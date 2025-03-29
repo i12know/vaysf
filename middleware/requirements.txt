@@ -1,0 +1,21 @@
+# Core dependencies
+requests>=2.28.1
+python-dotenv>=0.21.0
+cryptography>=38.0.1
+loguru>=0.6.0
+pydantic>=1.10.2
+pandas>=1.5.1
+openpyxl>=3.0.10
+tqdm>=4.64.1
+schedule>=1.1.0
+tenacity>=8.1.0
+pytz>=2022.5
+uuid>=1.30
+
+# Selenium for ChMeetings automation (when API is not available)
+selenium>=4.5.0
+webdriver-manager>=3.8.4
+
+# Validation and Testing
+pytest>=7.2.0
+pytest-mock>=3.10.0
