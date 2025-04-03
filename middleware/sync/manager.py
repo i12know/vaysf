@@ -436,10 +436,10 @@ class SyncManager:
             logger.info(f"Please import the Excel file at {excel_path} to ChMeetings")
             
             # Optional: Open the Excel file for the user
-            import platform
-            import subprocess
-            if platform.system() == 'Windows':
-                os.startfile(excel_path)
+            # import platform
+            # import subprocess
+            # if platform.system() == 'Windows':
+            #     os.startfile(excel_path)
             
             return True
         
