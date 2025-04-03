@@ -1757,6 +1757,7 @@ public function update_approval($request) {
 		
 		$table_approvals = vaysf_get_table_name('approvals');
 		$table_participants = vaysf_get_table_name('participants');
+        $table_churches = vaysf_get_table_name('churches');
 		
 		// Get parameters
 		$params = $request->get_params();
@@ -1862,7 +1863,7 @@ public function update_approval($request) {
 		if ($participant && !empty($participant['email'])) {
 			// Build email content
 			$subject = sprintf(
-				__('Sports Fest 2025: Your Participation Has Been %s', 'vaysf'),
+				__('Sports Fest: Your Participation Has Been %s', 'vaysf'),
 				$status === 'approved' ? __('Approved', 'vaysf') : __('Denied', 'vaysf')
 			);
 			
@@ -1927,7 +1928,18 @@ public function update_approval($request) {
 				));
 			}
 		}
-	}
+
+        // Ensure proper status return at the end of process_approval_token function
+        return rest_ensure_response(array(
+            'success' => true,
+            'message' => sprintf(
+                __('Participation has been %s.', 'vaysf'),
+                $status === 'approved' ? __('approved', 'vaysf') : __('denied', 'vaysf')
+            ),
+            'status' => $status
+        ));
+
+	} // end of function process_approval_token
 
 	/**
 	 * Get validation issues
