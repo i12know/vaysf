@@ -9,6 +9,7 @@ from typing import Optional
 from loguru import logger
 import schedule
 from tenacity import retry, stop_after_attempt, wait_exponential
+from config import Config, DATA_DIR
 
 # Add parent directory to import path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +32,12 @@ def parse_args() -> argparse.Namespace:
     sync_churches_parser = subparsers.add_parser("sync-churches", help="Sync churches from Excel file")
     sync_churches_parser.add_argument("--file", default=os.path.join("data", "Church Application Form.xlsx"),
                                       help="Path to the church Excel file")
+
+    # Group assignment command
+    group_assignment_parser = subparsers.add_parser("assign-groups", 
+                                             help="Create group assignments for people with church codes")
+    group_assignment_parser.add_argument("--output", help="Output directory path", 
+                                             default=DATA_DIR)
 
     # Config command
     config_parser = subparsers.add_parser("config", help="Configure system settings")
@@ -282,6 +289,16 @@ def main() -> None:
         else:
             with SyncManager() as manager:
                 success = manager.sync_churches_from_excel(args.file)  # Fixed
+    elif args.command == "assign-groups":
+        from group_assignment import export_people_with_church_codes
+        success = export_people_with_church_codes()
+        if success:
+            logger.info(f"Group assignment file created successfully at: {success}")
+            # Try to open the file for the user
+            import platform
+            import subprocess
+            if platform.system() == 'Windows':
+                os.startfile(success)
     elif args.command == "config":
         success = validate_config()
     elif args.command == "schedule":
