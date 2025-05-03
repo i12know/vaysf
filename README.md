@@ -20,7 +20,7 @@ The system uses a three-tier architecture:
 1. **ChMeetings (Core Data & Registration)**
    - Participant registration and profile management
    - Church registration
-   - Team/group management
+   - Team and group management
    - Payment processing
 
 2. **Windows-based Python Middleware**
