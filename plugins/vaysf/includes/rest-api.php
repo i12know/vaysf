@@ -1758,14 +1758,20 @@ public function update_approval($request) {
 		$table_approvals = vaysf_get_table_name('approvals');
 		$table_participants = vaysf_get_table_name('participants');
         $table_churches = vaysf_get_table_name('churches');
-		
+
+        //// Add debug logging
+        error_log('DEBUG: process_approval_token - Starting token processing');
+
 		// Get parameters
 		$params = $request->get_params();
 		$token = isset($params['token']) ? sanitize_text_field($params['token']) : '';
 		$decision = isset($params['decision']) ? sanitize_text_field($params['decision']) : '';
 		
+        error_log('DEBUG: Token: ' . $token . ', Decision: ' . $decision); //// Add debug logging
+
 		// Validate required parameters
 		if (empty($token) || empty($decision)) {
+            error_log('ERROR: Missing required parameters'); //// Add debug logging
 			return new WP_Error(
 				'rest_missing_parameter',
 				esc_html__('Missing required parameters: token and decision', 'vaysf'),
@@ -1775,6 +1781,7 @@ public function update_approval($request) {
 		
 		// Validate decision
 		if (!in_array($decision, array('approve', 'deny'))) {
+            error_log('ERROR: Invalid decision: ' . $decision); //// Add debug logging
 			return new WP_Error(
 				'rest_invalid_decision',
 				esc_html__('Invalid decision. Must be approve or deny.', 'vaysf'),
@@ -1791,18 +1798,22 @@ public function update_approval($request) {
 		);
 		
 		if (!$approval) {
+            error_log('ERROR: Invalid token: ' . $token); //// Add debug logging
 			return new WP_Error(
 				'rest_invalid_token',
 				esc_html__('Invalid approval token.', 'vaysf'),
 				array('status' => 400)
 			);
 		}
-		
+	
+        error_log('DEBUG: Found approval record - ID: ' . $approval->approval_id . ', Participant ID: ' . $approval->participant_id); //// Add debug logging
+        
 		// Check if token has expired
 		$token_expiry = new DateTime($approval->token_expiry);
 		$now = new DateTime();
 		
 		if ($token_expiry < $now) {
+            error_log('ERROR: Token expired. Expiry: ' . $approval->token_expiry); //// Add debug logging
 			return new WP_Error(
 				'rest_token_expired',
 				esc_html__('Approval token has expired.', 'vaysf'),
@@ -1812,6 +1823,7 @@ public function update_approval($request) {
 		
 		// Check if already processed
 		if ($approval->approval_status !== 'pending') {
+            error_log('WARNING: Approval already processed. Current status: ' . $approval->approval_status); //// Add debug logging
 			return new WP_Error(
 				'rest_approval_already_processed',
 				esc_html__('Approval has already been processed.', 'vaysf'),
@@ -1821,7 +1833,8 @@ public function update_approval($request) {
 		
 		// Set approval status based on decision
 		$status = $decision === 'approve' ? 'approved' : 'denied';
-		
+        error_log('DEBUG: Decision: ' . $decision . ', Setting status to: ' . $status); //// Add debug logging
+        
 		// Update approval
 		$wpdb->update(
 			$table_approvals,
@@ -1834,19 +1847,57 @@ public function update_approval($request) {
 			array('%s', '%s', '%s'),
 			array('%d')
 		);
-		
+
+//// DEBUG CODE BEFORE PARTICIPANT UPDATE        
+        if ($approval_result === false) {
+            error_log('ERROR: Failed to update approval status: ' . $wpdb->last_error);
+        } else {
+            error_log('SUCCESS: Updated approval status for ID ' . $approval->approval_id . ' to ' . $status);
+        }
+        // Update participant status
+        error_log('DEBUG: Updating participant ID: ' . $approval->participant_id . ' with status: ' . $status);
+        // Verify participant exists before updating
+        $participant_exists = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM $table_participants WHERE participant_id = %d",
+                $approval->participant_id
+            )
+        );
+        if (!$participant_exists) {
+            error_log('ERROR: Participant ID ' . $approval->participant_id . ' does not exist');
+        } else {
+            error_log('DEBUG: Participant ID ' . $approval->participant_id . ' exists, proceeding with update');        
+//// DEBUG CODE BEFORE PARTICIPANT UPDATE
+
 		// Update participant status
-		$wpdb->update(
-			$table_participants,
-			array(
-				'approval_status' => $status,
-				'updated_at' => current_time('mysql')
-			),
-			array('participant_id' => $approval->participant_id),
-			array('%s', '%s'),
-			array('%d')
-		);
-		
+            $wpdb->update(
+                $table_participants,
+                array(
+                    'approval_status' => $status,
+                    'updated_at' => current_time('mysql')
+                ),
+                array('participant_id' => $approval->participant_id),
+                array('%s', '%s'),
+                array('%d')
+            );
+
+//// DEBUG CODE 
+            if ($participant_result === false) {
+                error_log('ERROR: Failed to update participant status: ' . $wpdb->last_error);
+            } else {
+                error_log('SUCCESS: Updated participant status for ID ' . $approval->participant_id . ' to ' . $status);
+                // Double-check the update was applied
+                $updated_status = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT approval_status FROM $table_participants WHERE participant_id = %d",
+                        $approval->participant_id
+                    )
+                );
+                error_log('DEBUG: Verified participant status after update: ' . $updated_status);
+            }
+        }
+//// DEBUG CODE 
+
 		// Get participant and church data for notification
 		$participant = $wpdb->get_row(
 			$wpdb->prepare(
@@ -1859,8 +1910,17 @@ public function update_approval($request) {
 			ARRAY_A
 		);
 
+//// DEBUG CODE 
+        if (!$participant) {
+            error_log('ERROR: Failed to retrieve participant data for notification');
+        } else {
+            error_log('DEBUG: Retrieved participant data for notification - Name: ' . $participant['first_name'] . ' ' . $participant['last_name']);
+        }
+//// DEBUG CODE 
+
 		// Only send notification if we have the participant email
 		if ($participant && !empty($participant['email'])) {
+            error_log('DEBUG: Sending notification email to: ' . $participant['email']); //// Add debug logging
 			// Build email content
 			$subject = sprintf(
 				__('Sports Fest: Your Participation Has Been %s', 'vaysf'),
@@ -1914,7 +1974,15 @@ public function update_approval($request) {
 				$message,
 				$headers
 			);
-			
+
+//// DEBUG CODE 
+            if ($email_sent) {
+                error_log('SUCCESS: Email sent to ' . $participant['email']);
+            } else {
+                error_log('ERROR: Failed to send email to ' . $participant['email']);
+            }
+//// DEBUG CODE 
+
 			// Optionally log the email if enabled
 			if (get_option('vaysf_log_emails', false)) {
 				global $wpdb;
@@ -1926,10 +1994,14 @@ public function update_approval($request) {
 					'sent_at' => current_time('mysql'),
 					'status' => $email_sent ? 'sent' : 'failed'
 				));
+                error_log('DEBUG: Email logged in email_log table'); //// Add debug logging
 			}
+        } else { //// Add debug logging
+            error_log('WARNING: Cannot send notification - missing participant email'); //// Add debug logging
 		}
 
         // Ensure proper status return at the end of process_approval_token function
+        error_log('DEBUG: Returning success response with status: ' . $status); //// Add debug logging
         return rest_ensure_response(array(
             'success' => true,
             'message' => sprintf(
