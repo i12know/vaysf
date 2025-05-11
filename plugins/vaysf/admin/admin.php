@@ -284,14 +284,28 @@ class VAYSF_Admin {
      */
     public function display_dashboard_page() {
         global $wpdb;
-        
-        // Get stats
-        $church_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_churches");
-        $participant_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_participants");
-        $pending_approvals = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_approvals WHERE approval_status = 'pending'");
-        $approved_participants = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_participants WHERE approval_status = 'approved'");
-        $denied_participants = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_participants WHERE approval_status = 'denied'");
-        $validation_issues = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_validation_issues WHERE status = 'open'");
+
+        // Ensure VAYSF_Statistics class is available
+        if (!class_exists('VAYSF_Statistics')) {
+            // Adjust path if VAYSF_Admin and VAYSF_Statistics are in different directory levels relative to plugin root
+            require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-vaysf-statistics.php';
+        }
+        $stats = VAYSF_Statistics::get_overall_stats();
+        // Use stats from the VAYSF_Statistics class
+        $church_count = $stats['churches']['count'];
+        $participant_count = $stats['participants']['count'];
+        $pending_approvals = $stats['pending_approvals']['count'];
+        $approved_participants = $stats['approved']['count']; // Now uses the corrected logic
+        // $denied_participants = $stats['denied']['count']; // Also uses corrected logic
+        $validation_issues = $stats['validation_issues']['count'];
+
+        // Get stats the old ways
+        // $church_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_churches");
+        // $participant_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_participants");
+        // $pending_approvals = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_approvals WHERE approval_status = 'pending'");
+        // $approved_participants = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_approvals WHERE approval_status = 'approved'");
+        // $denied_participants = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_approvals WHERE approval_status = 'denied'");
+        // $validation_issues = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_validation_issues WHERE status = 'open'");
         
         ?>
         <div class="wrap">
@@ -302,31 +316,41 @@ class VAYSF_Admin {
                     <h2>Overview</h2>
                     <div class="vaysf-stat-grid">
                         <div class="vaysf-stat-box">
-                            <h3>Churches</h3>
+                            <h3><?php echo esc_html($stats['churches']['label']); ?></h3>
                             <div class="vaysf-stat-number"><?php echo esc_html($church_count); ?></div>
                             <a href="<?php echo admin_url('admin.php?page=vaysf-churches'); ?>" class="button">View Churches</a>
                         </div>
                         
                         <div class="vaysf-stat-box">
-                            <h3>Participants</h3>
+                            <h3><?php echo esc_html($stats['participants']['label']); ?></h3>
                             <div class="vaysf-stat-number"><?php echo esc_html($participant_count); ?></div>
                             <a href="<?php echo admin_url('admin.php?page=vaysf-participants'); ?>" class="button">View Participants</a>
                         </div>
                         
                         <div class="vaysf-stat-box">
-                            <h3>Pending Approvals</h3>
+                            <h3><?php echo esc_html($stats['pending_approvals']['label']); ?></h3>
                             <div class="vaysf-stat-number"><?php echo esc_html($pending_approvals); ?></div>
                             <a href="<?php echo admin_url('admin.php?page=vaysf-approvals'); ?>" class="button">View Approvals</a>
                         </div>
                         
                         <div class="vaysf-stat-box">
-                            <h3>Approved Participants</h3>
+                            <h3><?php echo esc_html($stats['approved']['label']); ?></h3>
                             <div class="vaysf-stat-number"><?php echo esc_html($approved_participants); ?></div>
                             <a href="<?php echo admin_url('admin.php?page=vaysf-participants'); ?>" class="button">View Participants</a>
                         </div>
-                        
+
+                        <?php // If we want to display denied participants on the admin dashboard:
+                        /*
                         <div class="vaysf-stat-box">
-                            <h3>Validation Issues</h3>
+                            <h3><?php echo esc_html($stats['denied']['label']); ?></h3>
+                            <div class="vaysf-stat-number"><?php echo esc_html($stats['denied']['count']); ?></div>
+                            <a href="<?php echo admin_url('admin.php?page=vaysf-participants'); // Link appropriately ?>" class="button">View Participants</a>
+                        </div>
+                        */
+                        ?>                        
+
+                        <div class="vaysf-stat-box">
+                            <h3><?php echo esc_html($stats['validation_issues']['label']); ?></h3>
                             <div class="vaysf-stat-number"><?php echo esc_html($validation_issues); ?></div>
                             <a href="<?php echo admin_url('admin.php?page=vaysf-validation'); ?>" class="button">View Issues</a>
                         </div>

@@ -46,6 +46,9 @@ class ParticipantSyncer:
     def sync_participants(self) -> bool:
         """Synchronize participant data from ChMeetings 'Team...' groups to WordPress."""
         logger.info("Starting participant synchronization...")
+        # Define the target ChMeetings ID for detailed logging
+        TARGET_CHM_ID_FOR_DEBUG = '0000000' # No chmeetings_id as Debugging Target for Logging
+        
         if not self.chm_connector or not self.wordpress_connector:
             logger.warning("Connectors not available")
             return False
@@ -55,7 +58,8 @@ class ParticipantSyncer:
             self.churches_cache.update({c["church_code"]: c for c in wp_churches})
 
         groups = self.chm_connector.get_groups()
-        logger.info(f"All groups fetched: {groups}")
+        # Reduced verbosity for general group fetching unless it's a specific debug need
+        # logger.info(f"All groups fetched: {groups}") 
         team_groups = [g for g in groups if g["name"].startswith(Config.TEAM_PREFIX)]
         logger.info(f"Filtered team_groups: {team_groups}")
         if not team_groups:
@@ -73,145 +77,241 @@ class ParticipantSyncer:
             logger.info(f"Processing {len(participants)} participants in group {group['name']}")
             for person in participants:
                 person_id = str(person.get("person_id"))
-                person_data = self.chm_connector.get_person(person_id)
-                logger.debug(f"Raw person_data for {person_id}: {person_data}")  ## Data dump for debugging purposes
-                if not person_data:
+                # Limit fetching person_data log too if needed, but often useful
+                # person_data = self.chm_connector.get_person(person_id)
+                # if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                #     logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Raw person_data for {person_id}: {person_data}")
+
+
+                # Early exit for chm_id to avoid deep processing if not target (optional, but good for performance)
+                # However, we need chm_id first.
+                
+                # Get chm_id as early as possible to apply the debug condition
+                temp_person_data = self.chm_connector.get_person(person_id)
+                if not temp_person_data:
                     logger.warning(f"Could not fetch details for person {person_id}")
                     continue
-
-                full_person = person_data if isinstance(person_data, dict) and "data" not in person_data else person_data.get("data", {})
-                logger.debug(f"Full person data for {person_id}: {full_person}")
-                if not full_person:
-                    logger.warning(f"Skipping person {person_id}: No data returned")
+                
+                temp_full_person = temp_person_data if isinstance(temp_person_data, dict) and "data" not in temp_person_data else temp_person_data.get("data", {})
+                if not temp_full_person:
+                    logger.warning(f"Skipping person {person_id}: No data returned from get_person")
                     continue
+                
+                # Assuming 'id' in temp_full_person is the chmeetings_id after get_person
+                # or use a lightweight way to get chm_id if possible before full mapping
+                # For now, we'll proceed with mapping to get chm_id cleanly.
+                # If performance is still an issue, this part might need optimization
+                # to get chm_id before full mapping for non-target records.
 
-                mapped = self._map_chmeetings_participants([full_person])[0]
-                logger.debug(f"Mapped data for {person_id}: {mapped}")
+                mapped = self._map_chmeetings_participants([temp_full_person])[0]
                 chm_id = mapped["chmeetings_id"]
-                roles = mapped.get("roles", "")
+                
+                # Conditional detailed logging starts here
+                if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                    logger.debug(f"--------------------------------------------------------------------------")
+                    logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] START PROCESSING TARGET RECORD")
+                    logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Raw person_data from ChM: {temp_person_data}")
+                    logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Full person data after initial parse: {temp_full_person}")
+                    logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Initial mapped data: {mapped}")
 
+                roles = mapped.get("roles", "")
                 is_athlete_or_participant = any(role.strip() in ["Athlete", "Participant", "Athlete/Participant"] for role in roles.split(","))
                 if not is_athlete_or_participant:
-                    first_name = mapped.get("first_name", "Unknown")
-                    last_name = mapped.get("last_name", "Unknown")
-                    logger.info(f"Skipping {chm_id} ({first_name} {last_name}): Roles '{roles}' do not qualify (must be Athlete/Participant)")
+                    # This log can be general or also conditional if too noisy
+                    # logger.info(f"Skipping {chm_id} ({mapped.get('first_name', 'N/A')} {mapped.get('last_name', 'N/A')}): Roles '{roles}' do not qualify.")
                     continue
 
                 required_fields = ["first_name", "last_name", "church_code"]
                 missing_fields = [field for field in required_fields if not mapped.get(field)]
                 if missing_fields:
-                    logger.error(f"Skipping {chm_id}: Missing required fields {missing_fields} in mapped data: {mapped}")
+                    logger.error(f"Skipping {chm_id}: Missing required fields {missing_fields} in mapped data.")
+                    if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                        logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Mapped data causing missing fields: {mapped}")
                     self.stats["participants"]["errors"] += 1
                     continue
 
-                chm_updated_on_str = full_person.get("updated_on", "1970-01-01T00:00:00+00:00").replace("Z", "+00:00")
+                chm_updated_on_str = temp_full_person.get("updated_on", "1970-01-01T00:00:00+00:00").replace("Z", "+00:00")
                 chm_updated_on = datetime.datetime.fromisoformat(chm_updated_on_str)
                 chm_updated_on_utc = chm_updated_on.astimezone(pytz.UTC)
-                mapped["updated_at"] = chm_updated_on_utc.strftime("%Y-%m-%d %H:%M:%S")  # Set WordPress timestamp
-                logger.debug(f"ChMeetings updated_on for {chm_id}: {chm_updated_on_utc}")
+                mapped["updated_at"] = chm_updated_on_utc.strftime("%Y-%m-%d %H:%M:%S")
+                
+                if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                    logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] ChMeetings updated_on (UTC): {chm_updated_on_utc}, Mapped updated_at: {mapped['updated_at']}")
 
-                participant = (self.wordpress_connector.get_participants({"chmeetings_id": chm_id}) or [None])[0]
-                logger.debug(f"Existing participant for {chm_id}: {participant}")
+                current_wp_status = mapped.get("approval_status", APPROVAL_STATUS["PENDING"])
+                final_status_determined = False
+                wp_participant_id = None 
 
-                if mapped["church_code"] not in self.churches_cache:
-                    logger.error(f"Invalid church_code '{mapped['church_code']}' for {chm_id}")
-                    self.stats["participants"]["errors"] += 1
-                    continue
+                participant_in_wp = (self.wordpress_connector.get_participants({"chmeetings_id": chm_id}) or [None])[0]
 
-                is_valid, issues = self.validate_participant(mapped)
-                if is_valid:
-                    completion_checklist = mapped.get("completion_checklist", "")
-                    required_items = [
-                        CHECK_BOXES["1-IDENTITY"],
-                        CHECK_BOXES["2-CONSENT"],
-                        CHECK_BOXES["3-ACCOUNT"],
-                        CHECK_BOXES["4-PHOTO_ID"]
-                    ]
-                    all_items_checked = all(item in completion_checklist for item in required_items)
-                    mapped["approval_status"] = APPROVAL_STATUS["PENDING_APPROVAL"] if all_items_checked else APPROVAL_STATUS["VALIDATED"]
-                else:
-                    mapped["approval_status"] = APPROVAL_STATUS["PENDING"]                
-                logger.debug(f"Validation issues for participant {participant}: {issues}") ## Debug print
+                if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                    logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Participant in WP (sf_participants direct fetch): {participant_in_wp}")
+                    logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Initial current_wp_status (from mapped before P1/P2): {current_wp_status}")
+
+                if participant_in_wp:
+                    wp_participant_id = participant_in_wp["participant_id"]
+                    status_in_sf_participants = participant_in_wp.get("approval_status")
+                    if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                        logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] P1 - WP Participant ID: {wp_participant_id}, Status from sf_participants: {status_in_sf_participants}")
+
+                    if status_in_sf_participants in [APPROVAL_STATUS["APPROVED"], APPROVAL_STATUS["DENIED"]]:
+                        current_wp_status = status_in_sf_participants
+                        final_status_determined = True
+                        if chm_id == TARGET_CHM_ID_FOR_DEBUG: # Also make existing info logs conditional for the target
+                            logger.info(f"[TARGET] Participant {wp_participant_id} (ChM ID: {chm_id}): Status preserved as '{current_wp_status}' from existing sf_participants record.")
+                    else:
+                        existing_approvals = self.wordpress_connector.get_approvals(
+                            params={"participant_id": wp_participant_id}
+                        )
+                        if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                            logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] P2 - Fetched sf_approvals records: {existing_approvals}")
+
+                        if existing_approvals:
+                            approval_record = existing_approvals[0] # Assuming the first one is the most relevant/latest
+                            status_from_sf_approvals = approval_record.get("approval_status")
+                            if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                                logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] P2 - Approval record found: {approval_record}")
+                                logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] P2 - Status from sf_approvals: {status_from_sf_approvals}")
+
+                            if status_from_sf_approvals in [APPROVAL_STATUS["APPROVED"], APPROVAL_STATUS["DENIED"]]:
+                                current_wp_status = status_from_sf_approvals
+                                final_status_determined = True
+                                if chm_id == TARGET_CHM_ID_FOR_DEBUG: # Also make existing info logs conditional for the target
+                                    logger.info(f"[TARGET] Participant {wp_participant_id} (ChM ID: {chm_id}): Status set to '{current_wp_status}' from sf_approvals table.")
+                
+                if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                    logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] After P1/P2 - current_wp_status: {current_wp_status}, final_status_determined: {final_status_determined}")
+                
+                mapped["approval_status"] = current_wp_status
+                issues = [] 
+                
+                if not final_status_determined:
+                    if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                        logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Entering validation/checklist logic. mapped['approval_status'] before this block: {mapped.get('approval_status')}")
+                    
+                    is_valid, issues = self.validate_participant(mapped) # 'issues' is populated here
+                    
+                    if is_valid:
+                        completion_checklist = mapped.get("completion_checklist", "")
+                        required_items = [
+                            CHECK_BOXES["1-IDENTITY"], CHECK_BOXES["2-CONSENT"],
+                            CHECK_BOXES["3-ACCOUNT"], CHECK_BOXES["4-PHOTO_ID"]
+                        ]
+                        all_items_checked = all(item.strip() in completion_checklist for item in required_items)
+                        
+                        if all_items_checked:
+                            mapped["approval_status"] = APPROVAL_STATUS["PENDING_APPROVAL"]
+                            # General info log, can be kept or made conditional if too noisy
+                            # logger.info(f"Participant {chm_id}: Status set to '{mapped['approval_status']}' (validation passed, checklist complete).")
+                        else:
+                            mapped["approval_status"] = APPROVAL_STATUS["VALIDATED"]
+                            # logger.info(f"Participant {chm_id}: Status set to '{mapped['approval_status']}' (validation passed, checklist incomplete).")
+                    else:
+                        mapped["approval_status"] = APPROVAL_STATUS["PENDING"]
+                        # logger.info(f"Participant {chm_id}: Status set to '{mapped['approval_status']}' (failed validation).")
+                    
+                    if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                        logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] After validation/checklist logic - mapped['approval_status']: {mapped.get('approval_status')}, Issues: {issues}")
+                
+                if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                    logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Final approval_status for {chm_id} before WP update/create: {mapped.get('approval_status')}")
 
                 try:
-                    if participant:
-                        wp_participant_id = participant["participant_id"]
-                        updated_at_str = participant.get("updated_at", "1970-01-01 00:00:00")
-                        updated_at = pytz.UTC.localize(datetime.datetime.strptime(updated_at_str, "%Y-%m-%d %H:%M:%S"))
-                        logger.debug(f"WordPress updated_at for {chm_id}: {updated_at}")
-                        # Force update regardless of timestamp
+                    if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                        logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Payload for WordPress (participant_in_wp: {bool(participant_in_wp)}) MAPPED DATA: {mapped}")
+                    
+                    participant_id_for_roster_validation = None 
+
+                    if participant_in_wp:
                         updated_participant = self.wordpress_connector.update_participant(wp_participant_id, mapped)
-                        logger.debug(f"Update result for {chm_id}: {updated_participant}")
+                        if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                            logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Update result: {updated_participant}")
                         if updated_participant:
-                            logger.info(f"Updated participant {chm_id}")
+                            # logger.info(f"Updated participant {chm_id}") # General log
                             self.stats["participants"]["updated"] += 1
                             self.participants_cache[chm_id] = updated_participant
-                            participant_id = updated_participant["participant_id"]
+                            participant_id_for_roster_validation = updated_participant["participant_id"]
                         else:
                             logger.error(f"Failed to update participant {chm_id}: No result returned")
                             self.stats["participants"]["errors"] += 1
                             continue
                     else:
                         created_participant = self.wordpress_connector.create_participant(mapped)
-                        logger.debug(f"Create result for {chm_id}: {created_participant}")
+                        if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                            logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Create result: {created_participant}")
                         if created_participant:
-                            logger.info(f"Created participant {chm_id}")
+                            # logger.info(f"Created participant {chm_id}") # General log
                             self.stats["participants"]["created"] += 1
                             self.participants_cache[chm_id] = created_participant
-                            participant_id = created_participant["participant_id"]
+                            participant_id_for_roster_validation = created_participant["participant_id"]
                         else:
                             logger.error(f"Failed to create participant {chm_id}: No result returned")
                             self.stats["participants"]["errors"] += 1
                             continue
 
-                    logger.debug(f"Syncing rosters for participant_id {participant_id}")
-                    self._sync_rosters(participant_id, mapped)
-                    # Use the last updated timestamp from ChMeetings to determine if validation is needed and sync issues if the participant data has changed
-                    chm_updated_on_utc_str = mapped["updated_at"]                   
-                    # Replace self._log_validation_issues(participant_id, mapped["church_code"], issues) with our new method below
-                    self._sync_validation_issues(participant_id, mapped["church_code"], issues, chm_updated_on_utc_str)                    
+                    if participant_id_for_roster_validation:
+                        if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                            logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Syncing rosters for WP participant_id {participant_id_for_roster_validation}")
+                        self._sync_rosters(participant_id_for_roster_validation, mapped) # Pass mapped here
+                        chm_updated_on_utc_str = mapped["updated_at"]
+                        if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                             logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] Syncing validation issues for WP participant_id {participant_id_for_roster_validation}. Issues to sync: {issues}")
+                        self._sync_validation_issues(participant_id_for_roster_validation, mapped["church_code"], issues, chm_updated_on_utc_str)
+                    else:
+                        logger.error(f"[SYNC_PARTICIPANT - {chm_id}] participant_id_for_roster_validation was not defined. Skipping roster and validation sync.")                   
 
                 except Exception as e:
-                    logger.error(f"Error syncing participant {chm_id}: {e}")
+                    logger.exception(f"Error syncing participant {chm_id}: {e}")
                     self.stats["participants"]["errors"] += 1
+                    if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                        logger.error(f"[SYNC_PARTICIPANT - {chm_id}] Exception occurred during WP update/create or subsequent sync.")
                     continue
+                
+                if chm_id == TARGET_CHM_ID_FOR_DEBUG:
+                    logger.debug(f"[SYNC_PARTICIPANT - {chm_id}] END PROCESSING TARGET RECORD")
+                    logger.debug(f"--------------------------------------------------------------------------")
 
-        logger.info(f"Participant sync completed: {self.stats['participants']}, Rosters: {self.stats['rosters']}, Validation Issues: {self.stats['validation_issues']}")
+
+        logger.info(f"Participant sync completed: Stats: Participants {self.stats['participants']}, Rosters: {self.stats['rosters']}, Validation Issues: {self.stats['validation_issues']}")
         return True
 ## New Code:
     def _map_chmeetings_participants(self, people: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Map ChMeetings person data to participant format."""
-        mapped = []
-        for person in people:
-            p = person.get("data", person) if "data" in person else person
+        TARGET_CHM_ID_FOR_DEBUG = '0000000' # No chmeetings_id as Debugging Target for Logging
+        mapped_list = []
+        for person_loop_item in people: # Renamed person to avoid conflict with outer scope if any
+            p = person_loop_item.get("data", person_loop_item) if "data" in person_loop_item else person_loop_item
+            
+            # Get chm_id for conditional logging, p.get('id') should be the chmeetings_id here
+            current_person_chm_id_for_map = str(p.get("id"))
+
             additional_fields = {f["field_name"]: f["value"] for f in p.get("additional_fields", [])}
             
             primary_sport = additional_fields.get("Primary Sport", "")
             if " - " in primary_sport:
-                primary_format = ""  # Team sports include format in sport name
+                primary_format_val = "" 
             else:
-                primary_format = additional_fields.get("Primary Racquet Sport Format", "")  # Racquet sports use separate field
+                primary_format_val = additional_fields.get("Primary Racquet Sport Format", "")
             
             secondary_sport = additional_fields.get("Secondary Sport", "")
             if " - " in secondary_sport:
-                secondary_format = ""
+                secondary_format_val = ""
             else:
-                secondary_format = additional_fields.get("Secondary Racquet Sport Format", "")
+                secondary_format_val = additional_fields.get("Secondary Racquet Sport Format", "")
 
-            # Get photo and ensure it's properly handled
             photo_url = p.get("photo", "")
             if not photo_url and isinstance(p.get("additional_fields"), list):
-                # If no photo in top-level, try to find it in additional_fields
                 photo_fields = [f for f in p.get("additional_fields", []) 
                              if f.get("field_name", "").lower() in ["photo", "profile_photo", "photo_url"]]
                 if photo_fields and photo_fields[0].get("value"):
                     photo_url = photo_fields[0].get("value")
             
-            # Log photo URL for debugging
-            logger.debug(f"Photo URL for {p.get('first_name')} {p.get('last_name')}: {photo_url}")
-            
-            participant = {
-                "chmeetings_id": str(p.get("id")),
+            if current_person_chm_id_for_map == TARGET_CHM_ID_FOR_DEBUG: # Conditional log for photo
+                logger.debug(f"[SYNC_PARTICIPANT_MAP - {current_person_chm_id_for_map}] Photo URL: {photo_url}")
+                logger.debug(f"[SYNC_PARTICIPANT_MAP - {current_person_chm_id_for_map}] Additional Fields from ChM: {additional_fields}")
+
+            participant_mapped_data = {
+                "chmeetings_id": current_person_chm_id_for_map, # Use the chm_id derived for logging
                 "church_code": additional_fields.get("Church Team", "").strip().upper(),
                 "first_name": p.get("first_name", ""),
                 "last_name": p.get("last_name", ""),
@@ -219,22 +319,22 @@ class ParticipantSyncer:
                 "phone": p.get("mobile", ""),
                 "gender": p.get("gender", ""),
                 "birthdate": p.get("birth_date", ""),
-                "photo_url": photo_url,  # Ensure this is properly set
+                "photo_url": photo_url,
                 "is_church_member": additional_fields.get(MEMBERSHIP_QUESTION, "No") == "Yes",
                 "primary_sport": primary_sport,
-                "primary_format": additional_fields.get("Primary Racquet Sport Format", ""),
+                "primary_format": primary_format_val,
                 "primary_partner": additional_fields.get("Primary Partner", ""),
                 "secondary_sport": secondary_sport,
-                "secondary_format": additional_fields.get("Secondary Racquet Sport Format", ""),
+                "secondary_format": secondary_format_val,
                 "secondary_partner": additional_fields.get("Secondary Partner", ""),
                 "other_events": additional_fields.get("Other Events", ""),
-                "approval_status": "pending",
+                "approval_status": "pending", 
                 "completion_checklist": additional_fields.get("Completion Check List", ""),
                 "parent_info": additional_fields.get("Parent Info", ""),
                 "roles": additional_fields.get("My role is", "")
             }
-            mapped.append(participant)
-        return mapped
+            mapped_list.append(participant_mapped_data)
+        return mapped_list
 
 ### WORKING CODE for validate_participant   
     def validate_participant(self, participant: Dict[str, Any]) -> Tuple[bool, List[Dict[str, str]]]:
