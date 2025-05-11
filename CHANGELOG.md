@@ -1,5 +1,9 @@
 # CHANGELOG
 
+- Fixed: Minor's record didn't show up for Pastoral Approval because ERROR in consent didn't get updated [#12](https://github.com/i12know/vaysf/issues/12)
+- Fixed: issue [#4](https://github.com/i12know/vaysf/issues/4) Approved athletes doesn't show approval_status correctly.
+- Added: main.py command "assign-groups": Create group assignments for people with church codes
+
 ## Version 1.0 (RC - Release Candidate)
 *Released: 2025-03-28
 
