@@ -47,7 +47,7 @@ class ParticipantSyncer:
         """Synchronize participant data from ChMeetings 'Team...' groups to WordPress."""
         logger.info("Starting participant synchronization...")
         # Define the target ChMeetings ID for detailed logging
-        TARGET_CHM_ID_FOR_DEBUG = '0000000' # No chmeetings_id as Debugging Target for Logging
+        TARGET_CHM_ID_FOR_DEBUG = '3622254' # Chmeetings_id as Debugging Target for Logging
         
         if not self.chm_connector or not self.wordpress_connector:
             logger.warning("Connectors not available")
@@ -277,7 +277,7 @@ class ParticipantSyncer:
 ## New Code:
     def _map_chmeetings_participants(self, people: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Map ChMeetings person data to participant format."""
-        TARGET_CHM_ID_FOR_DEBUG = '0000000' # No chmeetings_id as Debugging Target for Logging
+        TARGET_CHM_ID_FOR_DEBUG = '3622254' # Chmeetings_id as Debugging Target for Logging
         mapped_list = []
         for person_loop_item in people: # Renamed person to avoid conflict with outer scope if any
             p = person_loop_item.get("data", person_loop_item) if "data" in person_loop_item else person_loop_item
@@ -305,11 +305,25 @@ class ParticipantSyncer:
                              if f.get("field_name", "").lower() in ["photo", "profile_photo", "photo_url"]]
                 if photo_fields and photo_fields[0].get("value"):
                     photo_url = photo_fields[0].get("value")
+
+            # Let's get this string first.
+            completion_checklist_str = additional_fields.get("Completion Check List", "") 
+
+            # --- START NEW LOGIC TO SET consent_status ---
+            # (This block will be inserted BEFORE the participant_mapped_data dictionary)
+            # Ensure CHECK_BOXES is accessible (it is imported from config at the top of the file)
+            has_consent_checked = CHECK_BOXES["2-CONSENT"] in completion_checklist_str
+            # --- END NEW LOGIC TO SET consent_status ---
             
             if current_person_chm_id_for_map == TARGET_CHM_ID_FOR_DEBUG: # Conditional log for photo
                 logger.debug(f"[SYNC_PARTICIPANT_MAP - {current_person_chm_id_for_map}] Photo URL: {photo_url}")
                 logger.debug(f"[SYNC_PARTICIPANT_MAP - {current_person_chm_id_for_map}] Additional Fields from ChM: {additional_fields}")
+                # Add the new debug logs here as well:
+                logger.debug(f"[SYNC_PARTICIPANT_MAP - {current_person_chm_id_for_map}] Raw completion_checklist_str: '{completion_checklist_str}'")
+                logger.debug(f"[SYNC_PARTICIPANT_MAP - {current_person_chm_id_for_map}] CHECK_BOXES['2-CONSENT'] value is: '{CHECK_BOXES['2-CONSENT']}'")
+                logger.debug(f"[SYNC_PARTICIPANT_MAP - {current_person_chm_id_for_map}] Derived has_consent_checked: {has_consent_checked}")
 
+            # Original start of participant_mapped_data dictionary
             participant_mapped_data = {
                 "chmeetings_id": current_person_chm_id_for_map, # Use the chm_id derived for logging
                 "church_code": additional_fields.get("Church Team", "").strip().upper(),
@@ -331,7 +345,8 @@ class ParticipantSyncer:
                 "approval_status": "pending", 
                 "completion_checklist": additional_fields.get("Completion Check List", ""),
                 "parent_info": additional_fields.get("Parent Info", ""),
-                "roles": additional_fields.get("My role is", "")
+                "roles": additional_fields.get("My role is", ""),
+                "consent_status": has_consent_checked # New field added here
             }
             mapped_list.append(participant_mapped_data)
         return mapped_list
