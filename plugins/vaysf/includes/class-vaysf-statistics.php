@@ -38,12 +38,12 @@ class VAYSF_Statistics {
                 'icon'  => 'clock'
             ),
             'approved' => array(
-                'count' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_participants WHERE approval_status = 'approved'"),
+                'count' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_approvals WHERE approval_status = 'approved'"),
                 'label' => 'Approved Participants',
                 'icon'  => 'yes'
             ),
             'denied' => array(
-                'count' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_participants WHERE approval_status = 'denied'"),
+                'count' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_approvals WHERE approval_status = 'denied'"),
                 'label' => 'Denied Participants',
                 'icon'  => 'no'
             ),

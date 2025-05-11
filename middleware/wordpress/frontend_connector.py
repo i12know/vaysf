@@ -133,26 +133,81 @@ class WordPressConnector:
             logger.error(f"Failed to get church with code {church_code}: {str(e)}")
             return None
         
+##    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(requests.RequestException))
+##    def get_participants(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+##        """Get participants from WordPress with pagination support."""
+##        params = params or {}
+##        chmeetings_id = params.pop('chmeetings_id', None)  # Extract chmeetings_id if present
+##        
+##        if 'page' not in params:
+##            params['page'] = 1
+##        if 'per_page' not in params:
+##            params['per_page'] = 50  # Default to 50 per page
+##
+##        try:
+##            response = self.session.get(f"{self.custom_api_url}/participants", params=params, timeout=(5, 30))
+##            
+##            # NEW CODE: Check for 404 and log as warning instead of error
+##            if response.status_code == 404:
+##                if chmeetings_id:
+##                    logger.warning(f"No participant found with chmeetings_id: {chmeetings_id}")
+##                else:
+##                    logger.warning(f"No participants found for params: {params}")
+##                return []
+##                
+##            response.raise_for_status()
+            
+            # Store pagination metadata
+##            if 'X-WP-Total' in response.headers:
+##                self.total_participants = int(response.headers['X-WP-Total'])
+##            if 'X-WP-TotalPages' in response.headers:
+##                self.total_participant_pages = int(response.headers['X-WP-TotalPages'])
+##            
+##            results = response.json()
+
+            ### Debug logging for chmeetings_id filtering
+            ##if chmeetings_id is not None:
+            ##    logger.debug(f"Filtering participants by chmeetings_id: {chmeetings_id} (type: {type(chmeetings_id).__name__})")
+            ##    logger.debug(f"Before filtering: Found {len(results)} participants")
+            ##    
+                # Debug each participant's chmeetings_id
+            ##    for i, p in enumerate(results):
+            ##        p_id = p.get('chmeetings_id')
+            ##        logger.debug(f"Participant {i}: chmeetings_id = {p_id} (type: {type(p_id).__name__})")
+                
+                # Apply filter
+            ##    results = [p for p in results if p.get('chmeetings_id') == chmeetings_id]
+                
+            ##    logger.debug(f"After filtering: Found {len(results)} participants matching chmeetings_id {chmeetings_id}")
+            ### after adding the code above, we now know that James was not in the first page and that's why it was not found
+            
+            # Filter by chmeetings_id in Python if provided
+##            if chmeetings_id is not None:
+##                results = [p for p in results if p.get('chmeetings_id') == chmeetings_id]
+                
+##            return results
+##        except requests.RequestException as e:
+##            # CHANGED CODE: Only log as error for non-404 exceptions
+##            logger.error(f"Failed to get participants: {str(e)}")
+##            raise  # Let retry handle it
+
+    ## Newer code:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(requests.RequestException))
     def get_participants(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Get participants from WordPress with pagination support."""
+        """Get participants from WordPress."""
         params = params or {}
-        chmeetings_id = params.pop('chmeetings_id', None)  # Extract chmeetings_id if present
         
+        # Set default pagination if not provided
         if 'page' not in params:
             params['page'] = 1
         if 'per_page' not in params:
-            params['per_page'] = 50  # Default to 50 per page
-
+            params['per_page'] = 50
+        
         try:
             response = self.session.get(f"{self.custom_api_url}/participants", params=params, timeout=(5, 30))
             
-            # NEW CODE: Check for 404 and log as warning instead of error
             if response.status_code == 404:
-                if chmeetings_id:
-                    logger.warning(f"No participant found with chmeetings_id: {chmeetings_id}")
-                else:
-                    logger.warning(f"No participants found for params: {params}")
+                logger.warning(f"No participants found for params: {params}")
                 return []
                 
             response.raise_for_status()
@@ -163,18 +218,12 @@ class WordPressConnector:
             if 'X-WP-TotalPages' in response.headers:
                 self.total_participant_pages = int(response.headers['X-WP-TotalPages'])
             
-            results = response.json()
+            return response.json()
             
-            # Filter by chmeetings_id in Python if provided
-            if chmeetings_id is not None:
-                results = [p for p in results if p.get('chmeetings_id') == chmeetings_id]
-                
-            return results
         except requests.RequestException as e:
-            # CHANGED CODE: Only log as error for non-404 exceptions
             logger.error(f"Failed to get participants: {str(e)}")
             raise  # Let retry handle it
-        
+
     def create_participant(self, participant_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a participant record in WordPress."""
         try:
