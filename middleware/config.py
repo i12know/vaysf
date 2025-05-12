@@ -20,8 +20,12 @@ LOG_DIR = BASE_DIR / "logs"
 DATA_DIR = BASE_DIR / "data"
 TEMP_DIR = BASE_DIR / "temp"
 
+# Export settings - default to G:\VAYSF-data to share the files with Church Rep from my Google Drive 
+DEFAULT_EXPORT_PATH_STR = r"G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data"
+EXPORT_DIR = Path(os.getenv("EXPORT_DIR", DEFAULT_EXPORT_PATH_STR))
+
 # Ensure directories exist with error handling
-for directory in [LOG_DIR, DATA_DIR, TEMP_DIR]:
+for directory in [LOG_DIR, DATA_DIR, TEMP_DIR, EXPORT_DIR]:
     try:
         directory.mkdir(exist_ok=True)
     except OSError as e:
@@ -350,6 +354,12 @@ APPROVED_EXCEL_FILE=group_import_approved_participants.xlsx
 TEAM_PREFIX=Team
 SPORTS_FEST_DATE=2025-07-19
 CHURCH_EXCEL_FILE=
+
+# Export directory 
+# Default is now 'G:\\Shared drives\\RP Google Drive\\VAY\\SportsFest\\VAYSF-data' if not set here.
+# You can override it, e.g., EXPORT_DIR=C:\\Users\\YourUser\\Desktop\\VAYSF_Exports
+# or EXPORT_DIR=export (for a folder named 'export' in the project root)
+EXPORT_DIR=
 """
         env_template_path.write_text(template)
         logger.info(f"Created .env template at {env_template_path}")
