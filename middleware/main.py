@@ -9,14 +9,17 @@ from typing import Optional
 from loguru import logger
 import schedule
 from tenacity import retry, stop_after_attempt, wait_exponential
-from config import Config, DATA_DIR
+from config import Config, DATA_DIR, EXPORT_DIR
+from pathlib import Path
 
 # Add parent directory to import path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
 from sync.manager import SyncManager
-from config import Config
+from chmeetings.backend_connector import ChMeetingsConnector  # Import for export command
+from wordpress.frontend_connector import WordPressConnector   # Import for export command
+from church_teams_export import ChurchTeamsExporter           # Import for export command
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for the VAYSF middleware."""
@@ -28,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     sync_parser.add_argument("--type", choices=["churches", "participants", "approvals", "validation", "full"],
                              default="full", help="Type of data to sync")
 
-    # Sync-churches command (new)
+    # Sync-churches command
     sync_churches_parser = subparsers.add_parser("sync-churches", help="Sync churches from Excel file")
     sync_churches_parser.add_argument("--file", default=os.path.join("data", "Church Application Form.xlsx"),
                                       help="Path to the church Excel file")
@@ -38,6 +41,11 @@ def parse_args() -> argparse.Namespace:
                                              help="Create group assignments for people with church codes")
     group_assignment_parser.add_argument("--output", help="Output directory path", 
                                              default=DATA_DIR)
+
+    # Export command
+    export_parser = subparsers.add_parser("export-church-teams", help="Export church team status reports")
+    export_parser.add_argument("--church-code", help="Export for specific church code (if omitted, exports for all churches)")
+    export_parser.add_argument("--output", help="Output directory path", default=EXPORT_DIR)
 
     # Config command
     config_parser = subparsers.add_parser("config", help="Configure system settings")
@@ -299,6 +307,29 @@ def main() -> None:
             import subprocess
             if platform.system() == 'Windows':
                 os.startfile(success)
+    elif args.command == "export-church-teams":
+        output_path = Path(args.output) 
+        try:
+            output_path.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Report output directory set to: {output_path.resolve()}")
+        except OSError as e:
+            logger.error(f"Failed to create report output directory {output_path}: {e}")
+            success = False
+        else:
+            try:
+                # ChurchTeamsExporter is a context manager
+                with ChurchTeamsExporter() as exporter: 
+                    success = exporter.generate_reports( 
+                        target_church_code=args.church_code,
+                        output_dir=output_path
+                    )
+                if success: 
+                    logger.info(f"Church team reports generated successfully in {output_path.resolve()}.")
+                else:
+                    logger.error("Failed to generate church team reports (exporter returned False).")
+            except Exception as e:
+                logger.error(f"An exception occurred during report export: {e}", exc_info=True)
+                success = False
     elif args.command == "config":
         success = validate_config()
     elif args.command == "schedule":
