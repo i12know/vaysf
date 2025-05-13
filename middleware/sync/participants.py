@@ -47,7 +47,7 @@ class ParticipantSyncer:
         """Synchronize participant data from ChMeetings 'Team...' groups to WordPress."""
         logger.info("Starting participant synchronization...")
         # Define the target ChMeetings ID for detailed logging
-        TARGET_CHM_ID_FOR_DEBUG = '3622254' # Chmeetings_id as Debugging Target for Logging
+        TARGET_CHM_ID_FOR_DEBUG = '3139537' # Chmeetings_id as Debugging Target for Logging
         
         if not self.chm_connector or not self.wordpress_connector:
             logger.warning("Connectors not available")
@@ -277,7 +277,7 @@ class ParticipantSyncer:
 ## New Code:
     def _map_chmeetings_participants(self, people: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Map ChMeetings person data to participant format."""
-        TARGET_CHM_ID_FOR_DEBUG = '3622254' # Chmeetings_id as Debugging Target for Logging
+        TARGET_CHM_ID_FOR_DEBUG = '3139537' # Chmeetings_id as Debugging Target for Logging
         mapped_list = []
         for person_loop_item in people: # Renamed person to avoid conflict with outer scope if any
             p = person_loop_item.get("data", person_loop_item) if "data" in person_loop_item else person_loop_item
@@ -324,6 +324,7 @@ class ParticipantSyncer:
                 logger.debug(f"[SYNC_PARTICIPANT_MAP - {current_person_chm_id_for_map}] Derived has_consent_checked: {has_consent_checked}")
 
             # Original start of participant_mapped_data dictionary
+            # ChMeetings field name, MUST match the label in ChMeetings custom fields exactly
             participant_mapped_data = {
                 "chmeetings_id": current_person_chm_id_for_map, # Use the chm_id derived for logging
                 "church_code": additional_fields.get("Church Team", "").strip().upper(),
@@ -337,10 +338,10 @@ class ParticipantSyncer:
                 "is_church_member": additional_fields.get(MEMBERSHIP_QUESTION, "No") == "Yes",
                 "primary_sport": primary_sport,
                 "primary_format": primary_format_val,
-                "primary_partner": additional_fields.get("Primary Partner", ""),
+                "primary_partner": additional_fields.get("Primary Racquet Sport Partner (if applied)", ""),
                 "secondary_sport": secondary_sport,
                 "secondary_format": secondary_format_val,
-                "secondary_partner": additional_fields.get("Secondary Partner", ""),
+                "secondary_partner": additional_fields.get("Secondary Racquet Sport Partner (if applied)", ""),
                 "other_events": additional_fields.get("Other Events", ""),
                 "approval_status": "pending", 
                 "completion_checklist": additional_fields.get("Completion Check List", ""),
@@ -420,7 +421,7 @@ class ParticipantSyncer:
                     ## Debug for other_events roster in next 2 lines
                     logger.debug(f"Adding to current_sports: ('{other_sport}', 'Team', None)")
                     current_sports.add((other_sport, SPORT_FORMAT["TEAM"], None))
-                    self._create_or_update_roster(roster_data, current_sports)
+                    self._create_or_update_roster(roster_data)
             else:
                 sport_type = sport_value
                 format_value = participant.get(format_field) if format_field else None
@@ -463,7 +464,7 @@ class ParticipantSyncer:
                 ## Debug next 1 line for primary/secondary sport roster
                 logger.debug(f"Adding to current_sports: ('{sport_type}', '{sport_format}', {roster_data['team_order']})")
                 current_sports.add((roster_data["sport_type"], roster_data["sport_format"], roster_data["team_order"]))
-                self._create_or_update_roster(roster_data, current_sports)
+                self._create_or_update_roster(roster_data)
 
         ## Debug next line - show all current sports
         logger.debug(f"Current sports after processing: {current_sports}")
@@ -486,30 +487,93 @@ class ParticipantSyncer:
             logger.error(f"Error cleaning up rosters: {e}")
             self.stats["rosters"]["errors"] += 1
 
-    def _create_or_update_roster(self, roster_data, current_sports):
+    def _create_or_update_roster(self, roster_data: Dict[str, Any]): # Your correct signature
         """Create or update a roster entry."""
+        # Get details for logging prefix
+        participant_id_log = roster_data.get("participant_id")
+        sport_type_log = roster_data.get("sport_type")
+        sport_format_log = roster_data.get("sport_format")
+        log_prefix = f"C_O_U_R [P:{participant_id_log} S:{sport_type_log} F:{sport_format_log}]"
+
+        logger.debug(f"{log_prefix} - ENTRY. Full roster_data received: {roster_data}")
         try:
-            existing_rosters = self.wordpress_connector.get_rosters({
+            query_params = {
                 "participant_id": roster_data["participant_id"],
                 "sport_type": roster_data["sport_type"],
                 "sport_format": roster_data["sport_format"],
-                "team_order": roster_data["team_order"]
-            })
-            if not any(
-                r["sport_type"] == roster_data["sport_type"] and
-                r["sport_format"] == roster_data["sport_format"] and
-                r["team_order"] == roster_data["team_order"]
-                for r in existing_rosters
-            ):
-                logger.info(f"Creating roster: {roster_data}")
+            }
+            # Explicitly add team_order to query_params IF IT EXISTS in roster_data
+            # This ensures that if team_order is None or not present, it's not part of the query,
+            # unless your WP API specifically handles a 'team_order=null' query parameter.
+            # For now, let's assume if team_order is None in roster_data, we don't send it.
+            # If team_order: None should match team_order IS NULL in DB, then Python must send
+            # team_order as a parameter (e.g. team_order=None) and PHP API must handle it.
+            # Current: if roster_data.get("team_order") is None, it WONT be in query_params.
+            # This might be an issue if team_order IS NULL is a key differentiator.
+            if roster_data.get("team_order") is not None:
+                query_params["team_order"] = roster_data["team_order"]
+            
+            logger.debug(f"{log_prefix} - Querying WP with params: {query_params}")
+            existing_rosters_list = self.wordpress_connector.get_rosters(query_params) # Expect a list
+            logger.debug(f"{log_prefix} - WP get_rosters returned (list): {existing_rosters_list}")
+
+            matched_existing_roster_details = None
+            if existing_rosters_list: # Check if the list is not empty
+                # If multiple matches, this takes the first. This is a key assumption.
+                # This could be problematic if (participant_id, sport, format) without team_order
+                # returns multiple rosters (e.g., Volleyball Team A, Volleyball Team B)
+                # and team_order was not specific enough in the query or roster_data.
+                matched_existing_roster_details = existing_rosters_list[0]
+                logger.debug(f"{log_prefix} - Selected matched_existing_roster_details (from list[0]): {matched_existing_roster_details}")
+            else:
+                logger.debug(f"{log_prefix} - No existing rosters found by query.")
+
+
+            if matched_existing_roster_details:
+                roster_id_to_update = matched_existing_roster_details['roster_id']
+                logger.debug(f"{log_prefix} - Existing roster found (ID: {roster_id_to_update}). Checking for updates.")
+
+                fields_to_check_for_update = ["partner_name", "team_order"]
+                update_payload = {}
+                needs_db_update = False
+
+                for field_key in fields_to_check_for_update:
+                    new_value = roster_data.get(field_key)
+                    existing_value = matched_existing_roster_details.get(field_key)
+
+                    # Normalize for comparison
+                    normalized_new = "" if new_value is None else str(new_value)
+                    normalized_existing = "" if existing_value is None else str(existing_value)
+                    
+                    if normalized_new != normalized_existing:
+                        logger.debug(f"{log_prefix} - Field '{field_key}' differs. From CHM/Mapped: '{new_value}' (normalized: '{normalized_new}'). In DB: '{existing_value}' (normalized: '{normalized_existing}').")
+                        update_payload[field_key] = new_value # Send original new_value (None, empty, or actual)
+                        needs_db_update = True
+                
+                if needs_db_update:
+                    logger.info(f"{log_prefix} - Updating existing roster_id {roster_id_to_update}. Current DB values from matched: {matched_existing_roster_details}. Payload for update: {update_payload}")
+                    result = self.wordpress_connector.update_roster(roster_id_to_update, update_payload)
+                    if result:
+                        self.stats["rosters"].setdefault("updated", 0)
+                        self.stats["rosters"]["updated"] += 1
+                        logger.debug(f"{log_prefix} - Roster update successful for ID {roster_id_to_update}. Result: {result}")
+                    else:
+                        logger.error(f"{log_prefix} - Failed to update roster ID {roster_id_to_update}. WP Connector returned no/false result.")
+                        self.stats["rosters"]["errors"] += 1
+                else:
+                    logger.debug(f"{log_prefix} - Existing roster_id {roster_id_to_update} found, but no relevant fields changed. No DB update needed.")
+
+            else: # No existing roster found, create a new one
+                logger.info(f"{log_prefix} - Creating new roster with data: {roster_data}")
                 result = self.wordpress_connector.create_roster(roster_data)
-                logger.debug(f"Roster creation result: {result}")
                 if result:
                     self.stats["rosters"]["created"] += 1
+                    logger.debug(f"{log_prefix} - Roster creation successful. Result: {result}")
                 else:
-                    logger.error(f"Failed to create roster, no result returned: {roster_data}")
+                    logger.error(f"{log_prefix} - Failed to create roster. WP Connector returned no/false result. Data: {roster_data}")
+                    self.stats["rosters"]["errors"] += 1
         except Exception as e:
-            logger.error(f"Failed to create roster: {e}, data: {roster_data}")
+            logger.error(f"{log_prefix} - Exception in _create_or_update_roster. Current roster_data: {roster_data}", exc_info=True)
             self.stats["rosters"]["errors"] += 1
 
     def _log_validation_issues(self, participant_id: str, church_code: str, issues: List[Dict[str, str]]):
