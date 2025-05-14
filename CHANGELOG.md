@@ -1,7 +1,9 @@
 # CHANGELOG
 
-## Version 1.02 (2025-05-12)
-- Added: main.py command "export-church-teams": Generate Excel files for Church Rep's review (use arg --church-code ABC for a church)
+## Version 1.02 (2025-05-1x)
+- Fixed: issue [#23](https://github.com/i12know/vaysf/issues/23) Partner name didn't get recorded on sf_roster table
+- Added: command for "main.py sync --type participants --chm-id 3139537": sync just one participant by ID to debug issues faster
+- Added: command for "main.py export-church-teams": Generate Excel files for Church Rep's review (use arg --church-code ABC for a church)
 
 ## Version 1.01
 - Fixed: Minor's record didn't show up for Pastoral Approval because ERROR in consent didn't get updated [#12](https://github.com/i12know/vaysf/issues/12)

@@ -1259,32 +1259,74 @@ public function get_rosters($request) {
     $church_code = isset($params['church_code']) ? sanitize_text_field($params['church_code']) : '';
     $participant_id = isset($params['participant_id']) ? absint($params['participant_id']) : 0;
     
+    // Initialize WHERE clause array and format array
     $where = array();
     $where_format = array();
     
+    // Filter by church_code if provided
     if (!empty($church_code)) {
         $where[] = "r.church_code = %s";
         $where_format[] = $church_code;
     }
     
+    // Filter by participant_id if provided
     if ($participant_id > 0) {
         $where[] = "r.participant_id = %d";
         $where_format[] = $participant_id;
     }
+
+    // *** NEW: Filter by sport_type if provided ***
+    if (!empty($params['sport_type'])) {
+        $where[] = "r.sport_type = %s";
+        $where_format[] = sanitize_text_field($params['sport_type']);
+    }
+
+    // *** NEW: Filter by sport_format if provided ***
+    if (!empty($params['sport_format'])) {
+        $where[] = "r.sport_format = %s";
+        $where_format[] = sanitize_text_field($params['sport_format']);
+    }
+
+    // *** NEW: Filter by team_order (handles NULL effectively) ***
+    if (array_key_exists('team_order', $params)) {
+        $team_order_value = $params['team_order'];
+        // Treat null, 'null', 'None', or empty string from query param as DB IS NULL
+        if ($team_order_value === null || 
+            $team_order_value === '' || 
+            strtolower((string)$team_order_value) === 'none' || 
+            strtolower((string)$team_order_value) === 'null') {
+            $where[] = "r.team_order IS NULL";
+        } else {
+            $where[] = "r.team_order = %s";
+            $where_format[] = sanitize_text_field($team_order_value);
+        }
+    } else {
+        // If team_order was NOT sent by Python (e.g., when it's None in roster_data),
+        // assume it means match team_order IS NULL in the database.
+        $where[] = "r.team_order IS NULL";
+    }
     
+    // Construct the WHERE clause string
     $where_clause = !empty($where) ? 'WHERE ' . implode(' AND ', $where) : '';
     
-    $query = $wpdb->prepare(
-        "SELECT r.*, p.first_name, p.last_name, c.church_name 
-         FROM $table_rosters r 
-         JOIN $table_participants p ON r.participant_id = p.participant_id 
-         JOIN $table_churches c ON r.church_code = c.church_code 
-         $where_clause 
-         ORDER BY r.sport_type, r.sport_gender, r.sport_format",
-        $where_format
-    );
+    // Prepare the SQL query
+    // Note: $wpdb->prepare expects the base query string first, then an array of arguments.
+    $query_sql = "SELECT r.*, p.first_name, p.last_name, c.church_name 
+                  FROM $table_rosters r 
+                  JOIN $table_participants p ON r.participant_id = p.participant_id 
+                  JOIN $table_churches c ON r.church_code = c.church_code 
+                  $where_clause 
+                  ORDER BY r.sport_type, r.sport_gender, r.sport_format";
     
+    $query = $wpdb->prepare($query_sql, $where_format);
+    
+    // Execute query
     $rosters = $wpdb->get_results($query, ARRAY_A);
+    
+    // For debugging, you can log the actual query run:
+    // error_log('[VAYSF DEBUG] get_rosters SQL: ' . $wpdb->last_query);
+    // error_log('[VAYSF DEBUG] get_rosters Results Count: ' . count($rosters));
+
     return rest_ensure_response($rosters);
 }
 

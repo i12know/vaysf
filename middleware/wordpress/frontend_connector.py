@@ -343,6 +343,42 @@ class WordPressConnector:
 #            logger.error(f"Failed to create roster: {str(e)}")
 #            return None
 
+    def update_roster(self, roster_id: int, roster_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update a roster record in WordPress."""
+        try:
+            # Ensure updated_at is included if provided (though roster_data might not always have it here)
+            # The actual updated_at for the roster record itself will be handled by WordPress or the API endpoint.
+            # This log is more for if roster_data itself carries a timestamp.
+            if "updated_at" in roster_data:
+                logger.debug(f"Updating roster {roster_id} with data that includes updated_at: {roster_data['updated_at']}")
+            
+            response = self.session.put(
+                f"{self.custom_api_url}/rosters/{roster_id}",
+                json=roster_data  # Send only the fields to be updated
+            )
+            response.raise_for_status()
+            # Check if response is empty, common for successful PUT/PATCH with no content to return
+            if response.status_code == 204 or not response.content:
+                logger.info(f"Roster {roster_id} updated successfully (empty/204 response). Returning original payload as confirmation.")
+                # Return the payload that was sent, or a success marker,
+                # as the server might not return the full updated object.
+                # Or, you could re-fetch the roster here if needed. For now, return what was intended.
+                # To ensure the calling function gets a "truthy" value for success:
+                return {"success": True, "roster_id": roster_id, "updated_fields": roster_data}
+
+            result = response.json()
+            logger.debug(f"Updated roster {roster_id} response: {result}")
+            return result
+        except requests.RequestException as e:
+            logger.error(f"Failed to update roster {roster_id}: {str(e)}. Data: {roster_data}")
+            # Log the response content if it's an HTTP error
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Error response content: {e.response.text}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error updating roster {roster_id}: {e}. Response text: {response.text}")
+            return None
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(requests.RequestException))
     def delete_roster(self, roster_id: int) -> bool:
         """Delete a roster entry from sf_rosters by its ID and resolve related validation issues.
