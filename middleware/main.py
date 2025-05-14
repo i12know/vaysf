@@ -30,6 +30,8 @@ def parse_args() -> argparse.Namespace:
     sync_parser = subparsers.add_parser("sync", help="Sync data between systems")
     sync_parser.add_argument("--type", choices=["churches", "participants", "approvals", "validation", "full"],
                              default="full", help="Type of data to sync")
+    sync_parser.add_argument("--chm-id", type=str, default=None,
+                             help="Optional ChMeetings ID of a single participant to sync (only applies if --type is 'participants')")
 
     # Sync-churches command
     sync_churches_parser = subparsers.add_parser("sync-churches", help="Sync churches from Excel file")
@@ -69,17 +71,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def run_sync(manager: SyncManager, sync_type: str = "full") -> bool:
+def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str] = None) -> bool: # Added chm_id parameter
     """Run synchronization process with retry logic.
 
     Args:
         manager: SyncManager instance to use.
         sync_type: Type of sync to perform (churches, participants, approvals, validation, full).
+        chm_id: Optional ChMeetings ID of a single participant to sync.
 
     Returns:
         bool: True if successful, False otherwise.
     """
     logger.info(f"Running {sync_type} synchronization")
+    if chm_id and sync_type == "participants":
+        logger.info(f"Targeting single participant with ChMeetings ID: {chm_id}")
+
     try:
         if not manager.authenticate():
             logger.error("Authentication failed")
@@ -89,9 +95,10 @@ def run_sync(manager: SyncManager, sync_type: str = "full") -> bool:
             if not os.path.exists(excel_path):
                 logger.error(f"Excel file not found at {excel_path}")
                 return False
-            return manager.sync_churches_from_excel(excel_path)  # Fixed            
+            return manager.sync_churches_from_excel(excel_path)
         elif sync_type == "participants":
-            return manager.sync_participants()
+            # Pass chm_id to the manager's sync_participants method
+            return manager.sync_participants(chm_id=chm_id)
         elif sync_type == "approvals":
             success1 = manager.generate_approvals()
             success2 = manager.sync_approvals_to_chmeetings()
@@ -99,7 +106,15 @@ def run_sync(manager: SyncManager, sync_type: str = "full") -> bool:
         elif sync_type == "validation":
             return manager.validate_data()
         elif sync_type == "full":
-            stats = manager.run_full_sync()
+            # For a 'full' sync, we generally don't sync a single participant by ID,
+            # so chm_id is typically None here. If a chm_id were passed for 'full',
+            # the current SyncManager.run_full_sync doesn't use it.
+            # If you need 'full' sync to also be capable of targeting a specific CHM ID
+            # for its participant sync portion, SyncManager.run_full_sync would need adjustment.
+            # For now, assuming chm_id is primarily for direct 'participants' sync type.
+            if chm_id:
+                logger.warning("Warning: --chm-id is provided with --type=full. The participant sync portion of the full sync will currently run for all, not the specific ID.")
+            stats = manager.run_full_sync() # run_full_sync internally calls manager.sync_participants without an ID.
             logger.info(f"Full sync completed with stats: {stats}")
             return True
         else:
@@ -108,6 +123,7 @@ def run_sync(manager: SyncManager, sync_type: str = "full") -> bool:
     except Exception as e:
         logger.exception(f"Sync failed: {e}")
         return False
+# END --- Modified run_sync function in main.py ---
 
 def validate_config() -> bool:
     """Validate system configuration."""
@@ -286,10 +302,27 @@ def main() -> None:
     args = parse_args()
     logger.info(f"Executing command: {args.command}")
 
-    if args.command == "sync":        
+# START --- Modified main() function's sync block in main.py ---
+    if args.command == "sync":
+        # Retrieve chm_id from args. It will be None if not provided.
+        participant_chm_id = args.chm_id if hasattr(args, 'chm_id') else None
+
+        # Optional: Add a check or warning if --chm-id is used with a sync type other than 'participants'
+        if participant_chm_id and args.type != "participants":
+            logger.warning(f"--chm-id '{participant_chm_id}' was provided with sync type '{args.type}'. "
+                           "The --chm-id argument is only used when --type is 'participants'. "
+                           "The specified ID will be ignored for this operation.")
+            # Reset to None if not applicable to ensure run_sync behaves as expected for other types
+            # or let run_sync handle the warning as implemented above.
+            # For clarity here, if it's not for 'participants', it shouldn't be passed as a specific ID.
+            # However, run_sync already has a conditional warning for 'full' type.
+            # Let's pass it and let run_sync decide.
+
         manager = SyncManager()
         with manager:
-            success = run_sync(manager, args.type)        
+            # Pass the participant_chm_id to run_sync
+            success = run_sync(manager, args.type, chm_id=participant_chm_id)
+# END --- Modified main() function's sync block in main.py ---
     elif args.command == "sync-churches":
         if not os.path.exists(args.file):
             logger.error(f"Excel file not found at {args.file}")

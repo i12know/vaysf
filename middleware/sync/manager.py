@@ -5,7 +5,7 @@
 
 import os
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from loguru import logger
 from config import (Config, DATA_DIR, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION,
                    SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, 
@@ -50,11 +50,15 @@ class SyncManager:
         """Trigger church synchronization from an Excel file."""
         return self.church_syncer.sync_from_excel(excel_file_path)
 
-    def sync_participants(self) -> bool:
-        """Trigger participant synchronization from ChMeetings."""
+    def sync_participants(self, chm_id: Optional[str] = None) -> bool:
+        """
+        Trigger participant synchronization from ChMeetings.
+        Can sync a single participant if chm_id is provided.
+        """
         if self.participant_syncer:
-            return self.participant_syncer.sync_participants()
-        logger.warning("Participant syncer not initialized")
+            # Pass the chm_id to the ParticipantSyncer's method
+            return self.participant_syncer.sync_participants(chm_id_to_sync=chm_id)
+        logger.warning("Participant syncer not initialized. Cannot sync participants.")
         return False
 
     def get_validation_rules(self) -> Dict[str, Any]:
