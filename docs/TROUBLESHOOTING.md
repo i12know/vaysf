@@ -25,6 +25,7 @@ This guide addresses common issues you might encounter when using the Sports Fes
    ```bash
    python main.py test --system all --test-type connectivity
    ```
+5. If the config is still failing, run `python main.py config --validate` to check for any missing or misconfigured environment variables
 
 ### Python Dependency Errors
 
@@ -132,6 +133,20 @@ This guide addresses common issues you might encounter when using the Sports Fes
 3. Ensure group IDs are correct
 4. Check for changes in ChMeetings API structure
 
+### Participants Not Assigned to Groups
+
+**Issue**: Participants have a church code but are not in any "Team [Code]" group in ChMeetings, causing potential omissions in group-based lists.
+
+**Solutions**:
+1. Ensure that all church teams exist as groups in ChMeetings (e.g., "Team ABC")
+2. Ensure that the Participant Individual Form's "Church Team" has "ABC"
+3. Run the `assign-groups` command to generate a list of unassigned individuals:
+   ```bash
+   python main.py assign-groups
+   ```
+   Then import the generated file into ChMeetings to assign those people to their groups
+4. Verify that your ChMeetings Church Rep user has permission to manage groups (lack of permission could prevent them from reading group memberships)
+
 ## Data Synchronization Issues
 
 ### Missing Participants
@@ -143,10 +158,11 @@ This guide addresses common issues you might encounter when using the Sports Fes
 2. Verify participants are in the correct ChMeetings groups
 3. Check for validation errors in the middleware log
 4. Look for duplicate ChMeetings IDs
-5. Run a targeted participant sync:
+5. If a specific participant is not syncing, try syncing just that individual by ID:
    ```bash
-   python main.py sync --type participants
+   python main.py sync --type participants --chm-id <Their_ChMeetings_ID>
    ```
+   This can reveal if there's a data issue with that record alone, especially with a specific Debug Target ID (added in v1.02 for `participants.py`). This direct approach can help debug one participant's data without running a full sync.
 
 ### Roster Creation Failures
 
@@ -212,7 +228,13 @@ This guide addresses common issues you might encounter when using the Sports Fes
    BATCH_SIZE = 100  # Default is 50
    ```
 2. Ensure database indexes are optimized
-3. Run targeted syncs instead of full syncs
+3. Run targeted syncs instead of full syncs:
+   ```bash
+   # Sync one participant
+   python main.py sync --type participants --chm-id 1234567
+
+   # How about syncing one church ?
+   ```
 4. Schedule syncs during low-traffic periods
 5. Update logging level to reduce I/O:
    ```
@@ -261,7 +283,7 @@ Directly inspect the WordPress database tables to check for data issues:
 
 ```sql
 -- Check participants table
-SELECT * FROM wp_sf_participants WHERE approval_status = 'pending_approval';
+SELECT * FROM wp_sf_participants WHERE approval_status = 'pending';
 
 -- Check validation issues
 SELECT * FROM wp_sf_validation_issues WHERE status = 'open';

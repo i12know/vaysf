@@ -1,14 +1,15 @@
 # Usage Specifications
 
 This guide provides instructions for using the Sports Fest ChMeetings Integration system, including the Windows middleware and WordPress plugin.
-(Not all features are fully work yet, especially for 1.0 release. Currently the middleware can sync data to WordPress then send/process Pastor Approvals).
 
 ## Table of Contents
 
 - [Windows Middleware](#windows-middleware)
   - [Running Synchronization Tasks](#running-synchronization-tasks)
+  - [Exporting Church Team Reports](#exporting-church-team-reports)
+  - [Church Group Assignment Export](#church-group-assignment-export)
   - [Scheduled Syncs](#scheduled-syncs)
-  - [Testing Connectivity](#testing-connectivity)
+  - [Testing and Configuration](#testing-and-configuration)
 - [WordPress Plugin](#wordpress-plugin)
   - [Admin Dashboard](#admin-dashboard)
   - [Managing Churches](#managing-churches)
@@ -62,11 +63,21 @@ python main.py sync-churches --file "path/to/your/excel/file.xlsx"
 
 #### Participants Sync
 
-To sync only participant data:
+To sync all participants:
 
 ```bash
 python main.py sync --type participants
 ```
+
+##### Sync Single Participant
+
+To sync only one participant (for debugging or retries), provide their ChMeetings ID:
+
+```bash
+python main.py sync --type participants --chm-id 1234567
+```
+
+This will fetch and sync only the participant with ID 1234567 from ChMeetings. Note: The `--chm-id` option works only with `--type participants`.
 
 #### Approvals Generation
 
@@ -85,6 +96,54 @@ To run validation without other sync operations:
 ```bash
 python main.py sync --type validation
 ```
+
+### Exporting Church Team Reports
+
+Generate Excel reports showing church teams, participants, and their registration/approval status:
+
+```bash
+python main.py export-church-teams
+```
+
+This will generate reports for all churches in the system, pulling data from both ChMeetings and WordPress.
+
+To generate a report for a specific church:
+
+```bash
+python main.py export-church-teams --church-code ABC
+```
+
+Where `ABC` is the 3-letter church code.
+
+By default, reports are saved to the export directory (`EXPORT_DIR`) configured in your `.env` file. You can override the output location for a specific run:
+
+```bash
+python main.py export-church-teams --output "path/to/custom/directory"
+```
+
+The Excel reports contain:
+- List of all participants with their details
+- Sports and formats they're registered for
+- Approval status
+- Any missing requirements or validation issues
+- Summary statistics for the church
+
+### Church Group Assignment Export
+
+Identify participants who need to be added to their respective church team groups in ChMeetings:
+
+```bash
+python main.py assign-groups
+```
+
+This command:
+- Scans ChMeetings for participants with Church Codes who aren't in their church's team group
+- Creates an Excel file listing these participants
+- Generates a ChMeetings-importable file (`chm_group_import.xlsx`) to easily add them to their "Team [Code]" groups
+
+The Excel files are saved in the `data/` directory by default. On Windows, the system will attempt to automatically open the file upon successful generation.
+
+After running this command, you should import the generated file into ChMeetings (or manually add the people to groups) to ensure every participant is in the correct church group.
 
 ### Scheduled Syncs
 
@@ -110,7 +169,9 @@ To set up as a Windows scheduled task:
 
 2. Use Windows Task Scheduler to run this batch file at desired intervals.
 
-### Testing Connectivity
+### Testing and Configuration
+
+#### Testing Connectivity
 
 To test system connectivity:
 
@@ -130,6 +191,16 @@ To test email functionality:
 ```bash
 python main.py test --system wordpress --test-type email --test-email "test@example.com"
 ```
+
+#### Validating Configuration
+
+Verify your configuration file by running:
+
+```bash
+python main.py config --validate
+```
+
+This will check that all required environment variables and settings are properly set and will report any issues.
 
 ## WordPress Plugin
 
@@ -211,7 +282,7 @@ The Approvals page allows you to:
 
 ### Forms Configuration
 
-Two primary forms are needed in ChMeetings:
+Three primary forms are needed in ChMeetings:
 
 #### Church Application Form
 
@@ -247,6 +318,24 @@ Fields required:
 - Other Events
 - Photo (upload field)
 
+#### Consent Form
+
+Required sections:
+- Liability Release and Assumption of Risk
+- Medical Release & Disclaimer
+- Media/Photo Release
+- Behavior/Conduct Agreement
+- Confirmation & Signature
+- For minors: Parent/Guardian information and signature
+
+### Checking Consent Forms
+
+Upon completion of the Individual Application Form, user will receive an email confirmation with the https://bit.ly/vaysm-consent link to the Consent Form. The church rep will need to verify the consent form manually:
+
+1. **Use the People Record panel in ChMeetings** - Linked forms appear automatically in each participant's record if their name and email match exactly. This allows for quick verification of consent form completion.
+
+2. **Form-link caveat** - Per ChMeetings ticket #11991: automatic linking only works when the registrant already exists at the same level and contact information matches exactly; otherwise a manual form link is required. For participants whose forms don't automatically link, check the Forms section separately and manually connect them.
+
 ### Group Structure
 
 ChMeetings group structure should include:
@@ -280,6 +369,7 @@ Church Reps should be assigned as group leaders for their respective teams.
    - Run regular participant syncs to WordPress
    - Check validation issues in WordPress admin
    - Resolve validation issues with Church Reps
+   - Regularly run the group assignment export (`assign-groups`) to assign participants into their church teams, and import those assignments in ChMeetings
 
 2. **Approval Process**
    - Generate approval tokens for validated participants
@@ -294,6 +384,8 @@ Church Reps should be assigned as group leaders for their respective teams.
    - Confirm all validation issues are resolved
    - Ensure all participants have pastor approval
    - Sync approved participants to ChMeetings
+   - Generate final Church Team Status reports (`export-church-teams`) for each church to review their roster and participant statuses
+   - Provide these reports to church representatives for a final verification before the event (via Google Drive shared files)
 
 2. **Data Export**
    - Export participant lists for event check-in
@@ -309,4 +401,3 @@ Church Reps should be assigned as group leaders for their respective teams.
 2. **System Cleanup**
    - Archive data for future reference
    - Prepare system for next year
-  

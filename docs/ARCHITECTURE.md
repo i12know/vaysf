@@ -232,7 +232,7 @@ CREATE TABLE sf_validation_issues (
 - **sf_sync_log**: Logs synchronization operations and status
 - **sf_email_log**: Tracks email communications
 
-(These tables are fully documented in vaysf.php and are not used as of 1.0 except for the sf_email_log)
+(These tables are fully documented in vaysf.php and are not used as of v1.02 (Sports Fest 2025) except for the sf_email_log)
 
 ## Windows Middleware Architecture
 
@@ -243,6 +243,8 @@ CREATE TABLE sf_validation_issues (
 ├── main.py                     # Main entry script with CLI
 ├── config.py                   # Configuration and constants
 ├── requirements.txt            # Python dependencies
+├── group_assignment.py         # Script to generate church team assignment Excel (assign-groups command)
+├── church_teams_export.py      # Script to generate church status reports (export-church-teams command)
 ├── .env                        # Environment config
 ├── .env.template               # Template for .env
 ├── .key                        # Encryption key for sensitive data
@@ -310,7 +312,7 @@ Orchestrates the synchronization process.
 class SyncManager:
     def authenticate(self)
     def sync_churches_from_excel(self, excel_file_path)
-    def sync_participants(self)
+    def sync_participants(self, chm_id=None)
     def generate_approvals(self)
     def sync_approvals_to_chmeetings(self)
     def validate_data(self)
@@ -327,6 +329,19 @@ class IndividualValidator:
     def _validate_photo(self, participant)
     def _validate_consent(self, participant)
 ```
+
+#### ChurchTeamsExporter Utility
+Consolidates data from ChMeetings and WordPress to produce Excel reports of team rosters and statuses.
+```python
+class ChurchTeamsExporter:
+    def generate_reports(self, target_church_code=None, output_dir=None)
+    def _fetch_data(self, church_code=None)
+    def _create_report(self, church_data, participants_data)
+    def _calculate_age(self, birthdate)
+```
+
+#### Group Assignment Utility
+Scans ChMeetings for ungrouped people with church codes and outputs an Excel file for import. This ensures participants are placed into their 'Team [Code]' groups (related to the assign-groups command).
 
 ## WordPress Plugin Architecture
 
@@ -359,8 +374,11 @@ class IndividualValidator:
 | `/wp-json/vaysf/v1/rosters/{id}` | GET, PUT, DELETE | Manage specific roster |
 | `/wp-json/vaysf/v1/validation-issues` | GET, POST | List/create validation issues |
 | `/wp-json/vaysf/v1/validation-issues/{id}` | PUT | Update validation issue |
+| `/wp-json/vaysf/v1/validation-issues/bulk` | POST | Bulk update validation issues |
 | `/wp-json/vaysf/v1/approvals` | GET, POST | List/create approval requests |
 | `/wp-json/vaysf/v1/approvals/process-token` | GET | Process pastor approval token |
+| `/wp-json/vaysf/v1/sync-logs` | GET, POST | List/create sync logs |
+| `/wp-json/vaysf/v1/sync-logs/{id}` | PUT | Update sync log |
 | `/wp-json/vaysf/v1/send-email` | POST | Send email via WordPress |
 
 ## JSON-Based Validation System
@@ -470,6 +488,14 @@ These rules are stored in SUMMER_2025.json in the validation folder and should m
 	   
 ```
 
+## Future Enhancement: Multi-Vote Approval Workflow
+
+As discussed in GitHub Issue #5, a more robust "triumvirate" approval system is planned for future releases. Three main approaches are under consideration: 
+  (1) Sequential approval chain where each approver (e.g., Church Rep → Deacon → Pastor) must approve in order; 
+  (2) Parallel independent voting where all approvers receive simultaneous notifications and approve independently; 
+  (3) Threshold-based approval where different approvers have weighted votes and approval requires meeting a combined threshold. 
+The current design favors approach #2 with potential for a time-based fallback mechanism where default approvals occur after certain timeframes, reducing bottlenecks while maintaining oversight. This enhancement would build upon the existing approval infrastructure but require database schema updates to sf_approvals to track multiple approval statuses.
+
 ## Command-Line Interface
 
 The middleware provides a command-line interface through `main.py`:
@@ -481,9 +507,16 @@ Commands:
   sync                   Sync data between systems
     --type TYPE          Type of data to sync (churches, participants, 
                          approvals, validation, full)
+    --chm-id ID          ChMeetings ID for syncing a specific participant
   
   sync-churches          Sync churches from Excel file
     --file FILE          Path to the church Excel file
+  
+  export-church-teams    Generate Excel reports for church teams
+    --church-code CODE   Generate report for specific church
+    --output DIR         Output directory for reports
+  
+  assign-groups          Create group assignments for people with church codes
   
   config                 Configure system settings
     --validate           Validate current configuration

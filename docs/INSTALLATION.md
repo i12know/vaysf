@@ -15,8 +15,8 @@ This guide provides step-by-step instructions for setting up the Sports Fest ChM
 
 ### WordPress Requirements
 
-- WordPress 5.8+
-- PHP 7.4+
+- WordPress 5.8+ or 6.x
+- PHP 7.4+ or 8.x
 - MySQL 5.7+ or MariaDB 10.4+
 - WP Mail SMTP plugin (recommended for reliable email delivery)
 - SSH or FTP access to your WordPress installation
@@ -41,7 +41,10 @@ This guide provides step-by-step instructions for setting up the Sports Fest ChM
 
 ```bash
 # Clone using Git
-git clone https://github.com/username/sports-fest-integration.git
+git clone https://github.com/i12know/vaysf.git
+
+# Navigate to the project directory
+cd vaysf
 
 # Or download and extract the ZIP file from GitHub
 ```
@@ -49,9 +52,6 @@ git clone https://github.com/username/sports-fest-integration.git
 ### 3. Install Dependencies
 
 ```bash
-# Navigate to the project directory
-cd sports-fest-integration
-
 # Create a virtual environment (optional but recommended)
 python -m venv venv
 venv\Scripts\activate
@@ -71,8 +71,8 @@ pip install -r requirements.txt
    ```
    # ChMeetings configuration
    CHM_API_URL=https://api.chmeetings.com
-   CHM_USERNAME=your_username
-   CHM_PASSWORD=your_password
+   CHM_USERNAME=your_username_only_for_selenium
+   CHM_PASSWORD=your_password_only_for_selenium
    CHM_API_KEY=your_api_key
 
    # WordPress configuration
@@ -86,8 +86,26 @@ pip install -r requirements.txt
    APP_ENV=production
    DEBUG=False
    TOKEN_EXPIRY_DAYS=7
-   CHURCH_EXCEL_FILE=Church Application Form.xlsx
    ```
+
+3. Configure additional settings as needed:
+   ```
+   # Selenium settings
+   USE_CHROME_HEADLESS=True  # Set to False for debugging
+   CHROME_PROFILE_DIR=C:\path\to\chrome\profile  # Optional
+
+   # Sync settings
+   SYNC_INTERVAL_MINUTES=60  # Default sync interval
+
+   # Group settings
+   APPROVED_GROUP_NAME=2025 Sports Fest  # ChMeetings group for approved participants
+   
+   # Export settings
+   EXPORT_DIR=C:\path\to\export\directory  # MUST be set to a valid local path
+   APPROVED_EXCEL_FILE=C:\path\to\approved_participants.xlsx  # Export file for approvals
+   ```
+
+   **Important Note:** By default, exports try to save to a Google Drive path. You **must** set `EXPORT_DIR` in your `.env` to a valid local path if you plan to use the export features, or use the `--output` option with commands.
 
 ### 5. Set Up Chrome for Selenium (Optional)
 
@@ -111,7 +129,7 @@ python main.py test --system all --test-type connectivity
 
 ### 1. Install the Plugin
 
-1. Download the `vaysf.zip` plugin file
+1. Download the `vaysf.zip` plugin file from GitHub Releases or create a zip file from the `plugins/vaysf` directory in the repository
 2. Log in to your WordPress admin dashboard
 3. Navigate to Plugins > Add New > Upload Plugin
 4. Choose the downloaded zip file and click "Install Now"
@@ -141,6 +159,20 @@ For reliable email delivery, we recommend installing the WP Mail SMTP plugin:
 2. Configure it with your SMTP server details
 3. Send a test email to verify it's working correctly
 
+## Post-Installation Steps
+
+1. Make sure your `.env` file is properly configured with all required settings
+2. Configure WordPress plugin settings (API Key, etc.)
+3. Run a quick configuration validation:
+   ```bash
+   python main.py config --validate
+   ```
+4. Test connectivity to both systems:
+   ```bash
+   python main.py test --system all
+   ```
+5. Proceed to the [Usage Guide](USAGE.md) to learn how to use the system effectively
+
 ## Troubleshooting Installation
 
 ### Common Windows Middleware Issues
@@ -155,7 +187,7 @@ For reliable email delivery, we recommend installing the WP Mail SMTP plugin:
 
 3. **Selenium WebDriver Issues**
    - Ensure Chrome and ChromeDriver versions match
-   - Try running Chrome in non-headless mode for debugging
+   - Try running Chrome in non-headless mode by setting `USE_CHROME_HEADLESS=False` in `.env`
 
 ### Common WordPress Plugin Issues
 
