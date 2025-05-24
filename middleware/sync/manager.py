@@ -85,109 +85,132 @@ class SyncManager:
             "max_events_per_participant": 2
         }
 ## New Code:
-    def generate_approvals(self) -> bool:
+    def generate_approvals(self, chm_id_to_target: Optional[str] = None) -> bool: # New signature
         """Generate pastor approval tokens for participants with completed validation."""
         logger.info("Starting approval token generation...")
+
+        if chm_id_to_target:
+            logger.info(f"Targeting specific ChMeetings ID for approval generation: {chm_id_to_target}")
+            # Fetch the specific participant by their chmeetings_id from WordPress
+            # The get_participants method returns a list.
+            wp_participants_list = self.wordpress_connector.get_participants(params={"chmeetings_id": chm_id_to_target})
+            
+            if not wp_participants_list:
+                logger.warning(f"No participant found in WordPress with ChMeetings ID {chm_id_to_target}. Cannot generate approval.")
+                return True # Indicate that the operation completed without error for this specific (not found) ID.
+            
+            participant_to_check = wp_participants_list[0] # Assuming chmeetings_id is unique
+
+            # Check if this specific participant is in 'pending_approval' status
+            if participant_to_check.get("approval_status") != APPROVAL_STATUS["PENDING_APPROVAL"]:
+                logger.info(f"Participant ChM ID {chm_id_to_target} (WP ID: {participant_to_check.get('participant_id')}) "
+                            f"is not in 'pending_approval' status (current: {participant_to_check.get('approval_status')}). "
+                            "Skipping token generation for this participant.")
+                return True # Successfully did nothing as participant is not ready.
+            
+            wp_participants = [participant_to_check] # Process only this participant
+            logger.info(f"Processing 1 targeted participant (ChM ID: {chm_id_to_target}, WP ID: {participant_to_check.get('participant_id')}) for approval token generation.")
+        else:
+            # Original logic: Get ALL participants with 'pending_approval' status
+            wp_participants = self.wordpress_connector.get_participants(params={"approval_status": APPROVAL_STATUS["PENDING_APPROVAL"]})
+            if not wp_participants:
+                logger.info("No participants found with 'pending_approval' status for token generation.")
+                return True
+            logger.info(f"Found {len(wp_participants)} participants with 'pending_approval' status for token generation.")
         
-        # Get ALL participants with pending approval status
-        wp_participants = self.wordpress_connector.get_participants(params={"approval_status": APPROVAL_STATUS["PENDING_APPROVAL"]})
-        if not wp_participants:
-            logger.info("No pending participants found for approval")
-            return True
-        
-        logger.info(f"Found {len(wp_participants)} participants with pending status")
-        wp_approvals = self.wordpress_connector.get_approvals()
-        existing_approvals = {(a.get("participant_id"), a.get("church_id")): a for a in wp_approvals}
+        # The rest of the original generate_approvals logic can remain largely the same,
+        # as it iterates through the `wp_participants` list (which is now either all or one).
+
+        wp_approvals = self.wordpress_connector.get_approvals() # Fetch all existing approvals
+        ## old ## existing_approvals = {(a.get("participant_id"), a.get("church_id")): a for a in wp_approvals}
+        existing_approvals = {(str(a.get("participant_id")), str(a.get("church_id"))): a for a in wp_approvals}
         
         if not self.churches_cache:
             wp_churches = self.wordpress_connector.get_churches()
-            self.churches_cache = {c["church_code"]: c for c in wp_churches}
+            if wp_churches: # Ensure wp_churches is not None or empty
+                 self.churches_cache = {c["church_code"]: c for c in wp_churches}
+            else:
+                logger.error("Failed to load churches into cache. Cannot proceed with approval generation.")
+                return False # Critical failure if churches can't be loaded
         
         # Counter for participants ready for pastor approval
-        ready_for_approval_count = 0
+        ready_for_approval_count = 0 
         
         for participant in tqdm(wp_participants, desc="Generating approval tokens"):
-            wp_participant_id = participant["participant_id"]
+            wp_participant_id_int = participant["participant_id"] # Keep as int for DB operations
+            wp_participant_id_str = str(wp_participant_id_int)    # Use string for dict keys
             church_code = participant["church_code"]
             
-            # Skip if approval token already exists
-            if (wp_participant_id, self.churches_cache[church_code]["church_id"]) in existing_approvals:
+            # Ensure church_code is in cache
+            if church_code not in self.churches_cache:
+                logger.warning(f"Church with code '{church_code}' not found in cache for participant WP ID {wp_participant_id_str}. Skipping.")
+                self.stats["approvals"]["errors"] += 1
                 continue
             
-            # Check if participant has completed all pre-approval validation steps
-            completion_checklist = participant.get("completion_checklist", "")
-            
-            # Required checklist items - using constants from config.py
-#            required_items = [
-#                CHECK_BOXES["1-IDENTITY"],
-#                CHECK_BOXES["2-CONSENT"],
-#                CHECK_BOXES["3-ACCOUNT"],
-#                CHECK_BOXES["4-PHOTO_ID"]
-#            ]
-            
-            # Check if all required items are in the checklist (consider order might vary)
-#            all_items_checked = all(
-#                item.strip() in completion_checklist for item in required_items
-#            )
-            
-            # Skip if validation is not complete
-#            if not all_items_checked:
-#                logger.info(f"Skipping participant {wp_participant_id}: incomplete validation")
-#                continue
-            
-            # Check if participant already has the approval item checked (shouldn't happen with proper validation)
-#            if CHECK_BOXES["5-APPROVAL"] in completion_checklist:
-#                logger.warning(f"Participant {wp_participant_id} already has approval checked but status is still pending")
-#                continue
-            
-            # Participant is validated and ready for pastor approval
+            church_wp_id_str = str(self.churches_cache[church_code]["church_id"]) # Use string for dict keys
+
+            # --- CHECK FOR EXISTING APPROVAL ---
+            # This check is still important to prevent duplicate emails.
+            if (wp_participant_id_str, church_wp_id_str) in existing_approvals:
+                logger.info(f"Approval record already exists for participant WP ID {wp_participant_id_str} and church WP ID {church_wp_id_str}. Skipping token generation.")
+                continue
+            # --- END OF EXISTING APPROVAL CHECK ---
+
+            # If we are here, it means:
+            # 1. The participant is in 'PENDING_APPROVAL' status (because of how wp_participants was queried or filtered).
+            # 2. No approval token/record exists for them yet.
+            # We are trusting that 'PENDING_APPROVAL' implies the checklist was previously satisfied.
+
             ready_for_approval_count += 1
             
-            # Update the approval status to pending_approval to indicate it's awaiting pastor's decision
-            self.wordpress_connector.update_participant(
-                wp_participant_id, 
-                {"approval_status": APPROVAL_STATUS["PENDING_APPROVAL"]}
-            )
-            
-            # Generate and store token for pastor approval
-            if church_code not in self.churches_cache:
-                logger.warning(f"Church not found for participant {wp_participant_id}")
-                continue
-            
-            church = self.churches_cache[church_code]
+            church = self.churches_cache[church_code] 
             pastor_email = church.get("pastor_email")
             if not pastor_email:
-                logger.warning(f"Pastor email not found for church {church.get('church_name')}")
+                logger.warning(f"Pastor email not found for church '{church.get('church_name')}' (Code: {church_code}). Cannot send approval for participant WP ID {wp_participant_id_str}.")
+                self.stats["approvals"]["errors"] += 1
                 continue
             
             token = str(uuid4())
             expiry_date = datetime.datetime.now() + datetime.timedelta(days=Config.TOKEN_EXPIRY_DAYS)
             approval_data = {
-                "participant_id": wp_participant_id,
-                "church_id": church["church_id"],
+                "participant_id": wp_participant_id_int, 
+                "church_id": int(church_wp_id_str),      
                 "approval_token": token,
                 "token_expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S"),
                 "pastor_email": pastor_email,
-                "approval_status": APPROVAL_STATUS["PENDING"],
+                "approval_status": APPROVAL_STATUS["PENDING"], 
                 "synced_to_chmeetings": False
             }
             
             try:
-                if self.wordpress_connector.create_approval(approval_data):
+                created_approval = self.wordpress_connector.create_approval(approval_data)
+                if created_approval:
                     self.stats["approvals"]["created"] += 1
+                    logger.info(f"Successfully created approval record for participant WP ID {wp_participant_id_str}. Token: {token}")
                     
-                    # Send approval email to pastor (will implement this in the WordPress REST API)
                     participant_name = f"{participant['first_name']} {participant['last_name']}"
-                    # Add this debug line near the start of send_pastor_approval_email
-                    logger.debug(f"Participant data for email: {json.dumps(participant)}")
-                    self.send_pastor_approval_email(pastor_email, participant_name, token, participant, expiry_date)
+                    # 'participant' is the dictionary fetched from WordPress containing all participant details
+                    # including first_name, last_name, photo_url (if synced), is_church_member, etc.
+                    self.send_pastor_approval_email(pastor_email, participant_name, token, participant, expiry_date) 
+                else:
+                    logger.error(f"Failed to create approval record for participant WP ID {wp_participant_id_str} via WordPress connector.")
+                    self.stats["approvals"]["errors"] += 1
+
             except Exception as e:
-                logger.error(f"Error creating approval for participant {wp_participant_id}: {e}")
+                logger.error(f"Error creating approval or sending email for participant WP ID {wp_participant_id_str}: {e}", exc_info=True)
                 self.stats["approvals"]["errors"] += 1
         
-        logger.info(f"Found {ready_for_approval_count} participants ready for pastor approval")
-        logger.info(f"Approval token generation completed: {self.stats['approvals']}")
+        if chm_id_to_target:
+            if ready_for_approval_count == 0 and not wp_participants: # Means the targeted participant was not found or not ready
+                 logger.info(f"Targeted participant ChM ID {chm_id_to_target} was not processed for token generation (either not found, not pending_approval, or already has token).")
+            elif ready_for_approval_count > 0 :
+                 logger.info(f"Processed targeted participant ChM ID {chm_id_to_target} for approval.")
+        else:
+             logger.info(f"Found {ready_for_approval_count} participants overall ready for pastor approval email generation.")
+
+        logger.info(f"Approval token generation process completed. Stats: {self.stats['approvals']}")
         return True
+
 ## New Code:
     def send_pastor_approval_email(self, pastor_email: str, participant_name: str, token: str, 
                                    participant_data: Dict[str, Any], expiry_date: datetime.datetime) -> bool:
@@ -315,62 +338,6 @@ class SyncManager:
         except Exception as e:
             logger.error(f"Failed to send pastor approval email: {e}")
             return False
-        
-## Old Code:
-#    def generate_approvals(self) -> bool:
-#        """Generate pastor approval tokens for participants needing approval."""
-#        logger.info("Starting approval token generation...")
-#        wp_participants = self.wordpress_connector.get_participants(params={"approval_status": "pending"})
-#        if not wp_participants:
-#            logger.info("No pending participants found for approval")
-#            return True
-#
-#        logger.info(f"Found {len(wp_participants)} participants needing approval")
-#        wp_approvals = self.wordpress_connector.get_approvals()
-#        existing_approvals = {(a.get("participant_id"), a.get("church_id")): a for a in wp_approvals}
-#
-#        if not self.churches_cache:
-#            wp_churches = self.wordpress_connector.get_churches()
-#            self.churches_cache = {c["church_code"]: c for c in wp_churches}
-#
-#        for participant in tqdm(wp_participants, desc="Generating approval tokens"):
-#            wp_participant_id = participant["id"]
-#            wp_church_id = participant["church_id"]
-#            if (wp_participant_id, wp_church_id) in existing_approvals:
-#                continue#
-#
-#            if wp_church_id not in self.churches_cache:
-#                logger.warning(f"Church not found for participant {wp_participant_id}")#
-#
-#                continue
-#
-#
-#            church = self.churches_cache[wp_church_id]
-#            pastor_email = church.get("pastor_email")
-#            if not pastor_email:
-#                logger.warning(f"Pastor email not found for church {church.get('church_name')}")
-#                continue
-#
-#            token = str(uuid4())
-#            expiry_date = datetime.datetime.now() + datetime.timedelta(days=Config.TOKEN_EXPIRY_DAYS)
-#            approval_data = {
-#                "participant_id": wp_participant_id,
-#                "church_id": wp_church_id,
-#                "approval_token": token,
-#                "token_expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S"),
-#                "pastor_email": pastor_email,
-#                "approval_status": "pending",
-#                "synced_to_chmeetings": False
-#            }
-#            try:
-#                if self.wordpress_connector.create_approval(approval_data):
-#                    self.stats["approvals"]["created"] += 1
-#            except Exception as e:
-#                logger.error(f"Error creating approval for participant {wp_participant_id}: {e}")
-#                self.stats["approvals"]["errors"] += 1
-#
-#        logger.info(f"Approval token generation completed: {self.stats['approvals']}")
-#        return True
 
     def sync_approvals_to_chmeetings(self) -> bool:
         """Synchronize approval statuses from WordPress to ChMeetings via Excel import."""

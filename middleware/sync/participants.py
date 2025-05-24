@@ -53,7 +53,7 @@ class ParticipantSyncer:
         """
         # Define the target ChMeetings ID for detailed logging (used by _sync_single_participant)
         # This could also be an instance variable or passed differently if needed.
-        TARGET_CHM_ID_FOR_DEBUG = '3139537' 
+        TARGET_CHM_ID_FOR_DEBUG = '3633885' 
 
         if chm_id_to_sync:
             logger.info(f"Starting synchronization for single participant: ChM ID {chm_id_to_sync}...")
@@ -380,7 +380,7 @@ class ParticipantSyncer:
 ## New Code:
     def _map_chmeetings_participants(self, people: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Map ChMeetings person data to participant format."""
-        TARGET_CHM_ID_FOR_DEBUG = '3139537' # Chmeetings_id as Debugging Target for Logging
+        TARGET_CHM_ID_FOR_DEBUG = '3633885' # Chmeetings_id as Debugging Target for Logging
         mapped_list = []
         for person_loop_item in people: # Renamed person to avoid conflict with outer scope if any
             p = person_loop_item.get("data", person_loop_item) if "data" in person_loop_item else person_loop_item
