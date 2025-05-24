@@ -100,7 +100,9 @@ def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str
             # Pass chm_id to the manager's sync_participants method
             return manager.sync_participants(chm_id=chm_id)
         elif sync_type == "approvals":
-            success1 = manager.generate_approvals()
+            success1 = manager.generate_approvals(chm_id_to_target=chm_id)
+            # Generrate approvals email above with the option of just a single participant, but
+            # sync_approvals_to_chmeetings will always sync all approvals to ChMeetings.
             success2 = manager.sync_approvals_to_chmeetings()
             return success1 and success2
         elif sync_type == "validation":
@@ -307,13 +309,12 @@ def main() -> None:
         # Retrieve chm_id from args. It will be None if not provided.
         participant_chm_id = args.chm_id if hasattr(args, 'chm_id') else None
 
-        # Optional: Add a check or warning if --chm-id is used with a sync type other than 'participants'
-        if participant_chm_id and args.type != "participants":
+        # Optional: Add a check or warning if --chm-id is used with a sync type other than 'participants'  or 'approvals'
+        if participant_chm_id and args.type not in ["participants", "approvals"]: # Ensure "approvals" is in this list
             logger.warning(f"--chm-id '{participant_chm_id}' was provided with sync type '{args.type}'. "
-                           "The --chm-id argument is only used when --type is 'participants'. "
+                           "The --chm-id argument is only used when --type is 'participants' or 'approvals'. "
                            "The specified ID will be ignored for this operation.")
-            # Reset to None if not applicable to ensure run_sync behaves as expected for other types
-            # or let run_sync handle the warning as implemented above.
+            # Reset to None if not applicable to ensure run_sync behaves as expected for other types or let run_sync handle the warning as implemented above.
             # For clarity here, if it's not for 'participants', it shouldn't be passed as a specific ID.
             # However, run_sync already has a conditional warning for 'full' type.
             # Let's pass it and let run_sync decide.
