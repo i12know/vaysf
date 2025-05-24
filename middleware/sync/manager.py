@@ -231,7 +231,8 @@ class SyncManager:
             token_expiry_date = expiry_date.strftime("%B %d, %Y at %I:%M %p")
             
             # Get membership claim information
-            is_church_member = "Yes" if participant_data.get("is_church_member", False) else "No"
+            ## Bug ## is_church_member = "Yes" if participant_data.get("is_church_member", False) else "No"
+            is_church_member = "Yes" if str(participant_data.get("is_church_member", 0)) == "1" else "No"
             
             # Pastor approval email
             approval_link_base = f"{Config.WP_URL}/pastor-approval"
