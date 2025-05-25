@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## Version 1.03 (2025-05-24)
+- Fixed issue [#32](https://github.com/i12know/vaysf/issues/32): Not everyone from NHC church show up on Pastoral Approval emails. (pagination fix)
+- Fixed issue [#33](https://github.com/i12know/vaysf/issues/33): Non church member show up on Pastoral Approval email as "Yes" for church membership #33
+- Added: Command for "main.py sync --type approvals --chm-id Specific ID" for sync approvals command
+
 ## Version 1.02 (2025-05-15)
 - Fixed: issue [#23](https://github.com/i12know/vaysf/issues/23) Partner name didn't get recorded on sf_roster table
 - Fixed: Enhanced partner name handling in `_create_or_update_roster` to properly update existing entries
