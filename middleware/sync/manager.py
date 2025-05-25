@@ -5,6 +5,7 @@
 
 import os
 import json
+import pandas as pd
 from typing import Dict, Any, Optional
 from loguru import logger
 from config import (Config, DATA_DIR, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION,
@@ -111,12 +112,46 @@ class SyncManager:
             wp_participants = [participant_to_check] # Process only this participant
             logger.info(f"Processing 1 targeted participant (ChM ID: {chm_id_to_target}, WP ID: {participant_to_check.get('participant_id')}) for approval token generation.")
         else:
-            # Original logic: Get ALL participants with 'pending_approval' status
-            wp_participants = self.wordpress_connector.get_participants(params={"approval_status": APPROVAL_STATUS["PENDING_APPROVAL"]})
+            # --- START: MODIFIED LOGIC FOR PAGINATION ---
+            logger.info("Fetching ALL participants with 'pending_approval' status...")
+            all_pending_approval_participants = [] # List to hold all participants from all pages
+            current_page = 1
+            fetch_per_page = 100 # You can adjust this, but 100 is a common good value
+            max_pages_to_fetch = 50 # Safety limit to prevent infinite loops in unexpected scenarios
+
+            while True:
+                logger.info(f"Fetching page {current_page} of 'pending_approval' participants (per_page={fetch_per_page})...")
+                page_participants = self.wordpress_connector.get_participants(
+                    params={
+                        "approval_status": APPROVAL_STATUS["PENDING_APPROVAL"],
+                        "page": current_page,
+                        "per_page": fetch_per_page
+                    }
+                )
+                
+                if not page_participants: # No participants found on this page, means we're done.
+                    logger.info(f"No more participants found on page {current_page}. End of list.")
+                    break 
+                
+                all_pending_approval_participants.extend(page_participants)
+                logger.info(f"Fetched {len(page_participants)} participants on page {current_page}. Total fetched so far: {len(all_pending_approval_participants)}.")
+
+                if len(page_participants) < fetch_per_page: # Last page fetched
+                    logger.info("Last page of participants fetched.")
+                    break
+                
+                current_page += 1
+                if current_page > max_pages_to_fetch: 
+                    logger.warning(f"Reached maximum page limit ({max_pages_to_fetch}) for fetching 'pending_approval' participants. Stopping to prevent potential infinite loop.")
+                    break
+            
+            wp_participants = all_pending_approval_participants # Assign the fully fetched list
+
             if not wp_participants:
-                logger.info("No participants found with 'pending_approval' status for token generation.")
+                logger.info("No participants found with 'pending_approval' status after checking all pages for token generation.")
                 return True
-            logger.info(f"Found {len(wp_participants)} participants with 'pending_approval' status for token generation.")
+            logger.info(f"Found {len(wp_participants)} total participants with 'pending_approval' status for token generation after checking all pages.")
+            # --- END: MODIFIED LOGIC FOR PAGINATION ---
         
         # The rest of the original generate_approvals logic can remain largely the same,
         # as it iterates through the `wp_participants` list (which is now either all or one).
@@ -137,6 +172,7 @@ class SyncManager:
         ready_for_approval_count = 0 
         
         for participant in tqdm(wp_participants, desc="Generating approval tokens"):
+            logger.debug(f"Processing participant for approval: WP_ID {participant['participant_id']}, Name: {participant['first_name']} {participant['last_name']}, Church: {participant['church_code']}, Status: {participant['approval_status']}") # <-- ADD THIS
             wp_participant_id_int = participant["participant_id"] # Keep as int for DB operations
             wp_participant_id_str = str(wp_participant_id_int)    # Use string for dict keys
             church_code = participant["church_code"]
@@ -346,79 +382,122 @@ class SyncManager:
             logger.warning("ChMeetings connector not available")
             return False
 
-        # Get ALL approved participants from WordPress
-        wp_participants = self.wordpress_connector.get_participants(
-            params={"approval_status": "approved"}
-        )
+        all_approved_wp_participants = []
+        current_page = 1
+        fetch_per_page = 100 
         
-        if not wp_participants:
-            logger.info("No approved participants found to sync to ChMeetings")
+        while True:
+            logger.info(f"Fetching page {current_page} of approved participants from WordPress (per_page={fetch_per_page})...")
+            page_participants = self.wordpress_connector.get_participants(
+                params={"approval_status": "approved", "page": current_page, "per_page": fetch_per_page}
+            )
+            if not page_participants:
+                break 
+            all_approved_wp_participants.extend(page_participants)
+            if len(page_participants) < fetch_per_page:
+                break
+            current_page += 1
+            if current_page > 50: 
+                logger.warning(f"Reached page limit (50) for fetching approved participants. Stopping.")
+                break
+
+        wp_participants_for_excel = all_approved_wp_participants # Renamed for clarity
+        
+        if not wp_participants_for_excel:
+            logger.info("No approved participants found to sync to ChMeetings after checking all pages.")
             return True
 
-        logger.info(f"Found {len(wp_participants)} total approved participants to sync")
+        logger.info(f"Found {len(wp_participants_for_excel)} total approved participants (from sf_participants) to consider for export.")
         
-        # Create pandas DataFrame for Excel export
-        import pandas as pd
-        
-        # Initialize list to hold participant data
-        participants_data = []
-        
-        for participant in wp_participants:
+        participants_data_for_excel_export = []
+        # Keep track of the WordPress participant_ids of those who WILL BE in the Excel
+        # This is important because some might be filtered out if they lack a chmeetings_id
+        wp_participant_ids_exported = [] 
+
+        for participant in wp_participants_for_excel:
             if not participant.get("chmeetings_id"):
-                logger.warning(f"Participant {participant.get('participant_id')} missing ChMeetings ID, skipping")
+                logger.warning(f"Participant WP_ID {participant.get('participant_id')} missing ChMeetings ID, skipping for Excel export.")
                 continue
             
-            chm_id = participant["chmeetings_id"]
-            first_name = participant["first_name"]
-            last_name = participant["last_name"]
-            
-            # Add to participants data
-            participants_data.append({
-                "Person Id": chm_id,
-                "First Name": first_name,
-                "Last Name": last_name,
+            participants_data_for_excel_export.append({
+                "Person Id": participant["chmeetings_id"],
+                "First Name": participant["first_name"],
+                "Last Name": participant["last_name"],
                 "Group Name": Config.APPROVED_GROUP_NAME
             })
+            wp_participant_ids_exported.append(str(participant["participant_id"])) # Store as string for consistency
         
-        if not participants_data:
-            logger.warning("No valid participants found for import")
-            return False
+        if not participants_data_for_excel_export:
+            logger.warning("No valid participants (with ChM IDs) found for Excel import after filtering.")
+            return True 
         
-        # Create DataFrame and export to Excel
-        df = pd.DataFrame(participants_data)
-        
-        # Use the configured Excel file path from Config
+        # Ensure pandas is imported at the top of the file: import pandas as pd
+        df = pd.DataFrame(participants_data_for_excel_export)
         excel_path = Config.APPROVED_EXCEL_FILE
         
         try:
-            # Export to Excel
             df.to_excel(excel_path, index=False)
-            logger.info(f"Exported {len(participants_data)} approved participants to {excel_path}")
+            logger.info(f"Exported {len(participants_data_for_excel_export)} approved participants to {excel_path}")
             
-            # Mark all approvals as synced in WordPress
-            wp_approvals = self.wordpress_connector.get_approvals(
-                params={"synced_to_chmeetings": False, "approval_status": "approved"}
-            )
+            marked_synced_count = 0
+            if wp_participant_ids_exported:
+                # --- OPTIMIZATION ---
+                # Fetch ALL 'approved' and 'not synced' approval records in one go from sf_approvals.
+                # The WordPressConnector.get_approvals might also need pagination if you have
+                # thousands of such records, but for a few hundred, one fetch should be okay.
+                # If it does need pagination, you'd apply a similar loop as for get_participants.
+                
+                logger.info("Fetching all relevant 'approved' and 'not synced' approval records from sf_approvals...")
+                all_relevant_approvals_from_db = self.wordpress_connector.get_approvals(
+                    params={
+                        "approval_status": "approved",
+                        "synced_to_chmeetings": False,
+                        "per_page": 500 # Try to get a large batch, adjust if WP limits this
+                    }
+                )
+                if all_relevant_approvals_from_db is None: # Check if the call failed
+                    logger.error("Failed to fetch approval records from WordPress. Cannot mark as synced.")
+                    return False
+
+                logger.info(f"Fetched {len(all_relevant_approvals_from_db)} approval records from sf_approvals to check for marking as synced.")
+
+                # Create a lookup for faster access by participant_id
+                approvals_to_update_lookup = {}
+                for ar in all_relevant_approvals_from_db:
+                    # Assuming one approval record per participant that matches criteria.
+                    # If multiple, this will take the last one encountered for a given participant_id.
+                    # The query params should ideally ensure only one relevant record per participant is fetched
+                    # if your business logic implies that.
+                    approvals_to_update_lookup[str(ar.get("participant_id"))] = ar
+
+                for p_id_str in wp_participant_ids_exported: # These are strings
+                    approval_record_to_update = approvals_to_update_lookup.get(p_id_str)
+                    
+                    if approval_record_to_update:
+                        # The record was already filtered by approval_status='approved' and synced_to_chmeetings=False
+                        # by the get_approvals call, so no need to re-check those conditions here.
+                        
+                        update_success = self.wordpress_connector.update_approval(
+                            approval_record_to_update["approval_id"], 
+                            {"synced_to_chmeetings": True}
+                        )
+                        if update_success:
+                            self.stats["approvals"]["updated"] += 1
+                            marked_synced_count += 1
+                        else:
+                            logger.warning(f"Failed to mark approval_id {approval_record_to_update['approval_id']} as synced for participant_id {p_id_str}.")
+                    else:
+                        logger.debug(f"No 'approved' and 'not synced' approval record found in sf_approvals for exported participant_id {p_id_str}. Might be already synced or status changed.")
             
-            for approval in wp_approvals:
-                self.wordpress_connector.update_approval(approval["approval_id"], {"synced_to_chmeetings": True})
-                self.stats["approvals"]["updated"] += 1
-            
-            logger.info(f"Marked {len(wp_approvals)} approvals as synced to ChMeetings")
+            logger.info(f"Attempted to mark approvals as synced. Count updated: {marked_synced_count}.")
             logger.info(f"Please import the Excel file at {excel_path} to ChMeetings")
-            
-            # Optional: Open the Excel file for the user
-            # import platform
-            # import subprocess
-            # if platform.system() == 'Windows':
-            #     os.startfile(excel_path)
             
             return True
         
         except Exception as e:
-            logger.error(f"Error exporting approved participants to Excel: {e}")
+            logger.error(f"Error exporting approved participants to Excel or marking synced: {e}", exc_info=True)
             return False
-
+        
     def validate_data(self) -> bool:
         """Validate participant data against Sports Fest rules."""
         logger.info("Starting data validation...")
