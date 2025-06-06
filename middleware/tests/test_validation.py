@@ -20,6 +20,8 @@ def rules_manager():
 @pytest.fixture
 def validator():
     """Fixture for IndividualValidator."""
+    from config import Config
+    Config.SPORTS_FEST_DATE = "2025-07-19"
     return IndividualValidator(collection="SUMMER_2025")
 
 def test_rules_manager_loads_rules(rules_manager):

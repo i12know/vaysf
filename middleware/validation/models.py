@@ -34,7 +34,7 @@ class RulesManager:
         self.collection = collection
         self.rules_file = rules_file or os.path.join(
             os.path.dirname(__file__), 
-            f"{collection.lower()}.json"
+            f"{collection.title()}.json"
         )
         self.rules = self._load_rules()
     

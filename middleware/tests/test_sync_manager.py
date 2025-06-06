@@ -385,7 +385,7 @@ def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data
     mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2025-07-19")  # Updated path
 
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
-    chmeetings_id = "3505207"  # Jerry Phan from mock data
+    chmeetings_id = "3505203"  # Jerry Phan from mock data
 
     if live_test:
         participant = (sync_manager.wordpress_connector.get_participants({"chmeetings_id": chmeetings_id}) or [None])[0]
@@ -393,20 +393,30 @@ def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data
             logger.info(f"Found live participant by chmeetings_id: {participant['first_name']} {participant['last_name']}")
         assert participant is not None, "Should find participant by chmeetings_id in live test"
     else:
-        mock_response = mocker.Mock(status_code=200)
-        mock_response.headers = {'X-WP-Total': '1', 'X-WP-TotalPages': '1'}
         mock_participant = next((p for p in mock_chmeetings_data if str(p["id"]) == chmeetings_id), None)
-        wp_participant = {
-            "participant_id": 1,
-            "chmeetings_id": str(mock_participant["id"]),
-            "first_name": mock_participant["first_name"],
-            "last_name": mock_participant["last_name"],
-            "email": mock_participant["email"],
-            "church_code": "ORN",  # Adjusted to match mock data
-            "church_name": "Orange County Church"
-        }
-        mock_response.json.return_value = [wp_participant]
-        mocker.patch.object(sync_manager.wordpress_connector.session, "get", return_value=mock_response)
+
+        def fake_get(url, params=None, timeout=None):
+            if params and params.get("chmeetings_id") == chmeetings_id:
+                resp = mocker.Mock(status_code=200)
+                resp.headers = {'X-WP-Total': '1', 'X-WP-TotalPages': '1'}
+                wp_participant = {
+                    "participant_id": 1,
+                    "chmeetings_id": str(mock_participant["id"]),
+                    "first_name": mock_participant["first_name"],
+                    "last_name": mock_participant["last_name"],
+                    "email": mock_participant["email"],
+                    "church_code": "ORN",
+                    "church_name": "Orange County Church"
+                }
+                resp.json.return_value = [wp_participant]
+                return resp
+            else:
+                resp = mocker.Mock(status_code=404)
+                resp.headers = {}
+                resp.json.return_value = []
+                return resp
+
+        mocker.patch.object(sync_manager.wordpress_connector.session, "get", side_effect=fake_get)
         participant = (sync_manager.wordpress_connector.get_participants({"chmeetings_id": chmeetings_id}) or [None])[0]
         assert participant is not None, "Should find participant by chmeetings_id"
         assert participant["first_name"] == "Jerry", "Should return correct participant"
