@@ -81,14 +81,14 @@ python main.py export-church-teams
 python main.py export-church-teams --church-code ABC
 ```
 
-For detailed setup and usage instructions, see the [Installation Guide](INSTALLATION.md) and [Usage Guide](USAGE.md).
+For detailed setup and usage instructions, see the [Installation Guide](docs/INSTALLATION.md) and [Usage Guide](docs/USAGE.md).
 
 ## Documentation
 
-- [Installation Guide](INSTALLATION.md)
+- [Installation Guide](docs/INSTALLATION.md)
 - [Architecture Overview](ARCHITECTURE.md)
-- [Usage Guide](USAGE.md)
-- [Troubleshooting](TROUBLESHOOTING.md)
+- [Usage Guide](docs/USAGE.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## Project Status
