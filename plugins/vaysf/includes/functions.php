@@ -453,3 +453,71 @@ function vaysf_is_individual_sport($sport) {
 function vaysf_is_racquet_sport($sport) {
     return in_array($sport, array('Tennis', 'Pickleball', 'Table Tennis', 'Badminton'));
 }
+
+/**
+ * Send an email and optionally log it in the database
+ *
+ * @param string $to      Recipient email address
+ * @param string $subject Email subject line
+ * @param string $message HTML email body
+ * @param array  $args    Optional arguments (from => sender email)
+ * @return bool True if email was sent successfully
+ */
+function vaysf_send_email($to, $subject, $message, $args = array()) {
+    $to = sanitize_email($to);
+    $subject = sanitize_text_field($subject);
+    $message = wp_kses_post($message);
+
+    $headers = array('Content-Type: text/html; charset=UTF-8');
+    if (!empty($args['from'])) {
+        $from_email = sanitize_email($args['from']);
+        $headers[] = 'From: ' . $from_email;
+    } else {
+        $from_email = get_option('vaysf_email_from', get_option('admin_email'));
+        $headers[] = 'From: Sports Fest <' . $from_email . '>';
+    }
+
+    $sent = wp_mail($to, $subject, $message, $headers);
+
+    if (get_option('vaysf_log_emails', false)) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'sf_email_log';
+        $wpdb->insert($table_name, array(
+            'to_email' => $to,
+            'subject'  => $subject,
+            'message'  => $message,
+            'sent_at'  => current_time('mysql'),
+            'status'   => $sent ? 'sent' : 'failed'
+        ));
+    }
+
+    return $sent;
+}
+
+/**
+ * Resend pastor approval email for a given approval record
+ *
+ * @param array $approval Approval record with participant and church info
+ * @return bool True if email sent
+ */
+function vaysf_resend_approval_email($approval) {
+    $participant_name = $approval['first_name'] . ' ' . $approval['last_name'];
+    $subject_base     = get_option('vaysf_approval_email_subject', 'Sports Fest 2025: Approval Request');
+    $subject          = $subject_base . ' for ' . $participant_name;
+
+    $approve_link = site_url('pastor-approval') . '?token=' . urlencode($approval['approval_token']) . '&decision=approve';
+    $deny_link    = site_url('pastor-approval') . '?token=' . urlencode($approval['approval_token']) . '&decision=deny';
+    $expiry       = date_i18n('F j, Y g:i a', strtotime($approval['token_expiry']));
+
+    $message = '<h2>Sports Fest Participant Approval for ' . esc_html($participant_name) . '</h2>';
+    $message .= '<p>Dear Pastor,</p>';
+    $message .= '<p>A participant, <strong>' . esc_html($participant_name) . '</strong>, has registered for Sports Fest and listed under your church. Please review and approve or deny their participation.</p>';
+    $message .= '<p>';
+    $message .= '<a href="' . esc_url($approve_link) . '" style="padding:10px 15px;background:#4CAF50;color:white;text-decoration:none;margin-right:10px;">Approve</a>';
+    $message .= '<a href="' . esc_url($deny_link) . '" style="padding:10px 15px;background:#f44336;color:white;text-decoration:none;">Deny</a>';
+    $message .= '</p>';
+    $message .= '<p><strong>Note:</strong> This approval link will expire on ' . esc_html($expiry) . '.</p>';
+    $message .= '<p>Thank you for your help with Sports Fest!</p>';
+
+    return vaysf_send_email($approval['pastor_email'], $subject, $message);
+}
