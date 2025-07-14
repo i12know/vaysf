@@ -496,28 +496,194 @@ function vaysf_send_email($to, $subject, $message, $args = array()) {
 
 /**
  * Resend pastor approval email for a given approval record
+ * Updated to match the original email logic from the middleware
+ * Generates fresh token and resets approval status to 'pending'
  *
  * @param array $approval Approval record with participant and church info
  * @return bool True if email sent
  */
 function vaysf_resend_approval_email($approval) {
-    $participant_name = $approval['first_name'] . ' ' . $approval['last_name'];
-    $subject_base     = get_option('vaysf_approval_email_subject', 'Sports Fest 2025: Approval Request');
-    $subject          = $subject_base . ' for ' . $participant_name;
-
+    global $wpdb;
+    
+    // Generate fresh token and expiry date
+    $new_token = wp_generate_uuid4();
+    $token_expiry_days = get_option('vaysf_token_expiry_days', 7);
+    $new_expiry = date('Y-m-d H:i:s', strtotime("+{$token_expiry_days} days"));
+    
+    // Update the existing approval record with fresh token
+    $table_approvals = vaysf_get_table_name('approvals');
+    $update_result = $wpdb->update(
+        $table_approvals,
+        array(
+            'approval_token' => $new_token,
+            'token_expiry' => $new_expiry,
+            'approval_status' => 'pending',  // Reset to pending regardless of current status
+            'updated_at' => current_time('mysql')
+        ),
+        array('approval_id' => $approval['approval_id']),
+        array('%s', '%s', '%s', '%s'),
+        array('%d')
+    );
+    
+    // Verify the update was successful
+    if (false === $update_result) {
+        error_log('VAYSF: Failed to update approval record for resend - ID: ' . $approval['approval_id']);
+        return false;
+    }
+    
+    // Update the approval array with new values for email generation
+    $approval['approval_token'] = $new_token;
+    $approval['token_expiry'] = $new_expiry;
+    
+    // Get full participant and church data to match original email
+    $table_participants = vaysf_get_table_name('participants');
+    $table_churches = vaysf_get_table_name('churches');
+    
+    // Fetch complete participant data
+    $participant = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT * FROM $table_participants WHERE participant_id = %d",
+            $approval['participant_id']
+        ),
+        ARRAY_A
+    );
+    
+    // Fetch complete church data
+    $church = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT * FROM $table_churches WHERE church_id = %d",
+            $approval['church_id']
+        ),
+        ARRAY_A
+    );
+    
+    if (!$participant || !$church) {
+        error_log('VAYSF: Missing participant or church data for resend email');
+        return false;
+    }
+    
+    $participant_name = $participant['first_name'] . ' ' . $participant['last_name'];
+    
+    // Get church representative info (matching original logic)
+    $church_rep_name = $church['church_rep_name'] ?: 'N/A';
+    $church_rep_email = $church['church_rep_email'] ?: 'N/A';
+    $church_rep_phone = $church['church_rep_phone'] ?: 'N/A';
+    
+    // Format dates (matching original logic)
+    $sports_fest_date = get_option('vaysf_sports_fest_date', 'June 19-22, 2025');
+    $token_expiry_date = date_i18n('F j, Y \a\t g:i A', strtotime($approval['token_expiry']));
+    
+    // Get membership claim info
+    $membership_claim = $participant['is_church_member'] ? 'Yes' : 'No';
+    
+    // Build photo HTML (matching original logic)
+    $photo_html = '';
+    if (!empty($participant['photo_url'])) {
+        $photo_html = '<img src="' . esc_url($participant['photo_url']) . '" alt="' . esc_attr($participant_name) . '" style="max-width: 200px; max-height: 200px; margin: 10px 0;">';
+    } else {
+        $photo_html = '<p>(No photo available)</p>';
+    }
+    
+    // Build approval links
     $approve_link = site_url('pastor-approval') . '?token=' . urlencode($approval['approval_token']) . '&decision=approve';
-    $deny_link    = site_url('pastor-approval') . '?token=' . urlencode($approval['approval_token']) . '&decision=deny';
-    $expiry       = date_i18n('F j, Y g:i a', strtotime($approval['token_expiry']));
-
-    $message = '<h2>Sports Fest Participant Approval for ' . esc_html($participant_name) . '</h2>';
-    $message .= '<p>Dear Pastor,</p>';
-    $message .= '<p>A participant, <strong>' . esc_html($participant_name) . '</strong>, has registered for Sports Fest and listed under your church. Please review and approve or deny their participation.</p>';
-    $message .= '<p>';
-    $message .= '<a href="' . esc_url($approve_link) . '" style="padding:10px 15px;background:#4CAF50;color:white;text-decoration:none;margin-right:10px;">Approve</a>';
-    $message .= '<a href="' . esc_url($deny_link) . '" style="padding:10px 15px;background:#f44336;color:white;text-decoration:none;">Deny</a>';
-    $message .= '</p>';
-    $message .= '<p><strong>Note:</strong> This approval link will expire on ' . esc_html($expiry) . '.</p>';
+    $deny_link = site_url('pastor-approval') . '?token=' . urlencode($approval['approval_token']) . '&decision=deny';
+    
+    // Build subject (matching original logic)
+    $subject_base = get_option('vaysf_approval_email_subject', 'Sports Fest Pastor Approval Required');
+    $subject = '[RESEND] ' . $subject_base . ' for ' . $participant_name . ' from ' . $church['church_name'];
+    
+    // Build rich HTML message (matching original middleware logic)
+    $message = '<h2>Sports Fest Pastor Approval Required for ' . esc_html($participant_name) . '</h2>';
+    $message .= '<p><em><strong>Note:</strong> This is a resent approval request with a fresh approval link.</em></p>';
+    $message .= '<p>Dear Pastor ' . esc_html($church['pastor_name']) . ',</p>';
+    
+    $message .= '<p>A participant has registered for Sports Fest (starting on ' . $sports_fest_date . ') and listed <strong>' . esc_html($church['church_name']) . '</strong> as their home church. Please review their information and confirm their church membership.</p>';
+    
+    // Add participant photo
+    $message .= '<div style="margin: 15px 0;">';
+    $message .= '<strong>Participant Photo:</strong><br>';
+    $message .= $photo_html;
+    $message .= '</div>';
+    
+    // Add participant details
+    $message .= '<div style="margin: 15px 0; padding: 10px; background-color: #f9f9f9; border-left: 4px solid #0073aa;">';
+    $message .= '<h3 style="margin-top: 0;">Participant Information:</h3>';
+    $message .= '<p><strong>Name:</strong> ' . esc_html($participant_name) . '</p>';
+    $message .= '<p><strong>Email:</strong> ' . esc_html($participant['email']) . '</p>';
+    $message .= '<p><strong>Phone:</strong> ' . esc_html($participant['phone'] ?: 'Not provided') . '</p>';
+    $message .= '<p><strong>Date of Birth:</strong> ' . esc_html($participant['date_of_birth'] ?: 'Not provided') . '</p>';
+    $message .= '<p><strong>Claims Church Membership:</strong> ' . esc_html($membership_claim) . '</p>';
+    
+    // Add sports information
+    $sports = array();
+    if (!empty($participant['primary_sport'])) {
+        $sports[] = $participant['primary_sport'] . ' (' . ($participant['primary_format'] ?: 'Team') . ')';
+    }
+    if (!empty($participant['secondary_sport'])) {
+        $sports[] = $participant['secondary_sport'] . ' (' . ($participant['secondary_format'] ?: 'Team') . ')';
+    }
+    if (!empty($participant['other_events'])) {
+        $other_events = explode(',', $participant['other_events']);
+        foreach ($other_events as $event) {
+            $sports[] = trim($event);
+        }
+    }
+    
+    if (!empty($sports)) {
+        $message .= '<p><strong>Sports/Events:</strong> ' . esc_html(implode(', ', $sports)) . '</p>';
+    }
+    $message .= '</div>';
+    
+    // Add church representative info (matching original)
+    $message .= '<div style="margin: 15px 0; padding: 10px; background-color: #f0f8ff; border-left: 4px solid #2271b1;">';
+    $message .= '<h3 style="margin-top: 0;">Your Church Representative:</h3>';
+    $message .= '<p><strong>Name:</strong> ' . esc_html($church_rep_name) . '</p>';
+    $message .= '<p><strong>Email:</strong> ' . esc_html($church_rep_email) . '</p>';
+    $message .= '<p><strong>Phone:</strong> ' . esc_html($church_rep_phone) . '</p>';
+    $message .= '</div>';
+    
+    // Add action buttons
+    $message .= '<div style="margin: 20px 0; text-align: center;">';
+    $message .= '<p><strong>Please confirm this person is a member of your church:</strong></p>';
+    $message .= '<a href="' . esc_url($approve_link) . '" style="display: inline-block; padding: 12px 24px; background-color: #00a32a; color: white; text-decoration: none; border-radius: 5px; margin: 0 10px; font-weight: bold;">✓ APPROVE (Member)</a>';
+    $message .= '<a href="' . esc_url($deny_link) . '" style="display: inline-block; padding: 12px 24px; background-color: #d63638; color: white; text-decoration: none; border-radius: 5px; margin: 0 10px; font-weight: bold;">✗ DENY (Not a Member)</a>';
+    $message .= '</div>';
+    
+    // Add expiry and contact info
+    $message .= '<div style="margin: 20px 0; padding: 10px; background-color: #fff3cd; border-left: 4px solid #ffc107;">';
+    $message .= '<p><strong>Important:</strong> This approval link will expire on ' . esc_html($token_expiry_date) . '.</p>';
+    $message .= '<p>If you need more time, please contact the church representative: <strong>' . esc_html($church_rep_name) . '</strong> at ' . esc_html($church_rep_phone) . ' or ' . esc_html($church_rep_email) . '</p>';
+    $message .= '</div>';
+    
     $message .= '<p>Thank you for your help with Sports Fest!</p>';
-
-    return vaysf_send_email($approval['pastor_email'], $subject, $message);
+    $message .= '<p>VAY Sports Ministry</p>';
+    
+    // Use proper from email (matching original)
+    $from_email = get_option('vaysf_email_from', get_option('admin_email'));
+    $args = array('from' => $from_email);
+    
+    // Send email using the centralized function
+    $pastor_result = vaysf_send_email($approval['pastor_email'], $subject, $message, $args);
+    
+    // Send notification to participant and church rep (matching original logic)
+    if (!empty($participant['email']) && !empty($church_rep_email) && $church_rep_email !== 'N/A') {
+        $notification_subject = '[RESEND] Sports Fest Pastor Approval Requested for you, ' . $participant_name;
+        $notification_message = '<p>Dear ' . esc_html($participant_name) . ',</p>';
+        $notification_message .= '<p><strong>Update:</strong> We have resent your approval request to your church pastor with a fresh approval link.</p>';
+        $notification_message .= '<p>Your church pastor now has a new approval request for Sports Fest (starting on ' . $sports_fest_date . ').</p>';
+        $notification_message .= '<p>Your Sports Fest registration will be finalized once the pastor confirms your church membership.</p>';
+        $notification_message .= '<p>The pastor has until ' . esc_html($token_expiry_date) . ' to respond to this request. If you don\'t receive confirmation by then, please follow up with your church representative, ' . esc_html($church_rep_name) . ', at ' . esc_html($church_rep_email) . '.</p>';
+        $notification_message .= '<p>Thank you for registering for Sports Fest!</p>';
+        
+        // Send to participant with CC to church rep
+        $notification_headers = array(
+            'Content-Type: text/html; charset=UTF-8',
+            'From: Sports Fest <' . $from_email . '>',
+            'Cc: ' . $church_rep_email
+        );
+        
+        wp_mail($participant['email'], $notification_subject, $notification_message, $notification_headers);
+    }
+    
+    return $pastor_result;
 }

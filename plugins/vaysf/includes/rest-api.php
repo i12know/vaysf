@@ -11,16 +11,6 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-/**
- * Get table name with proper prefix
- * 
- * @param string $table Table name without prefix
- * @return string Full table name with prefix
- */
-function vaysf_get_table_name($table) {
-    global $wpdb;
-    return $wpdb->prefix . 'sf_' . $table;
-}
 
 class VAYSF_REST_API {
     
