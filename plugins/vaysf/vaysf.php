@@ -68,9 +68,12 @@ class VAYSF_Integration {
 	/**
 	 * Include required files
 	 */
-	private function include_files() {
-		// Include REST API
-		require_once(plugin_dir_path(__FILE__) . 'includes/rest-api.php');
+        private function include_files() {
+                // Helper functions
+                require_once(plugin_dir_path(__FILE__) . 'includes/functions.php');
+
+                // Include REST API
+                require_once(plugin_dir_path(__FILE__) . 'includes/rest-api.php');
 		
 		// Include admin interface files
 		require_once(plugin_dir_path(__FILE__) . 'admin/admin.php');

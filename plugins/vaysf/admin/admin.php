@@ -1125,14 +1125,32 @@ public function display_participants_page() {
         $table_churches = $wpdb->prefix . 'sf_churches';
         
 		// Handle actions
-		if (isset($_GET['action']) && $_GET['action'] === 'generate') {
-			// Log approval token generation request
-			if (vaysf_generate_approvals()) {
-				echo '<div class="notice notice-info"><p>Approval token generation has been logged. The middleware will process this request during its next scheduled run.</p></div>';
-			} else {
-				echo '<div class="notice notice-error"><p>Error logging approval token generation request.</p></div>';
-			}
-		}
+                if (isset($_GET['action']) && $_GET['action'] === 'generate') {
+                        // Log approval token generation request
+                        if (vaysf_generate_approvals()) {
+                                echo '<div class="notice notice-info"><p>Approval token generation has been logged. The middleware will process this request during its next scheduled run.</p></div>';
+                        } else {
+                                echo '<div class="notice notice-error"><p>Error logging approval token generation request.</p></div>';
+                        }
+                } elseif (isset($_GET['action']) && $_GET['action'] === 'resend' && !empty($_GET['id'])) {
+                        $resend_id = absint($_GET['id']);
+                        $approval = $wpdb->get_row(
+                                $wpdb->prepare(
+                                        "SELECT a.*, p.first_name, p.last_name, c.church_name FROM $table_approvals a JOIN $table_participants p ON a.participant_id = p.participant_id JOIN $table_churches c ON a.church_id = c.church_id WHERE a.approval_id = %d",
+                                        $resend_id
+                                ),
+                                ARRAY_A
+                        );
+                        if ($approval) {
+                                if (vaysf_resend_approval_email($approval)) {
+                                        echo '<div class="notice notice-success"><p>Approval email resent successfully.</p></div>';
+                                } else {
+                                        echo '<div class="notice notice-error"><p>Failed to resend approval email.</p></div>';
+                                }
+                        } else {
+                                echo '<div class="notice notice-error"><p>Approval record not found.</p></div>';
+                        }
+                }
         
         // Filter by participant
         $participant_filter = isset($_GET['participant_id']) ? (int) $_GET['participant_id'] : 0;
