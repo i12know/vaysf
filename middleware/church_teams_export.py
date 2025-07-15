@@ -245,6 +245,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                     "ChMeetings ID": chm_id,
                                     "Participant ID (WP)": wp_participant_id_val,
                                     "Approval_Status (WP)": approval_status_val,
+                                    "Is_Member_ChM": chm_person.get("Is_Member_ChM", False),  # ADD THIS LINE
+                                    "Photo": f'=IMAGE("{photo_url_val}")' if photo_url_val != "N/A" and photo_url_val.startswith(("http://", "https://")) else "",  # ADD THIS LINE
+#NOTE: The above line assumes the Excel engine supports IMAGE formula, which is not standard in pandas and will insert "@" after "="
                                     "First Name": chm_person["First Name"], 
                                     "Last Name": chm_person["Last Name"],
                                     "Gender": chm_person["Gender"],
@@ -391,6 +394,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 if not df_roster.empty:
                     roster_cols = [
                         "Church Team", "ChMeetings ID", "Participant ID (WP)", "Approval_Status (WP)",
+                        "Is_Member_ChM", "Photo",          # ADD THIS LINE
                         "First Name", "Last Name", "Gender", "Age (at Event)", "Mobile Phone", "Email",
                         "sport_type", "sport_gender", "sport_format", "team_order", "partner_name"
                     ]
@@ -398,8 +402,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         if col not in df_roster.columns:
                             df_roster[col] = None
                     df_roster = df_roster.reindex(columns=roster_cols).sort_values(
-                        by=["Church Team", "Approval_Status (WP)", "Last Name", "First Name", 
-                            "sport_type", "sport_gender", "sport_format"] # Removed team_order and partner_name from sort if they are often None
+                        by=["Church Team", "sport_type", "Last Name", "First Name", 
+                            "Approval_Status (WP)", "sport_gender", "sport_format"] # Removed team_order and partner_name from sort if they are often None
                     )
                 df_roster.to_excel(writer, sheet_name="Roster", index=False)
                 logger.debug(f"Roster tab: {len(df_roster)} rows.")
