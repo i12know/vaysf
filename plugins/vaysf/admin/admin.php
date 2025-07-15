@@ -127,6 +127,7 @@ class VAYSF_Admin {
 			'default' => false,
 			'sanitize_callback' => 'rest_sanitize_boolean'
 		));
+        register_setting('vaysf_settings', 'vaysf_sports_fest_date');        
 
 		add_settings_field(
 			'vaysf_log_emails',
@@ -142,6 +143,23 @@ class VAYSF_Admin {
 			array($this, 'display_section_api'),
 			'vaysf_settings'
 		);
+
+        // ADD THIS NEW SECTION:
+        add_settings_section(
+            'vaysf_section_event',
+            'Event Settings', 
+            array($this, 'display_section_event'),
+            'vaysf_settings'
+        );
+
+        // ADD THIS NEW FIELD:
+        add_settings_field(
+            'vaysf_sports_fest_date',
+            'Sports Fest Date',
+            array($this, 'display_field_sports_fest_date'),
+            'vaysf_settings',
+            'vaysf_section_event'
+        );
 
 		add_settings_field(
 			'vaysf_api_key',
@@ -503,7 +521,7 @@ public function display_participants_page() {
     }
     
     $church_filter = isset($_GET['church_id']) ? (int) $_GET['church_id'] : 0;
-    $where_clause = $church_filter ? "WHERE p.church_id = $church_filter" : '';
+    $where_clause = $church_filter ? "WHERE c.church_id = $church_filter" : '';
     
     $participants = $wpdb->get_results(
         "SELECT p.*, c.church_name 
@@ -1249,6 +1267,22 @@ public function display_participants_page() {
             </form>
         </div>
         <?php
+    }
+
+    /**
+     * Display event settings section
+     */
+    public function display_section_event() {
+        echo '<p>Settings for the Sports Fest event.</p>';
+    }
+
+    /**
+     * Display sports fest date field
+     */
+    public function display_field_sports_fest_date() {
+        $value = get_option('vaysf_sports_fest_date', 'June 19-22, 2025');
+        echo '<input type="text" id="vaysf_sports_fest_date" name="vaysf_sports_fest_date" value="' . esc_attr($value) . '" class="regular-text">';
+        echo '<p class="description">The date range for Sports Fest (displayed in approval emails). Example: "June 19-22, 2025"</p>';
     }
 }
 
