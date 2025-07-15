@@ -402,8 +402,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         if col not in df_roster.columns:
                             df_roster[col] = None
                     df_roster = df_roster.reindex(columns=roster_cols).sort_values(
-                        by=["Church Team", "sport_type", "Last Name", "First Name", 
-                            "Approval_Status (WP)", "sport_gender", "sport_format"] # Removed team_order and partner_name from sort if they are often None
+                        by=["Church Team", "sport_type", "sport_gender", "Last Name", "First Name", 
+                            "Approval_Status (WP)", "sport_format"] # Removed team_order and partner_name from sort if they are often None
                     )
                 df_roster.to_excel(writer, sheet_name="Roster", index=False)
                 logger.debug(f"Roster tab: {len(df_roster)} rows.")
