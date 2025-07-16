@@ -162,11 +162,17 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         logger.info(f"Fetched ChMeetings data for {len(chm_data_by_church)} churches.")
         return chm_data_by_church
 
-    def generate_reports(self, target_church_code: Optional[str], output_dir: Path) -> bool:
+    def generate_reports(self, target_church_code: Optional[str], output_dir: Path,
+                        force_resend_pending: bool = False, force_resend_validated1: bool = False, 
+                        force_resend_validated2: bool = False, dry_run: bool = False) -> bool:
         """
         Generates Excel status reports for church teams.
         If target_church_code is provided, generates a single report for that church.
         Otherwise, generates a report for each church and one consolidated "ALL" report.
+        Furthermore, the flags force_resend_pending, force_resend_validated1, and force_resend_validated2
+        control whether to resend pastoral approval for participants with approval pending, validated1 (under church rep's review),
+        and validated2 (no review yet).
+        Dry run mode does not send the email yet but note the actions would be taken.
         """
         if not self.chm_connector.authenticate(): 
             logger.error("ChMeetings authentication failed. Cannot generate reports.")
@@ -331,6 +337,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                      all_contacts_data, 
                                      all_rosters_data)   
 
+        # Handle force resend options
+        if force_resend_pending or force_resend_validated1 or force_resend_validated2:
+            resend_count = self._handle_force_resend(
+                all_contacts_data, force_resend_pending, force_resend_validated1, 
+                force_resend_validated2, dry_run
+            )
+            logger.info(f"Force resend completed. Total emails {'would be sent' if dry_run else 'sent'}: {resend_count}")
+        
         logger.info("Report generation process finished.")
         return True
 
@@ -408,10 +422,259 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 df_roster.to_excel(writer, sheet_name="Roster", index=False)
                 logger.debug(f"Roster tab: {len(df_roster)} rows.")
 
+                # Sport-Specific Tabs
+                if not df_roster.empty and "sport_type" in df_roster.columns:
+                    # Group roster data by sport combinations
+                    sport_groups = {}
+                    
+                    for _, row in df_roster.iterrows():
+                        sport_type = row.get("sport_type", "")
+                        sport_gender = row.get("sport_gender", "")
+                        
+                        if not sport_type:
+                            continue
+                            
+                        # Special handling for Volleyball - separate by gender
+                        if sport_type.upper() == "VOLLEYBALL" or sport_type.upper().startswith("VB"):
+                            if sport_gender.upper() == "MEN" or sport_gender.upper() == "MALE":
+                                tab_name = "VB Men"
+                            elif sport_gender.upper() == "WOMEN" or sport_gender.upper() == "FEMALE":
+                                tab_name = "VB Women"
+                            else:
+                                tab_name = "Volleyball"  # Fallback if gender unclear
+                        else:
+                            # For all other sports, use sport_type only
+                            tab_name = sport_type
+                        
+                        # Create group if it doesn't exist
+                        if tab_name not in sport_groups:
+                            sport_groups[tab_name] = []
+                        
+                        sport_groups[tab_name].append(row.to_dict())
+                    
+                    # Create tabs for each sport group
+                    for sport_name, sport_data in sport_groups.items():
+                        if not sport_data:  # Skip empty sports
+                            continue
+                            
+                        df_sport = pd.DataFrame(sport_data)
+                        
+                        # Modify columns: replace Last Name and First Name with Full Name
+                        sport_cols = [
+                            "Church Team", "ChMeetings ID", "Participant ID (WP)", "Approval_Status (WP)",
+                            "Is_Member_ChM", "Photo", "Full Name", "Gender", "Age (at Event)", 
+                            "Mobile Phone", "Email", "sport_type", "sport_gender", "sport_format", 
+                            "team_order", "partner_name"
+                        ]
+                        
+                        # Create Full Name column
+                        df_sport["Full Name"] = df_sport["Last Name"].astype(str) + " " + df_sport["First Name"].astype(str)
+                        
+                        # Ensure all sport columns exist
+                        for col in sport_cols:
+                            if col not in df_sport.columns:
+                                df_sport[col] = None
+                        
+                        # Reindex and sort
+                        df_sport = df_sport.reindex(columns=sport_cols).sort_values(
+                            by=["Church Team", "sport_type", "sport_gender", "Full Name", "Approval_Status (WP)"],
+                            ascending=[True, True, True, True, True]
+                        )
+                        
+                        # Write to Excel with sport name as tab name
+                        # Clean tab name for Excel compatibility (max 31 characters, no special chars)
+                        clean_tab_name = "".join(c for c in sport_name if c.isalnum() or c in " -_")[:31]
+                        df_sport.to_excel(writer, sheet_name=clean_tab_name, index=False)
+                        logger.debug(f"{clean_tab_name} tab: {len(df_sport)} rows.")
+
             logger.info(f"Successfully wrote Excel report: {filepath}")
         except Exception as e:
             logger.error(f"Failed to write Excel file {filepath}: {e}", exc_info=True)
 
+    def _handle_force_resend(self, contacts_data: List[Dict[str, Any]], 
+                            force_pending: bool, force_validated1: bool, force_validated2: bool,
+                            dry_run: bool) -> int:
+        """Handle force resend based on participant categories."""
+        
+        from sync.manager import SyncManager  # Import here to avoid circular imports
+        
+        participants_to_resend = []
+        
+        for contact in contacts_data:
+            approval_status = contact.get("Approval_Status (WP)", "").lower()
+            
+            # Category 1: Pending participants
+            if force_pending and approval_status in ["pending", "pending_approval"]:
+                participants_to_resend.append(contact)
+                logger.debug(f"Added pending participant: {contact.get('First Name')} {contact.get('Last Name')} ({contact.get('Church Team')})")
+                
+            # Category 2 & 3: Validated participants  
+            elif approval_status == "validated":
+                # Check Box 1-6 data to categorize
+                has_box_data = any(contact.get(f"Box {i}", "") for i in range(1, 7))
+                
+                if force_validated1 and has_box_data:
+                    # Under review by church rep
+                    participants_to_resend.append(contact)
+                    logger.debug(f"Added validated-under-review participant: {contact.get('First Name')} {contact.get('Last Name')} ({contact.get('Church Team')})")
+                elif force_validated2 and not has_box_data:
+                    # Not reviewed yet by church rep
+                    participants_to_resend.append(contact)
+                    logger.debug(f"Added validated-not-reviewed participant: {contact.get('First Name')} {contact.get('Last Name')} ({contact.get('Church Team')})")
+        
+        logger.info(f"Found {len(participants_to_resend)} participants matching criteria")
+        
+        if dry_run:
+            logger.info("DRY RUN - Would resend emails to:")
+            
+            # Load churches cache to get email addresses for dry run preview
+            temp_sync_manager = SyncManager()
+            with temp_sync_manager:
+                # Load churches cache
+                wp_churches = temp_sync_manager.wordpress_connector.get_churches()
+                if wp_churches:
+                    churches_cache = {c["church_code"]: c for c in wp_churches}
+                else:
+                    logger.error("Failed to load churches for dry-run preview")
+                    return len(participants_to_resend)
+                
+                for p in participants_to_resend:
+                    participant_name = f"{p.get('First Name')} {p.get('Last Name')}"
+                    church_code = p.get('Church Team')
+                    participant_email = p.get('Email', 'N/A')
+                    status = p.get('Approval_Status (WP)')
+                    
+                    # Get church details for email preview
+                    if church_code in churches_cache:
+                        church = churches_cache[church_code]
+                        pastor_email = church.get('pastor_email', 'N/A')
+                        church_rep_email = church.get('church_rep_email', 'N/A')
+                        
+                        logger.info(f"  {participant_name} ({church_code}) - Status: {status}")
+                        logger.info(f"    → Pastor approval email TO: {pastor_email}")
+                        logger.info(f"    → Participant notification TO: {participant_email}")
+                        if church_rep_email != 'N/A':
+                            logger.info(f"    → Church rep CC: {church_rep_email}")
+                        logger.info("")  # Empty line for readability
+                    else:
+                        logger.info(f"  {participant_name} ({church_code}) - Status: {status}")
+                        logger.error(f"    → ERROR: Church {church_code} not found in cache!")
+                        logger.info("")
+            
+            return len(participants_to_resend)
+        
+        # Actually send the emails
+        sync_manager = SyncManager()
+        with sync_manager:
+            success_count = 0
+            for participant_contact in participants_to_resend:
+                wp_participant_id = participant_contact.get("Participant ID (WP)")
+                if wp_participant_id and self._resend_approval_for_participant(sync_manager, participant_contact):
+                    success_count += 1
+                    logger.info(f"Resent approval email for {participant_contact.get('First Name')} {participant_contact.get('Last Name')}")
+                else:
+                    logger.error(f"Failed to resend for {participant_contact.get('First Name')} {participant_contact.get('Last Name')}")
+        
+        return success_count
+
+
+    # In church_teams_export.py, update both methods:
+    def _resend_approval_for_participant(self, sync_manager, participant_contact: Dict[str, Any]) -> bool:
+        """Resend approval email for a specific participant using contact data."""
+        try:
+            # Extract data from contact
+            wp_participant_id = participant_contact.get("Participant ID (WP)")
+            first_name = participant_contact.get("First Name", "")
+            last_name = participant_contact.get("Last Name", "")
+            church_team = participant_contact.get("Church Team", "")
+            chm_id = participant_contact.get("ChMeetings ID", "")
+            email = participant_contact.get("Email", "")
+            
+            if not wp_participant_id:
+                logger.error(f"No WordPress participant ID found for {first_name} {last_name}")
+                return False
+            
+            # Ensure churches cache is loaded
+            if not sync_manager.churches_cache:
+                logger.info("Loading churches cache for resend operation...")
+                wp_churches = sync_manager.wordpress_connector.get_churches()
+                if wp_churches:
+                    sync_manager.churches_cache = {c["church_code"]: c for c in wp_churches}
+                else:
+                    logger.error("Failed to load churches cache")
+                    return False
+            
+            church_code = church_team
+            if not church_code or church_code not in sync_manager.churches_cache:
+                logger.error(f"Church {church_code} not found for participant {first_name} {last_name}")
+                return False
+            
+            church = sync_manager.churches_cache[church_code]
+            pastor_email = church.get("pastor_email")
+            if not pastor_email:
+                logger.error(f"No pastor email for church {church_code}")
+                return False
+            
+            # Generate new token and expiry
+            from uuid import uuid4
+            import datetime
+            from config import Config
+            
+            token = str(uuid4())
+            expiry_date = datetime.datetime.now() + datetime.timedelta(days=Config.TOKEN_EXPIRY_DAYS)
+            
+            # Prepare approval data for CREATE endpoint (which now handles UNIQUE constraint properly)
+            church_wp_id = church["church_id"]
+            approval_data = {
+                "participant_id": wp_participant_id,
+                "church_id": church_wp_id,
+                "approval_token": token,
+                "token_expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S"),
+                "pastor_email": pastor_email,
+                "approval_status": "pending",
+                "synced_to_chmeetings": False
+            }
+            
+            # Use CREATE endpoint (which now handles UNIQUE constraint with INSERT ... ON DUPLICATE KEY UPDATE)
+            logger.info(f"Creating/updating approval record for participant {wp_participant_id} via CREATE endpoint")
+            
+            result = sync_manager.wordpress_connector.create_approval(approval_data)
+            
+            if not result:
+                logger.error(f"Failed to create/update approval record for participant {wp_participant_id}")
+                return False
+            
+            logger.info(f"Successfully created/updated approval record for participant {wp_participant_id}")
+            
+            # Build participant data for email
+            participant_data = {
+                "participant_id": wp_participant_id,
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email,
+                "church_code": church_code,
+                "chmeetings_id": chm_id,
+                "is_church_member": participant_contact.get("Is_Member_ChM", "No") == "Yes",
+                "photo_url": participant_contact.get("Photo URL (WP)", "")
+            }
+            
+            # Send approval email
+            participant_name = f"{first_name} {last_name}"
+            success = sync_manager.send_pastor_approval_email(
+                pastor_email, participant_name, token, participant_data, expiry_date
+            )
+            
+            if success:
+                logger.info(f"Successfully resent approval email for {participant_name} (ID: {wp_participant_id})")
+                return True
+            else:
+                logger.error(f"Failed to send approval email for {participant_name} (ID: {wp_participant_id})")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Error resending approval for participant {participant_contact.get('First Name')} {participant_contact.get('Last Name')}: {e}", exc_info=True)
+            return False
+                    
     def close(self):
         """Closes any open connections (if necessary)."""
         logger.info("Closing ChurchTeamsExporter resources.") # MODIFIED LOGGER MESSAGE
@@ -424,4 +687,3 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-

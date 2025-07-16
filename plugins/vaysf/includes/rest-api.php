@@ -177,6 +177,37 @@ class VAYSF_REST_API {
             ),
         ));
 
+        // Add this route registration to your register_routes() method in rest-api.php
+        // Insert this after the existing approval routes (around line 182)
+        register_rest_route(self::API_NAMESPACE, '/approvals/(?P<id>\d+)', array(
+            array(
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => array($this, 'get_approval'),
+                'permission_callback' => array($this, 'check_api_permission'),
+                'args' => array(
+                    'id' => array(
+                        'required' => true,
+                        'validate_callback' => function($param) {
+                            return is_numeric($param) && $param > 0;
+                        }
+                    )
+                )
+            ),
+            array(
+                'methods' => WP_REST_Server::EDITABLE,
+                'callback' => array($this, 'update_approval'),
+                'permission_callback' => array($this, 'check_api_permission'),
+                'args' => array(
+                    'id' => array(
+                        'required' => true,
+                        'validate_callback' => function($param) {
+                            return is_numeric($param) && $param > 0;
+                        }
+                    )
+                )
+            ),
+        ));
+
 		// Add route for token processing
 		register_rest_route(self::API_NAMESPACE, '/approvals/process-token', array(
 			array(
@@ -1542,7 +1573,43 @@ public function delete_roster($request) {
 }
 
 /**
- * Get approvals
+ * Get a single approval by ID
+ * Add this method to your VAYSF_REST_API class (around line 1600, before get_approvals)
+ */
+public function get_approval($request) {
+    global $wpdb;
+    
+    $table_approvals = vaysf_get_table_name('approvals');
+    $table_participants = vaysf_get_table_name('participants');
+    $approval_id = absint($request['id']);
+    
+    // Get approval with participant name
+    $approval = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT a.*, p.first_name, p.last_name 
+             FROM $table_approvals a
+             LEFT JOIN $table_participants p ON a.participant_id = p.participant_id
+             WHERE a.approval_id = %d",
+            $approval_id
+        ),
+        ARRAY_A
+    );
+    
+    // Check if approval exists
+    if (!$approval) {
+        return new WP_Error(
+            'rest_approval_not_found',
+            esc_html__('Approval not found.', 'vaysf'),
+            array('status' => 404)
+        );
+    }
+    
+    return rest_ensure_response($approval);
+}
+
+/**
+ * Get approvals - FIXED VERSION
+ * Replace the get_approvals() method in your rest-api.php file (around line 1604)
  */
 public function get_approvals($request) {
     global $wpdb;
@@ -1553,6 +1620,7 @@ public function get_approvals($request) {
     // Get parameters for filtering
     $params = $request->get_params();
     $participant_id = isset($params['participant_id']) ? absint($params['participant_id']) : 0;
+    $church_id = isset($params['church_id']) ? absint($params['church_id']) : 0;
     $approval_status = isset($params['approval_status']) ? sanitize_text_field($params['approval_status']) : '';
     $synced = isset($params['synced_to_chmeetings']) ? (bool)$params['synced_to_chmeetings'] : null;
     
@@ -1563,6 +1631,12 @@ public function get_approvals($request) {
     if ($participant_id > 0) {
         $where[] = 'a.participant_id = %d';
         $where_args[] = $participant_id;
+    }
+    
+    // FIX: Add church_id filter that was missing
+    if ($church_id > 0) {
+        $where[] = 'a.church_id = %d';
+        $where_args[] = $church_id;
     }
     
     if (!empty($approval_status)) {
@@ -1594,7 +1668,8 @@ public function get_approvals($request) {
 }
 
 /**
- * Create approval
+ * Create approval - FIXED VERSION
+ * Replace the create_approval() method in your rest-api.php file (around line 1622)
  */
 public function create_approval($request) {
     global $wpdb;
@@ -1634,26 +1709,47 @@ public function create_approval($request) {
         );
     }
     
-    // Prepare data for insertion
-    $data = array(
-        'participant_id' => absint($params['participant_id']),
-        'church_id' => absint($params['church_id']),
-        'approval_token' => sanitize_text_field($params['approval_token']),
-        'token_expiry' => sanitize_text_field($params['token_expiry']),
-        'pastor_email' => sanitize_email($params['pastor_email']),
-        'approval_status' => isset($params['approval_status']) ? sanitize_text_field($params['approval_status']) : 'pending',
-        'approval_date' => null,
-        'approval_notes' => isset($params['approval_notes']) ? sanitize_textarea_field($params['approval_notes']) : null,
-        'synced_to_chmeetings' => isset($params['synced_to_chmeetings']) ? (bool)$params['synced_to_chmeetings'] : false,
-        'created_at' => current_time('mysql'),
-        'updated_at' => current_time('mysql')
-    );
+    // Prepare data for insertion/update
+    $participant_id = absint($params['participant_id']);
+    $church_id = absint($params['church_id']);
+    $approval_token = sanitize_text_field($params['approval_token']);
+    $token_expiry = sanitize_text_field($params['token_expiry']);
+    $pastor_email = sanitize_email($params['pastor_email']);
+    $approval_status = isset($params['approval_status']) ? sanitize_text_field($params['approval_status']) : 'pending';
+    $approval_notes = isset($params['approval_notes']) ? sanitize_textarea_field($params['approval_notes']) : null;
+    $synced_to_chmeetings = isset($params['synced_to_chmeetings']) ? (bool)$params['synced_to_chmeetings'] : false;
     
-    // Insert approval
-    $result = $wpdb->insert($table_approvals, $data);
+    // Use INSERT ... ON DUPLICATE KEY UPDATE to handle UNIQUE constraint on (participant_id, church_id)
+    $sql = "INSERT INTO $table_approvals 
+            (participant_id, church_id, approval_token, token_expiry, pastor_email, approval_status, approval_date, approval_notes, synced_to_chmeetings, created_at, updated_at)
+            VALUES (%d, %d, %s, %s, %s, %s, NULL, %s, %d, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                approval_token = VALUES(approval_token),
+                token_expiry = VALUES(token_expiry),
+                pastor_email = VALUES(pastor_email),
+                approval_status = VALUES(approval_status),
+                approval_notes = VALUES(approval_notes),
+                synced_to_chmeetings = VALUES(synced_to_chmeetings),
+                updated_at = VALUES(updated_at)";
     
-    // Check if insertion was successful
+    $current_time = current_time('mysql');
+    
+    $result = $wpdb->query($wpdb->prepare($sql, 
+        $participant_id, 
+        $church_id, 
+        $approval_token, 
+        $token_expiry, 
+        $pastor_email, 
+        $approval_status, 
+        $approval_notes, 
+        $synced_to_chmeetings ? 1 : 0,
+        $current_time,
+        $current_time
+    ));
+    
+    // Check if operation was successful
     if (false === $result) {
+        error_log('Database error in create_approval: ' . $wpdb->last_error);
         return new WP_Error(
             'rest_approval_creation_failed',
             esc_html__('Failed to create approval.', 'vaysf'),
@@ -1661,8 +1757,29 @@ public function create_approval($request) {
         );
     }
     
-    // Get the newly created approval
+    // Get the approval_id - either from insert or existing record
     $approval_id = $wpdb->insert_id;
+    if (!$approval_id) {
+        // If insert_id is 0, it means we updated an existing record
+        $approval_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT approval_id FROM $table_approvals WHERE participant_id = %d AND church_id = %d",
+            $participant_id, $church_id
+        ));
+    }
+    
+    if (!$approval_id) {
+        error_log('Could not retrieve approval_id after insert/update');
+        return new WP_Error(
+            'rest_approval_creation_failed',
+            esc_html__('Could not retrieve approval record.', 'vaysf'),
+            array('status' => 500)
+        );
+    }
+    
+    // Log successful operation
+    error_log("Successfully upserted approval record - approval_id: $approval_id, participant_id: $participant_id, church_id: $church_id");
+    
+    // Get the complete approval record to return
     $approval = $wpdb->get_row(
         $wpdb->prepare(
             "SELECT a.*, p.first_name, p.last_name 

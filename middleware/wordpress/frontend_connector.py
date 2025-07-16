@@ -573,6 +573,24 @@ class WordPressConnector:
             logger.error(f"Failed to send email: {str(e)}")
             return {"success": False, "message": str(e)}
 
+    def update_approval_by_participant(self, participant_id: int, approval_data: Dict[str, Any]) -> bool:
+        """Update approval record by participant ID."""
+        try:
+            # Get the approval record for this participant using existing get_approvals method
+            approvals = self.get_approvals(params={"participant_id": participant_id})
+            if not approvals or len(approvals) == 0:
+                logger.error(f"No approval record found for participant {participant_id}")
+                return False
+            
+            # Update the first (should be only) approval record using existing update_approval method
+            approval_id = approvals[0]["approval_id"]
+            result = self.update_approval(approval_id, approval_data)
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"Error updating approval for participant {participant_id}: {e}")
+            return False
+
     def close(self):
         """Close connections and clean up resources."""
         self.session.close()

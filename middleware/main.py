@@ -48,6 +48,14 @@ def parse_args() -> argparse.Namespace:
     export_parser = subparsers.add_parser("export-church-teams", help="Export church team status reports")
     export_parser.add_argument("--church-code", help="Export for specific church code (if omitted, exports for all churches)")
     export_parser.add_argument("--output", help="Output directory path", default=EXPORT_DIR)
+    export_parser.add_argument("--force-resend-pending", action="store_true",
+                            help="Resend approval emails for participants with pending/pending_approval status")
+    export_parser.add_argument("--force-resend-validated1", action="store_true", 
+                            help="Resend approval emails for 'validated' participants WITH data in Box 1-6 (under review)")
+    export_parser.add_argument("--force-resend-validated2", action="store_true",
+                            help="Resend approval emails for 'validated' participants with NO data in Box 1-6 (not reviewed yet)")
+    export_parser.add_argument("--dry-run", action="store_true",
+                            help="Show what would be resent without actually sending emails")
 
     # Config command
     config_parser = subparsers.add_parser("config", help="Configure system settings")
@@ -355,7 +363,11 @@ def main() -> None:
                 with ChurchTeamsExporter() as exporter: 
                     success = exporter.generate_reports( 
                         target_church_code=args.church_code,
-                        output_dir=output_path
+                        output_dir=output_path,
+                        force_resend_pending=args.force_resend_pending,
+                        force_resend_validated1=args.force_resend_validated1,
+                        force_resend_validated2=args.force_resend_validated2,
+                        dry_run=args.dry_run
                     )
                 if success: 
                     logger.info(f"Church team reports generated successfully in {output_path.resolve()}.")

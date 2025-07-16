@@ -291,7 +291,13 @@ class SyncManager:
             
             # Get membership claim information
             ## Bug ## is_church_member = "Yes" if participant_data.get("is_church_member", False) else "No"
-            is_church_member = "Yes" if str(participant_data.get("is_church_member", 0)) == "1" else "No"
+            ## Bug also ## is_church_member = "Yes" if str(participant_data.get("is_church_member", 0)) == "1" else "No"
+            membership_value = participant_data.get("is_church_member", False)
+            # Handle various formats: boolean True/False, string "1"/"0", integer 1/0, string "Yes"/"No"
+            if membership_value in [True, 1, "1", "Yes", "yes", "TRUE", "true"]:
+                is_church_member = "Yes"
+            else:
+                is_church_member = "No"
             
             # Pastor approval email
             approval_link_base = f"{Config.WP_URL}/pastor-approval"
