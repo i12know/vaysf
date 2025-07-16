@@ -203,6 +203,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             total_members_chm = len(chm_data_by_church[church_code_iter])
             total_participants_wp = 0
             total_approved_wp = 0
+            total_denied_wp = 0
             total_pending_participants_wp = 0 
             total_with_open_errors_wp = 0
             participants_with_errors_set = set() # To count unique participants with errors
@@ -230,6 +231,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                         if approval_status_val == "approved":
                             total_approved_wp += 1
+                        if approval_status_val == "denied": # ADD THIS BLOCK
+                            total_denied_wp += 1
                         if approval_status_val in ["pending", "validated", "pending_approval"]:
                             total_pending_participants_wp +=1
 
@@ -300,6 +303,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "Total Members (ChM Team Group)": total_members_chm,
                 "Total Participants (in WP)": total_participants_wp,
                 "Total Approved (WP)": total_approved_wp,
+                "Total Denied (WP)": total_denied_wp, # ADD THIS LINE
                 "Total Pending Approval (WP)": total_pending_participants_wp, 
                 "Total Participants w/ Open ERRORs (WP)": total_with_open_errors_wp,
                 "Latest ChM Record Update for Team": self.latest_chm_update_by_church.get(church_code_iter, "N/A")
@@ -361,7 +365,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 if not df_summary.empty:
                     summary_cols = [
                         "Church Code", "Total Members (ChM Team Group)", "Total Participants (in WP)",
-                        "Total Approved (WP)", "Total Pending Approval (WP)", 
+                        "Total Approved (WP)", "Total Pending Approval (WP)", "Total Denied (WP)", # ADD THIS LINE
                         "Total Participants w/ Open ERRORs (WP)", "Latest ChM Record Update for Team"
                     ]
                     # Ensure all summary columns exist
@@ -687,3 +691,6 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+# end of the ChurchTeamsExporter class
+# end of the middleware/church_teams_export.py file
