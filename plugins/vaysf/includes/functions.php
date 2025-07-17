@@ -570,7 +570,7 @@ function vaysf_resend_approval_email($approval) {
     $church_rep_phone = $church['church_rep_phone'] ?: 'N/A';
     
     // Format dates (matching original logic)
-    $sports_fest_date = get_option('vaysf_sports_fest_date', 'June 19-22, 2025');
+    $sports_fest_date = VAYSF::get_sports_fest_date_formatted();
     $token_expiry_date = date_i18n('F j, Y \a\t g:i A', strtotime($approval['token_expiry']));
     
     // Get membership claim info

@@ -5,6 +5,7 @@
 - Added: "Is_Member_ChM" and "Photo" columns to Roster tab in church team reports; Photo column displays images using IMAGE() formula (use Excel Ctrl+H to replace "=@IMAGE" with "=IMAGE" if needed)
 - Added: "Total Denied" column in Summary tab
 - Added: options to mass pastor approval email sending at export rosters time for issue [#47](https://github.com/i12know/vaysf/issues/47)
+- Fixed Sports Fest Date display issue [#48](https://github.com/i12know/vaysf/issues/48)
 
 ## Version 1.03 (2025-05-24)
 - Fixed issue [#32](https://github.com/i12know/vaysf/issues/32): Not everyone from NHC church show up on Pastoral Approval emails. (pagination fix)

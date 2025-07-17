@@ -247,6 +247,12 @@ class VAYSF_Integration {
             'default' => 'Sports Fest 2025: Approval Request',
             'sanitize_callback' => 'sanitize_text_field'
         ));
+
+        register_setting('vaysf_settings', 'vaysf_sports_fest_date', array(
+            'type' => 'string',
+            'default' => '2025-07-19',
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
     }
     
     /**
@@ -256,6 +262,7 @@ class VAYSF_Integration {
         add_option('vaysf_token_expiry_days', 7);
         add_option('vaysf_email_from', get_option('admin_email'));
         add_option('vaysf_approval_email_subject', 'Sports Fest 2025: Approval Request');
+        add_option('vaysf_sports_fest_date', '2025-07-19');
 		add_option('vaysf_api_key', '');
     }
     
@@ -509,6 +516,17 @@ class VAYSF_Integration {
             // Log this change
             error_log('Added photo_url column to sf_participants table');
         }
+    }
+
+    /**
+     * Get formatted sports fest date
+     * 
+     * @param string $format PHP date format string
+     * @return string Formatted date
+     */
+    public static function get_sports_fest_date_formatted($format = 'F j, Y') {
+        $date = get_option('vaysf_sports_fest_date', '2025-07-19');
+        return date($format, strtotime($date));
     }
 }
 
