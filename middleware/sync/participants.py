@@ -522,8 +522,8 @@ class ParticipantSyncer:
                         "partner_name": None,
                     }
                     ## Debug for other_events roster in next 2 lines
-                    logger.debug(f"Adding to current_sports: ('{other_sport}', 'Team', None)")
-                    current_sports.add((other_sport, SPORT_FORMAT["TEAM"], None))
+                    logger.debug(f"Adding to current_sports: ('{other_sport}', 'Team', 'Mixed', None)")
+                    current_sports.add((roster_data["sport_type"], roster_data["sport_format"], roster_data["sport_gender"], roster_data["team_order"]))
                     self._create_or_update_roster(roster_data)
             else:
                 sport_type = sport_value
@@ -535,7 +535,20 @@ class ParticipantSyncer:
                     # Team sport or no format specified
                     sport_parts = sport_value.split(" - ")
                     sport_type = sport_parts[0]
-                    if len(sport_parts) > 1:
+
+                    # BUGGY: Smart Gender Mapping for Volleyball is NOT working correctly yet!!! 
+                    if sport_type.upper() == "VOLLEYBALL":
+                        participant_gender = participant.get("gender", "").lower()
+                        if participant_gender == "male":
+                            sport_gender = GENDER["MEN"]
+                            sport_type = "Volleyball"  # Normalize the sport name
+                        elif participant_gender == "female":
+                            sport_gender = GENDER["WOMEN"] 
+                            sport_type = "Volleyball"  # Normalize the sport name
+                        else:
+                            sport_gender = GENDER["MIXED"]  # Fallback
+                        sport_format = SPORT_FORMAT["TEAM"]
+                    elif len(sport_parts) > 1:
                         param = sport_parts[1]
                         if GENDER["MEN"] in param:
                             sport_gender = GENDER["MEN"]
@@ -565,8 +578,8 @@ class ParticipantSyncer:
                     continue
 
                 ## Debug next 1 line for primary/secondary sport roster
-                logger.debug(f"Adding to current_sports: ('{sport_type}', '{sport_format}', {roster_data['team_order']})")
-                current_sports.add((roster_data["sport_type"], roster_data["sport_format"], roster_data["team_order"]))
+                logger.debug(f"Adding to current_sports: ('{sport_type}', '{sport_format}', '{sport_gender}', {roster_data['team_order']})")
+                current_sports.add((roster_data["sport_type"], roster_data["sport_format"], roster_data["sport_gender"], roster_data["team_order"]))
                 self._create_or_update_roster(roster_data)
 
         ## Debug next line - show all current sports
@@ -578,8 +591,8 @@ class ParticipantSyncer:
             logger.debug(f"Found {len(all_rosters)} existing rosters for participant_id={participant_id}") ## Debug
  
             for roster in all_rosters:
-                roster_key = (roster["sport_type"], roster["sport_format"], roster["team_order"])
-                logger.debug(f"Checking roster_id={roster['roster_id']}: key={roster_key}") ## debug
+                roster_key = (roster["sport_type"], roster["sport_format"], roster["sport_gender"], roster["team_order"])
+                logger.debug(f"Checking roster_id={roster['roster_id']}: key={roster_key}")
                 if roster_key not in current_sports:
                     logger.info(f"Deleting roster_id={roster['roster_id']}: {roster_key} NOT in current_sports") ## debug
                     self.wordpress_connector.delete_roster(roster["roster_id"])
@@ -604,6 +617,7 @@ class ParticipantSyncer:
                 "participant_id": roster_data["participant_id"],
                 "sport_type": roster_data["sport_type"],
                 "sport_format": roster_data["sport_format"],
+                "sport_gender": roster_data["sport_gender"],  # Needed to flip Smart Gender Mapping for Volleyball
             }
             # Explicitly add team_order to query_params IF IT EXISTS in roster_data
             # This ensures that if team_order is None or not present, it's not part of the query,

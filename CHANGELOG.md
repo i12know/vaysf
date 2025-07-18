@@ -1,11 +1,13 @@
 # CHANGELOG
 
-## Version 1.04 (2025-07-16)
+## Version 1.04 (2025-07-17)
 - Fixed issue [#42](https://github.com/i12know/vaysf/issues/42): Resend approval email now generates fresh tokens with proper expiry dates instead of using expired tokens
 - Added: "Is_Member_ChM" and "Photo" columns to Roster tab in church team reports; Photo column displays images using IMAGE() formula (use Excel Ctrl+H to replace "=@IMAGE" with "=IMAGE" if needed)
 - Added: "Total Denied" column in Summary tab
 - Added: options to mass pastor approval email sending at export rosters time for issue [#47](https://github.com/i12know/vaysf/issues/47)
-- Fixed Sports Fest Date display issue [#48](https://github.com/i12know/vaysf/issues/48)
+- Fixed: plugin's admin Sports Fest Date display issue [#48](https://github.com/i12know/vaysf/issues/48)
+- Added: Auto Filter to all columns and a note about Photo formula
+- FIXED: Male athelete signed up for Women Volleyball now will be Smart Gender Map to the right team in Roster as issue [#50](https://github.com/i12know/vaysf/issues/50)
 
 ## Version 1.03 (2025-05-24)
 - Fixed issue [#32](https://github.com/i12know/vaysf/issues/32): Not everyone from NHC church show up on Pastoral Approval emails. (pagination fix)

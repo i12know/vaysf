@@ -1296,19 +1296,25 @@ public function get_rosters($request) {
         $where_format[] = $participant_id;
     }
 
-    // *** NEW: Filter by sport_type if provided ***
+    // *** Filter by sport_type if provided ***
     if (!empty($params['sport_type'])) {
         $where[] = "r.sport_type = %s";
         $where_format[] = sanitize_text_field($params['sport_type']);
     }
 
-    // *** NEW: Filter by sport_format if provided ***
+    // *** Filter by sport_format if provided ***
     if (!empty($params['sport_format'])) {
         $where[] = "r.sport_format = %s";
         $where_format[] = sanitize_text_field($params['sport_format']);
     }
 
-    // *** NEW: Filter by team_order (handles NULL effectively) ***
+    // *** NEW: Filter by sport_gender if provided ***
+    if (!empty($params['sport_gender'])) {
+        $where[] = "r.sport_gender = %s";
+        $where_format[] = sanitize_text_field($params['sport_gender']);
+    }
+
+    // *** Filter by team_order (handles NULL effectively) ***
     if (array_key_exists('team_order', $params)) {
         $team_order_value = $params['team_order'];
         // Treat null, 'null', 'None', or empty string from query param as DB IS NULL
