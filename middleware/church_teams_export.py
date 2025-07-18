@@ -374,6 +374,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                             df_summary[col] = None 
                     df_summary = df_summary.reindex(columns=summary_cols).sort_values(by="Church Code")
                 df_summary.to_excel(writer, sheet_name="Summary", index=False)
+                
                 logger.debug(f"Summary tab: {len(df_summary)} rows.")
 
                 # Contacts-Status Tab
@@ -425,6 +426,24 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     )
                 df_roster.to_excel(writer, sheet_name="Roster", index=False)
                 logger.debug(f"Roster tab: {len(df_roster)} rows.")
+
+                # Add yellow note to Photo column in Roster sheet
+                if not df_roster.empty:
+                    from openpyxl.comments import Comment
+                    from openpyxl.styles import PatternFill
+                    
+                    roster_ws = writer.sheets["Roster"]
+                    
+                    # Add comment to Photo column (column F)
+                    photo_comment = Comment(
+                        "In Office365 edition 2023 and later, you can remove the @ from the formula to display the image",
+                        "Bumble",200,300 # Width and height in pixels
+                    )
+                    roster_ws["F1"].comment = photo_comment
+                    
+                    # Add yellow background
+                    yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+                    roster_ws["F1"].fill = yellow_fill
 
                 # Sport-Specific Tabs
                 if not df_roster.empty and "sport_type" in df_roster.columns:
@@ -490,6 +509,30 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         clean_tab_name = "".join(c for c in sport_name if c.isalnum() or c in " -_")[:31]
                         df_sport.to_excel(writer, sheet_name=clean_tab_name, index=False)
                         logger.debug(f"{clean_tab_name} tab: {len(df_sport)} rows.")
+
+                # SINGLE Excel Formatting Block - Add right before closing writer
+                for sheet_name in writer.sheets:
+                    worksheet = writer.sheets[sheet_name]
+                    
+                    # Add auto filter to all data (if worksheet has data)
+                    if worksheet.max_row > 1:  # More than just headers
+                        worksheet.auto_filter.ref = worksheet.dimensions
+                    
+                    # Auto-adjust column widths
+                    for column in worksheet.columns:
+                        max_length = 0
+                        column_letter = column[0].column_letter
+                        
+                        for cell in column:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))/2 # Divide by 2 for better fit
+                            except:
+                                pass
+                        
+                        # Set width with some padding
+                        adjusted_width = min(max_length + 2, 50)  # Max width of 50
+                        worksheet.column_dimensions[column_letter].width = adjusted_width
 
             logger.info(f"Successfully wrote Excel report: {filepath}")
         except Exception as e:
