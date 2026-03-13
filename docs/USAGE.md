@@ -128,6 +128,18 @@ The Excel reports contain:
 - Any missing requirements or validation issues
 - Summary statistics for the church
 
+#### Leveraging Church Export for Mass Resending Pastoral Approval Emails 
+##### Dry run to see what would happen
+python main.py export-church-teams --force-resend-pending --dry-run
+
+##### Actually resend to pending participants
+python main.py export-church-teams --force-resend-pending
+python main.py export-church-teams --force-resend-validate1 (still under review - any Box 1-6)
+python main.py export-church-teams --force-resend-validate2 (no review yet - no Box 1-6)
+
+##### Resend to specific church
+python main.py export-church-teams --church-code TLC --force-resend-pending
+
 ### Church Group Assignment Export
 
 Identify participants who need to be added to their respective church team groups in ChMeetings:

@@ -550,11 +550,11 @@ class ParticipantSyncer:
                         sport_format = SPORT_FORMAT["TEAM"]
                     elif len(sport_parts) > 1:
                         param = sport_parts[1]
-                        if GENDER["MEN"] in param:
+                        if GENDER["MEN"] in param.upper():
                             sport_gender = GENDER["MEN"]
-                        elif GENDER["WOMEN"] in param:
+                        elif GENDER["WOMEN"] in param.upper():
                             sport_gender = GENDER["WOMEN"]
-                        elif GENDER["MIXED"] in param:
+                        elif GENDER["MIXED"] in param.upper():
                             sport_gender = GENDER["MIXED"]
                         else:
                             sport_gender = GENDER["MIXED"]

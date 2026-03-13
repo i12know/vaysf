@@ -1,5 +1,16 @@
 ## My Prj files
 
+# IDE and tools
+.claude/
+.vscode/
+
+# Legacy database
+accessDB/
+
+# Plugin version backups
+plugins/vaysf*.zip
+!plugins/vaysf.zip
+
 #other files
 *.log
 *.DS_Store
