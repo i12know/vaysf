@@ -45,7 +45,8 @@ def test_authenticate_api(chm_connector, mocker):
         with pytest.MonkeyPatch.context() as mp:
             mock_response = mocker.Mock()
             mock_response.status_code = 200
-            mock_response.json.return_value = {"data": []}
+            mock_response.json.return_value = {"status_code": 200, "paging": {"total_count": 0, "page": 1, "page_size": 1}, "errors": None, "data": []}
+            mock_response.raise_for_status = mocker.Mock()
             mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
             result = chm_connector.authenticate()
             assert result, "Mocked API authentication failed"
@@ -62,10 +63,11 @@ def test_get_people(chm_connector, mocker, mock_chm_people_data):
         with pytest.MonkeyPatch.context() as mp:
             mock_response = mocker.Mock()
             mock_response.status_code = 200
-            # Use the full JSON data
-            mock_response.json.return_value = mock_chm_people_data
+            mock_response.raise_for_status = mocker.Mock()
+            # Wrap in new API format
+            mock_response.json.return_value = {"status_code": 200, "paging": {"total_count": 3, "page": 1, "page_size": 100}, "errors": None, "data": mock_chm_people_data}
             mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
-            people = chm_connector.get_people({"page": 1, "page_size": 50})
+            people = chm_connector.get_people({"page": 1, "page_size": 100})
             assert len(people) == 3, "Expected three people from mock data"
 
 def test_get_person(chm_connector, mocker, mock_chm_people_data):
@@ -106,13 +108,15 @@ def test_get_person(chm_connector, mocker, mock_chm_people_data):
         with pytest.MonkeyPatch.context() as mp:
             mock_response = mocker.Mock()
             mock_response.status_code = 200
+            mock_response.raise_for_status = mocker.Mock()
             # Use next with a default value to avoid StopIteration if the ID is missing
             person_data = next((p for p in mock_chm_people_data if str(p["id"]) == person_id), None)
             assert person_data is not None, "Mock data should contain the person"
+            # New API returns person directly (not wrapped) for single entity
             mock_response.json.return_value = person_data
             mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
             person = chm_connector.get_person(person_id)
-            assert str(person["id"]) == person_id, "Person ID mismatch"  # Convert to string here
+            assert str(person["id"]) == person_id, "Person ID mismatch"
             
 def test_get_group_people(chm_connector, mocker, mock_chm_people_data):
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
@@ -128,7 +132,8 @@ def test_get_group_people(chm_connector, mocker, mock_chm_people_data):
             mock_response = mocker.Mock()
             mock_response.status_code = 200
             # Wrap in "data" key if required by the method
-            mock_response.json.return_value = {"data": mock_chm_people_data[:2]}  # Jerry and Khoi (RPC)
+            mock_response.raise_for_status = mocker.Mock()
+            mock_response.json.return_value = {"status_code": 200, "errors": None, "data": mock_chm_people_data[:2]}
             mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
             people = chm_connector.get_group_people("G1")
             assert len(people) == 2, "Expected two people in group from mock data"
@@ -144,7 +149,8 @@ def test_get_groups(chm_connector, mocker):
         with pytest.MonkeyPatch.context() as mp:
             mock_response = mocker.Mock()
             mock_response.status_code = 200
-            mock_response.json.return_value = [{"id": "G1", "Name": "Sports Team"}]
+            mock_response.raise_for_status = mocker.Mock()
+            mock_response.json.return_value = {"status_code": 200, "errors": None, "data": [{"id": "G1", "name": "Sports Team"}]}
             mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
             groups = chm_connector.get_groups()
             assert len(groups) == 1, "Expected one group"

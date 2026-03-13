@@ -71,8 +71,8 @@ def parse_args() -> argparse.Namespace:
     test_parser = subparsers.add_parser("test", help="Test connectivity and functionality of systems")
     test_parser.add_argument("--system", choices=["chmeetings", "wordpress", "all"],
                              default="all", help="System to test")
-    test_parser.add_argument("--test-type", choices=["connectivity", "churches", "email", "all"],
-                             default="connectivity", help="Type of test to run (connectivity, churches, email, or all)")
+    test_parser.add_argument("--test-type", choices=["connectivity", "churches", "email", "api-inspect", "all"],
+                             default="connectivity", help="Type of test to run (connectivity, churches, email, api-inspect, or all)")
     test_parser.add_argument("--test-email", default=os.getenv("TEST_EMAIL", "PastorBumble@gmail.com"),
                              help="Email address for email test")
                              
@@ -182,6 +182,78 @@ def test_connectivity(system: str = "all", test_type: str = "connectivity", test
                     else:
                         logger.error("Failed to connect to ChMeetings")
                         success = False
+
+                if test_type == "api-inspect":
+                    import json
+                    if not connector.authenticate():
+                        logger.error("Cannot inspect API - authentication failed")
+                        success = False
+                    else:
+                        # 1. Dump field definitions
+                        logger.info("=" * 60)
+                        logger.info("FIELD DEFINITIONS (GET /api/v1/people/fields)")
+                        logger.info("=" * 60)
+                        fields = connector.get_fields()
+                        if fields:
+                            sections = fields.get("sections", []) if isinstance(fields, dict) else fields
+                            for section in (sections if isinstance(sections, list) else []):
+                                logger.info(f"  Section: {section.get('title', '(untitled)')} (id={section.get('section_id')})")
+                                for field in section.get("fields", []):
+                                    opts = field.get("options", [])
+                                    opts_str = f" options={[(o.get('id'), o.get('name')) for o in opts]}" if opts else ""
+                                    logger.info(f"    field_id={field.get('field_id')} | name={field.get('field_name')!r} | type={field.get('field_type')}{opts_str}")
+                        else:
+                            logger.warning("No field definitions returned")
+
+                        # 2. List groups
+                        logger.info("=" * 60)
+                        logger.info("GROUPS (GET /api/v1/groups)")
+                        logger.info("=" * 60)
+                        groups = connector.get_groups()
+                        for g in groups:
+                            logger.info(f"  id={g.get('id')} | name={g.get('name')}")
+                        logger.info(f"  Total: {len(groups)} groups")
+
+                        # 3. Fetch 2 people with additional_fields and dump raw
+                        logger.info("=" * 60)
+                        logger.info("SAMPLE PEOPLE (GET /api/v1/people?include_additional_fields=true&page_size=2)")
+                        logger.info("=" * 60)
+                        sample_people = connector.get_people(params={
+                            "include_additional_fields": True,
+                            "include_family_members": False,
+                            "include_organizations": False,
+                            "page_size": 2, "page": 1
+                        })
+                        for person in sample_people[:2]:
+                            logger.info(f"--- Person: {person.get('first_name', '?')} {person.get('last_name', '?')} (id={person.get('id', person.get('person_id', '?'))}) ---")
+                            logger.info(f"  Keys: {list(person.keys())}")
+                            af = person.get("additional_fields", [])
+                            if af:
+                                logger.info(f"  additional_fields ({len(af)} fields):")
+                                for f in af[:5]:
+                                    logger.info(f"    {json.dumps(f)}")
+                                if len(af) > 5:
+                                    logger.info(f"    ... and {len(af) - 5} more fields")
+                            else:
+                                logger.info("  additional_fields: (empty or not present)")
+
+                        # 4. Fetch one person by ID if we have any
+                        if sample_people:
+                            pid = sample_people[0].get("id", sample_people[0].get("person_id"))
+                            if pid:
+                                logger.info("=" * 60)
+                                logger.info(f"SINGLE PERSON (GET /api/v1/people/{pid})")
+                                logger.info("=" * 60)
+                                single = connector.get_person(str(pid))
+                                if single:
+                                    logger.info(f"  Keys: {list(single.keys())}")
+                                    af = single.get("additional_fields", [])
+                                    logger.info(f"  additional_fields: {len(af) if isinstance(af, list) else 'N/A'} fields")
+                                    if af and isinstance(af, list):
+                                        for f in af[:3]:
+                                            logger.info(f"    {json.dumps(f)}")
+                                else:
+                                    logger.warning(f"  Could not fetch person {pid}")
         except Exception as e:
             logger.error(f"ChMeetings test failed: {e}")
             success = False
