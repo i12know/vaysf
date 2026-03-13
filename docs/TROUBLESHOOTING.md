@@ -214,20 +214,14 @@ This guide addresses common issues you might encounter when using the Sports Fes
 **Issue**: Sync operations take too long to complete.
 
 **Solutions**:
-1. Increase batch size in config.py:
-   ```python
-   BATCH_SIZE = 100  # Default is 50
-   ```
-2. Ensure database indexes are optimized
-3. Run targeted syncs instead of full syncs:
+1. Ensure database indexes are optimized
+2. Run targeted syncs instead of full syncs:
    ```bash
    # Sync one participant
    python main.py sync --type participants --chm-id 1234567
-
-   # How about syncing one church ?
    ```
-4. Schedule syncs during low-traffic periods
-5. Update logging level to reduce I/O:
+3. Schedule syncs during low-traffic periods
+4. Update logging level to reduce I/O:
    ```
    # In .env file
    DEBUG=False
