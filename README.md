@@ -94,6 +94,7 @@ For detailed setup and usage instructions, see the [Installation Guide](docs/INS
 - [Installation Guide](docs/INSTALLATION.md)
 - [Architecture Overview](ARCHITECTURE.md)
 - [Usage Guide](docs/USAGE.md)
+- [Season Transition Guide](docs/SEASON_TRANSITION.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Contributing](CONTRIBUTING.md)
 
