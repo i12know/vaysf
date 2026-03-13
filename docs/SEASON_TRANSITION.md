@@ -123,7 +123,5 @@ Each Sports Fest season produces data across all three systems:
 
 ## Known Gaps / Future Improvements
 
-- **`group_assignment.py`** still has a hardcoded `"Church Team"` string (line 58) instead of using `CHM_FIELDS["CHURCH_TEAM"]` from config.
 - **Clearing Team groups** is currently a manual process in ChMeetings. A future middleware command could automate this using the API.
 - **WordPress table reset** is manual (SQL or phpMyAdmin). A future `main.py reset-season` command could automate the truncation with confirmation prompts.
-- **`church_teams_export.py`** may also have hardcoded field names that should reference `CHM_FIELDS`.
