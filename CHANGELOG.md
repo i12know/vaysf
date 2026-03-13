@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## Version 1.05 (2026-03-13) — 2026 API Upgrade
+
+### Breaking Changes
+- Removed Selenium support entirely — the middleware now uses only the ChMeetings API for all operations
+- Removed `CHM_USERNAME`, `CHM_PASSWORD`, `CHROME_DRIVER_PATH`, `USE_CHROME_HEADLESS`, and `CHROME_PROFILE_DIR` from configuration
+- Removed `selenium` and `webdriver-manager` from dependencies
+- `ChMeetingsConnector` no longer accepts `use_selenium` parameter
+
+### New Features
+- **API-based approval sync**: `sync --type approvals` now uses the ChMeetings `add_person_to_group()` API to add approved participants directly to their designated group, eliminating the manual Excel import step
+- **Excel fallback for approvals**: Pass `--excel-fallback` to `sync --type approvals` to use the legacy Excel export workflow when needed
+- **Field mapping constants** (`CHM_FIELDS`): All ChMeetings custom field names are now centralized in `config.py` instead of being hardcoded across the codebase, making it easy to update if ChMeetings labels change
+- **API field inspector**: New `test --system chmeetings --test-type api-inspect` command retrieves custom field definitions from ChMeetings and cross-references them against `CHM_FIELDS` to detect mismatches
+- **New API methods**: `ChMeetingsConnector` now exposes `get_fields()` and `add_person_to_group(group_id, person_id)`
+
+### Bug Fixes
+- Fixed `get_people()` ignoring caller's `page_size` parameter — the pagination loop now respects the value passed by the caller instead of always using 100
+
+### Documentation
+- Updated ARCHITECTURE.md, INSTALLATION.md, TROUBLESHOOTING.md, USAGE.md, and README.md to reflect all changes
+- Removed all Selenium references from documentation
+
 ## Version 1.04 (2025-07-17)
 - Fixed issue [#42](https://github.com/i12know/vaysf/issues/42): Resend approval email now generates fresh tokens with proper expiry dates instead of using expired tokens
 - Added: "Is_Member_ChM" and "Photo" columns to Roster tab in church team reports; Photo column displays images using IMAGE() formula (use Excel Ctrl+H to replace "=@IMAGE" with "=IMAGE" if needed)

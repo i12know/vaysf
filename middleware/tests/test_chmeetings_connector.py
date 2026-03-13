@@ -25,14 +25,13 @@ def chm_connector(monkeypatch, mocker):
     if not live_test:
         mocker.patch("chmeetings.backend_connector.Config.CHM_API_URL", "https://test.chmeetings.com/")
         mocker.patch("chmeetings.backend_connector.Config.CHM_API_KEY", "test_api_key")
-    with ChMeetingsConnector(use_api=True, use_selenium=False) as connector:
+    with ChMeetingsConnector(use_api=True) as connector:
         logger.info(f"Test mode: {'Live' if live_test else 'Mocked'}, API URL: {connector.api_url}")
         yield connector
 
 def test_chm_connector_init(chm_connector):
     assert chm_connector is not None, "ChMeetingsConnector failed to initialize"
     assert chm_connector.use_api, "API usage should be enabled"
-    assert not chm_connector.use_selenium, "Selenium should be disabled"
 
 def test_authenticate_api(chm_connector, mocker):
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"

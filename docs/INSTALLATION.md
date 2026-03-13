@@ -11,7 +11,6 @@ This guide provides step-by-step instructions for setting up the Sports Fest ChM
 - Administrator privileges (for initial setup)
 - Internet connection
 - Microsoft Excel (for viewing and managing Excel files)
-- Chrome browser (for Selenium operations if needed)
 
 ### WordPress Requirements
 
@@ -71,8 +70,6 @@ pip install -r requirements.txt
    ```
    # ChMeetings configuration
    CHM_API_URL=https://api.chmeetings.com
-   CHM_USERNAME=your_username_only_for_selenium
-   CHM_PASSWORD=your_password_only_for_selenium
    CHM_API_KEY=your_api_key
 
    # WordPress configuration
@@ -90,10 +87,6 @@ pip install -r requirements.txt
 
 3. Configure additional settings as needed:
    ```
-   # Selenium settings
-   USE_CHROME_HEADLESS=True  # Set to False for debugging
-   CHROME_PROFILE_DIR=C:\path\to\chrome\profile  # Optional
-
    # Sync settings
    SYNC_INTERVAL_MINUTES=60  # Default sync interval
 
@@ -107,17 +100,7 @@ pip install -r requirements.txt
 
    **Important Note:** By default, exports try to save to a Google Drive path. You **must** set `EXPORT_DIR` in your `.env` to a valid local path if you plan to use the export features, or use the `--output` option with commands.
 
-### 5. Set Up Chrome for Selenium (Optional)
-
-If you plan to use Selenium for ChMeetings operations:
-
-1. Download Chrome WebDriver matching your Chrome version from [ChromeDriver](https://sites.google.com/chromium.org/driver/)
-2. Place the executable in the project directory or specify its path in the `.env` file:
-   ```
-   CHROME_DRIVER_PATH=C:\path\to\chromedriver.exe
-   ```
-
-### 6. Verify Installation
+### 5. Verify Installation
 
 Run a basic test to ensure everything is set up correctly:
 
@@ -184,10 +167,6 @@ For reliable email delivery, we recommend installing the WP Mail SMTP plugin:
 2. **Package Installation Failures**
    - Try upgrading pip: `python -m pip install --upgrade pip`
    - Install Visual C++ Build Tools if required for some packages
-
-3. **Selenium WebDriver Issues**
-   - Ensure Chrome and ChromeDriver versions match
-   - Try running Chrome in non-headless mode by setting `USE_CHROME_HEADLESS=False` in `.env`
 
 ### Common WordPress Plugin Issues
 

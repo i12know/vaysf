@@ -79,15 +79,21 @@ python main.py sync --type participants --chm-id 1234567
 
 This will fetch and sync only the participant with ID 1234567 from ChMeetings. Note: The `--chm-id` option works only with `--type participants`.
 
-#### Approvals Generation
+#### Approvals Sync
 
-To generate approval tokens for participants who have completed validation:
+To sync approved participants to ChMeetings (adds them to the approved group via API):
 
 ```bash
 python main.py sync --type approvals
 ```
 
-This will create tokens and send approval emails to pastors.
+By default, this uses the ChMeetings API to add approved participants directly to the designated group (configured via `APPROVED_GROUP_NAME` in `.env`). If the API approach is unavailable or you prefer the legacy Excel export workflow, use the `--excel-fallback` flag:
+
+```bash
+python main.py sync --type approvals --excel-fallback
+```
+
+The Excel fallback generates an import-ready file that can be manually imported into ChMeetings.
 
 #### Validation
 
@@ -203,6 +209,21 @@ To test email functionality:
 ```bash
 python main.py test --system wordpress --test-type email --test-email "test@example.com"
 ```
+
+#### Inspecting ChMeetings API Fields
+
+To inspect ChMeetings custom field definitions and verify that your configured field mappings match what the API returns:
+
+```bash
+python main.py test --system chmeetings --test-type api-inspect
+```
+
+This will:
+- Retrieve all custom field definitions from ChMeetings via the `get_fields()` API
+- Cross-reference each field in `CHM_FIELDS` (in `config.py`) against the live API response
+- Report OK or MISSING for each expected field name
+
+This is useful after ChMeetings updates or when setting up a new environment to ensure field names haven't changed.
 
 #### Validating Configuration
 
@@ -353,7 +374,7 @@ Upon completion of the Individual Application Form, user will receive an email c
 ChMeetings group structure should include:
 
 1. Team Groups (named "Team XYZ" where XYZ is the church code)
-2. 2025 Sports Fest (for approved participants)
+2. Approved participants group (configured via `APPROVED_GROUP_NAME` in `.env`, e.g., "2026 Sports Fest")
 
 Church Reps should be assigned as group leaders for their respective teams.
 

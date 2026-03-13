@@ -32,6 +32,8 @@ def parse_args() -> argparse.Namespace:
                              default="full", help="Type of data to sync")
     sync_parser.add_argument("--chm-id", type=str, default=None,
                              help="Optional ChMeetings ID of a single participant to sync (only applies if --type is 'participants')")
+    sync_parser.add_argument("--excel-fallback", action="store_true",
+                             help="Use Excel export instead of API for syncing approvals to ChMeetings")
 
     # Sync-churches command
     sync_churches_parser = subparsers.add_parser("sync-churches", help="Sync churches from Excel file")
@@ -79,13 +81,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str] = None) -> bool: # Added chm_id parameter
+def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str] = None,
+             excel_fallback: bool = False) -> bool:
     """Run synchronization process with retry logic.
 
     Args:
         manager: SyncManager instance to use.
         sync_type: Type of sync to perform (churches, participants, approvals, validation, full).
         chm_id: Optional ChMeetings ID of a single participant to sync.
+        excel_fallback: If True, use Excel export for approval sync instead of API.
 
     Returns:
         bool: True if successful, False otherwise.
@@ -109,9 +113,9 @@ def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str
             return manager.sync_participants(chm_id=chm_id)
         elif sync_type == "approvals":
             success1 = manager.generate_approvals(chm_id_to_target=chm_id)
-            # Generrate approvals email above with the option of just a single participant, but
+            # Generate approvals email above with the option of just a single participant, but
             # sync_approvals_to_chmeetings will always sync all approvals to ChMeetings.
-            success2 = manager.sync_approvals_to_chmeetings()
+            success2 = manager.sync_approvals_to_chmeetings(use_excel_fallback=excel_fallback)
             return success1 and success2
         elif sync_type == "validation":
             return manager.validate_data()
@@ -202,6 +206,29 @@ def test_connectivity(system: str = "all", test_type: str = "connectivity", test
                                     opts = field.get("options", [])
                                     opts_str = f" options={[(o.get('id'), o.get('name')) for o in opts]}" if opts else ""
                                     logger.info(f"    field_id={field.get('field_id')} | name={field.get('field_name')!r} | type={field.get('field_type')}{opts_str}")
+                            # 1b. Cross-reference CHM_FIELDS constants against live API
+                            from config import CHM_FIELDS
+                            all_api_field_names = set()
+                            for section in (sections if isinstance(sections, list) else []):
+                                for field in section.get("fields", []):
+                                    fname = field.get("field_name")
+                                    if fname:
+                                        all_api_field_names.add(fname)
+
+                            logger.info("=" * 60)
+                            logger.info("FIELD MAPPING VALIDATION (CHM_FIELDS vs live API)")
+                            logger.info("=" * 60)
+                            all_matched = True
+                            for key, expected_name in CHM_FIELDS.items():
+                                if expected_name in all_api_field_names:
+                                    logger.info(f"  OK  CHM_FIELDS[{key!r}] = {expected_name!r}")
+                                else:
+                                    logger.warning(f"  MISSING  CHM_FIELDS[{key!r}] = {expected_name!r} - NOT found in API fields!")
+                                    all_matched = False
+                            if all_matched:
+                                logger.info("  All CHM_FIELDS matched successfully.")
+                            else:
+                                logger.warning("  Some CHM_FIELDS did not match. Update config.py CHM_FIELDS if field names changed.")
                         else:
                             logger.warning("No field definitions returned")
 
@@ -399,10 +426,11 @@ def main() -> None:
             # However, run_sync already has a conditional warning for 'full' type.
             # Let's pass it and let run_sync decide.
 
+        excel_fallback = args.excel_fallback if hasattr(args, 'excel_fallback') else False
         manager = SyncManager()
         with manager:
-            # Pass the participant_chm_id to run_sync
-            success = run_sync(manager, args.type, chm_id=participant_chm_id)
+            # Pass the participant_chm_id and excel_fallback to run_sync
+            success = run_sync(manager, args.type, chm_id=participant_chm_id, excel_fallback=excel_fallback)
 # END --- Modified main() function's sync block in main.py ---
     elif args.command == "sync-churches":
         if not os.path.exists(args.file):
