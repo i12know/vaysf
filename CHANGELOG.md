@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Version 1.05 (2026-03-13) — 2026 API Upgrade
+## Version 1.05 (2026-03-13) — 2026 ChMeetings API Upgrade
 
 ### Breaking Changes
 - Removed Selenium support entirely — the middleware now uses only the ChMeetings API for all operations

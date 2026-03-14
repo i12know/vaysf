@@ -552,3 +552,67 @@ After completing the test suite, record:
 **Document Version:** 1.05
 **Last Updated:** March 13, 2026
 **Applicable to:** v1.05+ (API-only, CHM_FIELDS, no Selenium)
+
+## OLD INFO:
+
+## Testing Plan with 2025 Live Data
+
+Here's what I'd recommend, in order from safest to most impactful:
+
+### Step 1: Connectivity & Field Validation (read-only, safe)
+
+```bash
+python main.py test --system all --test-type connectivity
+python main.py test --system chmeetings --test-type api-inspect
+
+```
+
+The  `api-inspect`  is brand new — it'll confirm all 11  `CHM_FIELDS`  names match what ChMeetings actually has. This is the first real validation of our field mapping constants.
+
+### Step 2: Single Participant Sync (safe — just updates existing WP data)
+
+Pick a known 2025 participant and re-sync them:
+
+```bash
+python main.py sync --type participants --chm-id <a_known_2025_ID>
+
+```
+
+This tests the  `CHM_FIELDS`  mapping end-to-end with real data. Compare the WordPress record before and after — the data should be identical since nothing changed in ChMeetings.
+
+### Step 3: Test the API-based Approval Sync (this is the key test)
+
+This is the big one. Before running it, check your  `.env`:
+
+-   What is  `APPROVED_GROUP_NAME`  set to? It should be  `2025 Sports Fest`  currently.
+
+Then check whether there are any approved-but-not-synced participants in WordPress. You can dry-test by looking at the logs:
+
+```bash
+python main.py sync --type approvals
+
+```
+
+**What will happen:**
+
+-   The middleware will query WordPress for approved participants where  `synced_to_chmeetings = 0`
+-   If there are any, it will try to call  `add_person_to_group()`  to add them to the "2025 Sports Fest" group in ChMeetings
+-   If they're already in the group (likely, since 2025 is over), ChMeetings should handle that gracefully (either a no-op or a benign error)
+-   If there are none left to sync, it'll just log "No approved participants found" and exit cleanly
+
+Either outcome validates the new code path. If you want to test with the Excel fallback too:
+
+```bash
+python main.py sync --type approvals --excel-fallback
+
+```
+
+### Step 4: Verify page_size fix (optional)
+
+```bash
+python main.py sync --type participants
+
+```
+
+This full participant sync will exercise the fixed  `get_people()`  pagination. Watch the logs — you should see it paging through all participants correctly using whatever page_size the caller specifies.
+
