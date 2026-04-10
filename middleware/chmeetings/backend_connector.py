@@ -35,7 +35,7 @@ class ChMeetingsConnector:
         # Set headers with API key
         self.session.headers.update({
             "accept": "application/json",
-            "ApiKey": self.api_key  # Or try "Api-Key" or "Authorization" based on what works
+            "apikey": self.api_key
         })
         self.selenium_driver = None
         
@@ -193,7 +193,7 @@ class ChMeetingsConnector:
                 urljoin(self.api_url, f"api/v1/people/{person_id}")
             )
             response.raise_for_status()
-            return response.json()
+            return response.json().get("data")
         except requests.RequestException as e:
             logger.error(f"Failed to get person {person_id}: {str(e)}")
             return None
