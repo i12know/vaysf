@@ -433,4 +433,89 @@ def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data
 
         not_found = (sync_manager.wordpress_connector.get_participants({"chmeetings_id": "999999"}) or [None])[0]
         assert not_found is None, "Should return None for unknown chmeetings_id"
+
+def test_validate_data_pagination(sync_manager, mocker):
+    """validate_data() must fetch ALL participants across pages, not just the first page."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Pagination behaviour is verified in mock mode only")
+
+    # Page 1 returns a full page of 100 → loop must request page 2
+    page1 = [
+        {"participant_id": i, "church_id": 1, "is_church_member": True,
+         "primary_sport": "", "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""}
+        for i in range(1, 101)
+    ]
+    # Page 2 returns 5 items → signals last page (< per_page)
+    page2 = [
+        {"participant_id": i, "church_id": 1, "is_church_member": True,
+         "primary_sport": "", "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""}
+        for i in range(101, 106)
+    ]
+
+    call_count = {"n": 0}
+
+    def paged_get_participants(params=None):
+        call_count["n"] += 1
+        page = (params or {}).get("page", 1)
+        return page1 if page == 1 else page2
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
+                        side_effect=paged_get_participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "create_validation_issue",
+                        return_value={"issue_id": 1})
+
+    result = sync_manager.validate_data()
+
+    assert result, "validate_data() should return True with participants present"
+    assert call_count["n"] == 2, (
+        f"Expected exactly 2 page requests (page 1 full, page 2 partial), got {call_count['n']}"
+    )
+
+
+def test_sync_validation_issues_per_page(sync_manager, mocker):
+    """_sync_validation_issues() must pass per_page=200 to avoid silent PHP-default truncation."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("per_page param verification is a mock-only test")
+
+    from sync.participants import ParticipantSyncer
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    captured = {}
+
+    def capturing_get_validation_issues(params=None):
+        captured["params"] = params or {}
+        return []
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues",
+                        side_effect=capturing_get_validation_issues)
+    # Prevent _create_or_update_validation_issue from needing churches_cache
+    mocker.patch.object(participant_syncer, "_create_or_update_validation_issue")
+
+    issues = [{
+        "type": "missing_photo",
+        "description": "No photo uploaded",
+        "rule_code": "PHOTO_REQUIRED",
+        "rule_level": "INDIVIDUAL",
+        "severity": "WARNING",
+    }]
+
+    participant_syncer._sync_validation_issues("42", "RPC", issues, "2025-01-01")
+
+    assert "params" in captured, "get_validation_issues was never called"
+    assert captured["params"].get("per_page") == 200, (
+        f"Expected per_page=200, got: {captured['params']}"
+    )
+    assert captured["params"].get("participant_id") == "42"
+    assert captured["params"].get("status") == "open"
+
 ##### End of tests/test_sync_manager
