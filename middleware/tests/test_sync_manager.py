@@ -391,6 +391,13 @@ def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data
     chmeetings_id = "3505203"  # Jerry Phan from mock data
 
     if live_test:
+        # Discover a real participant from WordPress rather than assuming a hardcoded ID exists
+        all_participants = sync_manager.wordpress_connector.get_participants()
+        if not all_participants:
+            pytest.skip("No participants synced to WordPress yet — run a full sync first (FULL_LIVE_TEST=true)")
+        first = all_participants[0]
+        chmeetings_id = str(first["chmeetings_id"])
+        logger.info(f"Using live chmeetings_id: {chmeetings_id} ({first.get('first_name')} {first.get('last_name')})")
         participant = (sync_manager.wordpress_connector.get_participants({"chmeetings_id": chmeetings_id}) or [None])[0]
         if participant:
             logger.info(f"Found live participant by chmeetings_id: {participant['first_name']} {participant['last_name']}")
