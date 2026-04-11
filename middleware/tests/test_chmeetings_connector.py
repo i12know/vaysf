@@ -54,19 +54,88 @@ def test_get_people(chm_connector, mocker, mock_chm_people_data):
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
     if live_test:
         start = time.time()
-        people = chm_connector.get_people({"page": 1, "page_size": 10})
-        logger.info(f"Live people retrieved: {len(people)} - {people}, took {time.time() - start:.2f}s")
+        people = chm_connector.get_people()
+        elapsed = time.time() - start
+        logger.info(f"Live people retrieved: {len(people)} total, took {elapsed:.2f}s")
         assert isinstance(people, list), "Live people data should be a list"
         assert people, "Live test should return non-empty people list"
+        assert len(people) == 541, f"Expected 541 people from live ChMeetings, got {len(people)}"
     else:
         with pytest.MonkeyPatch.context() as mp:
             mock_response = mocker.Mock()
             mock_response.status_code = 200
-            # Use the full JSON data
-            mock_response.json.return_value = mock_chm_people_data
+            mock_response.json.return_value = {
+                "paging": {"total_count": 3, "page": 1, "page_size": 100},
+                "data": mock_chm_people_data,
+            }
             mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
-            people = chm_connector.get_people({"page": 1, "page_size": 50})
+            people = chm_connector.get_people()
             assert len(people) == 3, "Expected three people from mock data"
+
+
+def test_get_people_pagination(chm_connector, mocker, mock_chm_people_data):
+    """Verify multi-page pagination terminates correctly using total_count."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Pagination logic covered by test_get_people in live mode")
+
+    page1_data = mock_chm_people_data[:2]   # Jerry, Khoi
+    page2_data = mock_chm_people_data[2:]   # John
+
+    call_count = {"n": 0}
+
+    def paged_get(*args, **kwargs):
+        call_count["n"] += 1
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        if call_count["n"] == 1:
+            mock_resp.json.return_value = {
+                "paging": {"total_count": 3, "page": 1, "page_size": 2},
+                "data": page1_data,
+            }
+        else:
+            mock_resp.json.return_value = {
+                "paging": {"total_count": 3, "page": 2, "page_size": 2},
+                "data": page2_data,
+            }
+        return mock_resp
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("requests.Session.get", paged_get)
+        people = chm_connector.get_people()
+
+    assert len(people) == 3, "All 3 people should be collected across 2 pages"
+    assert call_count["n"] == 2, "Should have made exactly 2 page requests"
+
+
+def test_get_people_request_params(chm_connector, mocker):
+    """Verify include_additional_fields and include_family_members are sent."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Param verification is a mock-only test")
+
+    captured = {}
+
+    def capturing_get(url, **kwargs):
+        captured["params"] = kwargs.get("params", {})
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "paging": {"total_count": 0, "page": 1, "page_size": 100},
+            "data": [],
+        }
+        return mock_resp
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("requests.Session.get", capturing_get)
+        chm_connector.get_people()
+
+    assert captured["params"].get("include_additional_fields") is True, \
+        "include_additional_fields must be True"
+    assert captured["params"].get("include_family_members") is False, \
+        "include_family_members must be False"
+    assert captured["params"].get("page_size") == 100, \
+        "page_size should default to 100"
 
 def test_get_person(chm_connector, mocker, mock_chm_people_data):
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"

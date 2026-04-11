@@ -149,11 +149,16 @@ class ChMeetingsConnector:
         
         all_people = []
         page = 1
-        page_size = 50  # Adjust based on API limits if needed
+        page_size = 100
         params = params or {}
-        
+
         while True:
-            params.update({"page": page, "page_size": page_size})
+            params.update({
+                "page": page,
+                "page_size": page_size,
+                "include_additional_fields": True,
+                "include_family_members": False,
+            })
             try:
                 response = self.session.get(
                     urljoin(self.api_url, "api/v1/people"),
@@ -161,16 +166,21 @@ class ChMeetingsConnector:
                 )
                 response.raise_for_status()
                 data = response.json()
-                people = data if isinstance(data, list) else data.get("data", [])
+                people = data.get("data", [])
+                paging = data.get("paging", {})
+                total_count = paging.get("total_count", 0)
                 all_people.extend(people)
-                logger.info(f"Fetched page {page}: {len(people)} people")
-                if len(people) < page_size:  # No more pages
+                logger.info(
+                    f"Fetched page {page}: {len(people)} people "
+                    f"(total so far: {len(all_people)} / {total_count})"
+                )
+                if len(all_people) >= total_count or not people:
                     break
                 page += 1
             except requests.RequestException as e:
                 logger.error(f"Failed to get people on page {page}: {str(e)}")
                 break
-        
+
         return all_people
 
     
