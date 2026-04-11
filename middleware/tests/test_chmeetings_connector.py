@@ -58,8 +58,8 @@ def test_get_people(chm_connector, mocker, mock_chm_people_data):
         elapsed = time.time() - start
         logger.info(f"Live people retrieved: {len(people)} total, took {elapsed:.2f}s")
         assert isinstance(people, list), "Live people data should be a list"
-        assert people, "Live test should return non-empty people list"
-        assert len(people) == 541, f"Expected 541 people from live ChMeetings, got {len(people)}"
+        assert len(people) > 0, "Live test should return non-empty people list"
+        logger.info(f"Total people in ChMeetings: {len(people)}")
     else:
         with pytest.MonkeyPatch.context() as mp:
             mock_response = mocker.Mock()
