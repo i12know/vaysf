@@ -435,10 +435,8 @@ def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data
         assert not_found is None, "Should return None for unknown chmeetings_id"
 
 def test_validate_data_pagination(sync_manager, mocker):
-    """validate_data() must fetch ALL participants across pages, not just the first page."""
-    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
-    if live_test:
-        pytest.skip("Pagination behaviour is verified in mock mode only")
+    """validate_data() must fetch ALL participants across pages, not just the first page.
+    Runs in both mock and live mode — all external calls are patched by this test itself."""
 
     # Page 1 returns a full page of 100 → loop must request page 2
     page1 = [
@@ -476,10 +474,8 @@ def test_validate_data_pagination(sync_manager, mocker):
 
 
 def test_sync_validation_issues_per_page(sync_manager, mocker):
-    """_sync_validation_issues() must pass per_page=200 to avoid silent PHP-default truncation."""
-    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
-    if live_test:
-        pytest.skip("per_page param verification is a mock-only test")
+    """_sync_validation_issues() must pass per_page=200 to avoid silent PHP-default truncation.
+    Runs in both mock and live mode — all external calls are patched by this test itself."""
 
     from sync.participants import ParticipantSyncer
 
