@@ -406,7 +406,16 @@ def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data
             "church_name": "Orange County Church"
         }
         mock_response.json.return_value = [wp_participant]
-        mocker.patch.object(sync_manager.wordpress_connector.session, "get", return_value=mock_response)
+        empty_response = mocker.Mock(status_code=200)
+        empty_response.headers = {'X-WP-Total': '0', 'X-WP-TotalPages': '0'}
+        empty_response.json.return_value = []
+
+        def _mock_get(url, **kwargs):
+            if kwargs.get("params", {}).get("chmeetings_id") == chmeetings_id:
+                return mock_response
+            return empty_response
+
+        mocker.patch.object(sync_manager.wordpress_connector.session, "get", side_effect=_mock_get)
         participant = (sync_manager.wordpress_connector.get_participants({"chmeetings_id": chmeetings_id}) or [None])[0]
         assert participant is not None, "Should find participant by chmeetings_id"
         assert participant["first_name"] == "Jerry", "Should return correct participant"
