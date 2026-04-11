@@ -507,10 +507,26 @@ class SyncManager:
     def validate_data(self) -> bool:
         """Validate participant data against Sports Fest rules."""
         logger.info("Starting data validation...")
-        wp_participants = self.wordpress_connector.get_participants()
+        wp_participants = []
+        current_page = 1
+        fetch_per_page = 100
+        while True:
+            page_participants = self.wordpress_connector.get_participants(
+                params={"page": current_page, "per_page": fetch_per_page}
+            )
+            if not page_participants:
+                break
+            wp_participants.extend(page_participants)
+            if len(page_participants) < fetch_per_page:
+                break
+            current_page += 1
+            if current_page > 50:
+                logger.warning("Reached page limit (50) fetching participants for validation. Stopping.")
+                break
         if not wp_participants:
             logger.warning("No participants found for validation")
             return False
+        logger.info(f"Fetched {len(wp_participants)} participants for validation.")
 
         rules = self.get_validation_rules()
         participants_by_church = {}
