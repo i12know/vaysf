@@ -3,6 +3,7 @@ import json
 import pytest
 import sys
 import time
+import requests
 from chmeetings.backend_connector import ChMeetingsConnector
 from loguru import logger
 
@@ -195,6 +196,75 @@ def test_get_group_people(chm_connector, mocker, mock_chm_people_data):
             people = chm_connector.get_group_people("G1")
             assert len(people) == 2, "Expected two people in group from mock data"
             
+def test_add_person_to_group(chm_connector, mocker):
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    test_group_id = os.getenv("CHM_TEST_GROUP_ID", "")
+    test_person_id = os.getenv("CHM_TEST_PERSON_ID", "")
+
+    if live_test:
+        if not test_group_id or not test_person_id:
+            pytest.skip(
+                "Set CHM_TEST_GROUP_ID and CHM_TEST_PERSON_ID env vars to run live group membership tests"
+            )
+        result = chm_connector.add_person_to_group(test_group_id, test_person_id)
+        assert result, f"Live add_person_to_group failed for person {test_person_id} → group {test_group_id}"
+        logger.info(f"Live: added person {test_person_id} to group {test_group_id}")
+        # Verify membership via get_group_people
+        members = chm_connector.get_group_people(test_group_id)
+        member_ids = [str(m.get("person_id") or m.get("id", "")) for m in members]
+        assert test_person_id in member_ids, "Person not found in group after add"
+    else:
+        # 201 — newly added
+        mock_response = mocker.Mock()
+        mock_response.status_code = 201
+        mocker.patch.object(chm_connector.session, "post", return_value=mock_response)
+        assert chm_connector.add_person_to_group("G1", "P1") is True, "Should return True on 201"
+
+        # 200 — already a member (also success)
+        mock_response.status_code = 200
+        assert chm_connector.add_person_to_group("G1", "P1") is True, "Should return True on 200 (already member)"
+
+        # Failure — API error
+        mocker.patch.object(
+            chm_connector.session, "post",
+            side_effect=requests.RequestException("connection error")
+        )
+        assert chm_connector.add_person_to_group("G1", "P1") is False, "Should return False on error"
+
+
+def test_remove_person_from_group(chm_connector, mocker):
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    test_group_id = os.getenv("CHM_TEST_GROUP_ID", "")
+    test_person_id = os.getenv("CHM_TEST_PERSON_ID", "")
+
+    if live_test:
+        if not test_group_id or not test_person_id:
+            pytest.skip(
+                "Set CHM_TEST_GROUP_ID and CHM_TEST_PERSON_ID env vars to run live group membership tests"
+            )
+        # Remove (person was added by test_add_person_to_group above)
+        result = chm_connector.remove_person_from_group(test_group_id, test_person_id)
+        assert result, f"Live remove_person_from_group failed for person {test_person_id} → group {test_group_id}"
+        logger.info(f"Live: removed person {test_person_id} from group {test_group_id}")
+        # Verify no longer a member
+        members = chm_connector.get_group_people(test_group_id)
+        member_ids = [str(m.get("person_id") or m.get("id", "")) for m in members]
+        assert test_person_id not in member_ids, "Person still in group after remove"
+    else:
+        # Success — 200
+        mock_response = mocker.Mock()
+        mock_response.status_code = 200
+        mocker.patch.object(chm_connector.session, "delete", return_value=mock_response)
+        assert chm_connector.remove_person_from_group("G1", "P1") is True, "Should return True on 200"
+
+        # Failure — API error (e.g. person not in group)
+        mocker.patch.object(
+            chm_connector.session, "delete",
+            side_effect=requests.RequestException("not found")
+        )
+        assert chm_connector.remove_person_from_group("G1", "P1") is False, "Should return False on error"
+
+
 def test_get_groups(chm_connector, mocker):
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
     if live_test:

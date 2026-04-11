@@ -259,7 +259,60 @@ class ChMeetingsConnector:
         except requests.RequestException as e:
             logger.error(f"Failed to get people in group {group_id}: {str(e)}")
             return []
-    
+
+    def add_person_to_group(self, group_id: str, person_id: str) -> bool:
+        """
+        Add a person to a ChMeetings group.
+
+        Returns True if successful.
+        Note: 201 = newly added, 200 = already a member — both are success.
+
+        Args:
+            group_id: The group ID
+            person_id: The person ID to add
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return False
+        try:
+            response = self.session.post(
+                urljoin(self.api_url, f"api/v1/groups/{group_id}/memberships"),
+                json={"person_id": person_id}
+            )
+            response.raise_for_status()
+            logger.info(
+                f"Added person {person_id} to group {group_id} "
+                f"(status {response.status_code})"
+            )
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Failed to add person {person_id} to group {group_id}: {e}")
+            return False
+
+    def remove_person_from_group(self, group_id: str, person_id: str) -> bool:
+        """
+        Remove a person from a ChMeetings group.
+
+        Returns True if successful, False if not found or error.
+
+        Args:
+            group_id: The group ID
+            person_id: The person ID to remove
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return False
+        try:
+            response = self.session.delete(
+                urljoin(self.api_url, f"api/v1/groups/{group_id}/memberships/{person_id}")
+            )
+            response.raise_for_status()
+            logger.info(f"Removed person {person_id} from group {group_id}")
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Failed to remove person {person_id} from group {group_id}: {e}")
+            return False
+
     def update_person_via_selenium(self, person_id: str, update_data: Dict[str, Any]) -> bool:
         """
         Update a person record using Selenium (for cases where API doesn't support the operation).
