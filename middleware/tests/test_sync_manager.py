@@ -385,7 +385,7 @@ def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data
     mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2025-07-19")  # Updated path
 
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
-    chmeetings_id = "3505207"  # Jerry Phan from mock data
+    chmeetings_id = "3505203"  # Jerry Phan from mock data
 
     if live_test:
         participant = (sync_manager.wordpress_connector.get_participants({"chmeetings_id": chmeetings_id}) or [None])[0]

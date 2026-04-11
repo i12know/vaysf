@@ -109,7 +109,7 @@ def test_get_person(chm_connector, mocker, mock_chm_people_data):
             # Use next with a default value to avoid StopIteration if the ID is missing
             person_data = next((p for p in mock_chm_people_data if str(p["id"]) == person_id), None)
             assert person_data is not None, "Mock data should contain the person"
-            mock_response.json.return_value = person_data
+            mock_response.json.return_value = {"data": person_data}
             mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
             person = chm_connector.get_person(person_id)
             assert str(person["id"]) == person_id, "Person ID mismatch"  # Convert to string here
