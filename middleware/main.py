@@ -39,10 +39,16 @@ def parse_args() -> argparse.Namespace:
                                       help="Path to the church Excel file")
 
     # Group assignment command
-    group_assignment_parser = subparsers.add_parser("assign-groups", 
-                                             help="Create group assignments for people with church codes")
-    group_assignment_parser.add_argument("--output", help="Output directory path", 
-                                             default=DATA_DIR)
+    group_assignment_parser = subparsers.add_parser(
+        "assign-groups",
+        help="Assign ChMeetings people to church team groups via direct API calls",
+    )
+    group_assignment_parser.add_argument("--output", help="Output directory path",
+                                         default=DATA_DIR)
+    group_assignment_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Preview only — show who would be assigned without making API calls",
+    )
 
     # Export command
     export_parser = subparsers.add_parser("export-church-teams", help="Export church team status reports")
@@ -340,15 +346,14 @@ def main() -> None:
             with SyncManager() as manager:
                 success = manager.sync_churches_from_excel(args.file)  # Fixed
     elif args.command == "assign-groups":
-        from group_assignment import export_people_with_church_codes
-        success = export_people_with_church_codes()
+        from group_assignment import assign_people_to_church_team_groups
+        dry_run = getattr(args, "dry_run", False)
+        success = assign_people_to_church_team_groups(dry_run=dry_run)
         if success:
-            logger.info(f"Group assignment file created successfully at: {success}")
-            # Try to open the file for the user
-            import platform
-            import subprocess
-            if platform.system() == 'Windows':
-                os.startfile(success)
+            if dry_run:
+                logger.info("Dry-run complete. Check data/church_team_assignments.xlsx for the preview.")
+            else:
+                logger.info("Group assignment complete. Check data/church_team_assignments.xlsx for the audit log.")
     elif args.command == "export-church-teams":
         output_path = Path(args.output) 
         try:

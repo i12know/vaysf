@@ -514,4 +514,102 @@ def test_sync_validation_issues_per_page(sync_manager, mocker):
     assert captured["params"].get("participant_id") == "42"
     assert captured["params"].get("status") == "open"
 
+
+# ---------------------------------------------------------------------------
+# Tests for sync_approvals_to_chmeetings() — Issue #60
+# All three tests are pure mock tests (no LIVE_TEST guard needed).
+# ---------------------------------------------------------------------------
+
+def test_sync_approvals_api_happy(sync_manager, mocker):
+    """Happy path: 2 approved participants → add_person_to_group called twice,
+    both marked synced in WordPress."""
+    participants = [
+        {"participant_id": 1, "chmeetings_id": "CHM1", "first_name": "Alice", "last_name": "A"},
+        {"participant_id": 2, "chmeetings_id": "CHM2", "first_name": "Bob",   "last_name": "B"},
+    ]
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
+                        return_value=participants)
+
+    groups = [{"id": 999, "name": "2025 Sports Fest"}]
+    mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=groups)
+    mocker.patch.object(sync_manager.chm_connector, "add_person_to_group", return_value=True)
+
+    approvals = [
+        {"approval_id": 10, "participant_id": 1},
+        {"approval_id": 20, "participant_id": 2},
+    ]
+    mocker.patch.object(sync_manager.wordpress_connector, "get_approvals",
+                        return_value=approvals)
+    mocker.patch.object(sync_manager.wordpress_connector, "update_approval",
+                        return_value=True)
+
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2025 Sports Fest")
+
+    result = sync_manager.sync_approvals_to_chmeetings()
+
+    assert result is True
+    assert sync_manager.chm_connector.add_person_to_group.call_count == 2
+    sync_manager.chm_connector.add_person_to_group.assert_any_call("999", "CHM1")
+    sync_manager.chm_connector.add_person_to_group.assert_any_call("999", "CHM2")
+    assert sync_manager.wordpress_connector.update_approval.call_count == 2
+
+
+def test_sync_approvals_group_not_found(sync_manager, mocker):
+    """If APPROVED_GROUP_NAME doesn't exist in ChMeetings, return False immediately
+    and make zero update_approval calls."""
+    participants = [
+        {"participant_id": 1, "chmeetings_id": "CHM1", "first_name": "Alice", "last_name": "A"},
+    ]
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
+                        return_value=participants)
+
+    # Group list has no entry matching APPROVED_GROUP_NAME
+    mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=[
+        {"id": 1, "name": "Some Other Group"},
+    ])
+    mock_update = mocker.patch.object(sync_manager.wordpress_connector, "update_approval",
+                                      return_value=True)
+
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2025 Sports Fest")
+
+    result = sync_manager.sync_approvals_to_chmeetings()
+
+    assert result is False
+    mock_update.assert_not_called()
+
+
+def test_sync_approvals_partial_failure(sync_manager, mocker):
+    """First add succeeds, second fails → only the first is marked synced,
+    function returns False (failed_count > 0)."""
+    participants = [
+        {"participant_id": 1, "chmeetings_id": "CHM1", "first_name": "Alice", "last_name": "A"},
+        {"participant_id": 2, "chmeetings_id": "CHM2", "first_name": "Bob",   "last_name": "B"},
+    ]
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
+                        return_value=participants)
+
+    groups = [{"id": 999, "name": "2025 Sports Fest"}]
+    mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=groups)
+    # First call True, second False
+    mocker.patch.object(sync_manager.chm_connector, "add_person_to_group",
+                        side_effect=[True, False])
+
+    approvals = [
+        {"approval_id": 10, "participant_id": 1},
+        {"approval_id": 20, "participant_id": 2},
+    ]
+    mocker.patch.object(sync_manager.wordpress_connector, "get_approvals",
+                        return_value=approvals)
+    mock_update = mocker.patch.object(sync_manager.wordpress_connector, "update_approval",
+                                      return_value=True)
+
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2025 Sports Fest")
+
+    result = sync_manager.sync_approvals_to_chmeetings()
+
+    assert result is False  # failed_count == 1
+    # Only participant 1 (Alice) should have been marked synced
+    assert mock_update.call_count == 1
+    mock_update.assert_called_once_with(10, {"synced_to_chmeetings": True})
+
 ##### End of tests/test_sync_manager
