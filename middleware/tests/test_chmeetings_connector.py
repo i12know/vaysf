@@ -72,34 +72,27 @@ def test_get_person(chm_connector, mocker, mock_chm_people_data):
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
     # Use an ID that exists in mock_chm_people_data.json
     person_id = "3505203"  # Jerry Phan - Keep as string
-## NEW CODE:
+
     if live_test:
+        # Discover a real person ID from the live API (page 1, first record)
+        people = chm_connector.get_people({"page": 1, "page_size": 1})
+        assert people, "Live get_people returned no records — cannot test get_person"
+        person_id = str(people[0]["id"])
+        logger.info(f"Using live person_id: {person_id}")
+
         start = time.time()
         person = chm_connector.get_person(person_id)
-        
-        # Enhanced logging - dump the full raw person data
+
         logger.info("========== FULL RAW PERSON DATA ==========")
         logger.info(f"Person ID: {person_id}")
-        
-        # Log all top-level fields
         for key, value in person.items():
             if key != "additional_fields":
                 logger.info(f"{key}: {value}")
-        
-        # Log each additional field separately for clarity
         logger.info("-------- ADDITIONAL FIELDS --------")
-        if "additional_fields" in person:
-            additional_fields = person["additional_fields"]
-            for field in additional_fields:
-                field_name = field.get("field_name", "Unknown")
-                field_value = field.get("value", "None")
-                logger.info(f"Field: {field_name} = {field_value}")
-        
+        for field in person.get("additional_fields", []):
+            logger.info(f"Field: {field.get('field_name', 'Unknown')} = {field.get('value', 'None')}")
         logger.info("========== END OF RAW PERSON DATA ==========")
-## OLD CODE:
-#    if live_test:
-#        start = time.time()
-#        person = chm_connector.get_person(person_id)
+
         logger.info(f"Live person retrieved: {person}, took {time.time() - start:.2f}s")
         assert person is not None, "Live person retrieval failed"
     else:

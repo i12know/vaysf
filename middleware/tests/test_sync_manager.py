@@ -230,6 +230,9 @@ def test_validate_participant(sync_manager, mocker):
 def test_sync_participants(sync_manager, mocker, mock_chmeetings_data):
     """Test participant sync to sf_participants and sf_rosters with role filtering and proper validation issue tracking."""
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    full_live_test = os.getenv("FULL_LIVE_TEST", "false").strip().lower() == "true"
+    if live_test and not full_live_test:
+        pytest.skip("Full participant sync skipped in standard LIVE_TEST mode — set FULL_LIVE_TEST=true to run")
 
     # Patch config values
     mocker.patch("sync.participants.Config.TEAM_PREFIX", "Team")
