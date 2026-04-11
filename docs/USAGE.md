@@ -4,6 +4,11 @@ This guide provides instructions for using the Sports Fest ChMeetings Integratio
 
 ## Table of Contents
 
+- [Running Tests](#running-tests)
+  - [Mock Mode (Default)](#mock-mode-default)
+  - [Live Mode](#live-mode)
+  - [Live Group Membership Tests](#live-group-membership-tests)
+  - [Full Live Tests](#full-live-tests)
 - [Windows Middleware](#windows-middleware)
   - [Running Synchronization Tasks](#running-synchronization-tasks)
   - [Exporting Church Team Reports](#exporting-church-team-reports)
@@ -25,6 +30,78 @@ This guide provides instructions for using the Sports Fest ChMeetings Integratio
   - [During Registration Period](#during-registration-period)
   - [Final Preparations](#final-preparations)
   - [After Sports Fest](#after-sports-fest)
+
+## Running Tests
+
+The middleware ships with a pytest-based test suite covering all connectors and sync logic. Tests run in two modes: **mock** (fast, no credentials) and **live** (hits real APIs).
+
+All commands below assume you are in the `vaysf/middleware/` directory.
+
+### Environment Variables for Testing
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LIVE_TEST` | `false` | Set to `true` to run all tests against live APIs |
+| `FULL_LIVE_TEST` | `false` | Set to `true` to also run the full participant sync (~570 people, takes several minutes) |
+| `CHM_TEST_GROUP_ID` | _(none)_ | ChMeetings group ID for live group membership round-trip tests |
+| `CHM_TEST_PERSON_ID` | _(none)_ | ChMeetings person ID for live group membership round-trip tests |
+
+### Mock Mode (Default)
+
+No credentials required. All external API calls are intercepted by mock objects.
+
+```bash
+pytest tests/ -v
+```
+
+Expected result: `27 passed, 5 skipped` (skipped tests require live mode).
+
+### Live Mode
+
+Requires valid `.env` with `CHM_API_URL`, `CHM_API_KEY`, `WP_URL`, and `WP_API_KEY`.
+
+**Windows CMD:**
+```cmd
+set LIVE_TEST=true && pytest tests/ -v -s
+```
+
+**Windows PowerShell:**
+```powershell
+$env:LIVE_TEST="true"; pytest tests/ -v -s
+```
+
+Expected result: most tests pass; `test_sync_participants` is skipped unless `FULL_LIVE_TEST=true` is also set.
+
+### Live Group Membership Tests
+
+`test_add_person_to_group` and `test_remove_person_from_group` perform a self-cleaning round-trip: add a person to a group, confirm they appear in `get_group_people()`, then remove them and confirm they're gone. These tests are skipped if either env var is missing.
+
+**How to find the IDs:**
+- **Group ID**: From the ChMeetings group URL — e.g., `?gid=999847` → use `999847`
+- **Person ID**: From a member's profile URL — e.g., `.../MemberDashboard/3692903` → use `3692903`
+
+**Windows CMD:**
+```cmd
+set LIVE_TEST=true
+set CHM_TEST_GROUP_ID=999847
+set CHM_TEST_PERSON_ID=3692903
+pytest tests/test_chmeetings_connector.py::test_add_person_to_group tests/test_chmeetings_connector.py::test_remove_person_from_group -v -s
+```
+
+**Warning:** Use a disposable test group/person. The test adds then immediately removes the person; if it crashes mid-way the person may remain in the group and need to be removed manually.
+
+### Full Live Tests
+
+Includes `test_sync_participants`, which processes all registered participants and takes several minutes.
+
+**Windows CMD:**
+```cmd
+set LIVE_TEST=true && set FULL_LIVE_TEST=true && pytest tests/ -v -s
+```
+
+For details on what each API call does and how the response format changed in 2026, see [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md).
+
+---
 
 ## Windows Middleware
 

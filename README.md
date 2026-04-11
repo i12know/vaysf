@@ -1,4 +1,4 @@
-# Sports Fest 2025 ChMeetings Integration
+# Sports Fest 2026 ChMeetings Integration
 
 ## Overview
 
@@ -41,8 +41,8 @@ The system uses a three-tier architecture:
 ## Quick Start
 
 1. **Prerequisites**
-   - Windows 10/11 with Python 3.8+
-   - ChMeetings account
+   - Windows 10/11 with Python 3.10+
+   - ChMeetings account with API key
    - WordPress site with the VAYSF plugin installed
 
 2. **Installation**
@@ -51,15 +51,27 @@ The system uses a three-tier architecture:
 # Clone the repository
 git clone https://github.com/i12know/vaysf.git
 
-# Install dependencies
-cd vaysf
+# Install dependencies (all middleware code lives under middleware/)
+cd vaysf\middleware
 pip install -r requirements.txt
 
 # Copy .env.template to .env and edit with your credentials
-cp .env.template .env
+copy .env.template .env
 ```
 
-3. **Basic Usage**
+3. **Running Tests**
+
+```bash
+# From the middleware/ directory — mock mode (no credentials needed)
+pytest tests/ -v
+
+# Live mode (requires .env with real API keys)
+set LIVE_TEST=true && pytest tests/ -v -s
+```
+
+See [USAGE.md](docs/USAGE.md#running-tests) for full testing options including live group membership tests.
+
+4. **Basic Usage**
 
 ```bash
 # Run a full sync
@@ -86,23 +98,25 @@ For detailed setup and usage instructions, see the [Installation Guide](docs/INS
 ## Documentation
 
 - [Installation Guide](docs/INSTALLATION.md)
-- [Architecture Overview](ARCHITECTURE.md)
+- [Architecture Overview](docs/ARCHITECTURE.md)
 - [Usage Guide](docs/USAGE.md)
+- [ChMeetings API Migration](docs/CHMEETINGS_API_MIGRATION.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Contributing](CONTRIBUTING.md)
+- [Contributing](docs/CONTRIBUTING.md)
 
 ## Project Status
 
-The system has been thoroughly tested and is ready for production use for Sports Fest 2025. All core functionality is fully implemented and tested, including recent improvements:
+The system is actively maintained and ready for production use for Sports Fest 2026. All core functionality is fully implemented and tested, including recent improvements:
 
 - Church synchronization from Excel to WordPress
-- Participant synchronization from ChMeetings to WordPress
+- Participant synchronization from ChMeetings to WordPress (v1.05: robust pagination via `total_count`)
 - Validation system with JSON rules
 - Pastor approval workflow
 - WordPress admin interface
 - Enhanced reporting capabilities for church representatives
+- Direct ChMeetings group membership management via API (v1.05)
 
-The functionality covers the complete operational workflow from registration to participation, with robust error handling and recovery mechanisms. Recent updates in v1.01 and v1.02 have improved system reliability and added valuable debugging and reporting tools.
+The functionality covers the complete operational workflow from registration to participation, with robust error handling and recovery mechanisms. Recent updates through v1.05 have resolved ChMeetings API migration issues and added direct group membership management.
 
 ## License
 

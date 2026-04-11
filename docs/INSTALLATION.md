@@ -7,7 +7,7 @@ This guide provides step-by-step instructions for setting up the Sports Fest ChM
 ### Windows Middleware Requirements
 
 - Windows 10 or Windows 11
-- Python 3.8 or higher
+- Python 3.10 or higher
 - Administrator privileges (for initial setup)
 - Internet connection
 - Microsoft Excel (for viewing and managing Excel files)
@@ -30,7 +30,7 @@ This guide provides step-by-step instructions for setting up the Sports Fest ChM
 
 ### 1. Install Python
 
-1. Download Python 3.8+ from [python.org](https://www.python.org/downloads/windows/)
+1. Download Python 3.10+ from [python.org](https://www.python.org/downloads/windows/)
 2. Run the installer, checking "Add Python to PATH"
 3. Verify installation by opening Command Prompt and typing:
    ```
@@ -43,10 +43,10 @@ This guide provides step-by-step instructions for setting up the Sports Fest ChM
 # Clone using Git
 git clone https://github.com/i12know/vaysf.git
 
-# Navigate to the project directory
-cd vaysf
+# Navigate to the middleware directory (all Python code lives here)
+cd vaysf\middleware
 
-# Or download and extract the ZIP file from GitHub
+# Or download and extract the ZIP file from GitHub, then cd into vaysf\middleware
 ```
 
 ### 3. Install Dependencies
@@ -56,7 +56,7 @@ cd vaysf
 python -m venv venv
 venv\Scripts\activate
 
-# Install required packages
+# Install required packages (run from vaysf\middleware)
 pip install -r requirements.txt
 ```
 
@@ -119,11 +119,24 @@ If you plan to use Selenium for ChMeetings operations:
 
 ### 6. Verify Installation
 
-Run a basic test to ensure everything is set up correctly:
+Run the test suite to confirm the middleware is correctly installed. All tests should pass in mock mode without any API credentials:
 
 ```bash
-python main.py test --system all --test-type connectivity
+# From vaysf\middleware (mock mode — no credentials required)
+pytest tests/ -v
 ```
+
+A passing run shows something like: `27 passed, 5 skipped`.
+
+To verify live API connectivity (requires `.env` with real credentials):
+
+```bash
+set LIVE_TEST=true && pytest tests/ -v -s
+```
+
+**Note:** `pytest.ini` in the `middleware/` directory configures the Python import path automatically. You do not need to set `PYTHONPATH` manually.
+
+For full testing options (including live group membership tests), see the [Usage Guide](USAGE.md#running-tests).
 
 ## WordPress Plugin Installation
 

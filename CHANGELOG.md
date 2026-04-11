@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## Version 1.05 (2026-04-11)
+
+ChMeetings API Migration (Issues #56–#59):
+- Fixed [#57](https://github.com/i12know/vaysf/issues/57): Auth header casing — `ApiKey` → `apikey` for strict gateway compatibility
+- Fixed [#56](https://github.com/i12know/vaysf/issues/56): `get_person()` now correctly unwraps the `{"data": {...}}` response envelope
+- Fixed [#58](https://github.com/i12know/vaysf/issues/58): Rewrote `get_people()` pagination to use `total_count` (robust termination); added `include_additional_fields=True` and `include_family_members=False` params; added `test_get_people_pagination` and `test_get_people_request_params` tests
+- Added [#59](https://github.com/i12know/vaysf/issues/59): `add_person_to_group()` and `remove_person_from_group()` API methods with live round-trip test gate (`CHM_TEST_GROUP_ID` / `CHM_TEST_PERSON_ID` env vars)
+- Added `middleware/pytest.ini` to fix `ModuleNotFoundError` when running `pytest` from the `middleware/` directory
+- Added `FULL_LIVE_TEST` env var gate to skip the long-running full-sync test in standard `LIVE_TEST=true` mode
+- Created `docs/CHMEETINGS_API_MIGRATION.md` documenting all API migration changes
+
 ## Version 1.04 (2025-07-17)
 - Fixed issue [#42](https://github.com/i12know/vaysf/issues/42): Resend approval email now generates fresh tokens with proper expiry dates instead of using expired tokens
 - Added: "Is_Member_ChM" and "Photo" columns to Roster tab in church team reports; Photo column displays images using IMAGE() formula (use Excel Ctrl+H to replace "=@IMAGE" with "=IMAGE" if needed)
