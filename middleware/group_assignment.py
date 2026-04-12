@@ -1,6 +1,7 @@
 # middleware/group_assignment.py
 import os
 import sys
+import time
 import pandas as pd
 from loguru import logger
 from config import Config, DATA_DIR
@@ -107,6 +108,7 @@ def assign_people_to_church_team_groups(dry_run: bool = False) -> bool:
                 outcome = "dry_run"
             else:
                 ok = chm_connector.add_person_to_group(group_id, person["person_id"])
+                time.sleep(0.2)  # 200 ms between calls — avoids 429 rate limit
                 if ok:
                     added += 1
                     outcome = "added"

@@ -5,6 +5,7 @@
 
 import os
 import json
+import time
 from typing import Dict, Any, Optional
 from loguru import logger
 from config import (Config, DATA_DIR, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION,
@@ -452,6 +453,7 @@ class SyncManager:
             ok = self.chm_connector.add_person_to_group(
                 approved_group_id, str(chmeetings_id)
             )
+            time.sleep(0.2)  # 200 ms between calls → ~5 req/s, avoids 429 rate limit
             if ok:
                 successfully_synced_ids.append(wp_participant_id)
             else:
