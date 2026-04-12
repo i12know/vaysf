@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## Version 1.06 (2026-04-12)
+
+Replaced Excel export workarounds with direct ChMeetings API calls (Issue #60):
+- Rewrote [#60](https://github.com/i12know/vaysf/issues/60): `group_assignment.py` now calls `add_person_to_group()` directly — no more `chm_group_import.xlsx` or manual ChMeetings import step
+- Added `--dry-run` flag to `assign-groups` CLI command (previews who would be assigned, writes audit xlsx, zero API calls)
+- `church_team_assignments.xlsx` audit file is still written every run (both live and dry-run) as a record
+- Rewrote `sync_approvals_to_chmeetings()` in `sync/manager.py` to use `add_person_to_group()` instead of Excel; fails hard if `APPROVED_GROUP_NAME` group not found in ChMeetings
+- `synced_to_chmeetings=True` is now set per-person based on API success (not xlsx write success)
+- Removed `import pandas as pd` from `sync/manager.py` (no longer used there)
+- Added 429 rate-limit retry with 2/5/10 s back-off to `add_person_to_group()` in the ChMeetings connector
+- Added preventive 200 ms delay between API calls in both `sync_approvals_to_chmeetings()` and `assign_people_to_church_team_groups()` to stay under the ChMeetings rate limit
+- Added `PermissionError` handling when audit xlsx is open in Excel on Windows
+- Added 7 new mock tests in `tests/test_group_assignment.py`
+- Added 3 new mock tests for `sync_approvals_to_chmeetings()` in `tests/test_sync_manager.py`
+- Opened [#61](https://github.com/i12know/vaysf/issues/61): `get_approvals()` `synced_to_chmeetings` filter not working in WordPress REST API
+
 ## Version 1.05 (2026-04-11)
 
 ChMeetings API Migration (Issues #56–#59):

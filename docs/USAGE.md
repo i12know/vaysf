@@ -217,22 +217,32 @@ python main.py export-church-teams --force-resend-validate2 (no review yet - no 
 ##### Resend to specific church
 python main.py export-church-teams --church-code TLC --force-resend-pending
 
-### Church Group Assignment Export
+### Church Group Assignment
 
-Identify participants who need to be added to their respective church team groups in ChMeetings:
+Assign participants to their church team groups in ChMeetings directly via API:
 
 ```bash
+# Preview who would be assigned (no API calls made)
+python main.py assign-groups --dry-run
+
+# Live: assign unassigned participants to their Team groups
 python main.py assign-groups
 ```
 
 This command:
-- Scans ChMeetings for participants with Church Codes who aren't in their church's team group
-- Creates an Excel file listing these participants
-- Generates a ChMeetings-importable file (`chm_group_import.xlsx`) to easily add them to their "Team [Code]" groups
+- Scans ChMeetings for participants with a "Church Team" additional field who are not yet in their `Team [Code]` group
+- Calls `add_person_to_group()` directly for each unassigned participant — no Excel import step required
+- Writes `data/church_team_assignments.xlsx` as an audit log (in both live and dry-run modes); the `Outcome` column shows `added`, `failed`, `missing_group`, or `dry_run` per person
+- Logs a warning and skips any church code that has no matching group in ChMeetings (e.g. `Team OTHER` if that group doesn't exist)
+- Safe to re-run — participants already in their group are detected during identification and skipped
 
-The Excel files are saved in the `data/` directory by default. On Windows, the system will attempt to automatically open the file upon successful generation.
+> **Note:** Close `church_team_assignments.xlsx` in Excel before running, or you will see a warning that the audit file could not be written (the API calls still complete successfully).
 
-After running this command, you should import the generated file into ChMeetings (or manually add the people to groups) to ensure every participant is in the correct church group.
+After assigning participants to their Team groups, run the approval sync to add approved participants to the `2025 Sports Fest` group:
+
+```bash
+python main.py sync --type approvals
+```
 
 ### Scheduled Syncs
 

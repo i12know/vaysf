@@ -184,21 +184,47 @@ pytest tests/test_chmeetings_connector.py::test_add_person_to_group tests/test_c
 
 ---
 
-## Remaining Work — Issue #60
+## Change #5 — Replace Excel export workaround with direct API calls (Issue #60)
 
-Issue #60 tracks replacing the manual Excel-based group assignment workflow in `group_assignment.py` with direct API calls using the new `add_person_to_group()` method from Change #4.
+### Problem
+`group_assignment.py` generated an Excel file (`chm_group_import.xlsx`) and printed a message telling the operator to manually import it in ChMeetings. Similarly, `sync_approvals_to_chmeetings()` wrote `group_import_approved_participants.xlsx` and required a manual import step for the `2025 Sports Fest` group.
 
-**Current flow (workaround):**
-1. Run `python main.py assign-groups`
-2. System generates `chm_group_import.xlsx`
-3. Admin manually imports file into ChMeetings
+### Files Changed
+- `middleware/group_assignment.py` — complete rewrite of action step
+- `middleware/sync/manager.py` — `sync_approvals_to_chmeetings()` rewritten; `import pandas` removed
+- `middleware/main.py` — `assign-groups` subparser gets `--dry-run` flag
+- `middleware/chmeetings/backend_connector.py` — 429 retry added to `add_person_to_group()`
 
-**Target flow (post-#60):**
-1. Run `python main.py assign-groups`
-2. System directly calls `add_person_to_group()` for each unassigned participant
-3. No manual import step needed
+### New flow — `assign-groups`
 
-See Issue #60 for implementation details and acceptance criteria.
+```bash
+python main.py assign-groups           # live: assigns via API
+python main.py assign-groups --dry-run # preview only, no API calls
+```
+
+- Builds `name → id` lookup from `get_groups()`
+- Calls `add_person_to_group(group_id, person_id)` per unassigned person
+- Writes `data/church_team_assignments.xlsx` audit file (both modes)
+- Missing group (e.g. `Team OTHER` not in ChMeetings): warns and skips, does not fail
+- `PermissionError` when xlsx is open in Excel: warns and continues
+
+### New flow — `sync --type approvals`
+
+- Looks up `APPROVED_GROUP_NAME` group via `get_groups()` — fails hard if not found
+- Calls `add_person_to_group()` for each approved WP participant
+- Marks `synced_to_chmeetings=True` per-person only on API success
+- No Excel file generated; no manual import step
+
+### Rate limiting
+
+ChMeetings enforces a rate limit (~5 req/s) on group membership writes. Two safeguards added:
+
+1. **Preventive 200 ms delay** between each `add_person_to_group()` call in both calling loops
+2. **Retry with back-off** inside `add_person_to_group()` itself: on HTTP 429, waits 2 s → 5 s → 10 s before each of 3 retries; gives up and returns `False` after the third retry
+
+### Known limitation — Issue #61
+
+`get_approvals(synced_to_chmeetings=False)` consistently returns 0 records because the WordPress REST API endpoint does not support the `synced_to_chmeetings` filter parameter. As a result, `sf_approvals` rows are never updated to `synced_to_chmeetings=1`. This is safe (the ChMeetings add is idempotent — HTTP 200 for already-members) but wastes API calls on re-runs. Tracked in [Issue #61](https://github.com/i12know/vaysf/issues/61).
 
 ---
 
