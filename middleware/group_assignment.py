@@ -128,8 +128,15 @@ def assign_people_to_church_team_groups(dry_run: bool = False) -> bool:
         output_dir = DATA_DIR
         os.makedirs(output_dir, exist_ok=True)
         audit_file = os.path.join(output_dir, "church_team_assignments.xlsx")
-        pd.DataFrame(audit_rows).to_excel(audit_file, index=False)
-        logger.info(f"Audit file written: {audit_file}")
+        try:
+            pd.DataFrame(audit_rows).to_excel(audit_file, index=False)
+            logger.info(f"Audit file written: {audit_file}")
+        except PermissionError:
+            logger.warning(
+                f"Could not write audit file — {audit_file} is open in another program. "
+                "Close the file and re-run to get an updated audit log. "
+                "API calls already made above are unaffected."
+            )
 
         if dry_run:
             logger.info(
