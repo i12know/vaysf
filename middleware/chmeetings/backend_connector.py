@@ -193,7 +193,11 @@ class ChMeetingsConnector:
                 urljoin(self.api_url, f"api/v1/people/{person_id}")
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            # Unwrap {"status_code":..., "data": {...}} envelope if present
+            if isinstance(data, dict) and "data" in data:
+                data = data["data"]
+            return data
         except requests.RequestException as e:
             logger.error(f"Failed to get person {person_id}: {str(e)}")
             return None
