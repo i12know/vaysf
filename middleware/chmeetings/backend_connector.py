@@ -313,10 +313,109 @@ class ChMeetingsConnector:
             
             return False
     
+    def get_member_fields(self) -> List[Dict[str, Any]]:
+        """
+        Retrieve all custom field definitions from ChMeetings.
+
+        Calls GET /api/v1/people/fields and returns the full list of field
+        definitions, each containing field_id, field_name, field_type, and
+        available options.
+
+        Returns:
+            List of field definition dicts, or empty list on failure.
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return []
+        try:
+            response = self.session.get(
+                urljoin(self.api_url, "api/v1/people/fields")
+            )
+            response.raise_for_status()
+            data = response.json()
+            fields = data if isinstance(data, list) else data.get("data", [])
+            logger.info(f"Retrieved {len(fields)} custom field definitions")
+            return fields
+        except requests.RequestException as e:
+            logger.error(f"Failed to get member fields: {str(e)}")
+            return []
+
+    def add_member_note(self, person_id: str, note_text: str) -> bool:
+        """
+        Write a note to a person's ChMeetings profile.
+
+        Calls POST /api/v1/people/{person_id}/notes.
+
+        Args:
+            person_id: ChMeetings person ID.
+            note_text: Plain-text note content to store on the profile.
+
+        Returns:
+            True if the note was created successfully, False otherwise.
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return False
+        try:
+            response = self.session.post(
+                urljoin(self.api_url, f"api/v1/people/{person_id}/notes"),
+                json={"note": note_text}
+            )
+            response.raise_for_status()
+            logger.info(f"Added note to person {person_id}")
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Failed to add note to person {person_id}: {str(e)}")
+            return False
+
+    def update_person(
+        self,
+        person_id: str,
+        first_name: str,
+        last_name: str,
+        additional_fields: List[Dict[str, Any]],
+    ) -> bool:
+        """
+        Update a person's profile including custom field values.
+
+        Calls PUT /api/v1/people/{person_id} with the provided additional_fields
+        array.  Each element must contain ``field_id`` plus either
+        ``selected_option_id`` (dropdown/multiple_choice),
+        ``selected_option_ids`` (checkbox), or ``value`` (text/multi_line_text).
+
+        Args:
+            person_id: ChMeetings person ID.
+            first_name: Person's first name (required by the API).
+            last_name: Person's last name (required by the API).
+            additional_fields: List of custom field update dicts.
+
+        Returns:
+            True if the update succeeded, False otherwise.
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return False
+        payload = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "additional_fields": additional_fields,
+        }
+        try:
+            response = self.session.put(
+                urljoin(self.api_url, f"api/v1/people/{person_id}"),
+                json=payload
+            )
+            response.raise_for_status()
+            logger.info(f"Updated person {person_id} with {len(additional_fields)} field(s)")
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Failed to update person {person_id}: {str(e)}")
+            return False
+
     def close(self):
         """Close connections and clean up resources."""
         self.session.close()
-        
+
         if self.selenium_driver:
             self.selenium_driver.quit()
             logger.info("Selenium WebDriver closed")
