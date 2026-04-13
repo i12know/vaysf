@@ -75,6 +75,24 @@ def _build_reset_additional_fields(current_fields: List[Dict[str, Any]]) -> List
     return fields
 
 
+def _to_alt_format(fields: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Convert a standard reset payload to the alternative format:
+    - selected_option_id: null  →  selected_option_id: 0
+    - value: null               →  value: ""
+    Checkboxes (selected_option_ids: []) are left unchanged.
+    """
+    alt = []
+    for f in fields:
+        if "selected_option_id" in f:
+            alt.append({"field_id": f["field_id"], "selected_option_id": 0})
+        elif "value" in f:
+            alt.append({"field_id": f["field_id"], "value": ""})
+        else:
+            alt.append(dict(f))
+    return alt
+
+
 def _resolve_option_label(option_id: Optional[int], mapping: Dict[int, str]) -> str:
     """Return the human-readable label for an option ID, or 'Unknown'."""
     if option_id is None:
@@ -251,7 +269,7 @@ class SeasonResetter:
                     if not reset_fields_payload:
                         logger.info(f"No SF fields with values found for {first_name} {last_name} ({pid}) — nothing to reset.")
                     else:
-                        ok = self.chm.update_person(pid, first_name, last_name, reset_fields_payload)
+                        ok = self._reset_fields_with_fallback(pid, first_name, last_name, reset_fields_payload)
                         if not ok:
                             logger.warning(f"Failed to reset fields for {pid}")
                             errors += 1
@@ -262,6 +280,68 @@ class SeasonResetter:
     # ------------------------------------------------------------------ #
     # Private helpers                                                      #
     # ------------------------------------------------------------------ #
+
+    def _reset_fields_with_fallback(
+        self,
+        pid: str,
+        first_name: str,
+        last_name: str,
+        fields: List[Dict[str, Any]],
+    ) -> bool:
+        """
+        Reset custom fields with automatic format fallbacks.
+
+        The ChMeetings API spec says use null/[] to clear fields, but in
+        practice a generic 500 is returned when null is sent for
+        selected_option_id.  This method tries three escalating strategies:
+
+        1. **Standard bulk** — null / 0-length list as per spec
+        2. **Alternative bulk** — 0 for option IDs, "" for text values
+        3. **Field-by-field** — each field individually, cycling through
+           both format options, so partial success is still captured
+
+        The first strategy that fully succeeds is used.  Field-by-field
+        logging tells you exactly which field/format works, which is
+        useful for diagnosing API behaviour differences between field types.
+        """
+        # ── Strategy 1: standard bulk (null / []) ──────────────────────
+        if self.chm.update_person(pid, first_name, last_name, fields):
+            logger.info(f"Bulk reset (standard) succeeded for {pid}.")
+            return True
+
+        # ── Strategy 2: alternative bulk (0 / "") ──────────────────────
+        alt_fields = _to_alt_format(fields)
+        logger.warning(
+            f"Standard bulk reset failed for {pid} — "
+            f"retrying with alternative format (0 / empty-string)."
+        )
+        if self.chm.update_person(pid, first_name, last_name, alt_fields):
+            logger.info(f"Bulk reset (alternative format) succeeded for {pid}.")
+            return True
+
+        # ── Strategy 3: field-by-field with format cycling ─────────────
+        logger.warning(
+            f"Alternative bulk reset also failed for {pid} — "
+            f"falling back to field-by-field reset."
+        )
+        field_errors = 0
+        for std_field, alt_field in zip(fields, alt_fields):
+            field_id = std_field["field_id"]
+            # Try standard format first, then alternative
+            for attempt, candidate in enumerate((std_field, alt_field), start=1):
+                if self.chm.update_person(pid, first_name, last_name, [candidate]):
+                    logger.info(
+                        f"  field_id {field_id}: cleared with format #{attempt} — {candidate}"
+                    )
+                    break
+                logger.debug(f"  field_id {field_id}: format #{attempt} failed — {candidate}")
+            else:
+                logger.error(
+                    f"  field_id {field_id}: ALL formats failed — field not cleared"
+                )
+                field_errors += 1
+
+        return field_errors == 0
 
     def _get_vaysm_members(self, group_id: str) -> List[Dict[str, Any]]:
         """Fetch all members of the VAY-SM group from ChMeetings."""
