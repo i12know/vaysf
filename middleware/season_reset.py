@@ -37,18 +37,40 @@ from config import (
 )
 
 
-def _build_reset_additional_fields() -> List[Dict[str, Any]]:
-    """Return the additional_fields payload that clears every SF custom field."""
+def _build_reset_additional_fields(current_fields: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Return the additional_fields payload that clears every SF custom field
+    that currently has a value set on the person's profile.
+
+    Sending a null/empty reset for a field that was never filled in causes a
+    500 Internal Server Error from the ChMeetings API, so we only include
+    entries for fields that are actually present and non-empty.
+
+    Args:
+        current_fields: The ``additional_fields`` list from the person's
+            ChMeetings profile (as returned by get_person()).
+    """
+    # Index current values by field_id for quick lookup
+    current_by_id: Dict[int, Dict[str, Any]] = {
+        f["field_id"]: f for f in current_fields if "field_id" in f
+    }
+
     fields: List[Dict[str, Any]] = []
 
     for field_id in SF_CHECKBOX_FIELD_IDS:
-        fields.append({"field_id": field_id, "selected_option_ids": []})
+        cur = current_by_id.get(field_id, {})
+        if cur.get("selected_option_ids"):          # non-empty list
+            fields.append({"field_id": field_id, "selected_option_ids": []})
 
     for field_id in SF_DROPDOWN_FIELD_IDS:
-        fields.append({"field_id": field_id, "selected_option_id": None})
+        cur = current_by_id.get(field_id, {})
+        if cur.get("selected_option_id") is not None:
+            fields.append({"field_id": field_id, "selected_option_id": None})
 
     for field_id in SF_TEXT_FIELD_IDS:
-        fields.append({"field_id": field_id, "value": None})
+        cur = current_by_id.get(field_id, {})
+        if cur.get("value"):                        # non-empty string
+            fields.append({"field_id": field_id, "value": None})
 
     return fields
 
@@ -179,7 +201,6 @@ class SeasonResetter:
             wp_participants_by_chmid = self._fetch_wp_participants_by_chmid()
 
         # Step 3 — process each member
-        reset_fields_payload = _build_reset_additional_fields()
         errors = 0
         archive_note_prefix = f"Sports Fest {year} Archive"
 
@@ -191,6 +212,12 @@ class SeasonResetter:
                 logger.warning(f"Skipping member with no ID: {member}")
                 errors += 1
                 continue
+
+            # Build reset payload from the person's actual current fields so we
+            # only touch fields that have values — sending resets for unfilled
+            # fields causes a 500 from the ChMeetings API.
+            current_fields = member.get("additional_fields", [])
+            reset_fields_payload = _build_reset_additional_fields(current_fields)
 
             # a. Archive step
             if not reset_only:
@@ -217,13 +244,17 @@ class SeasonResetter:
             # b. Reset step
             if not archive_only:
                 if dry_run:
-                    logger.info(f"[DRY RUN] Would reset {len(reset_fields_payload)} fields "
-                                f"for {first_name} {last_name} ({pid})")
+                    logger.info(f"[DRY RUN] Would reset {len(reset_fields_payload)} field(s) "
+                                f"for {first_name} {last_name} ({pid}): "
+                                f"{[f['field_id'] for f in reset_fields_payload]}")
                 else:
-                    ok = self.chm.update_person(pid, first_name, last_name, reset_fields_payload)
-                    if not ok:
-                        logger.warning(f"Failed to reset fields for {pid}")
-                        errors += 1
+                    if not reset_fields_payload:
+                        logger.info(f"No SF fields with values found for {first_name} {last_name} ({pid}) — nothing to reset.")
+                    else:
+                        ok = self.chm.update_person(pid, first_name, last_name, reset_fields_payload)
+                        if not ok:
+                            logger.warning(f"Failed to reset fields for {pid}")
+                            errors += 1
 
         logger.info(f"Season reset complete. Members processed: {len(members)}, errors: {errors}.")
         return errors == 0

@@ -15,13 +15,23 @@ def _make_resetter(notes=None, get_person_ok=True, add_note_ok=True, update_ok=T
     chm = MagicMock()
     wp  = MagicMock()
 
+    from config import SF_FIELD_IDS
+    mock_additional_fields = [
+        {"field_id": SF_FIELD_IDS["PRIMARY_SPORT"],  "field_type": "dropdown",
+         "selected_option_id": 199334, "value": "Volleyball - Men Team"},
+        {"field_id": SF_FIELD_IDS["MY_ROLE"],        "field_type": "checkbox",
+         "selected_option_ids": [199442], "value": "Athlete/Participant"},
+    ]
     chm.get_person.return_value = (
-        {"id": "111", "first_name": "Jerry", "last_name": "Phan", "additional_fields": []}
+        {"id": "111", "first_name": "Jerry", "last_name": "Phan",
+         "additional_fields": mock_additional_fields}
         if get_person_ok else None
     )
     chm.get_group_people.return_value = [
-        {"id": "111", "first_name": "Jerry", "last_name": "Phan", "additional_fields": []},
-        {"id": "222", "first_name": "Khoi",  "last_name": "Nguyen", "additional_fields": []},
+        {"id": "111", "first_name": "Jerry", "last_name": "Phan",
+         "additional_fields": mock_additional_fields},
+        {"id": "222", "first_name": "Khoi",  "last_name": "Nguyen",
+         "additional_fields": mock_additional_fields},
     ]
     chm.get_person_notes.return_value = notes if notes is not None else []
     chm.add_member_note.return_value = add_note_ok
@@ -60,26 +70,52 @@ def test_build_archive_note_without_wp_data():
     assert "No WordPress participant record found" in note
 
 
-def test_build_reset_additional_fields_covers_all_field_types():
-    from config import SF_CHECKBOX_FIELD_IDS, SF_DROPDOWN_FIELD_IDS, SF_TEXT_FIELD_IDS
-    fields = _build_reset_additional_fields()
-    expected_count = len(SF_CHECKBOX_FIELD_IDS) + len(SF_DROPDOWN_FIELD_IDS) + len(SF_TEXT_FIELD_IDS)
-    assert len(fields) == expected_count
+def test_build_reset_additional_fields_only_includes_set_fields():
+    """Only fields that currently have a value should appear in the reset payload."""
+    from config import SF_FIELD_IDS
+    # Simulate a person who has Primary Sport and My role is set, but nothing else
+    current_fields = [
+        {"field_id": SF_FIELD_IDS["PRIMARY_SPORT"], "field_type": "dropdown",
+         "selected_option_id": 199334, "value": "Volleyball - Men Team"},
+        {"field_id": SF_FIELD_IDS["MY_ROLE"], "field_type": "checkbox",
+         "selected_option_ids": [199442], "value": "Athlete/Participant"},
+        {"field_id": SF_FIELD_IDS["NOTES_PROGRESS"], "field_type": "multi_line_text",
+         "value": "Some notes here"},
+    ]
+    fields = _build_reset_additional_fields(current_fields)
+    field_ids = [f["field_id"] for f in fields]
 
-    checkbox_entries  = [f for f in fields if "selected_option_ids" in f]
-    dropdown_entries  = [f for f in fields if "selected_option_id" in f]
-    text_entries      = [f for f in fields if "value" in f]
+    assert SF_FIELD_IDS["PRIMARY_SPORT"] in field_ids    # had a value → included
+    assert SF_FIELD_IDS["MY_ROLE"] in field_ids          # had a value → included
+    assert SF_FIELD_IDS["NOTES_PROGRESS"] in field_ids   # had a value → included
+    assert SF_FIELD_IDS["OTHER_EVENTS"] not in field_ids  # not set → excluded
+    assert SF_FIELD_IDS["PRIMARY_PARTNER"] not in field_ids  # not set → excluded
 
-    assert len(checkbox_entries) == len(SF_CHECKBOX_FIELD_IDS)
-    assert len(dropdown_entries) == len(SF_DROPDOWN_FIELD_IDS)
-    assert len(text_entries)     == len(SF_TEXT_FIELD_IDS)
 
-    for e in checkbox_entries:
-        assert e["selected_option_ids"] == []
-    for e in dropdown_entries:
-        assert e["selected_option_id"] is None
-    for e in text_entries:
-        assert e["value"] is None
+def test_build_reset_additional_fields_empty_when_no_sf_fields_set():
+    """Person with no SF fields set returns an empty reset payload."""
+    current_fields = [
+        {"field_id": 1055798, "field_type": "multiple_choice",  # unrelated field
+         "selected_option_id": 136778, "value": "Some spiritual stage"},
+    ]
+    fields = _build_reset_additional_fields(current_fields)
+    assert fields == []
+
+
+def test_build_reset_additional_fields_correct_reset_values():
+    """Check that reset values use the right property key for each field type."""
+    from config import SF_FIELD_IDS
+    current_fields = [
+        {"field_id": SF_FIELD_IDS["MY_ROLE"],       "selected_option_ids": [199442]},
+        {"field_id": SF_FIELD_IDS["PRIMARY_SPORT"],  "selected_option_id": 199334},
+        {"field_id": SF_FIELD_IDS["PARENT_NAME"],    "value": "Dad Ho"},
+    ]
+    fields = _build_reset_additional_fields(current_fields)
+    by_id = {f["field_id"]: f for f in fields}
+
+    assert by_id[SF_FIELD_IDS["MY_ROLE"]]["selected_option_ids"] == []
+    assert by_id[SF_FIELD_IDS["PRIMARY_SPORT"]]["selected_option_id"] is None
+    assert by_id[SF_FIELD_IDS["PARENT_NAME"]]["value"] is None
 
 
 # ── SeasonResetter.run — single person (--person-id) ─────────────────────────
