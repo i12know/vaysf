@@ -269,7 +269,10 @@ class SeasonResetter:
                     if not reset_fields_payload:
                         logger.info(f"No SF fields with values found for {first_name} {last_name} ({pid}) — nothing to reset.")
                     else:
-                        ok = self._reset_fields_with_fallback(pid, first_name, last_name, reset_fields_payload)
+                        ok = self._reset_fields_with_fallback(
+                            pid, first_name, last_name, reset_fields_payload,
+                            person_data=member,
+                        )
                         if not ok:
                             logger.warning(f"Failed to reset fields for {pid}")
                             errors += 1
@@ -287,57 +290,68 @@ class SeasonResetter:
         first_name: str,
         last_name: str,
         fields: List[Dict[str, Any]],
+        person_data: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
-        Reset custom fields with automatic format fallbacks.
+        Reset custom fields with automatic method/format/payload fallbacks.
 
-        The ChMeetings API spec says use null/[] to clear fields, but in
-        practice a generic 500 is returned when null is sent for
-        selected_option_id.  This method tries three escalating strategies:
+        Tries six escalating strategies and stops at the first success:
 
-        1. **Standard bulk** — null / 0-length list as per spec
-        2. **Alternative bulk** — 0 for option IDs, "" for text values
-        3. **Field-by-field** — each field individually, cycling through
-           both format options, so partial success is still captured
+        1. PUT  — standard null/[]  (spec-compliant)
+        2. PATCH — standard null/[]  (ChMeetings may require PATCH for partial updates)
+        3. PUT  — alternative 0/""   (in case null is rejected)
+        4. PATCH — alternative 0/""
+        5. PUT  — standard null/[], full person data in body (some APIs require it)
+        6. PATCH — standard null/[], full person data in body
+        7. Field-by-field PATCH — one field at a time, both formats, to capture
+           partial success and show exactly which field/format works
 
-        The first strategy that fully succeeds is used.  Field-by-field
-        logging tells you exactly which field/format works, which is
-        useful for diagnosing API behaviour differences between field types.
+        The full field-by-field fallback always uses PATCH since by that point
+        PUT has been exhausted.
         """
-        # ── Strategy 1: standard bulk (null / []) ──────────────────────
-        if self.chm.update_person(pid, first_name, last_name, fields):
-            logger.info(f"Bulk reset (standard) succeeded for {pid}.")
-            return True
-
-        # ── Strategy 2: alternative bulk (0 / "") ──────────────────────
         alt_fields = _to_alt_format(fields)
-        logger.warning(
-            f"Standard bulk reset failed for {pid} — "
-            f"retrying with alternative format (0 / empty-string)."
-        )
-        if self.chm.update_person(pid, first_name, last_name, alt_fields):
-            logger.info(f"Bulk reset (alternative format) succeeded for {pid}.")
-            return True
 
-        # ── Strategy 3: field-by-field with format cycling ─────────────
+        strategies = [
+            # (label,                     method,   field_payload, extra_data)
+            ("PUT  std null/[]",          "PUT",    fields,     None),
+            ("PATCH std null/[]",         "PATCH",  fields,     None),
+            ("PUT  alt 0/''",             "PUT",    alt_fields, None),
+            ("PATCH alt 0/''",            "PATCH",  alt_fields, None),
+            ("PUT  std + full person",    "PUT",    fields,     person_data),
+            ("PATCH std + full person",   "PATCH",  fields,     person_data),
+        ]
+
+        for label, meth, payload, extra in strategies:
+            if self.chm.update_person(
+                pid, first_name, last_name, payload,
+                method=meth, extra_person_data=extra
+            ):
+                logger.info(f"Reset succeeded for {pid} using strategy: {label}")
+                return True
+            logger.warning(f"Strategy '{label}' failed for {pid} — trying next.")
+
+        # ── Field-by-field PATCH as last resort ─────────────────────────
         logger.warning(
-            f"Alternative bulk reset also failed for {pid} — "
-            f"falling back to field-by-field reset."
+            f"All bulk strategies failed for {pid} — "
+            f"falling back to field-by-field PATCH."
         )
         field_errors = 0
         for std_field, alt_field in zip(fields, alt_fields):
             field_id = std_field["field_id"]
-            # Try standard format first, then alternative
             for attempt, candidate in enumerate((std_field, alt_field), start=1):
-                if self.chm.update_person(pid, first_name, last_name, [candidate]):
+                if self.chm.update_person(
+                    pid, first_name, last_name, [candidate], method="PATCH"
+                ):
                     logger.info(
-                        f"  field_id {field_id}: cleared with format #{attempt} — {candidate}"
+                        f"  field_id {field_id}: cleared (attempt #{attempt}) — {candidate}"
                     )
                     break
-                logger.debug(f"  field_id {field_id}: format #{attempt} failed — {candidate}")
+                logger.debug(
+                    f"  field_id {field_id}: attempt #{attempt} failed — {candidate}"
+                )
             else:
                 logger.error(
-                    f"  field_id {field_id}: ALL formats failed — field not cleared"
+                    f"  field_id {field_id}: ALL attempts failed — field not cleared"
                 )
                 field_errors += 1
 

@@ -407,20 +407,26 @@ class ChMeetingsConnector:
         first_name: str,
         last_name: str,
         additional_fields: List[Dict[str, Any]],
+        *,
+        method: str = "PUT",
+        extra_person_data: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Update a person's profile including custom field values.
 
-        Calls PUT /api/v1/people/{person_id} with the provided additional_fields
-        array.  Each element must contain ``field_id`` plus either
-        ``selected_option_id`` (dropdown/multiple_choice),
-        ``selected_option_ids`` (checkbox), or ``value`` (text/multi_line_text).
+        Tries PUT by default.  Pass ``method="PATCH"`` to use PATCH instead
+        (ChMeetings may require PATCH for partial updates).  Pass
+        ``extra_person_data`` to include additional core person fields in the
+        payload (some APIs reject a PUT that omits required person attributes).
 
         Args:
             person_id: ChMeetings person ID.
             first_name: Person's first name (required by the API).
             last_name: Person's last name (required by the API).
             additional_fields: List of custom field update dicts.
+            method: HTTP method to use — "PUT" (default) or "PATCH".
+            extra_person_data: Optional dict of additional person fields to
+                merge into the payload (e.g. email, gender, birth_date).
 
         Returns:
             True if the update succeeded, False otherwise.
@@ -428,27 +434,31 @@ class ChMeetingsConnector:
         if not self.use_api:
             logger.error("API usage is disabled")
             return False
-        payload = {
-            "first_name": first_name,
-            "last_name": last_name,
-            "additional_fields": additional_fields,
-        }
+
+        payload: Dict[str, Any] = {"first_name": first_name, "last_name": last_name}
+        if extra_person_data:
+            # Merge safely — never overwrite first_name / last_name
+            for k, v in extra_person_data.items():
+                if k not in ("id", "first_name", "last_name", "additional_fields"):
+                    payload[k] = v
+        payload["additional_fields"] = additional_fields
+
+        url = urljoin(self.api_url, f"api/v1/people/{person_id}")
+        http_call = self.session.patch if method.upper() == "PATCH" else self.session.put
+
         try:
-            logger.debug(f"update_person payload for {person_id}: {payload}")
-            response = self.session.put(
-                urljoin(self.api_url, f"api/v1/people/{person_id}"),
-                json=payload
-            )
+            logger.debug(f"update_person [{method}] payload for {person_id}: {payload}")
+            response = http_call(url, json=payload)
             if not response.ok:
                 logger.error(
-                    f"Failed to update person {person_id}: "
+                    f"Failed to update person {person_id} [{method}]: "
                     f"HTTP {response.status_code} — {response.text}"
                 )
                 return False
-            logger.info(f"Updated person {person_id} with {len(additional_fields)} field(s)")
+            logger.info(f"Updated person {person_id} with {len(additional_fields)} field(s) via {method}")
             return True
         except requests.RequestException as e:
-            logger.error(f"Failed to update person {person_id}: {str(e)}")
+            logger.error(f"Failed to update person {person_id} [{method}]: {str(e)}")
             return False
 
     def close(self):
