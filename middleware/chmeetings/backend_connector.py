@@ -434,11 +434,17 @@ class ChMeetingsConnector:
             "additional_fields": additional_fields,
         }
         try:
+            logger.debug(f"update_person payload for {person_id}: {payload}")
             response = self.session.put(
                 urljoin(self.api_url, f"api/v1/people/{person_id}"),
                 json=payload
             )
-            response.raise_for_status()
+            if not response.ok:
+                logger.error(
+                    f"Failed to update person {person_id}: "
+                    f"HTTP {response.status_code} — {response.text}"
+                )
+                return False
             logger.info(f"Updated person {person_id} with {len(additional_fields)} field(s)")
             return True
         except requests.RequestException as e:
