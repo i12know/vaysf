@@ -90,6 +90,8 @@ def parse_args() -> argparse.Namespace:
                               help="Write archive notes only; do not reset custom fields")
     reset_parser.add_argument("--reset-only", action="store_true",
                               help="Reset custom fields only; skip writing archive notes")
+    reset_parser.add_argument("--person-id", type=str, default=None,
+                              help="Process a single ChMeetings person ID instead of the whole group (for testing)")
 
     return parser.parse_args()
 
@@ -410,6 +412,7 @@ def main() -> None:
                     dry_run=args.dry_run,
                     archive_only=args.archive_only,
                     reset_only=args.reset_only,
+                    person_id=args.person_id,
                 )
     else:
         logger.error(f"Unknown command: {args.command}")

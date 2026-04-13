@@ -136,6 +136,7 @@ class SeasonResetter:
         dry_run: bool = False,
         archive_only: bool = False,
         reset_only: bool = False,
+        person_id: Optional[str] = None,
     ) -> bool:
         """
         Execute the season reset.
@@ -145,27 +146,34 @@ class SeasonResetter:
             dry_run: If True, log what would happen but make no changes.
             archive_only: If True, write archive notes but skip field reset.
             reset_only: If True, skip archive notes and only clear fields.
+            person_id: If given, process only this one ChMeetings person ID
+                instead of the entire VAY-SM group.  Useful for spot-testing.
 
         Returns:
             True if the operation completed without fatal errors.
         """
-        if dry_run:
-            logger.info(f"[DRY RUN] Season reset for {year} — no changes will be made.")
+        mode_tag = "[DRY RUN] " if dry_run else ""
+        scope = f"person {person_id}" if person_id else "all VAY-SM members"
+        logger.info(f"{mode_tag}Season reset for {year} — scope: {scope} "
+                    f"(archive={'yes' if not reset_only else 'no'}, "
+                    f"reset={'yes' if not archive_only else 'no'})")
+
+        # Step 1 — resolve the member list
+        if person_id:
+            member = self.chm.get_person(person_id)
+            if not member:
+                logger.error(f"Person {person_id} not found in ChMeetings; aborting.")
+                return False
+            members = [member]
         else:
-            logger.info(f"Starting season reset for {year} "
-                        f"(archive={'yes' if not reset_only else 'no'}, "
-                        f"reset={'yes' if not archive_only else 'no'})")
+            members = self._get_vaysm_members(Config.VAYSM_GROUP_ID)
+            if not members:
+                logger.error("No VAY-SM members found; aborting reset.")
+                return False
 
-        # Step 1 — fetch all VAY-SM members
-        vaysm_group_id = Config.VAYSM_GROUP_ID
-        members = self._get_vaysm_members(vaysm_group_id)
-        if not members:
-            logger.error("No VAY-SM members found; aborting reset.")
-            return False
+        logger.info(f"Processing {len(members)} member(s).")
 
-        logger.info(f"Found {len(members)} VAY-SM members to process.")
-
-        # Step 2 — fetch all WordPress participants (for archive enrichment)
+        # Step 2 — fetch WordPress participants for archive enrichment
         wp_participants_by_chmid: Dict[str, Dict[str, Any]] = {}
         if not reset_only:
             wp_participants_by_chmid = self._fetch_wp_participants_by_chmid()
@@ -173,37 +181,48 @@ class SeasonResetter:
         # Step 3 — process each member
         reset_fields_payload = _build_reset_additional_fields()
         errors = 0
+        archive_note_prefix = f"Sports Fest {year} Archive"
 
         for member in tqdm(members, desc="Processing members", unit="person"):
-            person_id = str(member.get("id") or member.get("person_id", ""))
+            pid        = str(member.get("id") or member.get("person_id", ""))
             first_name = member.get("first_name", "")
             last_name  = member.get("last_name", "")
-            if not person_id:
+            if not pid:
                 logger.warning(f"Skipping member with no ID: {member}")
                 errors += 1
                 continue
 
             # a. Archive step
             if not reset_only:
-                wp_participant = wp_participants_by_chmid.get(person_id)
+                wp_participant = wp_participants_by_chmid.get(pid)
                 note = _build_archive_note(year, member, wp_participant)
                 if dry_run:
-                    logger.info(f"[DRY RUN] Would archive {first_name} {last_name} ({person_id}): {note}")
+                    logger.info(f"[DRY RUN] Would archive {first_name} {last_name} ({pid}):\n  {note}")
                 else:
-                    ok = self.chm.add_member_note(person_id, note)
-                    if not ok:
-                        logger.warning(f"Failed to write archive note for {person_id}")
-                        errors += 1
+                    # Guard against duplicates: skip if an archive note for this
+                    # year already exists on the profile.
+                    existing_notes = self.chm.get_person_notes(pid)
+                    already_archived = any(
+                        archive_note_prefix in str(n.get("note", "") or n.get("content", "") or n.get("body", ""))
+                        for n in existing_notes
+                    )
+                    if already_archived:
+                        logger.info(f"Archive note for {year} already exists on {pid} — skipping.")
+                    else:
+                        ok = self.chm.add_member_note(pid, note)
+                        if not ok:
+                            logger.warning(f"Failed to write archive note for {pid}")
+                            errors += 1
 
             # b. Reset step
             if not archive_only:
                 if dry_run:
                     logger.info(f"[DRY RUN] Would reset {len(reset_fields_payload)} fields "
-                                f"for {first_name} {last_name} ({person_id})")
+                                f"for {first_name} {last_name} ({pid})")
                 else:
-                    ok = self.chm.update_person(person_id, first_name, last_name, reset_fields_payload)
+                    ok = self.chm.update_person(pid, first_name, last_name, reset_fields_payload)
                     if not ok:
-                        logger.warning(f"Failed to reset fields for {person_id}")
+                        logger.warning(f"Failed to reset fields for {pid}")
                         errors += 1
 
         logger.info(f"Season reset complete. Members processed: {len(members)}, errors: {errors}.")

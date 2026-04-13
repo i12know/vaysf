@@ -313,6 +313,35 @@ class ChMeetingsConnector:
             
             return False
     
+    def get_person_notes(self, person_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve existing notes from a person's ChMeetings profile.
+
+        Calls GET /api/v1/people/{person_id}/notes.
+
+        Args:
+            person_id: ChMeetings person ID.
+
+        Returns:
+            List of note dicts (each has at least a ``note`` key), or empty
+            list on failure.
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return []
+        try:
+            response = self.session.get(
+                urljoin(self.api_url, f"api/v1/people/{person_id}/notes")
+            )
+            response.raise_for_status()
+            data = response.json()
+            notes = data if isinstance(data, list) else data.get("data", [])
+            logger.debug(f"Retrieved {len(notes)} note(s) for person {person_id}")
+            return notes
+        except requests.RequestException as e:
+            logger.error(f"Failed to get notes for person {person_id}: {str(e)}")
+            return []
+
     def get_member_fields(self) -> List[Dict[str, Any]]:
         """
         Retrieve all custom field definitions from ChMeetings.
