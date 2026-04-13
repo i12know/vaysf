@@ -92,6 +92,8 @@ def parse_args() -> argparse.Namespace:
                               help="Reset custom fields only; skip writing archive notes")
     reset_parser.add_argument("--person-id", type=str, default=None,
                               help="Process a single ChMeetings person ID instead of the whole group (for testing)")
+    reset_parser.add_argument("--probe", action="store_true",
+                              help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id)")
 
     return parser.parse_args()
 
@@ -404,6 +406,14 @@ def main() -> None:
         if args.archive_only and args.reset_only:
             logger.error("--archive-only and --reset-only are mutually exclusive.")
             success = False
+        elif args.probe:
+            if not args.person_id:
+                logger.error("--probe requires --person-id.")
+                success = False
+            else:
+                with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+                    resetter = SeasonResetter(chm_conn, wp_conn)
+                    success = resetter.probe_put_endpoint(args.person_id)
         else:
             with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
                 resetter = SeasonResetter(chm_conn, wp_conn)

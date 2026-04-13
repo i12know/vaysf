@@ -357,6 +357,113 @@ class SeasonResetter:
 
         return field_errors == 0
 
+    def probe_put_endpoint(self, person_id: str) -> bool:
+        """
+        Diagnostic: send a series of minimal PUT requests to identify exactly
+        what the ChMeetings /api/v1/people/{id} endpoint accepts.
+
+        Tests (in order):
+          P1. PUT name only            — does the basic endpoint work at all?
+          P2. PUT name + current vals  — does additional_fields work with real values?
+          P3. PUT name + one set field — same but for a single field
+          P4. PUT /api/v1/people/{id}/fields  — alternate URL for custom fields
+          P5. POST /api/v1/people/{id}/fields — some APIs use POST for field updates
+
+        Prints a clear PASS/FAIL for each so we know exactly where to fix.
+        No irreversible changes are made: P1/P2/P3 set fields to their
+        CURRENT values (not clearing them), P4/P5 also use current values.
+        """
+        logger.info(f"=== Probing PUT endpoint for person {person_id} ===")
+        person = self.chm.get_person(person_id)
+        if not person:
+            logger.error(f"Could not fetch person {person_id}")
+            return False
+
+        first_name = person.get("first_name", "")
+        last_name  = person.get("last_name", "")
+        current_fields = person.get("additional_fields", [])
+
+        # Pick a single field that has a real value to use in P3
+        sample_field = next(
+            (f for f in current_fields if f.get("field_id") in SF_DROPDOWN_FIELD_IDS and f.get("selected_option_id")),
+            None
+        )
+
+        probes: List[tuple] = [
+            # (label, method, url_suffix, payload)
+            (
+                "P1: PUT name-only (no additional_fields)",
+                "PUT",
+                f"api/v1/people/{person_id}",
+                {"first_name": first_name, "last_name": last_name},
+            ),
+            (
+                "P2: PUT name + all current additional_fields (round-trip values)",
+                "PUT",
+                f"api/v1/people/{person_id}",
+                {
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "additional_fields": [
+                        {k: v for k, v in f.items() if k in ("field_id", "selected_option_id", "selected_option_ids", "value")}
+                        for f in current_fields
+                    ],
+                },
+            ),
+        ]
+        if sample_field:
+            single = {k: v for k, v in sample_field.items()
+                      if k in ("field_id", "selected_option_id")}
+            probes.append((
+                f"P3: PUT name + single field {sample_field['field_id']} = current value",
+                "PUT",
+                f"api/v1/people/{person_id}",
+                {"first_name": first_name, "last_name": last_name, "additional_fields": [single]},
+            ))
+
+        probes += [
+            (
+                "P4: PUT to /api/v1/people/{id}/fields (alternate URL)",
+                "PUT",
+                f"api/v1/people/{person_id}/fields",
+                {"additional_fields": [
+                    {k: v for k, v in f.items() if k in ("field_id", "selected_option_id", "selected_option_ids", "value")}
+                    for f in current_fields[:2]
+                ]},
+            ),
+            (
+                "P5: POST to /api/v1/people/{id}/fields (POST for field updates)",
+                "POST",
+                f"api/v1/people/{person_id}/fields",
+                {"additional_fields": [
+                    {k: v for k, v in f.items() if k in ("field_id", "selected_option_id", "selected_option_ids", "value")}
+                    for f in current_fields[:2]
+                ]},
+            ),
+        ]
+
+        from urllib.parse import urljoin as _urljoin
+        any_passed = False
+        for label, method, suffix, payload in probes:
+            url = _urljoin(self.chm.api_url, suffix)
+            try:
+                logger.debug(f"[{method}] {url}  payload={payload}")
+                http_fn = {"PUT": self.chm.session.put, "POST": self.chm.session.post,
+                           "PATCH": self.chm.session.patch}[method]
+                resp = http_fn(url, json=payload)
+                status = f"HTTP {resp.status_code}"
+                body   = resp.text[:200]
+                if resp.ok:
+                    logger.info(f"  PASS  {label} — {status}")
+                    any_passed = True
+                else:
+                    logger.warning(f"  FAIL  {label} — {status} — {body}")
+            except Exception as exc:
+                logger.error(f"  ERROR {label} — {exc}")
+
+        logger.info("=== Probe complete ===")
+        return any_passed
+
     def _get_vaysm_members(self, group_id: str) -> List[Dict[str, Any]]:
         """Fetch all members of the VAY-SM group from ChMeetings."""
         logger.info(f"Fetching VAY-SM members from group {group_id}")
