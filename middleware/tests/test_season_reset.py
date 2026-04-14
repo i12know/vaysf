@@ -103,19 +103,40 @@ def test_build_reset_additional_fields_empty_when_no_sf_fields_set():
 
 
 def test_build_reset_additional_fields_correct_reset_values():
-    """Check that reset values use the right property key for each field type."""
+    """
+    Check that reset values use the right property key for each field type
+    and that field_type is preserved from the source field (required by the
+    ChMeetings API — omitting it causes HTTP 500).
+    """
     from config import SF_FIELD_IDS
     current_fields = [
-        {"field_id": SF_FIELD_IDS["MY_ROLE"],       "selected_option_ids": [199442]},
-        {"field_id": SF_FIELD_IDS["PRIMARY_SPORT"],  "selected_option_id": 199334},
-        {"field_id": SF_FIELD_IDS["PARENT_NAME"],    "value": "Dad Ho"},
+        {"field_id": SF_FIELD_IDS["MY_ROLE"],       "field_type": "checkbox",
+         "selected_option_ids": [199442]},
+        {"field_id": SF_FIELD_IDS["PRIMARY_SPORT"],  "field_type": "dropdown",
+         "selected_option_id": 199334},
+        {"field_id": SF_FIELD_IDS["IS_MEMBER"],      "field_type": "multiple_choice",
+         "selected_option_id": 199355},
+        {"field_id": SF_FIELD_IDS["NOTES_PROGRESS"], "field_type": "multi_line_text",
+         "value": "some notes"},
+        {"field_id": SF_FIELD_IDS["PARENT_NAME"],    "field_type": "text",
+         "value": "Dad Ho"},
     ]
     fields = _build_reset_additional_fields(current_fields)
     by_id = {f["field_id"]: f for f in fields}
 
+    # Clearing values
     assert by_id[SF_FIELD_IDS["MY_ROLE"]]["selected_option_ids"] == []
     assert by_id[SF_FIELD_IDS["PRIMARY_SPORT"]]["selected_option_id"] is None
+    assert by_id[SF_FIELD_IDS["IS_MEMBER"]]["selected_option_id"] is None
+    assert by_id[SF_FIELD_IDS["NOTES_PROGRESS"]]["value"] is None
     assert by_id[SF_FIELD_IDS["PARENT_NAME"]]["value"] is None
+
+    # field_type must be present and correct (API rejects payloads without it)
+    assert by_id[SF_FIELD_IDS["MY_ROLE"]]["field_type"] == "checkbox"
+    assert by_id[SF_FIELD_IDS["PRIMARY_SPORT"]]["field_type"] == "dropdown"
+    assert by_id[SF_FIELD_IDS["IS_MEMBER"]]["field_type"] == "multiple_choice"
+    assert by_id[SF_FIELD_IDS["NOTES_PROGRESS"]]["field_type"] == "multi_line_text"
+    assert by_id[SF_FIELD_IDS["PARENT_NAME"]]["field_type"] == "text"
 
 
 # ── SeasonResetter.run — single person (--person-id) ─────────────────────────

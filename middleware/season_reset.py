@@ -42,9 +42,13 @@ def _build_reset_additional_fields(current_fields: List[Dict[str, Any]]) -> List
     Return the additional_fields payload that clears every SF custom field
     that currently has a value set on the person's profile.
 
-    Sending a null/empty reset for a field that was never filled in causes a
-    500 Internal Server Error from the ChMeetings API, so we only include
-    entries for fields that are actually present and non-empty.
+    Rules:
+    - Only include entries for fields that currently have a value (sending a
+      reset for a never-filled field causes a 500 from the ChMeetings API).
+    - Each item **must** include ``field_type`` — the ChMeetings API requires
+      this discriminator to process the field; omitting it causes HTTP 500.
+      The value is taken directly from the source field returned by
+      GET /api/v1/people/{id}, with sensible per-category fallbacks.
 
     Args:
         current_fields: The ``additional_fields`` list from the person's
@@ -60,37 +64,35 @@ def _build_reset_additional_fields(current_fields: List[Dict[str, Any]]) -> List
     for field_id in SF_CHECKBOX_FIELD_IDS:
         cur = current_by_id.get(field_id, {})
         if cur.get("selected_option_ids"):          # non-empty list
-            fields.append({"field_id": field_id, "selected_option_ids": []})
+            fields.append({
+                "field_id":           field_id,
+                "field_type":         cur.get("field_type", "checkbox"),
+                "selected_option_ids": [],
+            })
 
     for field_id in SF_DROPDOWN_FIELD_IDS:
         cur = current_by_id.get(field_id, {})
         if cur.get("selected_option_id") is not None:
-            fields.append({"field_id": field_id, "selected_option_id": None})
+            fields.append({
+                "field_id":          field_id,
+                # field_type is "dropdown" or "multiple_choice"; the API
+                # response always includes the real value so the fallback
+                # is only a last-resort safety net.
+                "field_type":        cur.get("field_type", "dropdown"),
+                "selected_option_id": None,
+            })
 
     for field_id in SF_TEXT_FIELD_IDS:
         cur = current_by_id.get(field_id, {})
         if cur.get("value"):                        # non-empty string
-            fields.append({"field_id": field_id, "value": None})
+            fields.append({
+                "field_id":   field_id,
+                "field_type": cur.get("field_type", "text"),
+                "value":      None,
+            })
 
     return fields
 
-
-def _to_alt_format(fields: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Convert a standard reset payload to the alternative format:
-    - selected_option_id: null  →  selected_option_id: 0
-    - value: null               →  value: ""
-    Checkboxes (selected_option_ids: []) are left unchanged.
-    """
-    alt = []
-    for f in fields:
-        if "selected_option_id" in f:
-            alt.append({"field_id": f["field_id"], "selected_option_id": 0})
-        elif "value" in f:
-            alt.append({"field_id": f["field_id"], "value": ""})
-        else:
-            alt.append(dict(f))
-    return alt
 
 
 def _resolve_option_label(option_id: Optional[int], mapping: Dict[int, str]) -> str:
@@ -293,69 +295,28 @@ class SeasonResetter:
         person_data: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
-        Reset custom fields with automatic method/format/payload fallbacks.
+        Reset custom fields via ``PUT /api/v1/people/{id}``.
 
-        Tries six escalating strategies and stops at the first success:
-
-        1. PUT  — standard null/[]  (spec-compliant)
-        2. PATCH — standard null/[]  (ChMeetings may require PATCH for partial updates)
-        3. PUT  — alternative 0/""   (in case null is rejected)
-        4. PATCH — alternative 0/""
-        5. PUT  — standard null/[], full person data in body (some APIs require it)
-        6. PATCH — standard null/[], full person data in body
-        7. Field-by-field PATCH — one field at a time, both formats, to capture
-           partial success and show exactly which field/format works
-
-        The full field-by-field fallback always uses PATCH since by that point
-        PUT has been exhausted.
+        ChMeetings API requirements (confirmed with vendor support):
+        - Only PUT is supported; PATCH returns 405.
+        - Every ``additional_fields`` item **must** include ``field_type``.
+        - PUT is a full-replace: standard fields (email, mobile, birthdate…)
+          not present in the body are cleared.  Always pass ``person_data``
+          so ``update_person`` can preserve those fields.
         """
-        alt_fields = _to_alt_format(fields)
-
-        strategies = [
-            # (label,                     method,   field_payload, extra_data)
-            ("PUT  std null/[]",          "PUT",    fields,     None),
-            ("PATCH std null/[]",         "PATCH",  fields,     None),
-            ("PUT  alt 0/''",             "PUT",    alt_fields, None),
-            ("PATCH alt 0/''",            "PATCH",  alt_fields, None),
-            ("PUT  std + full person",    "PUT",    fields,     person_data),
-            ("PATCH std + full person",   "PATCH",  fields,     person_data),
-        ]
-
-        for label, meth, payload, extra in strategies:
-            if self.chm.update_person(
-                pid, first_name, last_name, payload,
-                method=meth, extra_person_data=extra
-            ):
-                logger.info(f"Reset succeeded for {pid} using strategy: {label}")
-                return True
-            logger.warning(f"Strategy '{label}' failed for {pid} — trying next.")
-
-        # ── Field-by-field PATCH as last resort ─────────────────────────
-        logger.warning(
-            f"All bulk strategies failed for {pid} — "
-            f"falling back to field-by-field PATCH."
+        ok = self.chm.update_person(
+            pid, first_name, last_name, fields,
+            method="PUT", extra_person_data=person_data,
         )
-        field_errors = 0
-        for std_field, alt_field in zip(fields, alt_fields):
-            field_id = std_field["field_id"]
-            for attempt, candidate in enumerate((std_field, alt_field), start=1):
-                if self.chm.update_person(
-                    pid, first_name, last_name, [candidate], method="PATCH"
-                ):
-                    logger.info(
-                        f"  field_id {field_id}: cleared (attempt #{attempt}) — {candidate}"
-                    )
-                    break
-                logger.debug(
-                    f"  field_id {field_id}: attempt #{attempt} failed — {candidate}"
-                )
-            else:
-                logger.error(
-                    f"  field_id {field_id}: ALL attempts failed — field not cleared"
-                )
-                field_errors += 1
-
-        return field_errors == 0
+        if ok:
+            logger.info(f"Reset succeeded for {pid}")
+            return True
+        logger.error(
+            f"Failed to reset fields for {pid}. "
+            "Check that field_type is set on every additional_fields item "
+            "and that the full person profile is provided via extra_person_data."
+        )
+        return False
 
     def probe_put_endpoint(self, person_id: str) -> bool:
         """
