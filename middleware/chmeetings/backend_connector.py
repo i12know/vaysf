@@ -414,19 +414,24 @@ class ChMeetingsConnector:
         """
         Update a person's profile including custom field values.
 
-        Tries PUT by default.  Pass ``method="PATCH"`` to use PATCH instead
-        (ChMeetings may require PATCH for partial updates).  Pass
-        ``extra_person_data`` to include additional core person fields in the
-        payload (some APIs reject a PUT that omits required person attributes).
+        PUT is a full-replace operation on the ChMeetings API: standard
+        person fields not present in the body will be cleared.  Pass
+        ``extra_person_data`` (the full dict from ``get_person()``) so that
+        all writable standard fields are preserved.
+
+        Read-only and server-managed fields returned by ``get_person()``
+        (timestamps, computed fields, related-record arrays) are
+        automatically excluded from the payload to avoid HTTP 500 errors.
 
         Args:
             person_id: ChMeetings person ID.
             first_name: Person's first name (required by the API).
             last_name: Person's last name (required by the API).
             additional_fields: List of custom field update dicts.
-            method: HTTP method to use — "PUT" (default) or "PATCH".
-            extra_person_data: Optional dict of additional person fields to
-                merge into the payload (e.g. email, gender, birth_date).
+                Every item **must** include ``field_type``.
+            method: HTTP method to use — "PUT" (default).
+            extra_person_data: Full person dict from ``get_person()``; used
+                to populate all writable standard fields in the PUT body.
 
         Returns:
             True if the update succeeded, False otherwise.
@@ -435,11 +440,29 @@ class ChMeetingsConnector:
             logger.error("API usage is disabled")
             return False
 
+        # Fields from GET /api/v1/people/{id} that must NOT be sent in PUT:
+        # - first_name / last_name: provided as explicit parameters
+        # - id: immutable identifier
+        # - full_name: computed by the server from first+last
+        # - photo: managed via a separate upload endpoint
+        # - created_on / updated_on: server-managed timestamps
+        # - family: related-record array, not a writable person attribute
+        # - is_archived / archived_at: managed via archive/unarchive actions
+        # - additional_fields: provided as an explicit parameter
+        _EXCLUDE = frozenset({
+            "id", "first_name", "last_name",
+            "full_name",
+            "photo",
+            "created_on", "updated_on",
+            "family",
+            "is_archived", "archived_at",
+            "additional_fields",
+        })
+
         payload: Dict[str, Any] = {"first_name": first_name, "last_name": last_name}
         if extra_person_data:
-            # Merge safely — never overwrite first_name / last_name
             for k, v in extra_person_data.items():
-                if k not in ("id", "first_name", "last_name", "additional_fields"):
+                if k not in _EXCLUDE:
                     payload[k] = v
         payload["additional_fields"] = additional_fields
 
