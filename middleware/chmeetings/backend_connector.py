@@ -22,6 +22,28 @@ class ChMeetingsAPIError(Exception):
     """Exception raised for ChMeetings API errors."""
     pass
 
+
+# Fields returned by GET /api/v1/people/{id} that must NOT be sent in
+# PUT /api/v1/people/{id}.  Sending them causes HTTP 400 or 500 errors:
+#   - full_name      : computed by the server from first + last name
+#   - photo          : managed via a separate upload endpoint
+#   - created_on /
+#     updated_on     : server-managed timestamps (read-only)
+#   - family         : related-record array, not a writable person field
+#   - is_archived /
+#     archived_at    : managed via archive/unarchive actions, not PUT
+# first_name, last_name, id, additional_fields are passed as explicit
+# parameters and are always excluded here too.
+PERSON_PUT_EXCLUDE = frozenset({
+    "id", "first_name", "last_name",
+    "full_name",
+    "photo",
+    "created_on", "updated_on",
+    "family",
+    "is_archived", "archived_at",
+    "additional_fields",
+})
+
 class ChMeetingsConnector:
     """Connector for ChMeetings API and web interface."""
 
@@ -440,29 +462,15 @@ class ChMeetingsConnector:
             logger.error("API usage is disabled")
             return False
 
-        # Fields from GET /api/v1/people/{id} that must NOT be sent in PUT:
-        # - first_name / last_name: provided as explicit parameters
-        # - id: immutable identifier
-        # - full_name: computed by the server from first+last
-        # - photo: managed via a separate upload endpoint
-        # - created_on / updated_on: server-managed timestamps
-        # - family: related-record array, not a writable person attribute
-        # - is_archived / archived_at: managed via archive/unarchive actions
-        # - additional_fields: provided as an explicit parameter
-        _EXCLUDE = frozenset({
-            "id", "first_name", "last_name",
-            "full_name",
-            "photo",
-            "created_on", "updated_on",
-            "family",
-            "is_archived", "archived_at",
-            "additional_fields",
-        })
-
         payload: Dict[str, Any] = {"first_name": first_name, "last_name": last_name}
         if extra_person_data:
             for k, v in extra_person_data.items():
-                if k not in _EXCLUDE:
+                if k not in PERSON_PUT_EXCLUDE:
+                    if k == "address" and isinstance(v, dict):
+                        # The API rejects the 'country' key with HTTP 400:
+                        # "Changing country is not allowed."
+                        # Strip it so the rest of the address is preserved.
+                        v = {ak: av for ak, av in v.items() if ak != "country"}
                     payload[k] = v
         payload["additional_fields"] = additional_fields
 
