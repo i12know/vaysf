@@ -320,19 +320,20 @@ class SeasonResetter:
 
     def probe_put_endpoint(self, person_id: str) -> bool:
         """
-        Diagnostic: send a series of minimal PUT requests to identify exactly
-        what the ChMeetings /api/v1/people/{id} endpoint accepts.
+        Diagnostic: send a series of PUT requests to verify what the ChMeetings
+        /api/v1/people/{id} endpoint accepts.
 
         Tests (in order):
-          P1. PUT name only            — does the basic endpoint work at all?
-          P2. PUT name + current vals  — does additional_fields work with real values?
-          P3. PUT name + one set field — same but for a single field
-          P4. PUT /api/v1/people/{id}/fields  — alternate URL for custom fields
-          P5. POST /api/v1/people/{id}/fields — some APIs use POST for field updates
+          P1. PUT full person body, no additional_fields
+          P2. PUT full person + all current additional_fields (round-trip values)
+          P3. PUT full person + single current-value field
+          P4. PUT /api/v1/people/{id}/fields  — alternate URL
+          P5. POST /api/v1/people/{id}/fields — alternate URL + method
 
-        Prints a clear PASS/FAIL for each so we know exactly where to fix.
-        No irreversible changes are made: P1/P2/P3 set fields to their
-        CURRENT values (not clearing them), P4/P5 also use current values.
+        All PUT probes (P1-P3) include the full standard person body so no
+        standard profile fields (email, mobile, birthdate…) are wiped.
+        All probes use current field values, not clearing values, so the
+        profile content is not changed by running this command.
         """
         logger.info(f"=== Probing PUT endpoint for person {person_id} ===")
         person = self.chm.get_person(person_id)
@@ -350,23 +351,29 @@ class SeasonResetter:
             None
         )
 
+        # Build a safe base payload that preserves all standard person fields.
+        # PUT is full-replace — omitting any field clears it on the profile.
+        safe_base: Dict[str, Any] = {
+            k: v for k, v in person.items()
+            if k not in ("id", "additional_fields")
+        }
+
         probes: List[tuple] = [
             # (label, method, url_suffix, payload)
             (
-                "P1: PUT name-only (no additional_fields)",
+                "P1: PUT full person body, no additional_fields",
                 "PUT",
                 f"api/v1/people/{person_id}",
-                {"first_name": first_name, "last_name": last_name},
+                safe_base,
             ),
             (
-                "P2: PUT name + all current additional_fields (round-trip values)",
+                "P2: PUT full person + all current additional_fields (round-trip values)",
                 "PUT",
                 f"api/v1/people/{person_id}",
                 {
-                    "first_name": first_name,
-                    "last_name": last_name,
+                    **safe_base,
                     "additional_fields": [
-                        {k: v for k, v in f.items() if k in ("field_id", "selected_option_id", "selected_option_ids", "value")}
+                        {k: v for k, v in f.items() if k in ("field_id", "field_type", "selected_option_id", "selected_option_ids", "value")}
                         for f in current_fields
                     ],
                 },
@@ -374,12 +381,12 @@ class SeasonResetter:
         ]
         if sample_field:
             single = {k: v for k, v in sample_field.items()
-                      if k in ("field_id", "selected_option_id")}
+                      if k in ("field_id", "field_type", "selected_option_id")}
             probes.append((
-                f"P3: PUT name + single field {sample_field['field_id']} = current value",
+                f"P3: PUT full person + single field {sample_field['field_id']} = current value",
                 "PUT",
                 f"api/v1/people/{person_id}",
-                {"first_name": first_name, "last_name": last_name, "additional_fields": [single]},
+                {**safe_base, "additional_fields": [single]},
             ))
 
         probes += [
@@ -388,7 +395,7 @@ class SeasonResetter:
                 "PUT",
                 f"api/v1/people/{person_id}/fields",
                 {"additional_fields": [
-                    {k: v for k, v in f.items() if k in ("field_id", "selected_option_id", "selected_option_ids", "value")}
+                    {k: v for k, v in f.items() if k in ("field_id", "field_type", "selected_option_id", "selected_option_ids", "value")}
                     for f in current_fields[:2]
                 ]},
             ),
@@ -397,7 +404,7 @@ class SeasonResetter:
                 "POST",
                 f"api/v1/people/{person_id}/fields",
                 {"additional_fields": [
-                    {k: v for k, v in f.items() if k in ("field_id", "selected_option_id", "selected_option_ids", "value")}
+                    {k: v for k, v in f.items() if k in ("field_id", "field_type", "selected_option_id", "selected_option_ids", "value")}
                     for f in current_fields[:2]
                 ]},
             ),
@@ -433,19 +440,27 @@ class SeasonResetter:
 
     def _fetch_wp_participants_by_chmid(self) -> Dict[str, Dict[str, Any]]:
         """
-        Pull all sf_participants from WordPress and index them by chmeetings_id.
+        Pull ALL sf_participants from WordPress and index them by chmeetings_id.
+
+        Paginates through every page so that participants beyond the first 50
+        are not missed.
         """
         logger.info("Fetching WordPress participants for archive enrichment")
+        result: Dict[str, Dict[str, Any]] = {}
+        page = 1
+        per_page = 100
         try:
-            participants = self.wp.get_participants() or []
+            while True:
+                batch = self.wp.get_participants({"page": page, "per_page": per_page}) or []
+                for p in batch:
+                    chmid = str(p.get("chmeetings_id") or "")
+                    if chmid:
+                        result[chmid] = p
+                logger.debug(f"WP participants page {page}: {len(batch)} records")
+                if len(batch) < per_page:
+                    break
+                page += 1
         except Exception as e:
             logger.warning(f"Could not fetch WordPress participants: {e}")
-            return {}
-
-        result: Dict[str, Dict[str, Any]] = {}
-        for p in participants:
-            chmid = str(p.get("chmeetings_id") or "")
-            if chmid:
-                result[chmid] = p
         logger.info(f"Indexed {len(result)} WordPress participants by ChMeetings ID")
         return result
