@@ -65,21 +65,23 @@ def _build_reset_additional_fields(current_fields: List[Dict[str, Any]]) -> List
         cur = current_by_id.get(field_id, {})
         if cur.get("selected_option_ids"):          # non-empty list
             fields.append({
-                "field_id":           field_id,
-                "field_type":         cur.get("field_type", "checkbox"),
+                "field_id":            field_id,
+                "field_type":          cur.get("field_type", "checkbox"),
                 "selected_option_ids": [],
+                "value":               None,         # API appears to require this key
             })
 
     for field_id in SF_DROPDOWN_FIELD_IDS:
         cur = current_by_id.get(field_id, {})
         if cur.get("selected_option_id") is not None:
             fields.append({
-                "field_id":          field_id,
+                "field_id":           field_id,
                 # field_type is "dropdown" or "multiple_choice"; the API
                 # response always includes the real value so the fallback
                 # is only a last-resort safety net.
-                "field_type":        cur.get("field_type", "dropdown"),
+                "field_type":         cur.get("field_type", "dropdown"),
                 "selected_option_id": None,
+                "value":              None,           # API appears to require this key
             })
 
     for field_id in SF_TEXT_FIELD_IDS:
@@ -421,6 +423,26 @@ class SeasonResetter:
                 f"api/v1/people/{person_id}",
                 {**safe_base, "additional_fields": reset_fields}
                 if reset_fields else None,
+            ),
+            # ── Group D: hybrid — all current fields with SF ones overridden ──
+            # Tests whether the API requires the complete field list even for
+            # partial updates (i.e., all non-SF fields must be round-tripped).
+            (
+                "P6: PUT full person + ALL fields (non-SF round-trip, SF cleared)",
+                "PUT",
+                f"api/v1/people/{person_id}",
+                {
+                    **safe_base,
+                    "additional_fields": [
+                        # For SF fields use the clearing value; for others keep current
+                        next(
+                            (r for r in reset_fields if r["field_id"] == f["field_id"]),
+                            {k: v for k, v in f.items()
+                             if k in ("field_id", "field_type", "selected_option_id", "selected_option_ids", "value")}
+                        )
+                        for f in current_fields
+                    ],
+                } if reset_fields else None,
             ),
         ]
         # Remove probes where payload is None (field not present on this profile)
