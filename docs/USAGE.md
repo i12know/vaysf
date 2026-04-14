@@ -174,6 +174,29 @@ python main.py reset-season --year 2025 --person-id 3139537
 python main.py reset-season --year 2025 --person-id 3139537 --dry-run
 ```
 
+> **KNOWN LIMITATION — Field Reset Step (as of April 2026)**
+>
+> The ChMeetings `PUT /api/v1/people/{id}` endpoint returns HTTP 500 when any
+> `additional_fields` item has a null or empty clearing value
+> (`selected_option_id: null`, `selected_option_ids: []`, `value: null`).
+> This has been confirmed as a server-side bug and reported to ChMeetings
+> support (ticket pending).
+>
+> **Until ChMeetings resolves the bug:**
+>
+> 1. Run the **archive step** normally — it works correctly:
+>    ```bash
+>    python main.py reset-season --year 2025 --archive-only
+>    ```
+> 2. Clear the custom fields manually via a **ChMeetings CSV import**:
+>    - Export all VAY-SM members from ChMeetings → People → Export
+>    - In the exported CSV, blank out all Sports Fest columns
+>      (Church Team, Primary Sport, My role is, etc.)
+>    - Re-import the CSV via ChMeetings → People → Import
+>
+> The `--reset-only` and combined `--year 2025` commands will resume working
+> automatically once ChMeetings deploys the fix.
+
 **What the command does**
 
 1. **Fetches** all members of the VAY-SM ChMeetings group (`VAYSM_GROUP_ID`).
@@ -191,6 +214,8 @@ python main.py reset-season --year 2025 --person-id 3139537 --dry-run
    text fields → `null`).  The full person profile is included in the
    request to preserve standard fields (email, mobile, birthdate, etc.)
    that would otherwise be wiped by the PUT full-replace semantics.
+   *(See KNOWN LIMITATION above — this step currently fails due to a
+   ChMeetings server-side bug.)*
 
 **Fields cleared**
 
@@ -480,7 +505,10 @@ Church Reps should be assigned as group leaders for their respective teams.
    - Document participation statistics
 
 2. **System Cleanup**
-   - Archive and reset all members via:
-     `python main.py reset-season --year 2025`
+   - Archive all members' data as ChMeetings profile notes:
+     `python main.py reset-season --year 2025 --archive-only`
+   - Clear custom fields manually via ChMeetings CSV import (see
+     [Season Reset → KNOWN LIMITATION](#season-reset-year-end-archive-and-field-clear)
+     for step-by-step instructions until ChMeetings resolves the server-side bug)
    - Verify a few profiles in ChMeetings to confirm fields were cleared
    - Prepare system for next year
