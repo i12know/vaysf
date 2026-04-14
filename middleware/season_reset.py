@@ -358,57 +358,69 @@ class SeasonResetter:
             if k not in ("id", "additional_fields")
         }
 
+        # Build the actual reset payload (the operation we're trying to perform)
+        reset_fields = _build_reset_additional_fields(current_fields)
+
+        # Pick one checkbox and one dropdown to use in single-field probes
+        single_current = next(
+            (f for f in current_fields
+             if f.get("field_id") in SF_DROPDOWN_FIELD_IDS and f.get("selected_option_id")),
+            None
+        )
+        single_reset_checkbox = next(
+            (f for f in reset_fields if f.get("field_type") == "checkbox"), None
+        )
+        single_reset_dropdown = next(
+            (f for f in reset_fields if f.get("field_type") == "dropdown"), None
+        )
+
         probes: List[tuple] = [
-            # (label, method, url_suffix, payload)
+            # ── Group A: does the person body itself work? ───────────────
             (
-                "P1: PUT full person body, no additional_fields",
+                "P1: PUT full person body, NO additional_fields",
                 "PUT",
                 f"api/v1/people/{person_id}",
                 safe_base,
             ),
+            # ── Group B: round-trip current values (no clearing) ─────────
             (
-                "P2: PUT full person + all current additional_fields (round-trip values)",
+                "P2: PUT full person + all current additional_fields (round-trip)",
                 "PUT",
                 f"api/v1/people/{person_id}",
                 {
                     **safe_base,
                     "additional_fields": [
-                        {k: v for k, v in f.items() if k in ("field_id", "field_type", "selected_option_id", "selected_option_ids", "value")}
+                        {k: v for k, v in f.items()
+                         if k in ("field_id", "field_type", "selected_option_id", "selected_option_ids", "value")}
                         for f in current_fields
                     ],
                 },
             ),
-        ]
-        if sample_field:
-            single = {k: v for k, v in sample_field.items()
-                      if k in ("field_id", "field_type", "selected_option_id")}
-            probes.append((
-                f"P3: PUT full person + single field {sample_field['field_id']} = current value",
+            # ── Group C: actual clearing (the operation we need) ─────────
+            (
+                "P3: PUT full person + single checkbox cleared (selected_option_ids: [])",
                 "PUT",
                 f"api/v1/people/{person_id}",
-                {**safe_base, "additional_fields": [single]},
-            ))
-
-        probes += [
-            (
-                "P4: PUT to /api/v1/people/{id}/fields (alternate URL)",
-                "PUT",
-                f"api/v1/people/{person_id}/fields",
-                {"additional_fields": [
-                    {k: v for k, v in f.items() if k in ("field_id", "field_type", "selected_option_id", "selected_option_ids", "value")}
-                    for f in current_fields[:2]
-                ]},
+                {**safe_base, "additional_fields": [single_reset_checkbox]}
+                if single_reset_checkbox else None,
             ),
             (
-                "P5: POST to /api/v1/people/{id}/fields (POST for field updates)",
-                "POST",
-                f"api/v1/people/{person_id}/fields",
-                {"additional_fields": [
-                    {k: v for k, v in f.items() if k in ("field_id", "field_type", "selected_option_id", "selected_option_ids", "value")}
-                    for f in current_fields[:2]
-                ]},
+                "P4: PUT full person + single dropdown cleared (selected_option_id: null)",
+                "PUT",
+                f"api/v1/people/{person_id}",
+                {**safe_base, "additional_fields": [single_reset_dropdown]}
+                if single_reset_dropdown else None,
+            ),
+            (
+                "P5: PUT full person + ALL SF fields cleared (full season reset payload)",
+                "PUT",
+                f"api/v1/people/{person_id}",
+                {**safe_base, "additional_fields": reset_fields}
+                if reset_fields else None,
             ),
         ]
+        # Remove probes where payload is None (field not present on this profile)
+        probes = [(lbl, meth, url, pld) for lbl, meth, url, pld in probes if pld is not None]
 
         from urllib.parse import urljoin as _urljoin
         any_passed = False
