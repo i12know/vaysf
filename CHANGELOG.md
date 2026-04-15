@@ -1,6 +1,22 @@
 # CHANGELOG
 
-## Version 1.05 (2026-03-13) — 2026 ChMeetings API Upgrade
+## Version 1.06 (2026-04-12)
+
+Replaced Excel export workarounds with direct ChMeetings API calls (Issue #60):
+- Rewrote [#60](https://github.com/i12know/vaysf/issues/60): `group_assignment.py` now calls `add_person_to_group()` directly — no more `chm_group_import.xlsx` or manual ChMeetings import step
+- Added `--dry-run` flag to `assign-groups` CLI command (previews who would be assigned, writes audit xlsx, zero API calls)
+- `church_team_assignments.xlsx` audit file is still written every run (both live and dry-run) as a record
+- Rewrote `sync_approvals_to_chmeetings()` in `sync/manager.py` to use `add_person_to_group()` instead of Excel; fails hard if `APPROVED_GROUP_NAME` group not found in ChMeetings
+- `synced_to_chmeetings=True` is now set per-person based on API success (not xlsx write success)
+- Removed `import pandas as pd` from `sync/manager.py` (no longer used there)
+- Added 429 rate-limit retry with 2/5/10 s back-off to `add_person_to_group()` in the ChMeetings connector
+- Added preventive 200 ms delay between API calls in both `sync_approvals_to_chmeetings()` and `assign_people_to_church_team_groups()` to stay under the ChMeetings rate limit
+- Added `PermissionError` handling when audit xlsx is open in Excel on Windows
+- Added 7 new mock tests in `tests/test_group_assignment.py`
+- Added 3 new mock tests for `sync_approvals_to_chmeetings()` in `tests/test_sync_manager.py`
+- Opened [#61](https://github.com/i12know/vaysf/issues/61): `get_approvals()` `synced_to_chmeetings` filter not working in WordPress REST API
+
+## Version 1.05 (2026-04-11) — 2026 ChMeetings API Upgrade
 
 ### Breaking Changes
 - Removed Selenium support entirely — the middleware now uses only the ChMeetings API for all operations
@@ -13,14 +29,23 @@
 - **Excel fallback for approvals**: Pass `--excel-fallback` to `sync --type approvals` to use the legacy Excel export workflow when needed
 - **Field mapping constants** (`CHM_FIELDS`): All ChMeetings custom field names are now centralized in `config.py` instead of being hardcoded across the codebase, making it easy to update if ChMeetings labels change
 - **API field inspector**: New `test --system chmeetings --test-type api-inspect` command retrieves custom field definitions from ChMeetings and cross-references them against `CHM_FIELDS` to detect mismatches
-- **New API methods**: `ChMeetingsConnector` now exposes `get_fields()` and `add_person_to_group(group_id, person_id)`
+- **New API methods**: `ChMeetingsConnector` now exposes `get_fields()`, `add_person_to_group(group_id, person_id)`, and `remove_person_from_group(group_id, person_id)`
 
 ### Bug Fixes
-- Fixed `get_people()` ignoring caller's `page_size` parameter — the pagination loop now respects the value passed by the caller instead of always using 100
+- Fixed [#57](https://github.com/i12know/vaysf/issues/57): Auth header casing — `ApiKey` → `apikey` for strict gateway compatibility
+- Fixed [#56](https://github.com/i12know/vaysf/issues/56): `get_person()` now correctly unwraps the `{"data": {...}}` response envelope
+- Fixed [#58](https://github.com/i12know/vaysf/issues/58): `get_people()` pagination now uses `total_count` for robust termination; respects caller's `page_size`; sends `include_additional_fields=True` and `include_family_members=False`
+
+### Tests & Infrastructure
+- Added [#59](https://github.com/i12know/vaysf/issues/59): `add_person_to_group()` and `remove_person_from_group()` API methods with live round-trip test gate (`CHM_TEST_GROUP_ID` / `CHM_TEST_PERSON_ID` env vars)
+- Added `test_get_people_pagination` and `test_get_people_request_params` tests
+- Added `middleware/pytest.ini` to fix `ModuleNotFoundError` when running `pytest` from the `middleware/` directory
+- Added `FULL_LIVE_TEST` env var gate to skip the long-running full-sync test in standard `LIVE_TEST=true` mode
 
 ### Documentation
 - Updated ARCHITECTURE.md, INSTALLATION.md, TROUBLESHOOTING.md, USAGE.md, and README.md to reflect all changes
 - Removed all Selenium references from documentation
+- Created `docs/CHMEETINGS_API_MIGRATION.md` documenting all API migration changes
 
 ## Version 1.04 (2025-07-17)
 - Fixed issue [#42](https://github.com/i12know/vaysf/issues/42): Resend approval email now generates fresh tokens with proper expiry dates instead of using expired tokens

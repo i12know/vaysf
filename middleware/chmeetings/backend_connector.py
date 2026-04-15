@@ -104,7 +104,12 @@ class ChMeetingsConnector:
         params.setdefault("include_organizations", False)
 
         while True:
-            params.update({"page": page, "page_size": page_size})
+            params.update({
+                "page": page,
+                "page_size": page_size,
+                "include_additional_fields": True,
+                "include_family_members": False,
+            })
             try:
                 response = self.session.get(
                     urljoin(self.api_url, "api/v1/people"),
@@ -238,22 +243,75 @@ class ChMeetingsConnector:
 
     def add_person_to_group(self, group_id: str, person_id: str) -> bool:
         """
-        Add a person to a group via API.
-        Returns True if successful (201 Created or 200 Already Exists).
+        Add a person to a ChMeetings group.
+
+        Returns True if successful.
+        Note: 201 = newly added, 200 = already a member — both are success.
+        Retries up to 3 times on 429 (rate limit) with 2 / 5 / 10 s back-off.
+
+        Args:
+            group_id: The group ID
+            person_id: The person ID to add
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return False
+
+        retry_waits = [2, 5, 10]  # seconds to wait after each 429 response
+
+        for attempt in range(len(retry_waits) + 1):
+            try:
+                response = self.session.post(
+                    urljoin(self.api_url, f"api/v1/groups/{group_id}/memberships"),
+                    json={"person_id": person_id}
+                )
+                if response.status_code == 429:
+                    if attempt < len(retry_waits):
+                        wait = retry_waits[attempt]
+                        logger.warning(
+                            f"Rate limited adding person {person_id} to group {group_id}. "
+                            f"Waiting {wait}s before retry {attempt + 1}/{len(retry_waits)}..."
+                        )
+                        time.sleep(wait)
+                        continue
+                    logger.error(
+                        f"Rate limit persists after {len(retry_waits)} retries "
+                        f"for person {person_id} → group {group_id}"
+                    )
+                    return False
+                response.raise_for_status()
+                logger.info(
+                    f"Added person {person_id} to group {group_id} "
+                    f"(status {response.status_code})"
+                )
+                return True
+            except requests.RequestException as e:
+                logger.error(f"Failed to add person {person_id} to group {group_id}: {e}")
+                return False
+        return False
+
+    def remove_person_from_group(self, group_id: str, person_id: str) -> bool:
+        """
+        Remove a person from a ChMeetings group.
+
+        Returns True if successful, False if not found or error.
+
+        Args:
+            group_id: The group ID
+            person_id: The person ID to remove
         """
         if not self.use_api:
             logger.error("API usage is disabled")
             return False
         try:
-            response = self.session.post(
-                urljoin(self.api_url, f"api/v1/groups/{group_id}/memberships"),
-                json={"person_id": int(person_id)}
+            response = self.session.delete(
+                urljoin(self.api_url, f"api/v1/groups/{group_id}/memberships/{person_id}")
             )
             response.raise_for_status()
-            logger.info(f"Added person {person_id} to group {group_id} (HTTP {response.status_code})")
+            logger.info(f"Removed person {person_id} from group {group_id}")
             return True
         except requests.RequestException as e:
-            logger.error(f"Failed to add person {person_id} to group {group_id}: {str(e)}")
+            logger.error(f"Failed to remove person {person_id} from group {group_id}: {e}")
             return False
     
     def close(self):

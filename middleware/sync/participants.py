@@ -719,10 +719,12 @@ class ParticipantSyncer:
             # No issues to sync, we can return early
             return
         
-        # Get existing issues for this participant
+        # Get existing issues for this participant (per_page=200 avoids silent truncation
+        # at the PHP default; a single participant won't realistically exceed 200 issues)
         existing_issues = self.wordpress_connector.get_validation_issues({
             "participant_id": participant_id,
-            "status": "open"  # Only check open issues
+            "status": "open",
+            "per_page": 200,
         })
         
         # Create a lookup dictionary of existing issues

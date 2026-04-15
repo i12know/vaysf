@@ -47,13 +47,17 @@ Project maintainers have the right and responsibility to remove, edit, or reject
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/username/sports-fest-integration.git
-cd sports-fest-integration
+git clone https://github.com/i12know/vaysf.git
+cd vaysf\middleware
 ```
 
 ### Install Dependencies
 
 ```bash
+# Create a virtual environment (recommended)
+python -m venv venv
+venv\Scripts\activate
+
 pip install -r requirements.txt
 pip install -r requirements-dev.txt  # Development dependencies
 ```
@@ -156,27 +160,30 @@ function vaysf_get_participant($participant_id) {
 
 ### Python (Middleware)
 
-- Write tests using pytest
+- Write tests using pytest (run from `middleware/` — `pytest.ini` sets up the import paths)
 - Tests should be in the `tests/` directory
 - Test files should be named `test_*.py`
-- Include both unit tests and integration tests
-- Use mock objects for external dependencies
-- Test with both mock mode and live mode (with appropriate env var)
+- Every new ChMeetings connector method must have both a mock and a live-mode test path
+- Use `mocker.patch.object` (pytest-mock) for external API calls
+- Gate live-only tests behind `os.getenv("LIVE_TEST", "false").strip().lower() == "true"`
+- For write operations, use a self-cleaning round-trip pattern: add → verify → remove → verify
 
-Example:
+Example (connector test with mock + live paths):
 
 ```python
-def test_sync_churches(sync_manager, mocker):
-    """Test syncing churches from Excel to WordPress."""
-    # Arrange
-    mocker.patch.object(sync_manager.wordpress_connector, "create_church", return_value={"church_id": 1})
-    
-    # Act
-    result = sync_manager.sync_churches_from_excel("test_data.xlsx")
-    
-    # Assert
-    assert result is True
-    assert sync_manager.stats["churches"]["created"] > 0
+def test_get_group_people(chm_connector, mocker, mock_chm_people_data):
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        people = chm_connector.get_group_people("870578")
+        assert isinstance(people, list)
+    else:
+        with pytest.MonkeyPatch.context() as mp:
+            mock_response = mocker.Mock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"data": mock_chm_people_data[:2]}
+            mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
+            people = chm_connector.get_group_people("G1")
+            assert len(people) == 2
 ```
 
 ### PHP (WordPress Plugin)

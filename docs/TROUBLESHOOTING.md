@@ -87,6 +87,18 @@ This guide addresses common issues you might encounter when using the Sports Fes
 
 ## ChMeetings Integration Issues
 
+### 2026 API Migration Issues
+
+ChMeetings updated their API in 2026 with breaking changes. See [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md) for full details. Quick reference:
+
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| `401 Unauthorized` with a valid API key | Header sent as `ApiKey` (mixed case); gateway is now case-sensitive | Upgrade to v1.05; header must be lowercase `apikey` |
+| `get_person()` returns `None` for a valid ID | Old code returned the `{"data": {...}}` envelope as the person record | Upgrade to v1.05 (`get_person()` now calls `.get("data")`) |
+| Only first 100 participants returned | Old pagination stopped when a page was smaller than `page_size` | Upgrade to v1.05 (pagination now uses `total_count`) |
+| Participant sport/church fields are empty | `include_additional_fields` param not sent | Upgrade to v1.05 (`get_people()` now sends it by default) |
+| `add_person_to_group()` returns `False` | Wrong group ID, or account lacks group management permission | Confirm ID from ChMeetings URL; verify account permissions |
+
 ### API Authentication Failures
 
 **Issue**: Middleware can't authenticate with ChMeetings API.

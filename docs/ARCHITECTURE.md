@@ -284,13 +284,16 @@ Provides API access to ChMeetings data.
 ```python
 class ChMeetingsConnector:
     def authenticate(self)
-    def get_people(self, params=None)
-    def get_person(self, person_id)
+    def get_people(self, params=None)         # paginates via total_count; sends include_additional_fields=True
+    def get_person(self, person_id)            # unwraps {"data": {...}} envelope
     def get_groups(self, params=None)
     def get_group_people(self, group_id)
-    def get_fields(self)                              # Retrieve custom field definitions
-    def add_person_to_group(self, group_id, person_id) # Add person to a ChMeetings group
+    def get_fields(self)                                      # Retrieve custom field definitions
+    def add_person_to_group(self, group_id, person_id)        # POST /api/v1/groups/{id}/memberships
+    def remove_person_from_group(self, group_id, person_id)   # DELETE /api/v1/groups/{id}/memberships/{person_id}
 ```
+
+See [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md) for the full history of API breaking changes and the fixes applied in v1.05.
 
 #### WordPressConnector
 Handles REST API communication with WordPress.
@@ -565,14 +568,29 @@ The project includes a comprehensive test suite:
 ### Live/Mock Testing Toggle
 
 The testing framework supports two modes:
-- **Mock mode** (default): Uses mock data for fast, repeatable tests
-- **Live mode**: Tests against actual APIs for integration testing
+- **Mock mode** (default): Uses mock data for fast, repeatable tests — no credentials needed.
+- **Live mode**: Tests against actual APIs for integration testing.
 
-Toggle between modes using the LIVE_TEST environment variable:
+A `pytest.ini` in `middleware/` sets `pythonpath = .` so that `import chmeetings`, `import wordpress`, etc. resolve correctly without manually setting `PYTHONPATH`.
+
+#### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LIVE_TEST` | `false` | Enable live API tests |
+| `FULL_LIVE_TEST` | `false` | Also run the slow full-participant-sync test |
+| `CHM_TEST_GROUP_ID` | _(none)_ | ChMeetings group ID for group membership round-trip |
+| `CHM_TEST_PERSON_ID` | _(none)_ | ChMeetings person ID for group membership round-trip |
+
 ```bash
-# Mock mode
-pytest tests/test_wordpress_connector.py -v -s
+# Mock mode (all tests, no credentials)
+pytest tests/ -v
 
-# Live mode 
-set LIVE_TEST=true && pytest tests/test_wordpress_connector.py -v -s
+# Live mode
+set LIVE_TEST=true && pytest tests/ -v -s
+
+# Live mode with full sync + group membership tests
+set LIVE_TEST=true && set FULL_LIVE_TEST=true && set CHM_TEST_GROUP_ID=999847 && set CHM_TEST_PERSON_ID=3692903 && pytest tests/ -v -s
 ```
+
+For detailed testing instructions see [USAGE.md](USAGE.md#running-tests).

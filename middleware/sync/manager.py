@@ -5,7 +5,7 @@
 
 import os
 import json
-import pandas as pd
+import time
 from typing import Dict, Any, Optional
 from loguru import logger
 from config import (Config, DATA_DIR, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION,
@@ -402,7 +402,10 @@ class SyncManager:
         fetch_per_page = 100
 
         while True:
-            logger.info(f"Fetching page {current_page} of approved participants from WordPress (per_page={fetch_per_page})...")
+            logger.info(
+                f"Fetching page {current_page} of approved participants from WordPress "
+                f"(per_page={fetch_per_page})..."
+            )
             page_participants = self.wordpress_connector.get_participants(
                 params={"approval_status": "approved", "page": current_page, "per_page": fetch_per_page}
             )
@@ -482,6 +485,7 @@ class SyncManager:
             wp_id_str = str(participant["participant_id"])
 
             success = self.chm_connector.add_person_to_group(group_id, chm_id)
+            time.sleep(0.2)  # 200 ms between calls → ~5 req/s, avoids 429 rate limit
             if success:
                 added_count += 1
                 # Mark approval as synced in WordPress
@@ -569,10 +573,26 @@ class SyncManager:
     def validate_data(self) -> bool:
         """Validate participant data against Sports Fest rules."""
         logger.info("Starting data validation...")
-        wp_participants = self.wordpress_connector.get_participants()
+        wp_participants = []
+        current_page = 1
+        fetch_per_page = 100
+        while True:
+            page_participants = self.wordpress_connector.get_participants(
+                params={"page": current_page, "per_page": fetch_per_page}
+            )
+            if not page_participants:
+                break
+            wp_participants.extend(page_participants)
+            if len(page_participants) < fetch_per_page:
+                break
+            current_page += 1
+            if current_page > 50:
+                logger.warning("Reached page limit (50) fetching participants for validation. Stopping.")
+                break
         if not wp_participants:
             logger.warning("No participants found for validation")
             return False
+        logger.info(f"Fetched {len(wp_participants)} participants for validation.")
 
         rules = self.get_validation_rules()
         participants_by_church = {}
