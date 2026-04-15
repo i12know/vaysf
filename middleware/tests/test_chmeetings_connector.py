@@ -288,3 +288,170 @@ def test_close(chm_connector, mocker):
     mock_session_close = mocker.patch.object(chm_connector.session, "close")
     chm_connector.close()
     mock_session_close.assert_called_once()
+
+
+# ── Tests for Season Reset connector methods ─────────────────────────────────
+
+def test_get_person_notes(chm_connector, mocker):
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    person_id = "3505203"
+    if live_test:
+        start = time.time()
+        notes = chm_connector.get_person_notes(person_id)
+        logger.info(f"Live notes for {person_id}: {notes}, took {time.time() - start:.2f}s")
+        assert isinstance(notes, list), "Notes should be a list"
+    else:
+        mock_notes = [
+            {"note": "Sports Fest 2024 Archive — 2025-01-10 | Team: RPC"},
+            {"note": "Some other note"},
+        ]
+        with pytest.MonkeyPatch.context() as mp:
+            mock_response = mocker.Mock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mock_notes
+            mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
+            notes = chm_connector.get_person_notes(person_id)
+            assert len(notes) == 2
+            assert "Sports Fest 2024 Archive" in notes[0]["note"]
+
+
+def test_get_person_notes_wrapped_in_data(chm_connector, mocker):
+    """API may return notes inside a 'data' key."""
+    mock_notes = [{"note": "some note"}]
+    with pytest.MonkeyPatch.context() as mp:
+        mock_response = mocker.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": mock_notes}
+        mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
+        notes = chm_connector.get_person_notes("123")
+        assert len(notes) == 1
+
+
+def test_get_person_notes_returns_empty_on_error(chm_connector, mocker):
+    import requests as req
+    with pytest.MonkeyPatch.context() as mp:
+        def raise_error(*args, **kwargs):
+            raise req.RequestException("network error")
+        mp.setattr("requests.Session.get", raise_error)
+        notes = chm_connector.get_person_notes("123")
+        assert notes == []
+
+def test_get_member_fields(chm_connector, mocker):
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    mock_fields = [
+        {"field_id": 1282085, "field_name": "My role is", "field_type": "checkbox"},
+        {"field_id": 1281851, "field_name": "Church Team", "field_type": "dropdown"},
+    ]
+    if live_test:
+        start = time.time()
+        fields = chm_connector.get_member_fields()
+        logger.info(f"Live fields retrieved: {len(fields)}, took {time.time() - start:.2f}s")
+        assert isinstance(fields, list), "Fields should be a list"
+    else:
+        with pytest.MonkeyPatch.context() as mp:
+            mock_response = mocker.Mock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mock_fields
+            mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
+            fields = chm_connector.get_member_fields()
+            assert len(fields) == 2, "Expected two fields from mock data"
+            assert fields[0]["field_id"] == 1282085
+
+
+def test_get_member_fields_wrapped_in_data(chm_connector, mocker):
+    """API may return fields inside a 'data' key."""
+    mock_fields = [{"field_id": 1281847, "field_name": "Primary Sport", "field_type": "dropdown"}]
+    with pytest.MonkeyPatch.context() as mp:
+        mock_response = mocker.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": mock_fields}
+        mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
+        fields = chm_connector.get_member_fields()
+        assert len(fields) == 1
+        assert fields[0]["field_name"] == "Primary Sport"
+
+
+def test_get_member_fields_returns_empty_on_error(chm_connector, mocker):
+    """get_member_fields returns [] when the API call fails."""
+    import requests as req
+    with pytest.MonkeyPatch.context() as mp:
+        def raise_error(*args, **kwargs):
+            raise req.RequestException("network error")
+        mp.setattr("requests.Session.get", raise_error)
+        fields = chm_connector.get_member_fields()
+        assert fields == []
+
+
+def test_add_member_note(chm_connector, mocker):
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    person_id = "3505203"
+    note_text = "Sports Fest 2025 | Team: RPC | Primary: Badminton | Member: Yes"
+    if live_test:
+        start = time.time()
+        result = chm_connector.add_member_note(person_id, note_text)
+        logger.info(f"Live add_member_note result: {result}, took {time.time() - start:.2f}s")
+        assert result, "Live add_member_note should succeed"
+    else:
+        with pytest.MonkeyPatch.context() as mp:
+            mock_response = mocker.Mock()
+            mock_response.status_code = 201
+            mock_response.raise_for_status = lambda: None
+            mp.setattr("requests.Session.post", lambda *args, **kwargs: mock_response)
+            result = chm_connector.add_member_note(person_id, note_text)
+            assert result is True, "Mocked add_member_note should return True"
+
+
+def test_add_member_note_returns_false_on_error(chm_connector, mocker):
+    """add_member_note returns False when the API call fails."""
+    import requests as req
+    with pytest.MonkeyPatch.context() as mp:
+        def raise_error(*args, **kwargs):
+            raise req.RequestException("network error")
+        mp.setattr("requests.Session.post", raise_error)
+        result = chm_connector.add_member_note("123", "some note")
+        assert result is False
+
+
+def test_update_person(chm_connector, mocker):
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    person_id = "3505203"
+    additional_fields = [
+        {"field_id": 1282085, "selected_option_ids": []},
+        {"field_id": 1281851, "selected_option_id": None},
+        {"field_id": 1313282, "value": None},
+    ]
+    if live_test:
+        start = time.time()
+        result = chm_connector.update_person(person_id, "Jerry", "Phan", additional_fields)
+        logger.info(f"Live update_person result: {result}, took {time.time() - start:.2f}s")
+        assert result, "Live update_person should succeed"
+    else:
+        with pytest.MonkeyPatch.context() as mp:
+            mock_response = mocker.Mock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status = lambda: None
+            captured = {}
+
+            def fake_put(url, json=None, **kwargs):
+                captured["url"] = url
+                captured["json"] = json
+                return mock_response
+
+            mp.setattr("requests.Session.put", fake_put)
+            result = chm_connector.update_person(person_id, "Jerry", "Phan", additional_fields)
+            assert result is True, "Mocked update_person should return True"
+            assert "additional_fields" in captured["json"]
+            assert len(captured["json"]["additional_fields"]) == 3
+            assert captured["json"]["first_name"] == "Jerry"
+            assert captured["json"]["last_name"] == "Phan"
+
+
+def test_update_person_returns_false_on_error(chm_connector, mocker):
+    """update_person returns False when the API call fails."""
+    import requests as req
+    with pytest.MonkeyPatch.context() as mp:
+        def raise_error(*args, **kwargs):
+            raise req.RequestException("network error")
+        mp.setattr("requests.Session.put", raise_error)
+        result = chm_connector.update_person("123", "A", "B", [])
+        assert result is False

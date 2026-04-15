@@ -20,6 +20,7 @@ from sync.manager import SyncManager
 from chmeetings.backend_connector import ChMeetingsConnector  # Import for export command
 from wordpress.frontend_connector import WordPressConnector   # Import for export command
 from church_teams_export import ChurchTeamsExporter           # Import for export command
+from season_reset import SeasonResetter                       # Import for reset-season command
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for the VAYSF middleware."""
@@ -83,7 +84,25 @@ def parse_args() -> argparse.Namespace:
                              default="connectivity", help="Type of test to run (connectivity, churches, email, api-inspect, or all)")
     test_parser.add_argument("--test-email", default=os.getenv("TEST_EMAIL", "PastorBumble@gmail.com"),
                              help="Email address for email test")
-                             
+
+    # Reset-season command
+    reset_parser = subparsers.add_parser(
+        "reset-season",
+        help="Archive and clear Sports Fest custom fields for all VAY-SM members"
+    )
+    reset_parser.add_argument("--year", type=int, required=True,
+                              help="Season year to archive (e.g. 2025)")
+    reset_parser.add_argument("--dry-run", action="store_true",
+                              help="Preview what would be archived/reset without making any changes")
+    reset_parser.add_argument("--archive-only", action="store_true",
+                              help="Write archive notes only; do not reset custom fields")
+    reset_parser.add_argument("--reset-only", action="store_true",
+                              help="Reset custom fields only; skip writing archive notes")
+    reset_parser.add_argument("--person-id", type=str, default=None,
+                              help="Process a single ChMeetings person ID instead of the whole group (for testing)")
+    reset_parser.add_argument("--probe", action="store_true",
+                              help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id)")
+
     return parser.parse_args()
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
@@ -488,6 +507,28 @@ def main() -> None:
         success = True  # No exit until interrupted
     elif args.command == "test":
         success = test_connectivity(args.system, args.test_type, args.test_email)
+    elif args.command == "reset-season":
+        if args.archive_only and args.reset_only:
+            logger.error("--archive-only and --reset-only are mutually exclusive.")
+            success = False
+        elif args.probe:
+            if not args.person_id:
+                logger.error("--probe requires --person-id.")
+                success = False
+            else:
+                with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+                    resetter = SeasonResetter(chm_conn, wp_conn)
+                    success = resetter.probe_put_endpoint(args.person_id)
+        else:
+            with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+                resetter = SeasonResetter(chm_conn, wp_conn)
+                success = resetter.run(
+                    args.year,
+                    dry_run=args.dry_run,
+                    archive_only=args.archive_only,
+                    reset_only=args.reset_only,
+                    person_id=args.person_id,
+                )
     else:
         logger.error(f"Unknown command: {args.command}")
         success = False

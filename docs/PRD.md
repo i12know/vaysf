@@ -131,6 +131,14 @@ This is the end-to-end process that the system automates. Understanding this flo
          ↓
 3. Participant submits Individual Participant Application (ChMeetings)
          ↓
+3a. [MANUAL — Admin] Admin promotes participant from Form Submission to
+    VAY-SM Member via Bulk Actions → "Add People" in ChMeetings.
+    If person already exists in the Diocese under another church, the
+    bulk action fails; Admin must navigate to Diocese root level and
+    add them to the VAY-SM group manually.
+    Until this step is done, the participant is invisible to the middleware.
+    (See Issue #62 — planned for automation via email-triggered sync)
+         ↓
 4. Middleware syncs participant data to WordPress (sf_participants)
          ↓
 5. Church Rep reviews participant data in ChMeetings; verifies identity & documents
@@ -301,6 +309,8 @@ The following are **not** handled by the current system (as of v1.05) and requir
 - Outreach Plan submission and tracking for pre-Christian participants
 - On-site check-in and badge printing (photo is collected, but on-site scanning is manual)
 - Fee payment processing (handled directly in ChMeetings; only `payment_status` flags are tracked in WordPress)
+- **Form submission → VAY-SM Member promotion** (Issue #62): After a participant submits the Individual Participant Application Form, an Admin must manually promote them to a VAY-SM Member in ChMeetings before the middleware can sync them. Automation planned via email-triggered `sync --type form-submitters` command.
+- **Annual season reset of ChMeetings custom fields** (Issue #63): Before each season opens, an Admin must archive and clear all Sports Fest and Church Rep Verification custom fields for returning members. Automation planned via `reset-season --year YYYY` command using `PUT /api/v1/people/{id}` with `additional_fields[]` and `POST /api/v1/people/{id}/notes` for archiving.
 
 ---
 

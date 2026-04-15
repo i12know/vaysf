@@ -12,6 +12,7 @@ This guide provides instructions for using the Sports Fest ChMeetings Integratio
 - [Windows Middleware](#windows-middleware)
   - [Running Synchronization Tasks](#running-synchronization-tasks)
   - [Exporting Church Team Reports](#exporting-church-team-reports)
+  - [Season Reset (Year-End Archive and Field Clear)](#season-reset-year-end-archive-and-field-clear)
   - [Church Group Assignment Export](#church-group-assignment-export)
   - [Scheduled Syncs](#scheduled-syncs)
   - [Testing and Configuration](#testing-and-configuration)
@@ -223,7 +224,100 @@ python main.py export-church-teams --force-resend-validate2 (no review yet - no 
 ##### Resend to specific church
 python main.py export-church-teams --church-code TLC --force-resend-pending
 
-### Church Group Assignment
+### Season Reset (Year-End Archive and Field Clear)
+
+Before each new registration period opens, all Sports Fest custom fields on
+every VAY-SM member's ChMeetings profile must be archived and cleared.  The
+`reset-season` command handles this automatically.
+
+**Prerequisites**
+
+- Set `VAYSM_GROUP_ID` in your `.env` file to the ChMeetings group ID for
+  the VAY-SM member group.
+- Ensure `CHM_API_KEY` and `WP_API_KEY` are configured so the middleware can
+  reach both ChMeetings and WordPress.
+
+**Commands**
+
+```bash
+# Dry run — show what would be archived and reset, make no changes
+python main.py reset-season --year 2025 --dry-run
+
+# Archive 2025 data as ChMeetings profile notes, then clear all custom fields
+python main.py reset-season --year 2025
+
+# Archive only — write notes but do not clear fields
+python main.py reset-season --year 2025 --archive-only
+
+# Reset only — clear fields without writing archive notes
+python main.py reset-season --year 2025 --reset-only
+
+# Test against a single person before running on the full group
+python main.py reset-season --year 2025 --person-id 3139537
+python main.py reset-season --year 2025 --person-id 3139537 --dry-run
+```
+
+> **KNOWN LIMITATION — Field Reset Step (as of April 2026)**
+>
+> The ChMeetings `PUT /api/v1/people/{id}` endpoint returns HTTP 500 when any
+> `additional_fields` item has a null or empty clearing value
+> (`selected_option_id: null`, `selected_option_ids: []`, `value: null`).
+> This has been confirmed as a server-side bug and reported to ChMeetings
+> support (ticket pending).
+>
+> **Until ChMeetings resolves the bug:**
+>
+> 1. Run the **archive step** normally — it works correctly:
+>    ```bash
+>    python main.py reset-season --year 2025 --archive-only
+>    ```
+> 2. Clear the custom fields manually via a **ChMeetings CSV import**:
+>    - Export all VAY-SM members from ChMeetings → People → Export
+>    - In the exported CSV, blank out all Sports Fest columns
+>      (Church Team, Primary Sport, My role is, etc.)
+>    - Re-import the CSV via ChMeetings → People → Import
+>
+> The `--reset-only` and combined `--year 2025` commands will resume working
+> automatically once ChMeetings deploys the fix.
+
+**What the command does**
+
+1. **Fetches** all members of the VAY-SM ChMeetings group (`VAYSM_GROUP_ID`).
+2. **Archive step** (skipped with `--reset-only`): for each member, reads their
+   2025 participant record from WordPress (`sf_participants`) and writes a
+   structured note to their ChMeetings profile, e.g.:
+
+   > Sports Fest 2025 Archive — 2026-04-14 | Team: RPC | Primary: Badminton (Singles) | Secondary: Bible Challenge - Mixed Team | Member: Yes | Pastor Approved: approved | Checklist: 1✓ 2✓ 3✓ 4✓ 5✓ 6✗
+
+   Archive notes are idempotent — re-running will not create duplicate notes.
+
+3. **Reset step** (skipped with `--archive-only`): calls
+   `PUT /api/v1/people/{id}` to clear all Sports Fest and Church Rep
+   Verification custom fields (dropdowns → `null`, checkboxes → `[]`,
+   text fields → `null`).  The full person profile is included in the
+   request to preserve standard fields (email, mobile, birthdate, etc.)
+   that would otherwise be wiped by the PUT full-replace semantics.
+   *(See KNOWN LIMITATION above — this step currently fails due to a
+   ChMeetings server-side bug.)*
+
+**Fields cleared**
+
+Sports Fest section (section 116139): My role is, Church Team, Church
+membership question, Primary Sport, Primary Racquet Format, Primary Racquet
+Partner, Secondary Sport, Secondary Racquet Format, Secondary Racquet Partner,
+Other Events, Age Verification, Parent/Guardian name/email/phone, Additional
+Info.
+
+Church Rep Verification section (section 116188): Completion Check List,
+Notes on Progress.
+
+**Timing**
+
+Run this command **before the new Individual Participant Application Form goes
+live** — typically at or before the Church Registration Deadline for the
+upcoming year.
+
+### Church Group Assignment Export
 
 Assign participants to their church team groups in ChMeetings directly via API:
 
@@ -519,5 +613,10 @@ Church Reps should be assigned as group leaders for their respective teams.
    - Document participation statistics
 
 2. **System Cleanup**
-   - Archive data for future reference
+   - Archive all members' data as ChMeetings profile notes:
+     `python main.py reset-season --year 2025 --archive-only`
+   - Clear custom fields manually via ChMeetings CSV import (see
+     [Season Reset → KNOWN LIMITATION](#season-reset-year-end-archive-and-field-clear)
+     for step-by-step instructions until ChMeetings resolves the server-side bug)
+   - Verify a few profiles in ChMeetings to confirm fields were cleared
    - Prepare system for next year

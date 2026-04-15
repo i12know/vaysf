@@ -13,6 +13,28 @@ class ChMeetingsAPIError(Exception):
     """Exception raised for ChMeetings API errors."""
     pass
 
+
+# Fields returned by GET /api/v1/people/{id} that must NOT be sent in
+# PUT /api/v1/people/{id}.  Sending them causes HTTP 400 or 500 errors:
+#   - full_name      : computed by the server from first + last name
+#   - photo          : managed via a separate upload endpoint
+#   - created_on /
+#     updated_on     : server-managed timestamps (read-only)
+#   - family         : related-record array, not a writable person field
+#   - is_archived /
+#     archived_at    : managed via archive/unarchive actions, not PUT
+# first_name, last_name, id, additional_fields are passed as explicit
+# parameters and are always excluded here too.
+PERSON_PUT_EXCLUDE = frozenset({
+    "id", "first_name", "last_name",
+    "full_name",
+    "photo",
+    "created_on", "updated_on",
+    "family",
+    "is_archived", "archived_at",
+    "additional_fields",
+})
+
 class ChMeetingsConnector:
     """Connector for ChMeetings API."""
 
@@ -314,6 +336,159 @@ class ChMeetingsConnector:
             logger.error(f"Failed to remove person {person_id} from group {group_id}: {e}")
             return False
     
+    def get_person_notes(self, person_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve existing notes from a person's ChMeetings profile.
+
+        Calls GET /api/v1/people/{person_id}/notes.
+
+        Args:
+            person_id: ChMeetings person ID.
+
+        Returns:
+            List of note dicts (each has at least a ``note`` key), or empty
+            list on failure.
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return []
+        try:
+            response = self.session.get(
+                urljoin(self.api_url, f"api/v1/people/{person_id}/notes")
+            )
+            response.raise_for_status()
+            data = response.json()
+            notes = data if isinstance(data, list) else data.get("data", [])
+            logger.debug(f"Retrieved {len(notes)} note(s) for person {person_id}")
+            return notes
+        except requests.RequestException as e:
+            logger.error(f"Failed to get notes for person {person_id}: {str(e)}")
+            return []
+
+    def get_member_fields(self) -> List[Dict[str, Any]]:
+        """
+        Retrieve all custom field definitions from ChMeetings.
+
+        Calls GET /api/v1/people/fields and returns the full list of field
+        definitions, each containing field_id, field_name, field_type, and
+        available options.
+
+        Returns:
+            List of field definition dicts, or empty list on failure.
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return []
+        try:
+            response = self.session.get(
+                urljoin(self.api_url, "api/v1/people/fields")
+            )
+            response.raise_for_status()
+            data = response.json()
+            fields = data if isinstance(data, list) else data.get("data", [])
+            logger.info(f"Retrieved {len(fields)} custom field definitions")
+            return fields
+        except requests.RequestException as e:
+            logger.error(f"Failed to get member fields: {str(e)}")
+            return []
+
+    def add_member_note(self, person_id: str, note_text: str) -> bool:
+        """
+        Write a note to a person's ChMeetings profile.
+
+        Calls POST /api/v1/people/{person_id}/notes.
+
+        Args:
+            person_id: ChMeetings person ID.
+            note_text: Plain-text note content to store on the profile.
+
+        Returns:
+            True if the note was created successfully, False otherwise.
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return False
+        try:
+            response = self.session.post(
+                urljoin(self.api_url, f"api/v1/people/{person_id}/notes"),
+                json={"note": note_text}
+            )
+            response.raise_for_status()
+            logger.info(f"Added note to person {person_id}")
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Failed to add note to person {person_id}: {str(e)}")
+            return False
+
+    def update_person(
+        self,
+        person_id: str,
+        first_name: str,
+        last_name: str,
+        additional_fields: List[Dict[str, Any]],
+        *,
+        method: str = "PUT",
+        extra_person_data: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Update a person's profile including custom field values.
+
+        PUT is a full-replace operation on the ChMeetings API: standard
+        person fields not present in the body will be cleared.  Pass
+        ``extra_person_data`` (the full dict from ``get_person()``) so that
+        all writable standard fields are preserved.
+
+        Read-only and server-managed fields returned by ``get_person()``
+        (timestamps, computed fields, related-record arrays) are
+        automatically excluded from the payload to avoid HTTP 500 errors.
+
+        Args:
+            person_id: ChMeetings person ID.
+            first_name: Person's first name (required by the API).
+            last_name: Person's last name (required by the API).
+            additional_fields: List of custom field update dicts.
+                Every item **must** include ``field_type``.
+            method: HTTP method to use — "PUT" (default).
+            extra_person_data: Full person dict from ``get_person()``; used
+                to populate all writable standard fields in the PUT body.
+
+        Returns:
+            True if the update succeeded, False otherwise.
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return False
+
+        payload: Dict[str, Any] = {"first_name": first_name, "last_name": last_name}
+        if extra_person_data:
+            for k, v in extra_person_data.items():
+                if k not in PERSON_PUT_EXCLUDE:
+                    if k == "address" and isinstance(v, dict):
+                        # The API rejects the 'country' key with HTTP 400:
+                        # "Changing country is not allowed."
+                        # Strip it so the rest of the address is preserved.
+                        v = {ak: av for ak, av in v.items() if ak != "country"}
+                    payload[k] = v
+        payload["additional_fields"] = additional_fields
+
+        url = urljoin(self.api_url, f"api/v1/people/{person_id}")
+        http_call = self.session.patch if method.upper() == "PATCH" else self.session.put
+
+        try:
+            logger.debug(f"update_person [{method}] payload for {person_id}: {payload}")
+            response = http_call(url, json=payload)
+            if not response.ok:
+                logger.error(
+                    f"Failed to update person {person_id} [{method}]: "
+                    f"HTTP {response.status_code} — {response.text}"
+                )
+                return False
+            logger.info(f"Updated person {person_id} with {len(additional_fields)} field(s) via {method}")
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Failed to update person {person_id} [{method}]: {str(e)}")
+            return False
+
     def close(self):
         """Close connections and clean up resources."""
         self.session.close()
