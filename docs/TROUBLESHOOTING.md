@@ -42,20 +42,6 @@ This guide addresses common issues you might encounter when using the Sports Fes
    venv\Scripts\activate
    ```
 
-### Selenium WebDriver Issues
-
-**Issue**: Selenium operations fail or Chrome crashes.
-
-**Solutions**:
-1. Ensure Chrome and ChromeDriver versions match
-2. Update ChromeDriver to latest version
-3. Try running Chrome in non-headless mode for debugging:
-   ```
-   # In .env file
-   USE_CHROME_HEADLESS=False
-   ```
-4. Check Chrome profile path if using a custom profile
-
 ### Excel File Errors
 
 **Issue**: Church sync fails with Excel-related errors.
@@ -116,9 +102,14 @@ This guide addresses common issues you might encounter when using the Sports Fes
 **Issue**: ChMeetings data not mapping correctly to WordPress fields.
 
 **Solutions**:
-1. Check ChMeetings form field names match expected values
-2. Verify additional fields are set up correctly in ChMeetings
-3. Examine raw data using the middleware debug function:
+1. Check ChMeetings form field names match the `CHM_FIELDS` constants in `config.py`
+2. Run the API field inspector to verify field names match what ChMeetings returns:
+   ```bash
+   python main.py test --system chmeetings --test-type api-inspect
+   ```
+   This will cross-reference your configured field names against the live API and report any mismatches.
+3. Verify additional fields are set up correctly in ChMeetings
+4. Examine raw data using the middleware debug function:
    ```python
    logger.debug(f"Raw person_data for {person_id}: {person_data}")
    ```
@@ -223,20 +214,14 @@ This guide addresses common issues you might encounter when using the Sports Fes
 **Issue**: Sync operations take too long to complete.
 
 **Solutions**:
-1. Increase batch size in config.py:
-   ```python
-   BATCH_SIZE = 100  # Default is 50
-   ```
-2. Ensure database indexes are optimized
-3. Run targeted syncs instead of full syncs:
+1. Ensure database indexes are optimized
+2. Run targeted syncs instead of full syncs:
    ```bash
    # Sync one participant
    python main.py sync --type participants --chm-id 1234567
-
-   # How about syncing one church ?
    ```
-4. Schedule syncs during low-traffic periods
-5. Update logging level to reduce I/O:
+3. Schedule syncs during low-traffic periods
+4. Update logging level to reduce I/O:
    ```
    # In .env file
    DEBUG=False

@@ -3,7 +3,7 @@ import os
 import sys
 import pandas as pd
 from loguru import logger
-from config import Config, DATA_DIR
+from config import Config, CHM_FIELDS, DATA_DIR
 
 # Add parent directory to import path to access other modules
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -55,7 +55,7 @@ def export_people_with_church_codes():
             additional_fields = {f["field_name"]: f["value"] for f in person.get("additional_fields", [])}
             
             # Check if they have a church code
-            church_code = additional_fields.get("Church Team", "").strip().upper()
+            church_code = additional_fields.get(CHM_FIELDS["CHURCH_TEAM"], "").strip().upper()
             if church_code:
                 # This person needs to be assigned to a team
                 people_for_assignment.append({

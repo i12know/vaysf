@@ -14,7 +14,7 @@ The system uses a three-tier architecture to separate concerns and provide a rob
                              |                  |
                              +--------^---------+
                                       |
-                                      | API/Selenium
+                                      | API
                                       |
                              +--------v---------+
                              |                  |
@@ -251,7 +251,7 @@ CREATE TABLE sf_validation_issues (
 ├── run-sync.bat                # Batch file for manual sync
 ├── chmeetings\                 # ChMeetings connector module
 │   ├── __init__.py
-│   └── backend_connector.py    # API and Selenium connector
+│   └── backend_connector.py    # ChMeetings API connector
 ├── wordpress\                  # WordPress connector module
 │   ├── __init__.py
 │   └── frontend_connector.py   # REST API client
@@ -288,6 +288,8 @@ class ChMeetingsConnector:
     def get_person(self, person_id)
     def get_groups(self, params=None)
     def get_group_people(self, group_id)
+    def get_fields(self)                              # Retrieve custom field definitions
+    def add_person_to_group(self, group_id, person_id) # Add person to a ChMeetings group
 ```
 
 #### WordPressConnector
@@ -314,10 +316,11 @@ class SyncManager:
     def sync_churches_from_excel(self, excel_file_path)
     def sync_participants(self, chm_id=None)
     def generate_approvals(self)
-    def sync_approvals_to_chmeetings(self)
+    def sync_approvals_to_chmeetings(self, use_excel_fallback=False)
     def validate_data(self)
     def run_full_sync(self)
 ```
+The `sync_approvals_to_chmeetings()` method uses the ChMeetings API (`add_person_to_group()`) by default to add approved participants to the designated group. Pass `use_excel_fallback=True` to fall back to the legacy Excel export workflow.
 
 #### IndividualValidator
 Validates participant data against JSON rules.
@@ -505,9 +508,10 @@ Usage: main.py [command] [options]
 
 Commands:
   sync                   Sync data between systems
-    --type TYPE          Type of data to sync (churches, participants, 
+    --type TYPE          Type of data to sync (churches, participants,
                          approvals, validation, full)
     --chm-id ID          ChMeetings ID for syncing a specific participant
+    --excel-fallback     Use Excel export instead of API for approval sync
   
   sync-churches          Sync churches from Excel file
     --file FILE          Path to the church Excel file
@@ -527,7 +531,8 @@ Commands:
   
   test                   Test connectivity and functionality
     --system SYSTEM      System to test (chmeetings, wordpress, all)
-    --test-type TYPE     Type of test to run (connectivity, churches, email, all)
+    --test-type TYPE     Type of test to run (connectivity, churches, email,
+                         api-inspect, all)
     --test-email EMAIL   Email address for email test
 ```
 

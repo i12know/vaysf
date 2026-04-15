@@ -1,4 +1,4 @@
-# Sports Fest 2025 ChMeetings Integration
+# Sports Fest ChMeetings Integration
 
 ## Overview
 
@@ -15,6 +15,9 @@ The Sports Fest ChMeetings Integration is a comprehensive system for managing th
 - Targeted participant syncing for debugging (by ChMeetings ID)
 - Excel report generation for church team status
 - Group assignment creation for ChMeetings integration
+- API-based approval sync to ChMeetings groups (with Excel fallback)
+- Centralized field mapping configuration (`CHM_FIELDS`) for easy maintenance
+- API field inspector to detect ChMeetings field name changes
 
 ## System Architecture
 
@@ -68,8 +71,11 @@ python main.py sync --type full
 # Sync churches from Excel
 python main.py sync-churches --file "data/Church Application Form.xlsx"
 
-# Generate approval tokens
+# Sync approvals to ChMeetings (API-based)
 python main.py sync --type approvals
+
+# Sync approvals using legacy Excel export
+python main.py sync --type approvals --excel-fallback
 
 # Sync a specific participant by ChMeetings ID (for debugging)
 python main.py sync --type participants --chm-id <CHMEETINGS_ID>
@@ -88,12 +94,13 @@ For detailed setup and usage instructions, see the [Installation Guide](docs/INS
 - [Installation Guide](docs/INSTALLATION.md)
 - [Architecture Overview](ARCHITECTURE.md)
 - [Usage Guide](docs/USAGE.md)
+- [Season Transition Guide](docs/SEASON_TRANSITION.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## Project Status
 
-The system has been thoroughly tested and is ready for production use for Sports Fest 2025. All core functionality is fully implemented and tested, including recent improvements:
+The system has been thoroughly tested and is ready for production use. All core functionality is fully implemented and tested, including:
 
 - Church synchronization from Excel to WordPress
 - Participant synchronization from ChMeetings to WordPress
@@ -101,8 +108,10 @@ The system has been thoroughly tested and is ready for production use for Sports
 - Pastor approval workflow
 - WordPress admin interface
 - Enhanced reporting capabilities for church representatives
+- API-based approval sync (v1.05) — eliminates manual Excel import to ChMeetings
+- Centralized field mapping and API field inspector (v1.05)
 
-The functionality covers the complete operational workflow from registration to participation, with robust error handling and recovery mechanisms. Recent updates in v1.01 and v1.02 have improved system reliability and added valuable debugging and reporting tools.
+The functionality covers the complete operational workflow from registration to participation, with robust error handling and recovery mechanisms. The v1.05 release modernizes the ChMeetings integration by removing Selenium in favor of a pure API approach and adds tools for easier field mapping maintenance.
 
 ## License
 

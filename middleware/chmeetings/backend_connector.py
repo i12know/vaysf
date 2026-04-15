@@ -7,15 +7,6 @@ from typing import Dict, List, Optional, Union, Any
 from urllib.parse import urljoin
 from loguru import logger
 
-# Selenium imports
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-
 from config import Config
 
 class ChMeetingsAPIError(Exception):
@@ -23,135 +14,95 @@ class ChMeetingsAPIError(Exception):
     pass
 
 class ChMeetingsConnector:
-    """Connector for ChMeetings API and web interface."""
+    """Connector for ChMeetings API."""
 
 
-    def __init__(self, use_api: bool = True, use_selenium: bool = False):
+    def __init__(self, use_api: bool = True):
         self.api_url = Config.CHM_API_URL
-        self.api_key = Config.CHM_API_KEY  # Replace username/password with api_key
+        self.api_key = Config.CHM_API_KEY
         self.use_api = use_api
-        self.use_selenium = use_selenium
         self.session = requests.Session()
-        # Set headers with API key
+        # Set headers with API key (new API uses lowercase "apikey")
         self.session.headers.update({
             "accept": "application/json",
-            "ApiKey": self.api_key  # Or try "Api-Key" or "Authorization" based on what works
+            "apikey": self.api_key
         })
-        self.selenium_driver = None
-        
-        if self.use_selenium:
-            self._init_selenium()
-
-        
-    def _init_selenium(self):
-        """Initialize Selenium WebDriver for Windows."""
-        options = Options()
-        
-        # Set headless mode if configured
-        if Config.USE_CHROME_HEADLESS:
-            options.add_argument("--headless")
-            options.add_argument("--disable-gpu")  # Required for Windows
-        
-        # Add common options
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--window-size=1920,1080")  # Set a reasonable window size
-        
-        # Add user profile if specified
-        if Config.CHROME_PROFILE_DIR and os.path.exists(Config.CHROME_PROFILE_DIR):
-            options.add_argument(f"--user-data-dir={Config.CHROME_PROFILE_DIR}")
-        
-        # Initialize driver with specific path or using webdriver-manager
-        if Config.CHROME_DRIVER_PATH and os.path.exists(Config.CHROME_DRIVER_PATH):
-            self.selenium_driver = webdriver.Chrome(
-                service=Service(Config.CHROME_DRIVER_PATH),
-                options=options
-            )
-        else:
-            # Use webdriver-manager to auto-download the correct chromedriver
-            self.selenium_driver = webdriver.Chrome(
-                service=Service(ChromeDriverManager().install()),
-                options=options
-            )
-        
-        logger.info("Selenium WebDriver initialized for Chrome on Windows")
     
+    def _extract_data(self, response_json: Any) -> Any:
+        """Extract data from the new API response wrapper.
+
+        Handles both new format: {"status_code": 200, "paging": {...}, "data": [...]}
+        and old format: [...] or {"data": [...]}
+        """
+        if isinstance(response_json, list):
+            return response_json
+        if isinstance(response_json, dict):
+            if "data" in response_json:
+                return response_json["data"]
+        return response_json
+
+    def _get_paging(self, response_json: Any) -> Optional[Dict[str, Any]]:
+        """Extract paging info from new API response, if present."""
+        if isinstance(response_json, dict):
+            return response_json.get("paging")
+        return None
+
     def authenticate(self) -> bool:
         """
         Verify API key works by testing a simple request.
         Returns True if successful.
         """
-        if self.use_api:
-            try:
-                # Test the API key with a basic request (e.g., to /people)
-                response = self.session.get(
-                    urljoin(self.api_url, "api/v1/people"),
-                    params={"page": 1, "page_size": 10}
-                )
-                response.raise_for_status()
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return False
+
+        try:
+            response = self.session.get(
+                urljoin(self.api_url, "api/v1/people"),
+                params={"page": 1, "page_size": 1,
+                        "include_additional_fields": False,
+                        "include_family_members": False,
+                        "include_organizations": False}
+            )
+            response.raise_for_status()
+            data = response.json()
+            # New API returns status_code in wrapper
+            if isinstance(data, dict) and data.get("status_code") == 200:
+                logger.info("API key verified successfully with ChMeetings API (new API format)")
+            elif isinstance(data, dict) and "data" in data:
                 logger.info("API key verified successfully with ChMeetings API")
-                return True
-            except requests.RequestException as e:
-                logger.error(f"API key verification failed: {str(e)}")
-                return False
-                
-        if self.use_selenium and self.selenium_driver:
-            try:
-                self.selenium_driver.get(urljoin(self.api_url.replace("api.", ""), "login"))
-                
-                # Wait for login form
-                username_field = WebDriverWait(self.selenium_driver, 10).until(
-                    EC.presence_of_element_located((By.ID, "username"))
-                )
-                password_field = self.selenium_driver.find_element(By.ID, "password")
-                
-                # Fill in login form
-                username_field.send_keys(self.username)
-                password_field.send_keys(self.password)
-                
-                # Submit form
-                password_field.submit()
-                
-                # Wait for successful login
-                WebDriverWait(self.selenium_driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, ".dashboard"))
-                )
-                
-                logger.info("Successfully authenticated with ChMeetings via Selenium")
-                return True
-            except Exception as e:
-                logger.error(f"Failed to authenticate with ChMeetings via Selenium: {str(e)}")
-                
-                # Take screenshot if debugging is enabled
-                if Config.DEBUG and self.selenium_driver:
-                    screenshot_path = os.path.join(Config.TEMP_DIR, f"auth_error_{int(time.time())}.png")
-                    self.selenium_driver.save_screenshot(screenshot_path)
-                    logger.info(f"Screenshot saved to {screenshot_path}")
-                
-                return False
-        
-        return False
+            else:
+                logger.info("API key verified (response format unrecognized, but HTTP 200 OK)")
+            return True
+        except requests.RequestException as e:
+            logger.error(f"API key verification failed: {str(e)}")
+            return False
 
     
     def get_people(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Get people records from ChMeetings.
-        
+
         Args:
-            params: Query parameters
-            
+            params: Query parameters (include_additional_fields, name, mobile, email, etc.)
+
         Returns:
             List of people records
         """
         if not self.use_api:
             logger.error("API usage is disabled")
             return []
-        
+
         all_people = []
         page = 1
-        page_size = 50  # Adjust based on API limits if needed
         params = params or {}
-        
+        # Respect caller's page_size if provided, default to 100
+        page_size = params.pop("page_size", 100)
+        # Default to including additional fields for backward compat with sync
+        params.setdefault("include_additional_fields", True)
+        params.setdefault("include_family_members", False)
+        params.setdefault("include_organizations", False)
+
         while True:
             params.update({"page": page, "page_size": page_size})
             try:
@@ -160,40 +111,54 @@ class ChMeetingsConnector:
                     params=params
                 )
                 response.raise_for_status()
-                data = response.json()
-                people = data if isinstance(data, list) else data.get("data", [])
+                raw = response.json()
+                people = self._extract_data(raw)
+                if not isinstance(people, list):
+                    people = []
                 all_people.extend(people)
-                logger.info(f"Fetched page {page}: {len(people)} people")
-                if len(people) < page_size:  # No more pages
-                    break
+
+                # Use paging.total_count if available for proper pagination
+                paging = self._get_paging(raw)
+                if paging and "total_count" in paging:
+                    total = paging["total_count"]
+                    logger.info(f"Fetched page {page}: {len(people)} people (total: {total})")
+                    if page * page_size >= total:
+                        break
+                else:
+                    logger.info(f"Fetched page {page}: {len(people)} people")
+                    if len(people) < page_size:
+                        break
                 page += 1
             except requests.RequestException as e:
                 logger.error(f"Failed to get people on page {page}: {str(e)}")
                 break
-        
+
         return all_people
 
     
     def get_person(self, person_id: str) -> Optional[Dict[str, Any]]:
         """
         Get a specific person record from ChMeetings.
-        
+
         Args:
             person_id: The person ID
-            
+
         Returns:
             Person record or None if not found
         """
         if not self.use_api:
             logger.error("API usage is disabled")
             return None
-        
+
         try:
             response = self.session.get(
                 urljoin(self.api_url, f"api/v1/people/{person_id}")
             )
             response.raise_for_status()
-            return response.json()
+            raw = response.json()
+            # New API may return person directly or wrapped in data
+            data = self._extract_data(raw)
+            return data
         except requests.RequestException as e:
             logger.error(f"Failed to get person {person_id}: {str(e)}")
             return None
@@ -202,10 +167,10 @@ class ChMeetingsConnector:
     def get_groups(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Get groups from ChMeetings.
-        
+
         Args:
             params: Query parameters
-            
+
         Returns:
             List of group records
         """
@@ -218,8 +183,9 @@ class ChMeetingsConnector:
                 params=params
             )
             response.raise_for_status()
-            data = response.json()
-            return data if isinstance(data, list) else data.get("data", [])
+            raw = response.json()
+            data = self._extract_data(raw)
+            return data if isinstance(data, list) else []
         except requests.RequestException as e:
             logger.error(f"Failed to get groups: {str(e)}")
             return []
@@ -228,10 +194,10 @@ class ChMeetingsConnector:
     def get_group_people(self, group_id: str) -> List[Dict[str, Any]]:
         """
         Get people in a specific group from ChMeetings.
-        
+
         Args:
             group_id: The group ID
-            
+
         Returns:
             List of people in the group
         """
@@ -241,85 +207,58 @@ class ChMeetingsConnector:
         try:
             response = self.session.get(
                 urljoin(self.api_url, "api/v1/groups/people"),
-                params={"group_ids": group_id}  # Note the plural "group_ids"
+                params={"group_ids": group_id}
             )
             response.raise_for_status()
-            data = response.json()
-            return data.get("data", []) if isinstance(data, dict) else data
+            raw = response.json()
+            data = self._extract_data(raw)
+            return data if isinstance(data, list) else []
         except requests.RequestException as e:
             logger.error(f"Failed to get people in group {group_id}: {str(e)}")
             return []
-    
-    def update_person_via_selenium(self, person_id: str, update_data: Dict[str, Any]) -> bool:
+
+    def get_fields(self) -> Optional[Dict[str, Any]]:
         """
-        Update a person record using Selenium (for cases where API doesn't support the operation).
-        
-        Args:
-            person_id: The person ID
-            update_data: Data to update
-            
-        Returns:
-            True if successful
+        Get custom member field definitions from ChMeetings.
+        Returns sections with fields and their options (for mapping field_id to field_name).
         """
-        if not self.use_selenium or not self.selenium_driver:
-            logger.error("Selenium usage is disabled")
-            return False
-        
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return None
         try:
-            # Navigate to the person edit page
-            self.selenium_driver.get(urljoin(
-                self.api_url.replace("api.", ""),
-                f"people/{person_id}/edit"
-            ))
-            
-            # Take screenshot if debugging is enabled
-            if Config.DEBUG:
-                screenshot_path = os.path.join(Config.TEMP_DIR, f"person_edit_{person_id}.png")
-                self.selenium_driver.save_screenshot(screenshot_path)
-                logger.info(f"Screenshot saved to {screenshot_path}")
-            
-            # Wait for the form to load
-            WebDriverWait(self.selenium_driver, 10).until(
-                EC.presence_of_element_located((By.ID, "personForm"))
+            response = self.session.get(
+                urljoin(self.api_url, "api/v1/people/fields")
             )
-            
-            # Update fields
-            for field, value in update_data.items():
-                try:
-                    field_element = self.selenium_driver.find_element(By.ID, field)
-                    field_element.clear()
-                    field_element.send_keys(str(value))
-                except Exception as e:
-                    logger.warning(f"Failed to update field {field}: {str(e)}")
-            
-            # Submit form
-            self.selenium_driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
-            
-            # Wait for success message
-            WebDriverWait(self.selenium_driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".alert-success"))
+            response.raise_for_status()
+            raw = response.json()
+            return self._extract_data(raw)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get member fields: {str(e)}")
+            return None
+
+    def add_person_to_group(self, group_id: str, person_id: str) -> bool:
+        """
+        Add a person to a group via API.
+        Returns True if successful (201 Created or 200 Already Exists).
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return False
+        try:
+            response = self.session.post(
+                urljoin(self.api_url, f"api/v1/groups/{group_id}/memberships"),
+                json={"person_id": int(person_id)}
             )
-            
-            logger.info(f"Successfully updated person {person_id} via Selenium")
+            response.raise_for_status()
+            logger.info(f"Added person {person_id} to group {group_id} (HTTP {response.status_code})")
             return True
-        except Exception as e:
-            logger.error(f"Failed to update person {person_id} via Selenium: {str(e)}")
-            
-            # Take error screenshot if debugging is enabled
-            if Config.DEBUG and self.selenium_driver:
-                screenshot_path = os.path.join(Config.TEMP_DIR, f"person_edit_error_{person_id}.png")
-                self.selenium_driver.save_screenshot(screenshot_path)
-                logger.info(f"Error screenshot saved to {screenshot_path}")
-            
+        except requests.RequestException as e:
+            logger.error(f"Failed to add person {person_id} to group {group_id}: {str(e)}")
             return False
     
     def close(self):
         """Close connections and clean up resources."""
         self.session.close()
-        
-        if self.selenium_driver:
-            self.selenium_driver.quit()
-            logger.info("Selenium WebDriver closed")
 
     def __enter__(self):
         """Context manager entry point."""

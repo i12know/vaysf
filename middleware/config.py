@@ -154,6 +154,23 @@ CHECK_BOXES = {
     "6-PAID": "6. Paid All Fees"
 }
     
+# ChMeetings custom field names (must match labels in ChMeetings exactly)
+# Used in participants.py _map_chmeetings_participants() to extract data from additional_fields.
+# To verify these match the live API, run: python main.py test --system chmeetings --test-type api-inspect
+CHM_FIELDS = {
+    "CHURCH_TEAM": "Church Team",
+    "PRIMARY_SPORT": "Primary Sport",
+    "PRIMARY_FORMAT": "Primary Racquet Sport Format",
+    "PRIMARY_PARTNER": "Primary Racquet Sport Partner (if applied)",
+    "SECONDARY_SPORT": "Secondary Sport",
+    "SECONDARY_FORMAT": "Secondary Racquet Sport Format",
+    "SECONDARY_PARTNER": "Secondary Racquet Sport Partner (if applied)",
+    "OTHER_EVENTS": "Other Events",
+    "COMPLETION_CHECKLIST": "Completion Check List",
+    "PARENT_INFO": "Parent Info",
+    "ROLES": "My role is",
+}
+
 # Approval Status Constants
 APPROVAL_STATUS = {
     "PENDING": "pending",                   ## Initial status for participants who have validation issues or incomplete requirements: NOT yet ready for pastoral approval.
@@ -208,21 +225,14 @@ class Config:
     """Configuration settings for VAYSF middleware."""
     # ChMeetings configuration
     CHM_API_URL = os.getenv("CHM_API_URL", "https://api.chmeetings.com")
-    CHM_USERNAME = os.getenv("CHM_USERNAME")
-    CHM_PASSWORD = os.getenv("CHM_PASSWORD")
     CHM_API_KEY = os.getenv("CHM_API_KEY")
-    
+
     # WordPress configuration
     WP_URL = os.getenv("WP_URL")
     WP_API_KEY = os.getenv("WP_API_KEY")
-    
+
     # Email configuration
     EMAIL_FROM = os.getenv("EMAIL_FROM", "info@vaysm.org")
-    
-    # Selenium configuration
-    CHROME_DRIVER_PATH = os.getenv("CHROME_DRIVER_PATH", "")  # Empty if using webdriver-manager
-    USE_CHROME_HEADLESS = os.getenv("USE_CHROME_HEADLESS", "True").lower() == "true"
-    CHROME_PROFILE_DIR = os.getenv("CHROME_PROFILE_DIR", "")
     
     # Application settings
     # Default APP_ENV to "test" when running under pytest to avoid failing
@@ -249,8 +259,6 @@ class Config:
         """Validate configuration settings."""
         required_vars = {
             "CHM_API_URL": cls.CHM_API_URL,
-            "CHM_USERNAME": cls.CHM_USERNAME,
-            "CHM_PASSWORD": cls.CHM_PASSWORD,
             "CHM_API_KEY": cls.CHM_API_KEY,
             "WP_URL": cls.WP_URL,
             "WP_API_KEY": cls.WP_API_KEY,
@@ -330,8 +338,6 @@ def create_env_template() -> None:
     if not env_template_path.exists():
         template = """# ChMeetings configuration
 CHM_API_URL=https://api.chmeetings.com
-CHM_USERNAME=
-CHM_PASSWORD=
 CHM_API_KEY=
 
 # WordPress configuration
@@ -340,11 +346,6 @@ WP_API_KEY=
 
 # Email configuration
 EMAIL_FROM=sportsfest@example.com
-
-# Selenium configuration
-CHROME_DRIVER_PATH=
-USE_CHROME_HEADLESS=True
-CHROME_PROFILE_DIR=
 
 # Application settings
 APP_ENV=development
@@ -359,9 +360,8 @@ APPROVED_EXCEL_FILE=group_import_approved_participants.xlsx
 # Sync settings
 TEAM_PREFIX=Team
 SPORTS_FEST_DATE=2025-07-19
-CHURCH_EXCEL_FILE=
 
-# Export directory 
+# Export directory
 # Default is now 'G:\\Shared drives\\RP Google Drive\\VAY\\SportsFest\\VAYSF-data' if not set here.
 # You can override it, e.g., EXPORT_DIR=C:\\Users\\YourUser\\Desktop\\VAYSF_Exports
 # or EXPORT_DIR=export (for a folder named 'export' in the project root)
