@@ -46,10 +46,12 @@ def _build_reset_additional_fields(current_fields: List[Dict[str, Any]]) -> List
     Rules:
     - Only include entries for fields that currently have a value (sending a
       reset for a never-filled field causes a 500 from the ChMeetings API).
-    - Each item **must** include ``field_type`` — the ChMeetings API requires
-      this discriminator to process the field; omitting it causes HTTP 500.
-      The value is taken directly from the source field returned by
-      GET /api/v1/people/{id}, with sensible per-category fallbacks.
+    - Each item **must** include ``field_type`` (required per API spec).
+    - Each item must include **only** the property that matches its type:
+      ``selected_option_ids`` for checkbox, ``selected_option_id`` for
+      dropdown/multiple_choice, ``value`` for text fields.  Mixing in
+      extra keys (e.g. ``value: null`` alongside ``selected_option_id``)
+      causes HTTP 500 per ChMeetings support (April 2026).
 
     Args:
         current_fields: The ``additional_fields`` list from the person's
@@ -69,7 +71,6 @@ def _build_reset_additional_fields(current_fields: List[Dict[str, Any]]) -> List
                 "field_id":            field_id,
                 "field_type":          cur.get("field_type", "checkbox"),
                 "selected_option_ids": [],
-                "value":               None,         # API appears to require this key
             })
 
     for field_id in SF_DROPDOWN_FIELD_IDS:
@@ -82,7 +83,6 @@ def _build_reset_additional_fields(current_fields: List[Dict[str, Any]]) -> List
                 # is only a last-resort safety net.
                 "field_type":         cur.get("field_type", "dropdown"),
                 "selected_option_id": None,
-                "value":              None,           # API appears to require this key
             })
 
     for field_id in SF_TEXT_FIELD_IDS:
