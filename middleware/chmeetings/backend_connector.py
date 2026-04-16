@@ -369,18 +369,29 @@ class ChMeetingsConnector:
         if not self.use_api:
             logger.error("API usage is disabled")
             return []
-        try:
-            response = self.session.get(
-                urljoin(self.api_url, f"api/v1/people/{person_id}/notes")
-            )
-            response.raise_for_status()
-            data = response.json()
-            notes = data if isinstance(data, list) else data.get("data", [])
-            logger.debug(f"Retrieved {len(notes)} note(s) for person {person_id}")
-            return notes
-        except requests.RequestException as e:
-            logger.error(f"Failed to get notes for person {person_id}: {str(e)}")
-            return []
+        retry_waits = [2, 5, 10]
+        for attempt in range(len(retry_waits) + 1):
+            try:
+                response = self.session.get(
+                    urljoin(self.api_url, f"api/v1/people/{person_id}/notes")
+                )
+                if response.status_code == 429:
+                    if attempt < len(retry_waits):
+                        wait = retry_waits[attempt]
+                        logger.warning(f"Rate limited fetching notes for {person_id}. Waiting {wait}s...")
+                        time.sleep(wait)
+                        continue
+                    logger.error(f"Rate limit persists fetching notes for {person_id}")
+                    return []
+                response.raise_for_status()
+                data = response.json()
+                notes = data if isinstance(data, list) else data.get("data", [])
+                logger.debug(f"Retrieved {len(notes)} note(s) for person {person_id}")
+                return notes
+            except requests.RequestException as e:
+                logger.error(f"Failed to get notes for person {person_id}: {str(e)}")
+                return []
+        return []
 
     def get_member_fields(self) -> List[Dict[str, Any]]:
         """
@@ -425,17 +436,28 @@ class ChMeetingsConnector:
         if not self.use_api:
             logger.error("API usage is disabled")
             return False
-        try:
-            response = self.session.post(
-                urljoin(self.api_url, f"api/v1/people/{person_id}/notes"),
-                json={"note": note_text}
-            )
-            response.raise_for_status()
-            logger.info(f"Added note to person {person_id}")
-            return True
-        except requests.RequestException as e:
-            logger.error(f"Failed to add note to person {person_id}: {str(e)}")
-            return False
+        retry_waits = [2, 5, 10]
+        for attempt in range(len(retry_waits) + 1):
+            try:
+                response = self.session.post(
+                    urljoin(self.api_url, f"api/v1/people/{person_id}/notes"),
+                    json={"note": note_text}
+                )
+                if response.status_code == 429:
+                    if attempt < len(retry_waits):
+                        wait = retry_waits[attempt]
+                        logger.warning(f"Rate limited adding note for {person_id}. Waiting {wait}s...")
+                        time.sleep(wait)
+                        continue
+                    logger.error(f"Rate limit persists adding note for {person_id}")
+                    return False
+                response.raise_for_status()
+                logger.info(f"Added note to person {person_id}")
+                return True
+            except requests.RequestException as e:
+                logger.error(f"Failed to add note to person {person_id}: {str(e)}")
+                return False
+        return False
 
     def update_person(
         self,
