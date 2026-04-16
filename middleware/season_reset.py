@@ -14,6 +14,7 @@ Usage (via main.py):
 from __future__ import annotations
 
 import datetime
+import time
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -492,15 +493,19 @@ class SeasonResetter:
                 enriched.append(m)
                 continue
             full = self.chm.get_person(pid)
+            time.sleep(0.2)  # 200 ms between calls — stay under ChMeetings rate limit
             if full:
                 enriched.append(full)
             else:
+                # get_person() returns None for both 404 (deleted person) and
+                # exhausted 429 retries. Either way we cannot process this member.
                 logger.warning(
-                    f"Skipping person {pid} — not found in ChMeetings (orphaned group membership)."
+                    f"Skipping person {pid} — could not retrieve from ChMeetings "
+                    f"(deleted record or persistent rate limit)."
                 )
                 skipped += 1
         if skipped:
-            logger.warning(f"Skipped {skipped} orphaned membership(s) with no matching ChMeetings person record.")
+            logger.warning(f"Skipped {skipped} member(s) that could not be retrieved from ChMeetings.")
         return enriched
 
     def _fetch_wp_participants_by_chmid(self) -> Dict[str, Dict[str, Any]]:

@@ -177,18 +177,35 @@ class ChMeetingsConnector:
             logger.error("API usage is disabled")
             return None
 
-        try:
-            response = self.session.get(
-                urljoin(self.api_url, f"api/v1/people/{person_id}")
-            )
-            response.raise_for_status()
-            raw = response.json()
-            # New API may return person directly or wrapped in data
-            data = self._extract_data(raw)
-            return data
-        except requests.RequestException as e:
-            logger.error(f"Failed to get person {person_id}: {str(e)}")
-            return None
+        retry_waits = [2, 5, 10]
+        for attempt in range(len(retry_waits) + 1):
+            try:
+                response = self.session.get(
+                    urljoin(self.api_url, f"api/v1/people/{person_id}")
+                )
+                if response.status_code == 429:
+                    if attempt < len(retry_waits):
+                        wait = retry_waits[attempt]
+                        logger.warning(
+                            f"Rate limited fetching person {person_id}. "
+                            f"Waiting {wait}s (retry {attempt + 1}/{len(retry_waits)})..."
+                        )
+                        time.sleep(wait)
+                        continue
+                    logger.error(f"Rate limit persists after {len(retry_waits)} retries for person {person_id}")
+                    return None
+                if response.status_code == 404:
+                    logger.error(f"Failed to get person {person_id}: 404 Client Error: Not Found for url: {response.url}")
+                    return None
+                response.raise_for_status()
+                raw = response.json()
+                # New API may return person directly or wrapped in data
+                data = self._extract_data(raw)
+                return data
+            except requests.RequestException as e:
+                logger.error(f"Failed to get person {person_id}: {str(e)}")
+                return None
+        return None
 
     
     def get_groups(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
