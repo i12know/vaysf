@@ -255,30 +255,32 @@ python main.py reset-season --year 2025 --reset-only
 # Test against a single person before running on the full group
 python main.py reset-season --year 2025 --person-id 3139537
 python main.py reset-season --year 2025 --person-id 3139537 --dry-run
+
+# Diagnostic: probe what the PUT endpoint accepts for a single person
+python main.py reset-season --year 2025 --probe --person-id 3139537
 ```
 
-> **KNOWN LIMITATION — Field Reset Step (as of April 2026)**
->
-> The ChMeetings `PUT /api/v1/people/{id}` endpoint returns HTTP 500 when any
-> `additional_fields` item has a null or empty clearing value
-> (`selected_option_id: null`, `selected_option_ids: []`, `value: null`).
-> This has been confirmed as a server-side bug and reported to ChMeetings
-> support (ticket pending).
->
-> **Until ChMeetings resolves the bug:**
->
-> 1. Run the **archive step** normally — it works correctly:
->    ```bash
->    python main.py reset-season --year 2025 --archive-only
->    ```
-> 2. Clear the custom fields manually via a **ChMeetings CSV import**:
->    - Export all VAY-SM members from ChMeetings → People → Export
->    - In the exported CSV, blank out all Sports Fest columns
->      (Church Team, Primary Sport, My role is, etc.)
->    - Re-import the CSV via ChMeetings → People → Import
->
-> The `--reset-only` and combined `--year 2025` commands will resume working
-> automatically once ChMeetings deploys the fix.
+**Recommended run order**
+
+Before running on the full VAY-SM group, test with a single person and a small
+church team first:
+
+```bash
+# 1. Probe — verify the PUT endpoint accepts clearing values (should all pass)
+python main.py reset-season --year 2025 --probe --person-id <any_person_id>
+
+# 2. Single person — confirm archive note and field clear look correct
+python main.py reset-season --year 2025 --person-id <any_person_id>
+
+# 3. Small group — set VAYSM_GROUP_ID to a small church team group ID
+set VAYSM_GROUP_ID=<small_group_id>
+python main.py reset-season --year 2025 --dry-run
+python main.py reset-season --year 2025
+
+# 4. Full run — restore VAYSM_GROUP_ID to the real VAY-SM group
+set VAYSM_GROUP_ID=<vaysm_group_id>
+python main.py reset-season --year 2025
+```
 
 **What the command does**
 
@@ -297,8 +299,6 @@ python main.py reset-season --year 2025 --person-id 3139537 --dry-run
    text fields → `null`).  The full person profile is included in the
    request to preserve standard fields (email, mobile, birthdate, etc.)
    that would otherwise be wiped by the PUT full-replace semantics.
-   *(See KNOWN LIMITATION above — this step currently fails due to a
-   ChMeetings server-side bug.)*
 
 **Fields cleared**
 
@@ -613,10 +613,8 @@ Church Reps should be assigned as group leaders for their respective teams.
    - Document participation statistics
 
 2. **System Cleanup**
-   - Archive all members' data as ChMeetings profile notes:
-     `python main.py reset-season --year 2025 --archive-only`
-   - Clear custom fields manually via ChMeetings CSV import (see
-     [Season Reset → KNOWN LIMITATION](#season-reset-year-end-archive-and-field-clear)
-     for step-by-step instructions until ChMeetings resolves the server-side bug)
-   - Verify a few profiles in ChMeetings to confirm fields were cleared
-   - Prepare system for next year
+   - Archive all members' data and clear all Sports Fest custom fields:
+     `python main.py reset-season --year 2025`
+   - Verify a few profiles in ChMeetings to confirm archive notes were written
+     and fields are cleared
+   - Prepare system for next year (see [SEASON_TRANSITION.md](SEASON_TRANSITION.md))

@@ -39,9 +39,19 @@ Each Sports Fest season produces data across all three systems:
    ```
    Save these to the shared Google Drive for historical reference.
 
-2. **Back up WordPress database** — export the sf_* tables before clearing.
+2. **Archive and reset all Sports Fest custom fields** on every VAY-SM member:
+   ```bash
+   python main.py reset-season --year 2025
+   ```
+   This writes a structured archive note to each person's ChMeetings profile and
+   clears all Sports Fest and Church Rep Verification fields in one pass.
+   See [USAGE.md — Season Reset](USAGE.md#season-reset-year-end-archive-and-field-clear)
+   for the recommended single-person and small-group test steps before running on
+   the full VAY-SM group.
 
-3. **Note the current ChMeetings group structure** (for reference):
+3. **Back up WordPress database** — export the sf_* tables before clearing.
+
+4. **Note the current ChMeetings group structure** (for reference):
    ```bash
    python main.py test --system chmeetings --test-type api-inspect
    ```
@@ -124,4 +134,4 @@ Each Sports Fest season produces data across all three systems:
 ## Known Gaps / Future Improvements
 
 - **Clearing Team groups** is currently a manual process in ChMeetings. A future middleware command could automate this using the API.
-- **WordPress table reset** is manual (SQL or phpMyAdmin). A future `main.py reset-season` command could automate the truncation with confirmation prompts.
+- **WordPress table reset** is manual (SQL or phpMyAdmin). A future command could automate the truncation with confirmation prompts.
