@@ -485,13 +485,22 @@ class SeasonResetter:
 
         logger.info(f"Enriching {len(members)} member profile(s) with additional_fields...")
         enriched = []
+        skipped = 0
         for m in members:
             pid = str(m.get("id") or m.get("person_id", ""))
             if not pid:
                 enriched.append(m)
                 continue
             full = self.chm.get_person(pid)
-            enriched.append(full if full else m)
+            if full:
+                enriched.append(full)
+            else:
+                logger.warning(
+                    f"Skipping person {pid} — not found in ChMeetings (orphaned group membership)."
+                )
+                skipped += 1
+        if skipped:
+            logger.warning(f"Skipped {skipped} orphaned membership(s) with no matching ChMeetings person record.")
         return enriched
 
     def _fetch_wp_participants_by_chmid(self) -> Dict[str, Dict[str, Any]]:
