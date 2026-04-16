@@ -283,18 +283,21 @@ CREATE TABLE sf_validation_issues (
 Provides API access to ChMeetings data.
 ```python
 class ChMeetingsConnector:
-    def authenticate(self)
-    def get_people(self, params=None)         # paginates via total_count; sends include_additional_fields=True
-    def get_person(self, person_id)            # unwraps {"data": {...}} envelope
-    def get_groups(self, params=None)
-    def get_group_people(self, group_id)
-    def get_fields(self)                                      # GET /api/v1/people/fields → field_id / field_type map
-    def add_person_to_group(self, group_id, person_id)        # POST /api/v1/groups/{id}/memberships; 429-aware retry
-    def remove_person_from_group(self, group_id, person_id)   # DELETE /api/v1/groups/{id}/memberships/{person_id}
-    def add_member_note(self, person_id, note_text)           # POST /api/v1/people/{id}/notes
+    def authenticate(self)                                    # no 429 retry (Issue #64)
+    def get_people(self, params=None)                         # paginates via total_count; sends include_additional_fields=True; no 429 retry (Issue #64)
+    def get_person(self, person_id)                           # unwraps {"data": {...}} envelope; 429-aware retry (2/5/10s)
+    def get_groups(self, params=None)                         # no 429 retry (Issue #64)
+    def get_group_people(self, group_id)                      # no 429 retry (Issue #64)
+    def get_person_notes(self, person_id)                     # GET /api/v1/people/{id}/notes; 429-aware retry (2/5/10s)
+    def get_fields(self)                                      # GET /api/v1/people/fields → field_id / field_type map; no 429 retry (Issue #64)
+    def add_person_to_group(self, group_id, person_id)        # POST /api/v1/groups/{id}/memberships; 429-aware retry (2/5/10s)
+    def remove_person_from_group(self, group_id, person_id)   # DELETE /api/v1/groups/{id}/memberships/{person_id}; no 429 retry (Issue #64)
+    def add_member_note(self, person_id, note_text)           # POST /api/v1/people/{id}/notes; 429-aware retry (2/5/10s)
     def update_person(self, person_id, first_name,
-                      last_name, additional_fields)           # PUT /api/v1/people/{id} → reset custom fields
+                      last_name, additional_fields)           # PUT /api/v1/people/{id} → reset custom fields; no 429 retry (Issue #64)
 ```
+
+> **Rate-limit coverage**: 4 of 11 methods have 429 retry with 2/5/10s exponential backoff. Full centralization into a single `_api_request()` helper is tracked in **Issue #64**.
 
 See [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md) for the full history of API breaking changes and the fixes applied in v1.05.
 
