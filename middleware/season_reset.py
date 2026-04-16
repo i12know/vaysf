@@ -471,10 +471,28 @@ class SeasonResetter:
         return any_passed
 
     def _get_vaysm_members(self, group_id: str) -> List[Dict[str, Any]]:
-        """Fetch all members of the VAY-SM group from ChMeetings."""
+        """Fetch all members of the VAY-SM group from ChMeetings.
+
+        get_group_people() returns basic person records without additional_fields.
+        We follow up with get_person() for each member so the full profile
+        (including custom field values) is available for reset payload building
+        and checklist archiving.
+        """
         logger.info(f"Fetching VAY-SM members from group {group_id}")
         members = self.chm.get_group_people(group_id)
-        return members
+        if not members:
+            return []
+
+        logger.info(f"Enriching {len(members)} member profile(s) with additional_fields...")
+        enriched = []
+        for m in members:
+            pid = str(m.get("id") or m.get("person_id", ""))
+            if not pid:
+                enriched.append(m)
+                continue
+            full = self.chm.get_person(pid)
+            enriched.append(full if full else m)
+        return enriched
 
     def _fetch_wp_participants_by_chmid(self) -> Dict[str, Dict[str, Any]]:
         """
