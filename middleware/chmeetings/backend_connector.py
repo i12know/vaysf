@@ -38,7 +38,6 @@ PERSON_PUT_EXCLUDE = frozenset({
 class ChMeetingsConnector:
     """Connector for ChMeetings API."""
 
-
     def __init__(self, use_api: bool = True):
         self.api_url = Config.CHM_API_URL
         self.api_key = Config.CHM_API_KEY
@@ -49,7 +48,11 @@ class ChMeetingsConnector:
             "accept": "application/json",
             "apikey": self.api_key
         })
-    
+
+    # ------------------------------------------------------------------ #
+    # Internal helpers                                                     #
+    # ------------------------------------------------------------------ #
+
     def _extract_data(self, response_json: Any) -> Any:
         """Extract data from the new API response wrapper.
 
@@ -69,18 +72,44 @@ class ChMeetingsConnector:
             return response_json.get("paging")
         return None
 
+    def _api_request(self, method: str, url_suffix: str, **kwargs) -> requests.Response:
+        """Execute an HTTP request with automatic 429 retry (2s, 5s, 10s backoff).
+
+        Raises requests.RequestException on network errors or after exhausting
+        retries on HTTP 429.  Callers are responsible for checking other
+        non-2xx status codes via response.raise_for_status() or by inspecting
+        response.status_code directly.
+        """
+        retry_waits = [2, 5, 10]
+        url = urljoin(self.api_url, url_suffix)
+        http_fn = getattr(self.session, method.lower())
+        for attempt in range(len(retry_waits) + 1):
+            response = http_fn(url, **kwargs)
+            if response.status_code == 429:
+                if attempt < len(retry_waits):
+                    wait = retry_waits[attempt]
+                    logger.warning(
+                        f"Rate limited ({method.upper()} {url_suffix}). "
+                        f"Waiting {wait}s (retry {attempt + 1}/{len(retry_waits)})..."
+                    )
+                    time.sleep(wait)
+                    continue
+                response.raise_for_status()
+            return response
+        return response  # unreachable but satisfies linters
+
+    # ------------------------------------------------------------------ #
+    # Public API methods                                                   #
+    # ------------------------------------------------------------------ #
+
     def authenticate(self) -> bool:
-        """
-        Verify API key works by testing a simple request.
-        Returns True if successful.
-        """
+        """Verify API key works by testing a simple request. Returns True if successful."""
         if not self.use_api:
             logger.error("API usage is disabled")
             return False
-
         try:
-            response = self.session.get(
-                urljoin(self.api_url, "api/v1/people"),
+            response = self._api_request(
+                "GET", "api/v1/people",
                 params={"page": 1, "page_size": 1,
                         "include_additional_fields": False,
                         "include_family_members": False,
@@ -100,7 +129,6 @@ class ChMeetingsConnector:
             logger.error(f"API key verification failed: {str(e)}")
             return False
 
-    
     def get_people(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Get people records from ChMeetings.
@@ -133,10 +161,7 @@ class ChMeetingsConnector:
                 "include_family_members": False,
             })
             try:
-                response = self.session.get(
-                    urljoin(self.api_url, "api/v1/people"),
-                    params=params
-                )
+                response = self._api_request("GET", "api/v1/people", params=params)
                 response.raise_for_status()
                 raw = response.json()
                 people = self._extract_data(raw)
@@ -162,7 +187,6 @@ class ChMeetingsConnector:
 
         return all_people
 
-    
     def get_person(self, person_id: str) -> Optional[Dict[str, Any]]:
         """
         Get a specific person record from ChMeetings.
@@ -176,38 +200,22 @@ class ChMeetingsConnector:
         if not self.use_api:
             logger.error("API usage is disabled")
             return None
-
-        retry_waits = [2, 5, 10]
-        for attempt in range(len(retry_waits) + 1):
-            try:
-                response = self.session.get(
-                    urljoin(self.api_url, f"api/v1/people/{person_id}")
+        try:
+            response = self._api_request("GET", f"api/v1/people/{person_id}")
+            if response.status_code == 404:
+                logger.error(
+                    f"Failed to get person {person_id}: "
+                    f"404 Client Error: Not Found for url: {response.url}"
                 )
-                if response.status_code == 429:
-                    if attempt < len(retry_waits):
-                        wait = retry_waits[attempt]
-                        logger.warning(
-                            f"Rate limited fetching person {person_id}. "
-                            f"Waiting {wait}s (retry {attempt + 1}/{len(retry_waits)})..."
-                        )
-                        time.sleep(wait)
-                        continue
-                    logger.error(f"Rate limit persists after {len(retry_waits)} retries for person {person_id}")
-                    return None
-                if response.status_code == 404:
-                    logger.error(f"Failed to get person {person_id}: 404 Client Error: Not Found for url: {response.url}")
-                    return None
-                response.raise_for_status()
-                raw = response.json()
-                # New API may return person directly or wrapped in data
-                data = self._extract_data(raw)
-                return data
-            except requests.RequestException as e:
-                logger.error(f"Failed to get person {person_id}: {str(e)}")
                 return None
-        return None
+            response.raise_for_status()
+            raw = response.json()
+            # New API may return person directly or wrapped in data
+            return self._extract_data(raw)
+        except requests.RequestException as e:
+            logger.error(f"Failed to get person {person_id}: {str(e)}")
+            return None
 
-    
     def get_groups(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Get groups from ChMeetings.
@@ -222,10 +230,7 @@ class ChMeetingsConnector:
             logger.error("API usage is disabled")
             return []
         try:
-            response = self.session.get(
-                urljoin(self.api_url, "api/v1/groups"),
-                params=params
-            )
+            response = self._api_request("GET", "api/v1/groups", params=params)
             response.raise_for_status()
             raw = response.json()
             data = self._extract_data(raw)
@@ -234,7 +239,6 @@ class ChMeetingsConnector:
             logger.error(f"Failed to get groups: {str(e)}")
             return []
 
-    
     def get_group_people(self, group_id: str) -> List[Dict[str, Any]]:
         """
         Get people in a specific group from ChMeetings.
@@ -249,8 +253,8 @@ class ChMeetingsConnector:
             logger.error("API usage is disabled")
             return []
         try:
-            response = self.session.get(
-                urljoin(self.api_url, "api/v1/groups/people"),
+            response = self._api_request(
+                "GET", "api/v1/groups/people",
                 params={"group_ids": group_id}
             )
             response.raise_for_status()
@@ -270,9 +274,7 @@ class ChMeetingsConnector:
             logger.error("API usage is disabled")
             return None
         try:
-            response = self.session.get(
-                urljoin(self.api_url, "api/v1/people/fields")
-            )
+            response = self._api_request("GET", "api/v1/people/fields")
             response.raise_for_status()
             raw = response.json()
             return self._extract_data(raw)
@@ -286,7 +288,6 @@ class ChMeetingsConnector:
 
         Returns True if successful.
         Note: 201 = newly added, 200 = already a member — both are success.
-        Retries up to 3 times on 429 (rate limit) with 2 / 5 / 10 s back-off.
 
         Args:
             group_id: The group ID
@@ -295,39 +296,20 @@ class ChMeetingsConnector:
         if not self.use_api:
             logger.error("API usage is disabled")
             return False
-
-        retry_waits = [2, 5, 10]  # seconds to wait after each 429 response
-
-        for attempt in range(len(retry_waits) + 1):
-            try:
-                response = self.session.post(
-                    urljoin(self.api_url, f"api/v1/groups/{group_id}/memberships"),
-                    json={"person_id": person_id}
-                )
-                if response.status_code == 429:
-                    if attempt < len(retry_waits):
-                        wait = retry_waits[attempt]
-                        logger.warning(
-                            f"Rate limited adding person {person_id} to group {group_id}. "
-                            f"Waiting {wait}s before retry {attempt + 1}/{len(retry_waits)}..."
-                        )
-                        time.sleep(wait)
-                        continue
-                    logger.error(
-                        f"Rate limit persists after {len(retry_waits)} retries "
-                        f"for person {person_id} → group {group_id}"
-                    )
-                    return False
-                response.raise_for_status()
-                logger.info(
-                    f"Added person {person_id} to group {group_id} "
-                    f"(status {response.status_code})"
-                )
-                return True
-            except requests.RequestException as e:
-                logger.error(f"Failed to add person {person_id} to group {group_id}: {e}")
-                return False
-        return False
+        try:
+            response = self._api_request(
+                "POST", f"api/v1/groups/{group_id}/memberships",
+                json={"person_id": person_id}
+            )
+            response.raise_for_status()
+            logger.info(
+                f"Added person {person_id} to group {group_id} "
+                f"(status {response.status_code})"
+            )
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Failed to add person {person_id} to group {group_id}: {e}")
+            return False
 
     def remove_person_from_group(self, group_id: str, person_id: str) -> bool:
         """
@@ -343,8 +325,8 @@ class ChMeetingsConnector:
             logger.error("API usage is disabled")
             return False
         try:
-            response = self.session.delete(
-                urljoin(self.api_url, f"api/v1/groups/{group_id}/memberships/{person_id}")
+            response = self._api_request(
+                "DELETE", f"api/v1/groups/{group_id}/memberships/{person_id}"
             )
             response.raise_for_status()
             logger.info(f"Removed person {person_id} from group {group_id}")
@@ -352,7 +334,7 @@ class ChMeetingsConnector:
         except requests.RequestException as e:
             logger.error(f"Failed to remove person {person_id} from group {group_id}: {e}")
             return False
-    
+
     def get_person_notes(self, person_id: str) -> List[Dict[str, Any]]:
         """
         Retrieve existing notes from a person's ChMeetings profile.
@@ -369,29 +351,16 @@ class ChMeetingsConnector:
         if not self.use_api:
             logger.error("API usage is disabled")
             return []
-        retry_waits = [2, 5, 10]
-        for attempt in range(len(retry_waits) + 1):
-            try:
-                response = self.session.get(
-                    urljoin(self.api_url, f"api/v1/people/{person_id}/notes")
-                )
-                if response.status_code == 429:
-                    if attempt < len(retry_waits):
-                        wait = retry_waits[attempt]
-                        logger.warning(f"Rate limited fetching notes for {person_id}. Waiting {wait}s...")
-                        time.sleep(wait)
-                        continue
-                    logger.error(f"Rate limit persists fetching notes for {person_id}")
-                    return []
-                response.raise_for_status()
-                data = response.json()
-                notes = data if isinstance(data, list) else data.get("data", [])
-                logger.debug(f"Retrieved {len(notes)} note(s) for person {person_id}")
-                return notes
-            except requests.RequestException as e:
-                logger.error(f"Failed to get notes for person {person_id}: {str(e)}")
-                return []
-        return []
+        try:
+            response = self._api_request("GET", f"api/v1/people/{person_id}/notes")
+            response.raise_for_status()
+            data = response.json()
+            notes = data if isinstance(data, list) else data.get("data", [])
+            logger.debug(f"Retrieved {len(notes)} note(s) for person {person_id}")
+            return notes
+        except requests.RequestException as e:
+            logger.error(f"Failed to get notes for person {person_id}: {str(e)}")
+            return []
 
     def get_member_fields(self) -> List[Dict[str, Any]]:
         """
@@ -408,9 +377,7 @@ class ChMeetingsConnector:
             logger.error("API usage is disabled")
             return []
         try:
-            response = self.session.get(
-                urljoin(self.api_url, "api/v1/people/fields")
-            )
+            response = self._api_request("GET", "api/v1/people/fields")
             response.raise_for_status()
             data = response.json()
             fields = data if isinstance(data, list) else data.get("data", [])
@@ -436,28 +403,17 @@ class ChMeetingsConnector:
         if not self.use_api:
             logger.error("API usage is disabled")
             return False
-        retry_waits = [2, 5, 10]
-        for attempt in range(len(retry_waits) + 1):
-            try:
-                response = self.session.post(
-                    urljoin(self.api_url, f"api/v1/people/{person_id}/notes"),
-                    json={"note": note_text}
-                )
-                if response.status_code == 429:
-                    if attempt < len(retry_waits):
-                        wait = retry_waits[attempt]
-                        logger.warning(f"Rate limited adding note for {person_id}. Waiting {wait}s...")
-                        time.sleep(wait)
-                        continue
-                    logger.error(f"Rate limit persists adding note for {person_id}")
-                    return False
-                response.raise_for_status()
-                logger.info(f"Added note to person {person_id}")
-                return True
-            except requests.RequestException as e:
-                logger.error(f"Failed to add note to person {person_id}: {str(e)}")
-                return False
-        return False
+        try:
+            response = self._api_request(
+                "POST", f"api/v1/people/{person_id}/notes",
+                json={"note": note_text}
+            )
+            response.raise_for_status()
+            logger.info(f"Added note to person {person_id}")
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Failed to add note to person {person_id}: {str(e)}")
+            return False
 
     def update_person(
         self,
@@ -510,12 +466,9 @@ class ChMeetingsConnector:
                     payload[k] = v
         payload["additional_fields"] = additional_fields
 
-        url = urljoin(self.api_url, f"api/v1/people/{person_id}")
-        http_call = self.session.patch if method.upper() == "PATCH" else self.session.put
-
         try:
             logger.debug(f"update_person [{method}] payload for {person_id}: {payload}")
-            response = http_call(url, json=payload)
+            response = self._api_request(method, f"api/v1/people/{person_id}", json=payload)
             if not response.ok:
                 logger.error(
                     f"Failed to update person {person_id} [{method}]: "
@@ -535,7 +488,7 @@ class ChMeetingsConnector:
     def __enter__(self):
         """Context manager entry point."""
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit point."""
         self.close()
