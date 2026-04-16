@@ -20,6 +20,7 @@ from sync.manager import SyncManager
 from chmeetings.backend_connector import ChMeetingsConnector  # Import for export command
 from wordpress.frontend_connector import WordPressConnector   # Import for export command
 from church_teams_export import ChurchTeamsExporter           # Import for export command
+from season_reset import SeasonResetter                       # Import for reset-season command
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for the VAYSF middleware."""
@@ -32,6 +33,8 @@ def parse_args() -> argparse.Namespace:
                              default="full", help="Type of data to sync")
     sync_parser.add_argument("--chm-id", type=str, default=None,
                              help="Optional ChMeetings ID of a single participant to sync (only applies if --type is 'participants')")
+    sync_parser.add_argument("--excel-fallback", action="store_true",
+                             help="Use Excel export instead of API for syncing approvals to ChMeetings")
 
     # Sync-churches command
     sync_churches_parser = subparsers.add_parser("sync-churches", help="Sync churches from Excel file")
@@ -39,10 +42,16 @@ def parse_args() -> argparse.Namespace:
                                       help="Path to the church Excel file")
 
     # Group assignment command
-    group_assignment_parser = subparsers.add_parser("assign-groups", 
-                                             help="Create group assignments for people with church codes")
-    group_assignment_parser.add_argument("--output", help="Output directory path", 
-                                             default=DATA_DIR)
+    group_assignment_parser = subparsers.add_parser(
+        "assign-groups",
+        help="Assign ChMeetings people to church team groups via direct API calls",
+    )
+    group_assignment_parser.add_argument("--output", help="Output directory path",
+                                         default=DATA_DIR)
+    group_assignment_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Preview only — show who would be assigned without making API calls",
+    )
 
     # Export command
     export_parser = subparsers.add_parser("export-church-teams", help="Export church team status reports")
@@ -71,21 +80,41 @@ def parse_args() -> argparse.Namespace:
     test_parser = subparsers.add_parser("test", help="Test connectivity and functionality of systems")
     test_parser.add_argument("--system", choices=["chmeetings", "wordpress", "all"],
                              default="all", help="System to test")
-    test_parser.add_argument("--test-type", choices=["connectivity", "churches", "email", "all"],
-                             default="connectivity", help="Type of test to run (connectivity, churches, email, or all)")
+    test_parser.add_argument("--test-type", choices=["connectivity", "churches", "email", "api-inspect", "all"],
+                             default="connectivity", help="Type of test to run (connectivity, churches, email, api-inspect, or all)")
     test_parser.add_argument("--test-email", default=os.getenv("TEST_EMAIL", "PastorBumble@gmail.com"),
                              help="Email address for email test")
-                             
+
+    # Reset-season command
+    reset_parser = subparsers.add_parser(
+        "reset-season",
+        help="Archive and clear Sports Fest custom fields for all VAY-SM members"
+    )
+    reset_parser.add_argument("--year", type=int, required=True,
+                              help="Season year to archive (e.g. 2025)")
+    reset_parser.add_argument("--dry-run", action="store_true",
+                              help="Preview what would be archived/reset without making any changes")
+    reset_parser.add_argument("--archive-only", action="store_true",
+                              help="Write archive notes only; do not reset custom fields")
+    reset_parser.add_argument("--reset-only", action="store_true",
+                              help="Reset custom fields only; skip writing archive notes")
+    reset_parser.add_argument("--person-id", type=str, default=None,
+                              help="Process a single ChMeetings person ID instead of the whole group (for testing)")
+    reset_parser.add_argument("--probe", action="store_true",
+                              help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id)")
+
     return parser.parse_args()
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str] = None) -> bool: # Added chm_id parameter
+def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str] = None,
+             excel_fallback: bool = False) -> bool:
     """Run synchronization process with retry logic.
 
     Args:
         manager: SyncManager instance to use.
         sync_type: Type of sync to perform (churches, participants, approvals, validation, full).
         chm_id: Optional ChMeetings ID of a single participant to sync.
+        excel_fallback: If True, use Excel export for approval sync instead of API.
 
     Returns:
         bool: True if successful, False otherwise.
@@ -109,9 +138,9 @@ def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str
             return manager.sync_participants(chm_id=chm_id)
         elif sync_type == "approvals":
             success1 = manager.generate_approvals(chm_id_to_target=chm_id)
-            # Generrate approvals email above with the option of just a single participant, but
+            # Generate approvals email above with the option of just a single participant, but
             # sync_approvals_to_chmeetings will always sync all approvals to ChMeetings.
-            success2 = manager.sync_approvals_to_chmeetings()
+            success2 = manager.sync_approvals_to_chmeetings(use_excel_fallback=excel_fallback)
             return success1 and success2
         elif sync_type == "validation":
             return manager.validate_data()
@@ -182,6 +211,101 @@ def test_connectivity(system: str = "all", test_type: str = "connectivity", test
                     else:
                         logger.error("Failed to connect to ChMeetings")
                         success = False
+
+                if test_type == "api-inspect":
+                    import json
+                    if not connector.authenticate():
+                        logger.error("Cannot inspect API - authentication failed")
+                        success = False
+                    else:
+                        # 1. Dump field definitions
+                        logger.info("=" * 60)
+                        logger.info("FIELD DEFINITIONS (GET /api/v1/people/fields)")
+                        logger.info("=" * 60)
+                        fields = connector.get_fields()
+                        if fields:
+                            sections = fields.get("sections", []) if isinstance(fields, dict) else fields
+                            for section in (sections if isinstance(sections, list) else []):
+                                logger.info(f"  Section: {section.get('title', '(untitled)')} (id={section.get('section_id')})")
+                                for field in section.get("fields", []):
+                                    opts = field.get("options", [])
+                                    opts_str = f" options={[(o.get('id'), o.get('name')) for o in opts]}" if opts else ""
+                                    logger.info(f"    field_id={field.get('field_id')} | name={field.get('field_name')!r} | type={field.get('field_type')}{opts_str}")
+                            # 1b. Cross-reference CHM_FIELDS constants against live API
+                            from config import CHM_FIELDS
+                            all_api_field_names = set()
+                            for section in (sections if isinstance(sections, list) else []):
+                                for field in section.get("fields", []):
+                                    fname = field.get("field_name")
+                                    if fname:
+                                        all_api_field_names.add(fname)
+
+                            logger.info("=" * 60)
+                            logger.info("FIELD MAPPING VALIDATION (CHM_FIELDS vs live API)")
+                            logger.info("=" * 60)
+                            all_matched = True
+                            for key, expected_name in CHM_FIELDS.items():
+                                if expected_name in all_api_field_names:
+                                    logger.info(f"  OK  CHM_FIELDS[{key!r}] = {expected_name!r}")
+                                else:
+                                    logger.warning(f"  MISSING  CHM_FIELDS[{key!r}] = {expected_name!r} - NOT found in API fields!")
+                                    all_matched = False
+                            if all_matched:
+                                logger.info("  All CHM_FIELDS matched successfully.")
+                            else:
+                                logger.warning("  Some CHM_FIELDS did not match. Update config.py CHM_FIELDS if field names changed.")
+                        else:
+                            logger.warning("No field definitions returned")
+
+                        # 2. List groups
+                        logger.info("=" * 60)
+                        logger.info("GROUPS (GET /api/v1/groups)")
+                        logger.info("=" * 60)
+                        groups = connector.get_groups()
+                        for g in groups:
+                            logger.info(f"  id={g.get('id')} | name={g.get('name')}")
+                        logger.info(f"  Total: {len(groups)} groups")
+
+                        # 3. Fetch 2 people with additional_fields and dump raw
+                        logger.info("=" * 60)
+                        logger.info("SAMPLE PEOPLE (GET /api/v1/people?include_additional_fields=true&page_size=2)")
+                        logger.info("=" * 60)
+                        sample_people = connector.get_people(params={
+                            "include_additional_fields": True,
+                            "include_family_members": False,
+                            "include_organizations": False,
+                            "page_size": 2, "page": 1
+                        })
+                        for person in sample_people[:2]:
+                            logger.info(f"--- Person: {person.get('first_name', '?')} {person.get('last_name', '?')} (id={person.get('id', person.get('person_id', '?'))}) ---")
+                            logger.info(f"  Keys: {list(person.keys())}")
+                            af = person.get("additional_fields", [])
+                            if af:
+                                logger.info(f"  additional_fields ({len(af)} fields):")
+                                for f in af[:5]:
+                                    logger.info(f"    {json.dumps(f)}")
+                                if len(af) > 5:
+                                    logger.info(f"    ... and {len(af) - 5} more fields")
+                            else:
+                                logger.info("  additional_fields: (empty or not present)")
+
+                        # 4. Fetch one person by ID if we have any
+                        if sample_people:
+                            pid = sample_people[0].get("id", sample_people[0].get("person_id"))
+                            if pid:
+                                logger.info("=" * 60)
+                                logger.info(f"SINGLE PERSON (GET /api/v1/people/{pid})")
+                                logger.info("=" * 60)
+                                single = connector.get_person(str(pid))
+                                if single:
+                                    logger.info(f"  Keys: {list(single.keys())}")
+                                    af = single.get("additional_fields", [])
+                                    logger.info(f"  additional_fields: {len(af) if isinstance(af, list) else 'N/A'} fields")
+                                    if af and isinstance(af, list):
+                                        for f in af[:3]:
+                                            logger.info(f"    {json.dumps(f)}")
+                                else:
+                                    logger.warning(f"  Could not fetch person {pid}")
         except Exception as e:
             logger.error(f"ChMeetings test failed: {e}")
             success = False
@@ -327,10 +451,11 @@ def main() -> None:
             # However, run_sync already has a conditional warning for 'full' type.
             # Let's pass it and let run_sync decide.
 
+        excel_fallback = args.excel_fallback if hasattr(args, 'excel_fallback') else False
         manager = SyncManager()
         with manager:
-            # Pass the participant_chm_id to run_sync
-            success = run_sync(manager, args.type, chm_id=participant_chm_id)
+            # Pass the participant_chm_id and excel_fallback to run_sync
+            success = run_sync(manager, args.type, chm_id=participant_chm_id, excel_fallback=excel_fallback)
 # END --- Modified main() function's sync block in main.py ---
     elif args.command == "sync-churches":
         if not os.path.exists(args.file):
@@ -340,15 +465,14 @@ def main() -> None:
             with SyncManager() as manager:
                 success = manager.sync_churches_from_excel(args.file)  # Fixed
     elif args.command == "assign-groups":
-        from group_assignment import export_people_with_church_codes
-        success = export_people_with_church_codes()
+        from group_assignment import assign_people_to_church_team_groups
+        dry_run = getattr(args, "dry_run", False)
+        success = assign_people_to_church_team_groups(dry_run=dry_run)
         if success:
-            logger.info(f"Group assignment file created successfully at: {success}")
-            # Try to open the file for the user
-            import platform
-            import subprocess
-            if platform.system() == 'Windows':
-                os.startfile(success)
+            if dry_run:
+                logger.info("Dry-run complete. Check data/church_team_assignments.xlsx for the preview.")
+            else:
+                logger.info("Group assignment complete. Check data/church_team_assignments.xlsx for the audit log.")
     elif args.command == "export-church-teams":
         output_path = Path(args.output) 
         try:
@@ -383,6 +507,28 @@ def main() -> None:
         success = True  # No exit until interrupted
     elif args.command == "test":
         success = test_connectivity(args.system, args.test_type, args.test_email)
+    elif args.command == "reset-season":
+        if args.archive_only and args.reset_only:
+            logger.error("--archive-only and --reset-only are mutually exclusive.")
+            success = False
+        elif args.probe:
+            if not args.person_id:
+                logger.error("--probe requires --person-id.")
+                success = False
+            else:
+                with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+                    resetter = SeasonResetter(chm_conn, wp_conn)
+                    success = resetter.probe_put_endpoint(args.person_id)
+        else:
+            with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+                resetter = SeasonResetter(chm_conn, wp_conn)
+                success = resetter.run(
+                    args.year,
+                    dry_run=args.dry_run,
+                    archive_only=args.archive_only,
+                    reset_only=args.reset_only,
+                    person_id=args.person_id,
+                )
     else:
         logger.error(f"Unknown command: {args.command}")
         success = False

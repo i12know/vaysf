@@ -7,11 +7,10 @@ This guide provides step-by-step instructions for setting up the Sports Fest ChM
 ### Windows Middleware Requirements
 
 - Windows 10 or Windows 11
-- Python 3.8 or higher
+- Python 3.10 or higher
 - Administrator privileges (for initial setup)
 - Internet connection
 - Microsoft Excel (for viewing and managing Excel files)
-- Chrome browser (for Selenium operations if needed)
 
 ### WordPress Requirements
 
@@ -30,7 +29,7 @@ This guide provides step-by-step instructions for setting up the Sports Fest ChM
 
 ### 1. Install Python
 
-1. Download Python 3.8+ from [python.org](https://www.python.org/downloads/windows/)
+1. Download Python 3.10+ from [python.org](https://www.python.org/downloads/windows/)
 2. Run the installer, checking "Add Python to PATH"
 3. Verify installation by opening Command Prompt and typing:
    ```
@@ -43,10 +42,10 @@ This guide provides step-by-step instructions for setting up the Sports Fest ChM
 # Clone using Git
 git clone https://github.com/i12know/vaysf.git
 
-# Navigate to the project directory
-cd vaysf
+# Navigate to the middleware directory (all Python code lives here)
+cd vaysf\middleware
 
-# Or download and extract the ZIP file from GitHub
+# Or download and extract the ZIP file from GitHub, then cd into vaysf\middleware
 ```
 
 ### 3. Install Dependencies
@@ -56,7 +55,7 @@ cd vaysf
 python -m venv venv
 venv\Scripts\activate
 
-# Install required packages
+# Install required packages (run from vaysf\middleware)
 pip install -r requirements.txt
 ```
 
@@ -71,8 +70,6 @@ pip install -r requirements.txt
    ```
    # ChMeetings configuration
    CHM_API_URL=https://api.chmeetings.com
-   CHM_USERNAME=your_username_only_for_selenium
-   CHM_PASSWORD=your_password_only_for_selenium
    CHM_API_KEY=your_api_key
 
    # WordPress configuration
@@ -90,10 +87,6 @@ pip install -r requirements.txt
 
 3. Configure additional settings as needed:
    ```
-   # Selenium settings
-   USE_CHROME_HEADLESS=True  # Set to False for debugging
-   CHROME_PROFILE_DIR=C:\path\to\chrome\profile  # Optional
-
    # Sync settings
    SYNC_INTERVAL_MINUTES=60  # Default sync interval
 
@@ -107,23 +100,26 @@ pip install -r requirements.txt
 
    **Important Note:** By default, exports try to save to a Google Drive path. You **must** set `EXPORT_DIR` in your `.env` to a valid local path if you plan to use the export features, or use the `--output` option with commands.
 
-### 5. Set Up Chrome for Selenium (Optional)
+### 5. Verify Installation
 
-If you plan to use Selenium for ChMeetings operations:
-
-1. Download Chrome WebDriver matching your Chrome version from [ChromeDriver](https://sites.google.com/chromium.org/driver/)
-2. Place the executable in the project directory or specify its path in the `.env` file:
-   ```
-   CHROME_DRIVER_PATH=C:\path\to\chromedriver.exe
-   ```
-
-### 6. Verify Installation
-
-Run a basic test to ensure everything is set up correctly:
+Run the test suite to confirm the middleware is correctly installed. All tests should pass in mock mode without any API credentials:
 
 ```bash
-python main.py test --system all --test-type connectivity
+# From vaysf\middleware (mock mode — no credentials required)
+pytest tests/ -v
 ```
+
+A passing run shows something like: `27 passed, 5 skipped`.
+
+To verify live API connectivity (requires `.env` with real credentials):
+
+```bash
+set LIVE_TEST=true && pytest tests/ -v -s
+```
+
+**Note:** `pytest.ini` in the `middleware/` directory configures the Python import path automatically. You do not need to set `PYTHONPATH` manually.
+
+For full testing options (including live group membership tests), see the [Usage Guide](USAGE.md#running-tests).
 
 ## WordPress Plugin Installation
 
@@ -184,10 +180,6 @@ For reliable email delivery, we recommend installing the WP Mail SMTP plugin:
 2. **Package Installation Failures**
    - Try upgrading pip: `python -m pip install --upgrade pip`
    - Install Visual C++ Build Tools if required for some packages
-
-3. **Selenium WebDriver Issues**
-   - Ensure Chrome and ChromeDriver versions match
-   - Try running Chrome in non-headless mode by setting `USE_CHROME_HEADLESS=False` in `.env`
 
 ### Common WordPress Plugin Issues
 

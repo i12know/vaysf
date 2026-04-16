@@ -230,6 +230,9 @@ def test_validate_participant(sync_manager, mocker):
 def test_sync_participants(sync_manager, mocker, mock_chmeetings_data):
     """Test participant sync to sf_participants and sf_rosters with role filtering and proper validation issue tracking."""
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    full_live_test = os.getenv("FULL_LIVE_TEST", "false").strip().lower() == "true"
+    if live_test and not full_live_test:
+        pytest.skip("Full participant sync skipped in standard LIVE_TEST mode — set FULL_LIVE_TEST=true to run")
 
     # Patch config values
     mocker.patch("sync.participants.Config.TEAM_PREFIX", "Team")
@@ -385,9 +388,16 @@ def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data
     mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2025-07-19")  # Updated path
 
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
-    chmeetings_id = "3505207"  # Jerry Phan from mock data
+    chmeetings_id = "3505203"  # Jerry Phan from mock data
 
     if live_test:
+        # Discover a real participant from WordPress rather than assuming a hardcoded ID exists
+        all_participants = sync_manager.wordpress_connector.get_participants()
+        if not all_participants:
+            pytest.skip("No participants synced to WordPress yet — run a full sync first (FULL_LIVE_TEST=true)")
+        first = all_participants[0]
+        chmeetings_id = str(first["chmeetings_id"])
+        logger.info(f"Using live chmeetings_id: {chmeetings_id} ({first.get('first_name')} {first.get('last_name')})")
         participant = (sync_manager.wordpress_connector.get_participants({"chmeetings_id": chmeetings_id}) or [None])[0]
         if participant:
             logger.info(f"Found live participant by chmeetings_id: {participant['first_name']} {participant['last_name']}")
@@ -406,12 +416,205 @@ def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data
             "church_name": "Orange County Church"
         }
         mock_response.json.return_value = [wp_participant]
-        mocker.patch.object(sync_manager.wordpress_connector.session, "get", return_value=mock_response)
+        empty_response = mocker.Mock(status_code=200)
+        empty_response.headers = {'X-WP-Total': '0', 'X-WP-TotalPages': '0'}
+        empty_response.json.return_value = []
+
+        def _mock_get(url, **kwargs):
+            if kwargs.get("params", {}).get("chmeetings_id") == chmeetings_id:
+                return mock_response
+            return empty_response
+
+        mocker.patch.object(sync_manager.wordpress_connector.session, "get", side_effect=_mock_get)
         participant = (sync_manager.wordpress_connector.get_participants({"chmeetings_id": chmeetings_id}) or [None])[0]
         assert participant is not None, "Should find participant by chmeetings_id"
         assert participant["first_name"] == "Jerry", "Should return correct participant"
         assert participant["chmeetings_id"] == chmeetings_id, "Should have matching chmeetings_id"
 
+        # Mock empty response for unknown chmeetings_id
+        mock_empty_response = mocker.Mock(status_code=200)
+        mock_empty_response.headers = {'X-WP-Total': '0', 'X-WP-TotalPages': '0'}
+        mock_empty_response.json.return_value = []
+        mocker.patch.object(sync_manager.wordpress_connector.session, "get", return_value=mock_empty_response)
         not_found = (sync_manager.wordpress_connector.get_participants({"chmeetings_id": "999999"}) or [None])[0]
         assert not_found is None, "Should return None for unknown chmeetings_id"
+
+def test_validate_data_pagination(sync_manager, mocker):
+    """validate_data() must fetch ALL participants across pages, not just the first page.
+    Runs in both mock and live mode — all external calls are patched by this test itself."""
+
+    # Page 1 returns a full page of 100 → loop must request page 2
+    page1 = [
+        {"participant_id": i, "church_id": 1, "is_church_member": True,
+         "primary_sport": "", "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""}
+        for i in range(1, 101)
+    ]
+    # Page 2 returns 5 items → signals last page (< per_page)
+    page2 = [
+        {"participant_id": i, "church_id": 1, "is_church_member": True,
+         "primary_sport": "", "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""}
+        for i in range(101, 106)
+    ]
+
+    call_count = {"n": 0}
+
+    def paged_get_participants(params=None):
+        call_count["n"] += 1
+        page = (params or {}).get("page", 1)
+        return page1 if page == 1 else page2
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
+                        side_effect=paged_get_participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "create_validation_issue",
+                        return_value={"issue_id": 1})
+
+    result = sync_manager.validate_data()
+
+    assert result, "validate_data() should return True with participants present"
+    assert call_count["n"] == 2, (
+        f"Expected exactly 2 page requests (page 1 full, page 2 partial), got {call_count['n']}"
+    )
+
+
+def test_sync_validation_issues_per_page(sync_manager, mocker):
+    """_sync_validation_issues() must pass per_page=200 to avoid silent PHP-default truncation.
+    Runs in both mock and live mode — all external calls are patched by this test itself."""
+
+    from sync.participants import ParticipantSyncer
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    captured = {}
+
+    def capturing_get_validation_issues(params=None):
+        captured["params"] = params or {}
+        return []
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues",
+                        side_effect=capturing_get_validation_issues)
+    # Prevent _create_or_update_validation_issue from needing churches_cache
+    mocker.patch.object(participant_syncer, "_create_or_update_validation_issue")
+
+    issues = [{
+        "type": "missing_photo",
+        "description": "No photo uploaded",
+        "rule_code": "PHOTO_REQUIRED",
+        "rule_level": "INDIVIDUAL",
+        "severity": "WARNING",
+    }]
+
+    participant_syncer._sync_validation_issues("42", "RPC", issues, "2025-01-01")
+
+    assert "params" in captured, "get_validation_issues was never called"
+    assert captured["params"].get("per_page") == 200, (
+        f"Expected per_page=200, got: {captured['params']}"
+    )
+    assert captured["params"].get("participant_id") == "42"
+    assert captured["params"].get("status") == "open"
+
+
+# ---------------------------------------------------------------------------
+# Tests for sync_approvals_to_chmeetings() — Issue #60
+# All three tests are pure mock tests (no LIVE_TEST guard needed).
+# ---------------------------------------------------------------------------
+
+def test_sync_approvals_api_happy(sync_manager, mocker):
+    """Happy path: 2 approved participants → add_person_to_group called twice,
+    both marked synced in WordPress."""
+    participants = [
+        {"participant_id": 1, "chmeetings_id": "CHM1", "first_name": "Alice", "last_name": "A"},
+        {"participant_id": 2, "chmeetings_id": "CHM2", "first_name": "Bob",   "last_name": "B"},
+    ]
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
+                        return_value=participants)
+
+    groups = [{"id": 999, "name": "2025 Sports Fest"}]
+    mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=groups)
+    mocker.patch.object(sync_manager.chm_connector, "add_person_to_group", return_value=True)
+
+    approvals = [
+        {"approval_id": 10, "participant_id": 1},
+        {"approval_id": 20, "participant_id": 2},
+    ]
+    mocker.patch.object(sync_manager.wordpress_connector, "get_approvals",
+                        return_value=approvals)
+    mocker.patch.object(sync_manager.wordpress_connector, "update_approval",
+                        return_value=True)
+
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2025 Sports Fest")
+
+    result = sync_manager.sync_approvals_to_chmeetings()
+
+    assert result is True
+    assert sync_manager.chm_connector.add_person_to_group.call_count == 2
+    sync_manager.chm_connector.add_person_to_group.assert_any_call("999", "CHM1")
+    sync_manager.chm_connector.add_person_to_group.assert_any_call("999", "CHM2")
+    assert sync_manager.wordpress_connector.update_approval.call_count == 2
+
+
+def test_sync_approvals_group_not_found(sync_manager, mocker):
+    """If APPROVED_GROUP_NAME doesn't exist in ChMeetings, return False immediately
+    and make zero update_approval calls."""
+    participants = [
+        {"participant_id": 1, "chmeetings_id": "CHM1", "first_name": "Alice", "last_name": "A"},
+    ]
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
+                        return_value=participants)
+
+    # Group list has no entry matching APPROVED_GROUP_NAME
+    mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=[
+        {"id": 1, "name": "Some Other Group"},
+    ])
+    mock_update = mocker.patch.object(sync_manager.wordpress_connector, "update_approval",
+                                      return_value=True)
+
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2025 Sports Fest")
+
+    result = sync_manager.sync_approvals_to_chmeetings()
+
+    assert result is False
+    mock_update.assert_not_called()
+
+
+def test_sync_approvals_partial_failure(sync_manager, mocker):
+    """First add succeeds, second fails → only the first is marked synced,
+    function returns False (failed_count > 0)."""
+    participants = [
+        {"participant_id": 1, "chmeetings_id": "CHM1", "first_name": "Alice", "last_name": "A"},
+        {"participant_id": 2, "chmeetings_id": "CHM2", "first_name": "Bob",   "last_name": "B"},
+    ]
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
+                        return_value=participants)
+
+    groups = [{"id": 999, "name": "2025 Sports Fest"}]
+    mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=groups)
+    # First call True, second False
+    mocker.patch.object(sync_manager.chm_connector, "add_person_to_group",
+                        side_effect=[True, False])
+
+    approvals = [
+        {"approval_id": 10, "participant_id": 1},
+        {"approval_id": 20, "participant_id": 2},
+    ]
+    mocker.patch.object(sync_manager.wordpress_connector, "get_approvals",
+                        return_value=approvals)
+    mock_update = mocker.patch.object(sync_manager.wordpress_connector, "update_approval",
+                                      return_value=True)
+
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2025 Sports Fest")
+
+    result = sync_manager.sync_approvals_to_chmeetings()
+
+    assert result is False  # failed_count == 1
+    # Only participant 1 (Alice) should have been marked synced
+    assert mock_update.call_count == 1
+    mock_update.assert_called_once_with(10, {"synced_to_chmeetings": True})
+
 ##### End of tests/test_sync_manager

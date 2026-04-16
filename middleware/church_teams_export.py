@@ -7,7 +7,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 import re
 
-from config import Config, CHECK_BOXES, MEMBERSHIP_QUESTION
+from config import Config, CHECK_BOXES, CHM_FIELDS, MEMBERSHIP_QUESTION
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
 
@@ -145,8 +145,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "Mobile Phone": person_data.get("mobile", ""),
                     "Email": person_data.get("email", "").strip(),
                     "Is_Member_ChM": additional_fields.get(MEMBERSHIP_QUESTION, "No") == "Yes",
-                    "ChM_Roles": additional_fields.get("My role is", ""),
-                    "ChM_Completion_Checklist": additional_fields.get("Completion Check List", ""),
+                    "ChM_Roles": additional_fields.get(CHM_FIELDS["ROLES"], ""),
+                    "ChM_Completion_Checklist": additional_fields.get(CHM_FIELDS["COMPLETION_CHECKLIST"], ""),
                     "Update_on_ChM": updated_on_dt.strftime("%Y-%m-%d %H:%M:%S") 
                 }
                 chm_data_by_church[church_code].append(mapped_person)

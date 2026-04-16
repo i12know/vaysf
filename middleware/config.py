@@ -154,6 +154,164 @@ CHECK_BOXES = {
     "6-PAID": "6. Paid All Fees"
 }
     
+# ChMeetings custom field names (must match labels in ChMeetings exactly)
+# Used in participants.py _map_chmeetings_participants() to extract data from additional_fields.
+# To verify these match the live API, run: python main.py test --system chmeetings --test-type api-inspect
+CHM_FIELDS = {
+    "CHURCH_TEAM": "Church Team",
+    "PRIMARY_SPORT": "Primary Sport",
+    "PRIMARY_FORMAT": "Primary Racquet Sport Format",
+    "PRIMARY_PARTNER": "Primary Racquet Sport Partner (if applied)",
+    "SECONDARY_SPORT": "Secondary Sport",
+    "SECONDARY_FORMAT": "Secondary Racquet Sport Format",
+    "SECONDARY_PARTNER": "Secondary Racquet Sport Partner (if applied)",
+    "OTHER_EVENTS": "Other Events",
+    "COMPLETION_CHECKLIST": "Completion Check List",
+    "PARENT_INFO": "Parent Info",
+    "ROLES": "My role is",
+}
+
+# ── Season Reset: ChMeetings Custom Field & Option IDs ──────────────────────
+# Sports Fest section (section_id: 116139)
+SF_SECTION_ID = 116139
+
+SF_FIELD_IDS = {
+    "MY_ROLE":             1282085,  # checkbox
+    "CHURCH_TEAM":         1281851,  # dropdown
+    "IS_MEMBER":           1281852,  # multiple_choice
+    "PRIMARY_SPORT":       1281847,  # dropdown
+    "PRIMARY_FORMAT":      1313281,  # dropdown
+    "PRIMARY_PARTNER":     1313282,  # text
+    "SECONDARY_SPORT":     1281848,  # dropdown
+    "SECONDARY_FORMAT":    1313283,  # dropdown
+    "SECONDARY_PARTNER":   1313284,  # text
+    "OTHER_EVENTS":        1281849,  # checkbox
+    "AGE_VERIFICATION":    1283264,  # multiple_choice
+    "PARENT_NAME":         1283265,  # text
+    "PARENT_EMAIL":        1283266,  # text
+    "PARENT_PHONE":        1283267,  # text
+    "ADDITIONAL_INFO":     1281850,  # multi_line_text
+    # Church Rep Verification section (section_id: 116188)
+    "CHECKLIST":           1283271,  # checkbox
+    "NOTES_PROGRESS":      1283358,  # multi_line_text
+}
+
+# Church Team dropdown option_id → church code mapping (field_id: 1281851)
+SF_CHURCH_TEAM_OPTIONS = {
+    199353: "Other",
+    199354: "RPC",
+    199451: "ORN",
+    213666: "SDC",
+    214591: "NSD",
+    214653: "TLC",
+    215122: "ANH",
+    215123: "GLA",
+    215124: "NHC",
+    215125: "SGV",
+    226673: "GAC",
+    226674: "PCC",
+    226675: "WSD",
+    227107: "FVC",
+    227108: "MWC",
+    227109: "OCB",
+    227110: "WCC",
+    227627: "LBC",
+    227691: "SBC",
+    227692: "SFV",
+}
+
+# Primary Sport dropdown option_id → label (field_id: 1281847)
+SF_PRIMARY_SPORT_OPTIONS = {
+    199332: "Basketball - Men Team",
+    199333: "Bible Challenge - Mixed Team",
+    199334: "Volleyball - Men Team",
+    199335: "Volleyball - Women Team",
+    199343: "Badminton",
+    199344: "Tennis",
+    199345: "Table Tennis",
+    199346: "Pickleball",
+    212136: "Unselected/NA",
+    212137: "Pickleball 35+",
+}
+
+# Secondary Sport dropdown option_id → label (field_id: 1281848)
+SF_SECONDARY_SPORT_OPTIONS = {
+    199336: "Basketball - Men Team",
+    199337: "Bible Challenge - Mixed Team",
+    199338: "Volleyball - Men Team",
+    199339: "Volleyball - Women Team",
+    199347: "Badminton",
+    199348: "Tennis",
+    199349: "Table Tennis",
+    199350: "Pickleball",
+    199352: "Unselected/NA",
+    212143: "Pickleball 35+",
+}
+
+# My Role checkbox option_id → label (field_id: 1282085)
+SF_MY_ROLE_OPTIONS = {
+    199442: "Athlete/Participant",
+    199443: "Parents paying for minors who play in Sports Fest",
+    199444: "Church's Representative",
+    199445: "Church Pastor, Leader, or Coach",
+    199446: "VAY SM Staff",
+    199447: "Fan and Supporter",
+}
+
+# Other Events checkbox option_id → label (field_id: 1281849)
+SF_OTHER_EVENTS_OPTIONS = {
+    199340: "Scripture Memorization",
+    199341: "Track & Field",
+    199342: "Tug-of-war",
+}
+
+# Age Verification multiple_choice option_id → label (field_id: 1283264)
+SF_AGE_VERIFICATION_OPTIONS = {
+    199606: "I am over 18 but under 35",
+    199607: "I am under 18",
+    212149: "I am over 35",
+}
+
+# Completion Checklist checkbox option_id → label (field_id: 1283271)
+SF_CHECKLIST_OPTIONS = {
+    199608: "1. Correct identity, gender, age range",
+    199609: "2. Consent Form Signed by Self or Parents",
+    199621: "3. Account created on Member Portal and logged in",
+    199610: "4. Valid Photo as ID for event check-in",
+    199611: "5. Approval from Pastor",
+    199612: "6. Paid All Fees",
+}
+
+# Fields that use selected_option_ids (array) — reset to []
+SF_CHECKBOX_FIELD_IDS = {
+    SF_FIELD_IDS["MY_ROLE"],
+    SF_FIELD_IDS["OTHER_EVENTS"],
+    SF_FIELD_IDS["CHECKLIST"],
+}
+
+# Fields that use selected_option_id (scalar) — reset to null
+SF_DROPDOWN_FIELD_IDS = {
+    SF_FIELD_IDS["CHURCH_TEAM"],
+    SF_FIELD_IDS["IS_MEMBER"],
+    SF_FIELD_IDS["PRIMARY_SPORT"],
+    SF_FIELD_IDS["PRIMARY_FORMAT"],
+    SF_FIELD_IDS["SECONDARY_SPORT"],
+    SF_FIELD_IDS["SECONDARY_FORMAT"],
+    SF_FIELD_IDS["AGE_VERIFICATION"],
+}
+
+# Fields that use value (string) — reset to null
+SF_TEXT_FIELD_IDS = {
+    SF_FIELD_IDS["PRIMARY_PARTNER"],
+    SF_FIELD_IDS["SECONDARY_PARTNER"],
+    SF_FIELD_IDS["PARENT_NAME"],
+    SF_FIELD_IDS["PARENT_EMAIL"],
+    SF_FIELD_IDS["PARENT_PHONE"],
+    SF_FIELD_IDS["ADDITIONAL_INFO"],
+    SF_FIELD_IDS["NOTES_PROGRESS"],
+}
+# ── End Season Reset constants ───────────────────────────────────────────────
+
 # Approval Status Constants
 APPROVAL_STATUS = {
     "PENDING": "pending",                   ## Initial status for participants who have validation issues or incomplete requirements: NOT yet ready for pastoral approval.
@@ -208,21 +366,14 @@ class Config:
     """Configuration settings for VAYSF middleware."""
     # ChMeetings configuration
     CHM_API_URL = os.getenv("CHM_API_URL", "https://api.chmeetings.com")
-    CHM_USERNAME = os.getenv("CHM_USERNAME")
-    CHM_PASSWORD = os.getenv("CHM_PASSWORD")
     CHM_API_KEY = os.getenv("CHM_API_KEY")
-    
+
     # WordPress configuration
     WP_URL = os.getenv("WP_URL")
     WP_API_KEY = os.getenv("WP_API_KEY")
-    
+
     # Email configuration
     EMAIL_FROM = os.getenv("EMAIL_FROM", "info@vaysm.org")
-    
-    # Selenium configuration
-    CHROME_DRIVER_PATH = os.getenv("CHROME_DRIVER_PATH", "")  # Empty if using webdriver-manager
-    USE_CHROME_HEADLESS = os.getenv("USE_CHROME_HEADLESS", "True").lower() == "true"
-    CHROME_PROFILE_DIR = os.getenv("CHROME_PROFILE_DIR", "")
     
     # Application settings
     # Default APP_ENV to "test" when running under pytest to avoid failing
@@ -237,6 +388,7 @@ class Config:
     CHURCH_EXCEL_FILE = DATA_DIR / os.getenv("CHURCH_EXCEL_FILE", "Church Application Form.xlsx")
     APPROVED_GROUP_NAME = os.getenv("APPROVED_GROUP_NAME", "2025 Sports Fest")
     APPROVED_EXCEL_FILE = DATA_DIR / os.getenv("APPROVED_EXCEL_FILE", "group_import_approved_participants.xlsx")
+    VAYSM_GROUP_ID = os.getenv("VAYSM_GROUP_ID", "")
     
     # Sync settings
     SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", 60))
@@ -249,8 +401,6 @@ class Config:
         """Validate configuration settings."""
         required_vars = {
             "CHM_API_URL": cls.CHM_API_URL,
-            "CHM_USERNAME": cls.CHM_USERNAME,
-            "CHM_PASSWORD": cls.CHM_PASSWORD,
             "CHM_API_KEY": cls.CHM_API_KEY,
             "WP_URL": cls.WP_URL,
             "WP_API_KEY": cls.WP_API_KEY,
@@ -330,8 +480,6 @@ def create_env_template() -> None:
     if not env_template_path.exists():
         template = """# ChMeetings configuration
 CHM_API_URL=https://api.chmeetings.com
-CHM_USERNAME=
-CHM_PASSWORD=
 CHM_API_KEY=
 
 # WordPress configuration
@@ -340,11 +488,6 @@ WP_API_KEY=
 
 # Email configuration
 EMAIL_FROM=sportsfest@example.com
-
-# Selenium configuration
-CHROME_DRIVER_PATH=
-USE_CHROME_HEADLESS=True
-CHROME_PROFILE_DIR=
 
 # Application settings
 APP_ENV=development
@@ -359,9 +502,9 @@ APPROVED_EXCEL_FILE=group_import_approved_participants.xlsx
 # Sync settings
 TEAM_PREFIX=Team
 SPORTS_FEST_DATE=2025-07-19
-CHURCH_EXCEL_FILE=
+VAYSM_GROUP_ID=
 
-# Export directory 
+# Export directory
 # Default is now 'G:\\Shared drives\\RP Google Drive\\VAY\\SportsFest\\VAYSF-data' if not set here.
 # You can override it, e.g., EXPORT_DIR=C:\\Users\\YourUser\\Desktop\\VAYSF_Exports
 # or EXPORT_DIR=export (for a folder named 'export' in the project root)

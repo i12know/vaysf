@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple, Any, Optional
 from loguru import logger  # Import from config.py
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
-from config import (Config, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION,
+from config import (Config, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION, CHM_FIELDS,
                    SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, RULE_LEVEL, FORMAT_MAPPINGS,
                    SPORT_UNSELECTED, RACQUET_SPORTS, VALIDATION_SEVERITY, is_racquet_sport)                   
 import datetime
@@ -390,17 +390,17 @@ class ParticipantSyncer:
 
             additional_fields = {f["field_name"]: f["value"] for f in p.get("additional_fields", [])}
             
-            primary_sport = additional_fields.get("Primary Sport", "")
+            primary_sport = additional_fields.get(CHM_FIELDS["PRIMARY_SPORT"], "")
             if " - " in primary_sport:
-                primary_format_val = "" 
+                primary_format_val = ""
             else:
-                primary_format_val = additional_fields.get("Primary Racquet Sport Format", "")
-            
-            secondary_sport = additional_fields.get("Secondary Sport", "")
+                primary_format_val = additional_fields.get(CHM_FIELDS["PRIMARY_FORMAT"], "")
+
+            secondary_sport = additional_fields.get(CHM_FIELDS["SECONDARY_SPORT"], "")
             if " - " in secondary_sport:
                 secondary_format_val = ""
             else:
-                secondary_format_val = additional_fields.get("Secondary Racquet Sport Format", "")
+                secondary_format_val = additional_fields.get(CHM_FIELDS["SECONDARY_FORMAT"], "")
 
             photo_url = p.get("photo", "")
             if not photo_url and isinstance(p.get("additional_fields"), list):
@@ -410,7 +410,7 @@ class ParticipantSyncer:
                     photo_url = photo_fields[0].get("value")
 
             # Let's get this string first.
-            completion_checklist_str = additional_fields.get("Completion Check List", "") 
+            completion_checklist_str = additional_fields.get(CHM_FIELDS["COMPLETION_CHECKLIST"], "")
 
             # --- START NEW LOGIC TO SET consent_status ---
             # (This block will be inserted BEFORE the participant_mapped_data dictionary)
@@ -427,10 +427,10 @@ class ParticipantSyncer:
                 logger.debug(f"[SYNC_PARTICIPANT_MAP - {current_person_chm_id_for_map}] Derived has_consent_checked: {has_consent_checked}")
 
             # Original start of participant_mapped_data dictionary
-            # ChMeetings field name, MUST match the label in ChMeetings custom fields exactly
+            # ChMeetings field names use CHM_FIELDS constants from config.py
             participant_mapped_data = {
                 "chmeetings_id": current_person_chm_id_for_map, # Use the chm_id derived for logging
-                "church_code": additional_fields.get("Church Team", "").strip().upper(),
+                "church_code": additional_fields.get(CHM_FIELDS["CHURCH_TEAM"], "").strip().upper(),
                 "first_name": p.get("first_name", ""),
                 "last_name": p.get("last_name", ""),
                 "email": p.get("email", "").strip(),
@@ -441,15 +441,15 @@ class ParticipantSyncer:
                 "is_church_member": additional_fields.get(MEMBERSHIP_QUESTION, "No") == "Yes",
                 "primary_sport": primary_sport,
                 "primary_format": primary_format_val,
-                "primary_partner": additional_fields.get("Primary Racquet Sport Partner (if applied)", ""),
+                "primary_partner": additional_fields.get(CHM_FIELDS["PRIMARY_PARTNER"], ""),
                 "secondary_sport": secondary_sport,
                 "secondary_format": secondary_format_val,
-                "secondary_partner": additional_fields.get("Secondary Racquet Sport Partner (if applied)", ""),
-                "other_events": additional_fields.get("Other Events", ""),
-                "approval_status": "pending", 
-                "completion_checklist": additional_fields.get("Completion Check List", ""),
-                "parent_info": additional_fields.get("Parent Info", ""),
-                "roles": additional_fields.get("My role is", ""),
+                "secondary_partner": additional_fields.get(CHM_FIELDS["SECONDARY_PARTNER"], ""),
+                "other_events": additional_fields.get(CHM_FIELDS["OTHER_EVENTS"], ""),
+                "approval_status": "pending",
+                "completion_checklist": additional_fields.get(CHM_FIELDS["COMPLETION_CHECKLIST"], ""),
+                "parent_info": additional_fields.get(CHM_FIELDS["PARENT_INFO"], ""),
+                "roles": additional_fields.get(CHM_FIELDS["ROLES"], ""),
                 "consent_status": has_consent_checked # New field added here
             }
             mapped_list.append(participant_mapped_data)
@@ -719,10 +719,12 @@ class ParticipantSyncer:
             # No issues to sync, we can return early
             return
         
-        # Get existing issues for this participant
+        # Get existing issues for this participant (per_page=200 avoids silent truncation
+        # at the PHP default; a single participant won't realistically exceed 200 issues)
         existing_issues = self.wordpress_connector.get_validation_issues({
             "participant_id": participant_id,
-            "status": "open"  # Only check open issues
+            "status": "open",
+            "per_page": 200,
         })
         
         # Create a lookup dictionary of existing issues

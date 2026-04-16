@@ -4,9 +4,15 @@ This guide provides instructions for using the Sports Fest ChMeetings Integratio
 
 ## Table of Contents
 
+- [Running Tests](#running-tests)
+  - [Mock Mode (Default)](#mock-mode-default)
+  - [Live Mode](#live-mode)
+  - [Live Group Membership Tests](#live-group-membership-tests)
+  - [Full Live Tests](#full-live-tests)
 - [Windows Middleware](#windows-middleware)
   - [Running Synchronization Tasks](#running-synchronization-tasks)
   - [Exporting Church Team Reports](#exporting-church-team-reports)
+  - [Season Reset (Year-End Archive and Field Clear)](#season-reset-year-end-archive-and-field-clear)
   - [Church Group Assignment Export](#church-group-assignment-export)
   - [Scheduled Syncs](#scheduled-syncs)
   - [Testing and Configuration](#testing-and-configuration)
@@ -25,6 +31,78 @@ This guide provides instructions for using the Sports Fest ChMeetings Integratio
   - [During Registration Period](#during-registration-period)
   - [Final Preparations](#final-preparations)
   - [After Sports Fest](#after-sports-fest)
+
+## Running Tests
+
+The middleware ships with a pytest-based test suite covering all connectors and sync logic. Tests run in two modes: **mock** (fast, no credentials) and **live** (hits real APIs).
+
+All commands below assume you are in the `vaysf/middleware/` directory.
+
+### Environment Variables for Testing
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LIVE_TEST` | `false` | Set to `true` to run all tests against live APIs |
+| `FULL_LIVE_TEST` | `false` | Set to `true` to also run the full participant sync (~570 people, takes several minutes) |
+| `CHM_TEST_GROUP_ID` | _(none)_ | ChMeetings group ID for live group membership round-trip tests |
+| `CHM_TEST_PERSON_ID` | _(none)_ | ChMeetings person ID for live group membership round-trip tests |
+
+### Mock Mode (Default)
+
+No credentials required. All external API calls are intercepted by mock objects.
+
+```bash
+pytest tests/ -v
+```
+
+Expected result: `27 passed, 5 skipped` (skipped tests require live mode).
+
+### Live Mode
+
+Requires valid `.env` with `CHM_API_URL`, `CHM_API_KEY`, `WP_URL`, and `WP_API_KEY`.
+
+**Windows CMD:**
+```cmd
+set LIVE_TEST=true && pytest tests/ -v -s
+```
+
+**Windows PowerShell:**
+```powershell
+$env:LIVE_TEST="true"; pytest tests/ -v -s
+```
+
+Expected result: most tests pass; `test_sync_participants` is skipped unless `FULL_LIVE_TEST=true` is also set.
+
+### Live Group Membership Tests
+
+`test_add_person_to_group` and `test_remove_person_from_group` perform a self-cleaning round-trip: add a person to a group, confirm they appear in `get_group_people()`, then remove them and confirm they're gone. These tests are skipped if either env var is missing.
+
+**How to find the IDs:**
+- **Group ID**: From the ChMeetings group URL — e.g., `?gid=999847` → use `999847`
+- **Person ID**: From a member's profile URL — e.g., `.../MemberDashboard/3692903` → use `3692903`
+
+**Windows CMD:**
+```cmd
+set LIVE_TEST=true
+set CHM_TEST_GROUP_ID=999847
+set CHM_TEST_PERSON_ID=3692903
+pytest tests/test_chmeetings_connector.py::test_add_person_to_group tests/test_chmeetings_connector.py::test_remove_person_from_group -v -s
+```
+
+**Warning:** Use a disposable test group/person. The test adds then immediately removes the person; if it crashes mid-way the person may remain in the group and need to be removed manually.
+
+### Full Live Tests
+
+Includes `test_sync_participants`, which processes all registered participants and takes several minutes.
+
+**Windows CMD:**
+```cmd
+set LIVE_TEST=true && set FULL_LIVE_TEST=true && pytest tests/ -v -s
+```
+
+For details on what each API call does and how the response format changed in 2026, see [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md).
+
+---
 
 ## Windows Middleware
 
@@ -79,15 +157,21 @@ python main.py sync --type participants --chm-id 1234567
 
 This will fetch and sync only the participant with ID 1234567 from ChMeetings. Note: The `--chm-id` option works only with `--type participants`.
 
-#### Approvals Generation
+#### Approvals Sync
 
-To generate approval tokens for participants who have completed validation:
+To sync approved participants to ChMeetings (adds them to the approved group via API):
 
 ```bash
 python main.py sync --type approvals
 ```
 
-This will create tokens and send approval emails to pastors.
+By default, this uses the ChMeetings API to add approved participants directly to the designated group (configured via `APPROVED_GROUP_NAME` in `.env`). If the API approach is unavailable or you prefer the legacy Excel export workflow, use the `--excel-fallback` flag:
+
+```bash
+python main.py sync --type approvals --excel-fallback
+```
+
+The Excel fallback generates an import-ready file that can be manually imported into ChMeetings.
 
 #### Validation
 
@@ -140,22 +224,125 @@ python main.py export-church-teams --force-resend-validate2 (no review yet - no 
 ##### Resend to specific church
 python main.py export-church-teams --church-code TLC --force-resend-pending
 
-### Church Group Assignment Export
+### Season Reset (Year-End Archive and Field Clear)
 
-Identify participants who need to be added to their respective church team groups in ChMeetings:
+Before each new registration period opens, all Sports Fest custom fields on
+every VAY-SM member's ChMeetings profile must be archived and cleared.  The
+`reset-season` command handles this automatically.
+
+**Prerequisites**
+
+- Set `VAYSM_GROUP_ID` in your `.env` file to the ChMeetings group ID for
+  the VAY-SM member group.
+- Ensure `CHM_API_KEY` and `WP_API_KEY` are configured so the middleware can
+  reach both ChMeetings and WordPress.
+
+**Commands**
 
 ```bash
+# Dry run — show what would be archived and reset, make no changes
+python main.py reset-season --year 2025 --dry-run
+
+# Archive 2025 data as ChMeetings profile notes, then clear all custom fields
+python main.py reset-season --year 2025
+
+# Archive only — write notes but do not clear fields
+python main.py reset-season --year 2025 --archive-only
+
+# Reset only — clear fields without writing archive notes
+python main.py reset-season --year 2025 --reset-only
+
+# Test against a single person before running on the full group
+python main.py reset-season --year 2025 --person-id 3139537
+python main.py reset-season --year 2025 --person-id 3139537 --dry-run
+
+# Diagnostic: probe what the PUT endpoint accepts for a single person
+python main.py reset-season --year 2025 --probe --person-id 3139537
+```
+
+**Recommended run order**
+
+Before running on the full VAY-SM group, test with a single person and a small
+church team first:
+
+```bash
+# 1. Probe — verify the PUT endpoint accepts clearing values (should all pass)
+python main.py reset-season --year 2025 --probe --person-id <any_person_id>
+
+# 2. Single person — confirm archive note and field clear look correct
+python main.py reset-season --year 2025 --person-id <any_person_id>
+
+# 3. Small group — set VAYSM_GROUP_ID to a small church team group ID
+set VAYSM_GROUP_ID=<small_group_id>
+python main.py reset-season --year 2025 --dry-run
+python main.py reset-season --year 2025
+
+# 4. Full run — restore VAYSM_GROUP_ID to the real VAY-SM group
+set VAYSM_GROUP_ID=<vaysm_group_id>
+python main.py reset-season --year 2025
+```
+
+**What the command does**
+
+1. **Fetches** all members of the VAY-SM ChMeetings group (`VAYSM_GROUP_ID`).
+2. **Archive step** (skipped with `--reset-only`): for each member, reads their
+   2025 participant record from WordPress (`sf_participants`) and writes a
+   structured note to their ChMeetings profile, e.g.:
+
+   > Sports Fest 2025 Archive — 2026-04-14 | Team: RPC | Primary: Badminton (Singles) | Secondary: Bible Challenge - Mixed Team | Member: Yes | Pastor Approved: approved | Checklist: 1✓ 2✓ 3✓ 4✓ 5✓ 6✗
+
+   Archive notes are idempotent — re-running will not create duplicate notes.
+
+3. **Reset step** (skipped with `--archive-only`): calls
+   `PUT /api/v1/people/{id}` to clear all Sports Fest and Church Rep
+   Verification custom fields (dropdowns → `null`, checkboxes → `[]`,
+   text fields → `null`).  The full person profile is included in the
+   request to preserve standard fields (email, mobile, birthdate, etc.)
+   that would otherwise be wiped by the PUT full-replace semantics.
+
+**Fields cleared**
+
+Sports Fest section (section 116139): My role is, Church Team, Church
+membership question, Primary Sport, Primary Racquet Format, Primary Racquet
+Partner, Secondary Sport, Secondary Racquet Format, Secondary Racquet Partner,
+Other Events, Age Verification, Parent/Guardian name/email/phone, Additional
+Info.
+
+Church Rep Verification section (section 116188): Completion Check List,
+Notes on Progress.
+
+**Timing**
+
+Run this command **before the new Individual Participant Application Form goes
+live** — typically at or before the Church Registration Deadline for the
+upcoming year.
+
+### Church Group Assignment Export
+
+Assign participants to their church team groups in ChMeetings directly via API:
+
+```bash
+# Preview who would be assigned (no API calls made)
+python main.py assign-groups --dry-run
+
+# Live: assign unassigned participants to their Team groups
 python main.py assign-groups
 ```
 
 This command:
-- Scans ChMeetings for participants with Church Codes who aren't in their church's team group
-- Creates an Excel file listing these participants
-- Generates a ChMeetings-importable file (`chm_group_import.xlsx`) to easily add them to their "Team [Code]" groups
+- Scans ChMeetings for participants with a "Church Team" additional field who are not yet in their `Team [Code]` group
+- Calls `add_person_to_group()` directly for each unassigned participant — no Excel import step required
+- Writes `data/church_team_assignments.xlsx` as an audit log (in both live and dry-run modes); the `Outcome` column shows `added`, `failed`, `missing_group`, or `dry_run` per person
+- Logs a warning and skips any church code that has no matching group in ChMeetings (e.g. `Team OTHER` if that group doesn't exist)
+- Safe to re-run — participants already in their group are detected during identification and skipped
 
-The Excel files are saved in the `data/` directory by default. On Windows, the system will attempt to automatically open the file upon successful generation.
+> **Note:** Close `church_team_assignments.xlsx` in Excel before running, or you will see a warning that the audit file could not be written (the API calls still complete successfully).
 
-After running this command, you should import the generated file into ChMeetings (or manually add the people to groups) to ensure every participant is in the correct church group.
+After assigning participants to their Team groups, run the approval sync to add approved participants to the `2025 Sports Fest` group:
+
+```bash
+python main.py sync --type approvals
+```
 
 ### Scheduled Syncs
 
@@ -203,6 +390,21 @@ To test email functionality:
 ```bash
 python main.py test --system wordpress --test-type email --test-email "test@example.com"
 ```
+
+#### Inspecting ChMeetings API Fields
+
+To inspect ChMeetings custom field definitions and verify that your configured field mappings match what the API returns:
+
+```bash
+python main.py test --system chmeetings --test-type api-inspect
+```
+
+This will:
+- Retrieve all custom field definitions from ChMeetings via the `get_fields()` API
+- Cross-reference each field in `CHM_FIELDS` (in `config.py`) against the live API response
+- Report OK or MISSING for each expected field name
+
+This is useful after ChMeetings updates or when setting up a new environment to ensure field names haven't changed.
 
 #### Validating Configuration
 
@@ -353,7 +555,7 @@ Upon completion of the Individual Application Form, user will receive an email c
 ChMeetings group structure should include:
 
 1. Team Groups (named "Team XYZ" where XYZ is the church code)
-2. 2025 Sports Fest (for approved participants)
+2. Approved participants group (configured via `APPROVED_GROUP_NAME` in `.env`, e.g., "2026 Sports Fest")
 
 Church Reps should be assigned as group leaders for their respective teams.
 
@@ -411,5 +613,8 @@ Church Reps should be assigned as group leaders for their respective teams.
    - Document participation statistics
 
 2. **System Cleanup**
-   - Archive data for future reference
-   - Prepare system for next year
+   - Archive all members' data and clear all Sports Fest custom fields:
+     `python main.py reset-season --year 2025`
+   - Verify a few profiles in ChMeetings to confirm archive notes were written
+     and fields are cleared
+   - Prepare system for next year (see [SEASON_TRANSITION.md](SEASON_TRANSITION.md))

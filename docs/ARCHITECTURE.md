@@ -14,7 +14,7 @@ The system uses a three-tier architecture to separate concerns and provide a rob
                              |                  |
                              +--------^---------+
                                       |
-                                      | API/Selenium
+                                      | API
                                       |
                              +--------v---------+
                              |                  |
@@ -251,7 +251,7 @@ CREATE TABLE sf_validation_issues (
 ├── run-sync.bat                # Batch file for manual sync
 ├── chmeetings\                 # ChMeetings connector module
 │   ├── __init__.py
-│   └── backend_connector.py    # API and Selenium connector
+│   └── backend_connector.py    # ChMeetings API connector
 ├── wordpress\                  # WordPress connector module
 │   ├── __init__.py
 │   └── frontend_connector.py   # REST API client
@@ -283,12 +283,23 @@ CREATE TABLE sf_validation_issues (
 Provides API access to ChMeetings data.
 ```python
 class ChMeetingsConnector:
-    def authenticate(self)
-    def get_people(self, params=None)
-    def get_person(self, person_id)
-    def get_groups(self, params=None)
-    def get_group_people(self, group_id)
+    def authenticate(self)                                    # no 429 retry (Issue #64)
+    def get_people(self, params=None)                         # paginates via total_count; sends include_additional_fields=True; no 429 retry (Issue #64)
+    def get_person(self, person_id)                           # unwraps {"data": {...}} envelope; 429-aware retry (2/5/10s)
+    def get_groups(self, params=None)                         # no 429 retry (Issue #64)
+    def get_group_people(self, group_id)                      # no 429 retry (Issue #64)
+    def get_person_notes(self, person_id)                     # GET /api/v1/people/{id}/notes; 429-aware retry (2/5/10s)
+    def get_fields(self)                                      # GET /api/v1/people/fields → field_id / field_type map; no 429 retry (Issue #64)
+    def add_person_to_group(self, group_id, person_id)        # POST /api/v1/groups/{id}/memberships; 429-aware retry (2/5/10s)
+    def remove_person_from_group(self, group_id, person_id)   # DELETE /api/v1/groups/{id}/memberships/{person_id}; no 429 retry (Issue #64)
+    def add_member_note(self, person_id, note_text)           # POST /api/v1/people/{id}/notes; 429-aware retry (2/5/10s)
+    def update_person(self, person_id, first_name,
+                      last_name, additional_fields)           # PUT /api/v1/people/{id} → reset custom fields; no 429 retry (Issue #64)
 ```
+
+> **Rate-limit coverage**: 4 of 11 methods have 429 retry with 2/5/10s exponential backoff. Full centralization into a single `_api_request()` helper is tracked in **Issue #64**.
+
+See [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md) for the full history of API breaking changes and the fixes applied in v1.05.
 
 #### WordPressConnector
 Handles REST API communication with WordPress.
@@ -314,10 +325,11 @@ class SyncManager:
     def sync_churches_from_excel(self, excel_file_path)
     def sync_participants(self, chm_id=None)
     def generate_approvals(self)
-    def sync_approvals_to_chmeetings(self)
+    def sync_approvals_to_chmeetings(self, use_excel_fallback=False)
     def validate_data(self)
     def run_full_sync(self)
 ```
+The `sync_approvals_to_chmeetings()` method uses the ChMeetings API (`add_person_to_group()`) by default to add approved participants to the designated group. Pass `use_excel_fallback=True` to fall back to the legacy Excel export workflow.
 
 #### IndividualValidator
 Validates participant data against JSON rules.
@@ -505,9 +517,17 @@ Usage: main.py [command] [options]
 
 Commands:
   sync                   Sync data between systems
-    --type TYPE          Type of data to sync (churches, participants, 
-                         approvals, validation, full)
+    --type TYPE          Type of data to sync:
+                           churches      Sync churches from ChMeetings
+                           participants  Sync participants from VAY-SM group
+                           approvals     Sync approval statuses to ChMeetings
+                           validation    Run validation rules
+                           full          Run complete sync pipeline
+                           form-submitters  [Planned - Issue #62] Detect form
+                                            submitters not yet added as VAY-SM
+                                            Members and promote them via API
     --chm-id ID          ChMeetings ID for syncing a specific participant
+    --excel-fallback     Use Excel export instead of API for approval sync
   
   sync-churches          Sync churches from Excel file
     --file FILE          Path to the church Excel file
@@ -517,6 +537,15 @@ Commands:
     --output DIR         Output directory for reports
   
   assign-groups          Create group assignments for people with church codes
+
+  reset-season           [Planned - Issue #63] Archive 2025 custom field data
+                         as ChMeetings profile notes, then clear all Sports Fest
+                         and Church Rep Verification custom fields for all
+                         VAY-SM Members
+    --year YEAR          Season year to archive (e.g. 2025)
+    --dry-run            Show what would change; make no API calls
+    --archive-only       Write archive notes only; do not reset fields
+    --reset-only         Clear fields only; skip archive note writing
   
   config                 Configure system settings
     --validate           Validate current configuration
@@ -527,7 +556,8 @@ Commands:
   
   test                   Test connectivity and functionality
     --system SYSTEM      System to test (chmeetings, wordpress, all)
-    --test-type TYPE     Type of test to run (connectivity, churches, email, all)
+    --test-type TYPE     Type of test to run (connectivity, churches, email,
+                         api-inspect, all)
     --test-email EMAIL   Email address for email test
 ```
 
@@ -560,14 +590,97 @@ The project includes a comprehensive test suite:
 ### Live/Mock Testing Toggle
 
 The testing framework supports two modes:
-- **Mock mode** (default): Uses mock data for fast, repeatable tests
-- **Live mode**: Tests against actual APIs for integration testing
+- **Mock mode** (default): Uses mock data for fast, repeatable tests — no credentials needed.
+- **Live mode**: Tests against actual APIs for integration testing.
 
-Toggle between modes using the LIVE_TEST environment variable:
+A `pytest.ini` in `middleware/` sets `pythonpath = .` so that `import chmeetings`, `import wordpress`, etc. resolve correctly without manually setting `PYTHONPATH`.
+
+#### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LIVE_TEST` | `false` | Enable live API tests |
+| `FULL_LIVE_TEST` | `false` | Also run the slow full-participant-sync test |
+| `CHM_TEST_GROUP_ID` | _(none)_ | ChMeetings group ID for group membership round-trip |
+| `CHM_TEST_PERSON_ID` | _(none)_ | ChMeetings person ID for group membership round-trip |
+
 ```bash
-# Mock mode
-pytest tests/test_wordpress_connector.py -v -s
+# Mock mode (all tests, no credentials)
+pytest tests/ -v
 
-# Live mode 
-set LIVE_TEST=true && pytest tests/test_wordpress_connector.py -v -s
+# Live mode
+set LIVE_TEST=true && pytest tests/ -v -s
+
+# Live mode with full sync + group membership tests
+set LIVE_TEST=true && set FULL_LIVE_TEST=true && set CHM_TEST_GROUP_ID=999847 && set CHM_TEST_PERSON_ID=3692903 && pytest tests/ -v -s
 ```
+
+For detailed testing instructions see [USAGE.md](USAGE.md#running-tests).
+
+## ChMeetings REST API Surface
+
+The ChMeetings API is documented at `https://api.chmeetings.com/scalar`. The published OpenAPI JSON (`/openapi/v1.json`) is **incomplete** — it covers only ~30 paths (groups, families, contributions, events). The Scalar UI exposes a fuller set of endpoints that should be used as the authoritative reference.
+
+### Confirmed Available Endpoints (as of April 2026)
+
+| Tag | Method | Path | Notes |
+|---|---|---|---|
+| People | GET | `/api/v1/people` | Supports `include_additional_fields=True` |
+| People | POST | `/api/v1/people` | Create a new person |
+| People | GET | `/api/v1/people/{id}` | Get person by ID |
+| People | PUT | `/api/v1/people/{id}` | Update person + custom fields via `additional_fields[]` |
+| People | DELETE | `/api/v1/people/{id}` | Delete person |
+| People | GET | `/api/v1/people/fields` | Returns all custom field definitions with `field_id`, `field_type`, and option IDs |
+| Notes | GET | `/api/v1/people/{id}/notes` | List all notes on a person's profile |
+| Notes | POST | `/api/v1/people/{id}/notes` | Write a note to a person's profile |
+| Notes | GET | `/api/v1/people/{id}/notes/{note_id}` | Get a specific note |
+| Notes | PUT | `/api/v1/people/{id}/notes/{note_id}` | Update a note |
+| Notes | DELETE | `/api/v1/people/{id}/notes/{note_id}` | Delete a note |
+| Groups | GET | `/api/v1/groups` | List groups |
+| Groups | GET | `/api/v1/groups/people` | Get people in groups (pass `group_ids`) |
+| Groups | POST | `/api/v1/groups/{id}/memberships` | Add person to group (201=added, 200=already member) |
+| Groups | DELETE | `/api/v1/groups/{id}/memberships/{person_id}` | Remove person from group |
+
+### Custom Fields API Notes
+
+The `PUT /api/v1/people/{id}` endpoint accepts an `additional_fields` array of `CustomFieldRequest` objects. The `field_type` discriminator and corresponding reset property differ by type:
+
+| field_type | required_property | Reset value |
+|---|---|---|
+| `checkbox` | `selected_option_ids` (array) | `[]` |
+| `dropdown` | `selected_option_id` (number) | `null` |
+| `multiple_choice` | `selected_option_id` (number) | `null` |
+| `text` | `value` (string) | `null` |
+| `multi_line_text` | `value` (string) | `null` |
+
+**Important:** Field IDs and option IDs are assigned by ChMeetings at creation time and will change if custom fields are deleted and recreated. Always call `GET /api/v1/people/fields` at runtime to discover current IDs dynamically — never hardcode them. See Issue #63 for the current field ID reference table.
+
+---
+
+## Known Operational Prerequisites (Admin Manual Steps)
+
+These are manual admin steps that currently have no automation and must be performed before or alongside the middleware sync pipeline. They are tracked as GitHub Issues for future automation.
+
+### 1. Form Submission → VAY-SM Member Promotion (Issue #62)
+
+**Problem:** When a participant submits the Individual Participant Application Form in ChMeetings, they appear in the Form Submissions list but are **not** automatically added as a Member of the VAY-SM church group. The `sync_participants` command only reads VAY-SM Members, so unpromotied submitters are silently invisible to the middleware.
+
+**Current manual process:**
+1. Admin navigates to VAY SM → Forms → Individual Application Form → Submissions
+2. Selects new submitters and uses **Bulk Actions → Add People**
+3. If the person already exists in the Diocese (another church), the bulk action fails — admin must go to the Diocese root level and add them to VAY-SM manually
+
+**Planned automation:** `sync --type form-submitters` command using email-based detection (ChMeetings sends a notification email per submission to the admin inbox) combined with `add_person_to_group()` API calls. See Issue #62 for full design.
+
+### 2. Annual Season Reset of Custom Fields (Issue #63)
+
+**Problem:** Sports Fest custom profile fields (sport selections, Church Rep verification checklist) remain set from the prior season on returning members' ChMeetings profiles. These stale values corrupt the next season's sync and validation.
+
+**Current manual process:** Admin manually edits each returning member's profile in ChMeetings to clear all Sports Fest and Church Rep Verification fields.
+
+**Planned automation:** `reset-season --year YYYY` command that:
+1. Reads 2025 data from `sf_participants` (WordPress)
+2. Writes a structured archive note to each person's ChMeetings profile via `POST /api/v1/people/{id}/notes`
+3. Clears all Sports Fest and Church Rep Verification custom fields via `PUT /api/v1/people/{id}` with `additional_fields[]`
+
+See Issue #63 for the complete field ID reference table and implementation plan.

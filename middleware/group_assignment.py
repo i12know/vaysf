@@ -1,9 +1,10 @@
 # middleware/group_assignment.py
 import os
 import sys
+import time
 import pandas as pd
 from loguru import logger
-from config import Config, DATA_DIR
+from config import Config, CHM_FIELDS, DATA_DIR
 
 # Add parent directory to import path to access other modules
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -12,99 +13,172 @@ sys.path.append(current_dir)
 from chmeetings.backend_connector import ChMeetingsConnector
 from config import Config
 
-def export_people_with_church_codes():
+
+def assign_people_to_church_team_groups(dry_run: bool = False) -> bool:
     """
-    Export people from ChMeetings who have church codes assigned
-    but aren't yet in their church groups.
+    Assign people in ChMeetings to their church team groups via direct API calls.
+
+    Identifies people who have a church code in their ChMeetings profile but are
+    not yet members of the corresponding "Team XYZ" group, then calls
+    add_person_to_group() for each one.
+
+    Args:
+        dry_run: If True, only generate the audit file — no API calls are made.
+
+    Returns:
+        True if the run succeeded with zero API failures.
+        False if authentication failed, an unexpected error occurred,
+        or any add_person_to_group() call returned False.
     """
-    logger.info("Exporting people with church codes...")
-    
+    logger.info(f"Starting church team group assignment (dry_run={dry_run})...")
+
     with ChMeetingsConnector() as chm_connector:
-        # Authenticate with ChMeetings
         if not chm_connector.authenticate():
             logger.error("Authentication with ChMeetings failed")
             return False
-            
-        # Get all people from ChMeetings
+
+        # --- Identification (unchanged logic) ---
         all_people = chm_connector.get_people()
         logger.info(f"Retrieved {len(all_people)} people from ChMeetings")
-        
-        # Get all groups (to check who's already in a team)
+
         all_groups = chm_connector.get_groups()
         team_groups = [g for g in all_groups if g["name"].startswith(Config.TEAM_PREFIX)]
-        
-        # Create a set of people IDs who are already in team groups
+
+        # Build name → id lookup for fast group resolution
+        team_group_by_name = {g["name"]: str(g["id"]) for g in team_groups}
+
+        # Build set of people already in a team group
         people_in_teams = set()
         for group in team_groups:
-            group_people = chm_connector.get_group_people(group["id"])
-            for person in group_people:
+            for person in chm_connector.get_group_people(group["id"]):
                 people_in_teams.add(str(person.get("person_id")))
-        
+
         logger.info(f"Found {len(people_in_teams)} people already in team groups")
-        
-        # Filter people who need group assignment
+
+        # Collect people needing assignment
         people_for_assignment = []
         for person in all_people:
             person_id = str(person.get("id"))
-            
-            # Skip people already in teams
             if person_id in people_in_teams:
                 continue
-                
+
             # Get all additional fields
             additional_fields = {f["field_name"]: f["value"] for f in person.get("additional_fields", [])}
-            
+
             # Check if they have a church code
-            church_code = additional_fields.get("Church Team", "").strip().upper()
+            church_code = additional_fields.get(CHM_FIELDS["CHURCH_TEAM"], "").strip().upper()
             if church_code:
-                # This person needs to be assigned to a team
                 people_for_assignment.append({
-                    "Person Id": person_id,
-                    "First Name": person.get("first_name", ""),
-                    "Last Name": person.get("last_name", ""),
-                    "Email": person.get("email", ""),
-                    "Church Code": church_code,
-                    "Group Name": f"Team {church_code}"
+                    "person_id": person_id,
+                    "first_name": person.get("first_name", ""),
+                    "last_name": person.get("last_name", ""),
+                    "email": person.get("email", ""),
+                    "church_code": church_code,
+                    "target_group": f"{Config.TEAM_PREFIX} {church_code}",
                 })
-        
+
         logger.info(f"Found {len(people_for_assignment)} people needing team assignment")
-        
-        # Create Excel file
-        if people_for_assignment:
-            df = pd.DataFrame(people_for_assignment)
-            
-            # Create the output directory if it doesn't exist
-            output_dir = DATA_DIR
-            os.makedirs(output_dir, exist_ok=True)
-            
-            # Export to Excel
-            output_file = os.path.join(output_dir, "church_team_assignments.xlsx")
-            df.to_excel(output_file, index=False)
-            logger.info(f"Exported team assignments to {output_file}")
-            
-            # Also create a ChMeetings-compatible import file
-            chm_import_file = os.path.join(output_dir, "chm_group_import.xlsx")
-            chm_df = df[["Person Id", "First Name", "Last Name", "Group Name"]]
-            chm_df.to_excel(chm_import_file, index=False)
-            logger.info(f"Created ChMeetings import file at {chm_import_file}")
-            
-            return chm_import_file
+
+        if not people_for_assignment:
+            logger.info("No people need team assignment — nothing to do.")
+            return True
+
+        # --- Action ---
+        added = 0
+        failed = 0
+        missing_group = 0
+        audit_rows = []
+
+        for person in people_for_assignment:
+            target_group_name = person["target_group"]
+            group_id = team_group_by_name.get(target_group_name)
+
+            if group_id is None:
+                logger.warning(
+                    f"Group '{target_group_name}' not found in ChMeetings — "
+                    f"skipping {person['first_name']} {person['last_name']} "
+                    f"(id={person['person_id']})"
+                )
+                missing_group += 1
+                outcome = "missing_group"
+            elif dry_run:
+                logger.info(
+                    f"[dry-run] Would add {person['first_name']} {person['last_name']} "
+                    f"(id={person['person_id']}) → {target_group_name}"
+                )
+                outcome = "dry_run"
+            else:
+                ok = chm_connector.add_person_to_group(group_id, person["person_id"])
+                time.sleep(0.2)  # 200 ms between calls — avoids 429 rate limit
+                if ok:
+                    added += 1
+                    outcome = "added"
+                else:
+                    failed += 1
+                    outcome = "failed"
+
+            audit_rows.append({
+                "Person Id": person["person_id"],
+                "First Name": person["first_name"],
+                "Last Name": person["last_name"],
+                "Email": person["email"],
+                "Church Code": person["church_code"],
+                "Target Group": target_group_name,
+                "Outcome": outcome,
+            })
+
+        # Always write audit file (both live and dry-run)
+        output_dir = DATA_DIR
+        os.makedirs(output_dir, exist_ok=True)
+        audit_file = os.path.join(output_dir, "church_team_assignments.xlsx")
+        try:
+            pd.DataFrame(audit_rows).to_excel(audit_file, index=False)
+            logger.info(f"Audit file written: {audit_file}")
+        except PermissionError:
+            logger.warning(
+                f"Could not write audit file — {audit_file} is open in another program. "
+                "Close the file and re-run to get an updated audit log. "
+                "API calls already made above are unaffected."
+            )
+
+        if dry_run:
+            logger.info(
+                f"[dry-run] Would assign {len(people_for_assignment)} people "
+                f"({missing_group} with missing group). No API calls made."
+            )
         else:
-            logger.info("No people found needing team assignment")
-            return None
+            logger.info(
+                f"Group assignment complete: {added} added, {failed} failed, "
+                f"{missing_group} skipped (group not found in ChMeetings)."
+            )
+
+        return failed == 0
+
+
+# Back-compat alias — main.py imports this name
+export_people_with_church_codes = assign_people_to_church_team_groups
+
 
 if __name__ == "__main__":
-    # Configure logging
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Assign ChMeetings people to church team groups"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Preview only — no API calls, audit xlsx still written"
+    )
+    script_args = parser.parse_args()
+
     logger.remove()
     logger.add(sys.stderr, level="INFO")
     logger.add(os.path.join(current_dir, "logs", "group_assignment.log"), rotation="10 MB")
-    
+
     try:
-        result = export_people_with_church_codes()
-        if result:
-            logger.info(f"Success! Import file created at: {result}")
-            logger.info("You can now import this file in ChMeetings using Tools > Import Group")
-        else:
-            logger.info("No assignment file created. Either all people are already assigned or there are no people with church codes.")
+        success = assign_people_to_church_team_groups(dry_run=script_args.dry_run)
+        if not success:
+            sys.exit(1)
     except Exception as e:
         logger.exception(f"Error in group assignment process: {e}")
+        sys.exit(1)

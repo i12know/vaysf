@@ -8,8 +8,8 @@ from datetime import datetime
 from validation.models import Participant, RulesManager
 from validation.individual_validator import IndividualValidator
 from loguru import logger
-from config import Config
-from config import (SPORT_TYPE, SPORT_UNSELECTED, DEFAULT_SPORT, 
+from config import Config, CHM_FIELDS
+from config import (SPORT_TYPE, SPORT_UNSELECTED, DEFAULT_SPORT,
                    VALIDATION_SEVERITY, AGE_RESTRICTIONS)
 
 @pytest.fixture
@@ -69,8 +69,8 @@ def test_validator_with_good_mock_data(validator, mock_chm_people_data):
             "last_name": person["last_name"],
             "gender": person["gender"],
             "birthdate": person["birth_date"],
-            "primary_sport": additional_fields.get("Primary Sport", SPORT_TYPE["BIBLE_CHALLENGE"]),
-            "secondary_sport": additional_fields.get("Secondary Sport", "Pickleball - Mixed Doubles"),
+            "primary_sport": additional_fields.get(CHM_FIELDS["PRIMARY_SPORT"], SPORT_TYPE["BIBLE_CHALLENGE"]),
+            "secondary_sport": additional_fields.get(CHM_FIELDS["SECONDARY_SPORT"], "Pickleball - Mixed Doubles"),
             "photo_url": person["photo"],
             "consent_status": False  # Will cause consent validation warning
         }
@@ -138,8 +138,8 @@ def test_validator_with_bad_mock_data(validator, mock_chm_bad_people_data):
             "last_name": person["last_name"],
             "gender": person["gender"],
             "birthdate": person["birth_date"],
-            "primary_sport": additional_fields.get("Primary Sport", SPORT_TYPE["BIBLE_CHALLENGE"]),
-            "secondary_sport": additional_fields.get("Secondary Sport", "Pickleball - Mixed Doubles"),
+            "primary_sport": additional_fields.get(CHM_FIELDS["PRIMARY_SPORT"], SPORT_TYPE["BIBLE_CHALLENGE"]),
+            "secondary_sport": additional_fields.get(CHM_FIELDS["SECONDARY_SPORT"], "Pickleball - Mixed Doubles"),
             "photo_url": person["photo"],
             "consent_status": False
         }

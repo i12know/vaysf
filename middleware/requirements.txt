@@ -12,10 +12,6 @@ tenacity>=8.1.0
 pytz>=2022.5
 uuid>=1.30
 
-# Selenium for ChMeetings automation (when API is not available)
-selenium>=4.5.0
-webdriver-manager>=3.8.4
-
 # Validation and Testing
 pytest>=7.2.0
 pytest-mock>=3.10.0
