@@ -448,7 +448,11 @@ class ParticipantSyncer:
                 "other_events": additional_fields.get(CHM_FIELDS["OTHER_EVENTS"], ""),
                 "approval_status": "pending",
                 "completion_checklist": additional_fields.get(CHM_FIELDS["COMPLETION_CHECKLIST"], ""),
-                "parent_info": additional_fields.get(CHM_FIELDS["PARENT_INFO"], ""),
+                "parent_info": ", ".join(filter(None, [
+                    additional_fields.get(CHM_FIELDS["PARENT_NAME"], ""),
+                    additional_fields.get(CHM_FIELDS["PARENT_EMAIL"], ""),
+                    additional_fields.get(CHM_FIELDS["PARENT_PHONE"], ""),
+                ])),
                 "roles": additional_fields.get(CHM_FIELDS["ROLES"], ""),
                 "consent_status": has_consent_checked # New field added here
             }

@@ -167,7 +167,9 @@ CHM_FIELDS = {
     "SECONDARY_PARTNER": "Secondary Racquet Sport Partner (if applied)",
     "OTHER_EVENTS": "Other Events",
     "COMPLETION_CHECKLIST": "Completion Check List",
-    "PARENT_INFO": "Parent Info",
+    "PARENT_NAME":  "Name of my parents or legal guardian",
+    "PARENT_EMAIL": "Email of my parents or legal guardian",
+    "PARENT_PHONE": "Cell phone of my parents or legal guardian",
     "ROLES": "My role is",
 }
 
@@ -263,6 +265,7 @@ SF_OTHER_EVENTS_OPTIONS = {
     199340: "Scripture Memorization",
     199341: "Track & Field",
     199342: "Tug-of-war",
+    329599: "Soccer - Coed Exhibition",
 }
 
 # Age Verification multiple_choice option_id → label (field_id: 1283264)
