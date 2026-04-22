@@ -2,6 +2,8 @@
 
 # IDE and tools
 .claude/
+!.claude/skills/
+!.claude/skills/**
 .vscode/
 
 # Legacy database
@@ -34,7 +36,7 @@ wp-content/ai1wm-backups/
 # Environment files and keys
 .env
 .env.*
-.env.template
+!.env.template
 *.key
 
 # Local development
