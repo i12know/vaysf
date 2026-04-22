@@ -1,7 +1,7 @@
 ## My Prj files
 
 # IDE and tools
-.claude/
+.claude/*
 !.claude/skills/
 !.claude/skills/**
 .vscode/
