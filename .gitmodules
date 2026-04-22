@@ -1,0 +1,3 @@
+[submodule ".claude/skills/vay-chmeetings"]
+	path = .claude/skills/vay-chmeetings
+	url = https://github.com/i12know/vay-chmeetings-skill
