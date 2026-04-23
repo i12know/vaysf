@@ -1896,20 +1896,16 @@ public function update_approval($request) {
             array('status' => 500)
         );
     }
-    
-    // Get the updated approval
-    $approval = $wpdb->get_row(
-        $wpdb->prepare(
-            "SELECT a.*, p.first_name, p.last_name 
-             FROM $table_approvals a
-             LEFT JOIN $table_participants p ON a.participant_id = p.participant_id
-             WHERE a.approval_id = %d",
-            $approval_id
-        ),
-        ARRAY_A
-    );
-    
-    return rest_ensure_response($approval);
+
+    // Minimal success response. We deliberately skip a second SELECT with
+    // JOIN on participants here — the caller only needs a truthy signal,
+    // and the previous JOIN path referenced an undefined $table_participants
+    // which produced a malformed response body (see Issue #61 follow-up).
+    return rest_ensure_response(array(
+        'approval_id' => $approval_id,
+        'updated'     => true,
+        'fields'      => array_keys($data),
+    ));
 }
 
 	/**
