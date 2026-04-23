@@ -169,6 +169,14 @@ class VAYSF_REST_API {
                 'methods' => WP_REST_Server::READABLE,
                 'callback' => array($this, 'get_approvals'),
                 'permission_callback' => array($this, 'check_api_permission'),
+                // Without 'args', WordPress silently drops unrecognized query
+                // parameters before the callback sees them (see Issue #61).
+                'args' => array(
+                    'participant_id'       => array('type' => 'integer', 'required' => false),
+                    'church_id'            => array('type' => 'integer', 'required' => false),
+                    'approval_status'      => array('type' => 'string',  'required' => false),
+                    'synced_to_chmeetings' => array('type' => 'boolean', 'required' => false),
+                ),
             ),
             array(
                 'methods' => WP_REST_Server::CREATABLE,

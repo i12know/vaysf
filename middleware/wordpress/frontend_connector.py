@@ -434,6 +434,10 @@ class WordPressConnector:
     
     def get_approvals(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Get approvals from WordPress."""
+        # Coerce Python bools to 0/1 so query params don't serialize as "True"/"False"
+        # strings, which a PHP (bool) cast would read as truthy (see Issue #61).
+        if params:
+            params = {k: int(v) if isinstance(v, bool) else v for k, v in params.items()}
         try:
             response = self.session.get(
                 f"{self.custom_api_url}/approvals",

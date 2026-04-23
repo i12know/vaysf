@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## Version 1.08 (2026-04-23)
+
+### Bug Fixes
+- Fixed [#61](https://github.com/i12know/vaysf/issues/61): `get_approvals(synced_to_chmeetings=False)` returned 0 records because the WordPress REST API silently drops unregistered query parameters
+  - WordPress plugin: added `args` array to the `/approvals` READABLE route in `plugins/vaysf/includes/rest-api.php` declaring `participant_id`, `church_id`, `approval_status`, and `synced_to_chmeetings` (type boolean) so WordPress sanitizes and forwards them to the callback
+  - Middleware: `get_approvals()` in `wordpress/frontend_connector.py` now coerces Python bools to 0/1 before URL-encoding — avoids the `"False"` → PHP `true` string-cast pitfall
+  - Added `test_get_approvals_coerces_bool_params` mock test asserting `synced_to_chmeetings=False` serializes as `0` in the outgoing request
+  - Rebuilt `plugins/vaysf.zip`
+
+### Housekeeping
+- Closed [#54](https://github.com/i12know/vaysf/issues/54) and [#55](https://github.com/i12know/vaysf/issues/55): Soccer - Coed Exhibition was implemented as an Other Events checkbox (already shipped as option_id 329599 in `SF_OTHER_EVENTS_OPTIONS` in v1.07). The full "Exhibition event type" feature (EXHIBITION category, `event_type` column on `sf_rosters`, separate fees, admin UI distinction) was deferred as YAGNI — current structural shape already gives Soccer the right behavior end-to-end
+  - Added a comment in `middleware/validation/team_validator.py` locking in the intent that `("primary_sport", "secondary_sport")` deliberately excludes `other_events` so exhibition entries bypass the non-member team limit
+  - Added `test_sync_rosters_soccer_coed_exhibition` regression test pinning the comma-split path
+
 ## Version 1.07 (2026-04-23)
 
 ### New Features

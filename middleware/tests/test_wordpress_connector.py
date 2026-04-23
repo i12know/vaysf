@@ -110,6 +110,48 @@ def test_create_and_update_church(wp_connector, mocker):
             assert updated_church is not None, "Mocked update church failed"
             assert updated_church["church_name"] == "Updated Test Church Pytest", "Mocked updated name mismatch"
 
+def test_get_approvals_coerces_bool_params(wp_connector, mocker):
+    """Issue #61: Python bools must be serialized as 0/1 in query params, not
+    the strings 'True'/'False' — the WordPress REST API's 'args' boolean
+    sanitizer tolerates both, but PHP (bool) casts on raw strings read 'False'
+    as truthy. Asserts synced_to_chmeetings=False → 0 in the outgoing request."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Pure mock test — no live variant needed")
+
+    captured = {}
+
+    def capturing_get(url, **kwargs):
+        captured["url"] = url
+        captured["params"] = kwargs.get("params")
+        resp = mocker.Mock()
+        resp.status_code = 200
+        resp.raise_for_status = mocker.Mock()
+        resp.json.return_value = []
+        return resp
+
+    mocker.patch.object(wp_connector.session, "get", side_effect=capturing_get)
+
+    wp_connector.get_approvals(params={
+        "approval_status": "approved",
+        "synced_to_chmeetings": False,
+        "per_page": 500,
+    })
+
+    assert captured["params"] is not None, "get_approvals did not pass params"
+    assert captured["params"]["synced_to_chmeetings"] == 0, (
+        f"Expected bool False → int 0, got: {captured['params']['synced_to_chmeetings']!r}"
+    )
+    assert captured["params"]["approval_status"] == "approved", "non-bool params preserved"
+    assert captured["params"]["per_page"] == 500, "non-bool params preserved"
+
+    # True must coerce to 1 too
+    wp_connector.get_approvals(params={"synced_to_chmeetings": True})
+    assert captured["params"]["synced_to_chmeetings"] == 1, (
+        f"Expected bool True → int 1, got: {captured['params']['synced_to_chmeetings']!r}"
+    )
+
+
 def test_send_email(wp_connector, mocker):
     """Test sending an email."""
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
