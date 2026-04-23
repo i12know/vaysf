@@ -6,6 +6,7 @@
 import os
 import json
 import time
+import pandas as pd
 from typing import Dict, Any, Optional
 from loguru import logger
 from config import (Config, DATA_DIR, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION,
@@ -434,8 +435,9 @@ class SyncManager:
         if not approved_group:
             logger.error(f"Could not find group '{Config.APPROVED_GROUP_NAME}' in ChMeetings. "
                          f"Available groups: {[g.get('name') for g in groups]}")
-            logger.info("Falling back to Excel export...")
-            return self._sync_approvals_via_excel(participants)
+            logger.error("Check APPROVED_GROUP_NAME in your .env and re-run. "
+                         "Use --excel-fallback if you need the manual Excel path.")
+            return False
 
         group_id = str(approved_group.get("id"))
         logger.info(f"Found approved group: '{Config.APPROVED_GROUP_NAME}' (ID: {group_id})")
