@@ -32,6 +32,8 @@ class TeamValidator:
         for p in participants:
             if p.get("is_church_member"):
                 continue
+            # Intentionally excludes "other_events" so exhibition entries
+            # (e.g. "Soccer - Coed Exhibition") bypass the non-member team limit.
             for sport_field in ("primary_sport", "secondary_sport"):
                 sport = p.get(sport_field, "")
                 if sport in sport_non_members:

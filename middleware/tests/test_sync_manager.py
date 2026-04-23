@@ -617,4 +617,41 @@ def test_sync_approvals_partial_failure(sync_manager, mocker):
     assert mock_update.call_count == 1
     mock_update.assert_called_once_with(10, {"synced_to_chmeetings": True})
 
+def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
+    """Soccer - Coed Exhibition arrives via the other_events checkbox; the comma-split
+    loop must produce a single roster row with sport_format=Team and sport_gender=Mixed,
+    so it bypasses the non-member team limit by living outside primary/secondary slots."""
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    captured = []
+
+    def capture_create_or_update_roster(roster_data):
+        captured.append(roster_data)
+        return {"roster_id": len(captured), **roster_data}
+
+    mocker.patch.object(participant_syncer, "_create_or_update_roster",
+                        side_effect=capture_create_or_update_roster)
+
+    participant = {
+        "church_code": "RPC",
+        "primary_sport": SPORT_UNSELECTED,
+        "secondary_sport": SPORT_UNSELECTED,
+        "other_events": "Soccer - Coed Exhibition",
+    }
+    participant_syncer._sync_rosters("42", participant)
+
+    assert len(captured) == 1, f"Expected 1 roster row, got {len(captured)}: {captured}"
+    row = captured[0]
+    assert row["sport_type"] == "Soccer - Coed Exhibition"
+    assert row["sport_format"] == SPORT_FORMAT["TEAM"]
+    assert row["sport_gender"] == GENDER["MIXED"]
+    assert row["participant_id"] == 42
+    assert row["church_code"] == "RPC"
+
+
 ##### End of tests/test_sync_manager
