@@ -41,7 +41,7 @@ class ParticipantSyncer:
         self.churches_cache = churches_cache  # Cache of church data for validation
         self.participants_cache = {}  # Local cache for participant IDs
         # Initialize the IndividualValidator with the event collection
-        self.validator = IndividualValidator(collection="SUMMER_2025")
+        self.validator = IndividualValidator(collection="SUMMER_2026")
 
 # In sync/participants.py, inside the ParticipantSyncer class
 

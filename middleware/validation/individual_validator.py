@@ -15,7 +15,7 @@ from config import (Config, SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER,
 class IndividualValidator:
     """Simple validator for individual participants."""
     
-    def __init__(self, collection="SUMMER_2025"):
+    def __init__(self, collection="SUMMER_2026"):
         """Initialize with collection name."""
         self.rules_manager = RulesManager(collection)
         self.sports_fest_date = self._parse_event_date()
