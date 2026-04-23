@@ -174,7 +174,7 @@ class ChMeetingsConnector:
                 if paging and "total_count" in paging:
                     total = paging["total_count"]
                     logger.info(f"Fetched page {page}: {len(people)} people (total: {total})")
-                    if page * page_size >= total:
+                    if len(all_people) >= total:
                         break
                 else:
                     logger.info(f"Fetched page {page}: {len(people)} people")
@@ -379,8 +379,19 @@ class ChMeetingsConnector:
         try:
             response = self._api_request("GET", "api/v1/people/fields")
             response.raise_for_status()
-            data = response.json()
-            fields = data if isinstance(data, list) else data.get("data", [])
+            raw = response.json()
+            # Peel top-level API wrapper {"status_code":..., "data": ...}
+            if isinstance(raw, dict) and "data" in raw:
+                inner = raw["data"]
+            else:
+                inner = raw
+            # Extract fields from flat list or sections-based structure
+            if isinstance(inner, list):
+                fields = inner
+            elif isinstance(inner, dict) and "sections" in inner:
+                fields = [f for section in inner["sections"] for f in section.get("fields", [])]
+            else:
+                fields = []
             logger.info(f"Retrieved {len(fields)} custom field definitions")
             return fields
         except requests.RequestException as e:

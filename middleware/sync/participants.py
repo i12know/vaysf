@@ -41,7 +41,7 @@ class ParticipantSyncer:
         self.churches_cache = churches_cache  # Cache of church data for validation
         self.participants_cache = {}  # Local cache for participant IDs
         # Initialize the IndividualValidator with the event collection
-        self.validator = IndividualValidator(collection="SUMMER_2025")
+        self.validator = IndividualValidator(collection="SUMMER_2026")
 
 # In sync/participants.py, inside the ParticipantSyncer class
 
@@ -448,7 +448,11 @@ class ParticipantSyncer:
                 "other_events": additional_fields.get(CHM_FIELDS["OTHER_EVENTS"], ""),
                 "approval_status": "pending",
                 "completion_checklist": additional_fields.get(CHM_FIELDS["COMPLETION_CHECKLIST"], ""),
-                "parent_info": additional_fields.get(CHM_FIELDS["PARENT_INFO"], ""),
+                "parent_info": ", ".join(filter(None, [
+                    additional_fields.get(CHM_FIELDS["PARENT_NAME"], ""),
+                    additional_fields.get(CHM_FIELDS["PARENT_EMAIL"], ""),
+                    additional_fields.get(CHM_FIELDS["PARENT_PHONE"], ""),
+                ])),
                 "roles": additional_fields.get(CHM_FIELDS["ROLES"], ""),
                 "consent_status": has_consent_checked # New field added here
             }

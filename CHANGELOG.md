@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## Version 1.07 (2026-04-23)
+
+### New Features
+- Implemented [#53](https://github.com/i12know/vaysf/issues/53): `TeamValidator` — team-composition rules moved from hardcoded Python into `summer_2026.json`
+  - New `middleware/validation/team_validator.py`: reads `max_non_members` limits from JSON, validates non-church-member counts per team sport and per doubles pair using `SPORT_BY_CATEGORY` full sport names and `FORMAT_MAPPINGS` for doubles detection
+  - New `middleware/validation/summer_2026.json`: all 11 individual rules from `Summer_2025.json` (updated to `SUMMER_2026` collection) plus 3 new TEAM-level rules: `MAX_NON_MEMBERS_TEAM` (2), `MAX_NON_MEMBERS_DOUBLES` (1), `MAX_EVENTS_PER_PARTICIPANT` (2, defined only — form-enforced)
+  - Default collection switches globally to `SUMMER_2026` in `IndividualValidator`, `SyncManager`, and `ParticipantSyncer`
+  - Removed `get_validation_rules()` from `SyncManager`; `validate_data()` now delegates to `TeamValidator`
+  - Fixed pre-existing bug: old `validate_data()` used abbreviated sport names (`"Basketball"`) that never matched real ChMeetings data (`"Basketball - Men Team"`), causing team checks to silently no-op
+
+### Bug Fixes
+- Fixed [#65](https://github.com/i12know/vaysf/issues/65): `NameError: name 'pd' is not defined` in `_sync_approvals_via_excel()` — `import pandas as pd` was missing from `sync/manager.py`
+- Fixed `sync_approvals_to_chmeetings()` group-not-found path: now returns `False` with a clear error message instead of falling through to the Excel export path
+- Fixed `get_member_fields()` in `ChMeetingsConnector` to handle the new API response format `{"status_code":200, "data": {"sections": [...]}}` — fields are now correctly flattened from all sections
+- Fixed `get_people()` pagination: termination check changed from `page * page_size >= total` to `len(all_people) >= total`, preventing early exit when the response page_size differs from the requested page_size
+
+### Tests & Infrastructure
+- Added 8 new `TeamValidator` unit tests in `tests/test_validation.py` covering team limits, doubles limits, member exclusion, cross-sport isolation, and secondary sport counting
+- Fixed 3 live test failures: `test_get_member_fields` (sections format), `test_add_member_note` and `test_update_person` now discover a valid live person ID when the hardcoded test ID is no longer in ChMeetings
+- Fixed 3 pre-existing mock test failures caused by Python bound-method calling convention on Linux: `capturing_get` and `fake_put` mock signatures updated to `*args, **kwargs`
+
 ## Version 1.06 (2026-04-12)
 
 Replaced Excel export workarounds with direct ChMeetings API calls (Issue #60):

@@ -1,5 +1,5 @@
 # tests/test_validation.py
-# version 1.0.3
+# version 1.0.4
 # author: Claude 3.7, Bumble & Grok 3
 import os
 import json
@@ -7,6 +7,7 @@ import pytest
 from datetime import datetime
 from validation.models import Participant, RulesManager
 from validation.individual_validator import IndividualValidator
+from validation.team_validator import TeamValidator
 from loguru import logger
 from config import Config, CHM_FIELDS
 from config import (SPORT_TYPE, SPORT_UNSELECTED, DEFAULT_SPORT,
@@ -15,12 +16,12 @@ from config import (SPORT_TYPE, SPORT_UNSELECTED, DEFAULT_SPORT,
 @pytest.fixture
 def rules_manager():
     """Fixture for RulesManager."""
-    return RulesManager(collection="SUMMER_2025")
+    return RulesManager(collection="SUMMER_2026")
 
 @pytest.fixture
 def validator():
     """Fixture for IndividualValidator."""
-    return IndividualValidator(collection="SUMMER_2025")
+    return IndividualValidator(collection="SUMMER_2026")
 
 def test_rules_manager_loads_rules(rules_manager):
     """Test that RulesManager loads rules correctly."""
@@ -382,3 +383,131 @@ def test_severity_levels(validator):
     warnings = [i for i in issues if i.get("severity") == VALIDATION_SEVERITY["WARNING"]]
     assert len(errors) == 1, "Should have gender error"
     assert len(warnings) == 2, "Should have both photo and consent warnings"
+
+
+# ---------------------------------------------------------------------------
+# TeamValidator tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def team_validator():
+    return TeamValidator(collection="SUMMER_2026")
+
+
+def _make_participant(church_id=1, is_member=False,
+                      primary_sport="", primary_format="",
+                      secondary_sport="", secondary_format=""):
+    return {
+        "church_id": church_id,
+        "is_church_member": is_member,
+        "primary_sport": primary_sport,
+        "primary_format": primary_format,
+        "secondary_sport": secondary_sport,
+        "secondary_format": secondary_format,
+    }
+
+
+def test_team_validator_under_team_limit(team_validator):
+    """2 non-members in Basketball — at limit, no issue."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+    ]
+    issues = team_validator.validate_church(1, participants)
+    assert issues == []
+
+
+def test_team_validator_exceeds_team_limit(team_validator):
+    """3 non-members in Basketball — one team_non_member_limit issue."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+    ]
+    issues = team_validator.validate_church(1, participants)
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue["issue_type"] == "team_non_member_limit"
+    assert issue["church_id"] == 1
+    assert issue["participant_id"] is None
+    assert SPORT_TYPE["BASKETBALL"] in issue["issue_description"]
+    assert "3 non-members" in issue["issue_description"]
+    assert "exceeding limit of 2" in issue["issue_description"]
+
+
+def test_team_validator_each_team_sport_independent(team_validator):
+    """Basketball at limit and Volleyball at limit are counted independently."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["VOLLEYBALL_MEN"]),
+        _make_participant(primary_sport=SPORT_TYPE["VOLLEYBALL_MEN"]),
+    ]
+    issues = team_validator.validate_church(1, participants)
+    assert issues == [], "Two sports each at the limit should produce no issues"
+
+
+def test_team_validator_ignores_members(team_validator):
+    """Church members are never counted toward the non-member limit."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+    ]
+    issues = team_validator.validate_church(1, participants)
+    assert issues == []
+
+
+def test_team_validator_secondary_sport_also_counted(team_validator):
+    """Non-members with Basketball as secondary sport count toward the limit."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(secondary_sport=SPORT_TYPE["BASKETBALL"]),
+    ]
+    issues = team_validator.validate_church(1, participants)
+    assert len(issues) == 1
+    assert issues[0]["issue_type"] == "team_non_member_limit"
+
+
+def test_team_validator_under_doubles_limit(team_validator):
+    """1 non-member in Mixed Double Pickleball — at limit, no issue."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["PICKLEBALL"],
+                          primary_format="Mixed Double"),
+    ]
+    issues = team_validator.validate_church(1, participants)
+    assert issues == []
+
+
+def test_team_validator_exceeds_doubles_limit(team_validator):
+    """2 non-members in Men Double Badminton — one doubles_non_member_limit issue."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["BADMINTON"],
+                          primary_format="Men Double"),
+        _make_participant(primary_sport=SPORT_TYPE["BADMINTON"],
+                          primary_format="Men Double"),
+    ]
+    issues = team_validator.validate_church(1, participants)
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue["issue_type"] == "doubles_non_member_limit"
+    assert issue["church_id"] == 1
+    assert issue["participant_id"] is None
+    assert SPORT_TYPE["BADMINTON"] in issue["issue_description"]
+    assert "Men Double" in issue["issue_description"]
+    assert "exceeding limit of 1" in issue["issue_description"]
+
+
+def test_team_validator_doubles_format_isolated_by_format(team_validator):
+    """1 non-member in Men Double + 1 in Women Double — each under limit, no issue."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["BADMINTON"],
+                          primary_format="Men Double"),
+        _make_participant(primary_sport=SPORT_TYPE["BADMINTON"],
+                          primary_format="Women Double"),
+    ]
+    issues = team_validator.validate_church(1, participants)
+    assert issues == [], "Different formats must be tracked separately"

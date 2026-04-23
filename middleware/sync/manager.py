@@ -6,6 +6,7 @@
 import os
 import json
 import time
+import pandas as pd
 from typing import Dict, Any, Optional
 from loguru import logger
 from config import (Config, DATA_DIR, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION,
@@ -15,6 +16,7 @@ from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
 from sync.churches import ChurchSyncer
 from sync.participants import ParticipantSyncer
+from validation import TeamValidator
 import datetime
 from uuid import uuid4
 from tqdm import tqdm
@@ -62,29 +64,6 @@ class SyncManager:
         logger.warning("Participant syncer not initialized. Cannot sync participants.")
         return False
 
-    def get_validation_rules(self) -> Dict[str, Any]:
-        """Return centralized validation rules."""
-        return {
-            "age": {
-                "default": {"min": 13, "max": 35},
-                "exceptions": {
-                    "Scripture Memorization": {"min": 10, "max": 99},
-                    "Tug-of-war": {"min": 13, "max": 99},
-                    "Pickleball 35+": {"min": 35, "max": 99}
-                }
-            },
-            "gender_restrictions": {
-                "men_events": ["Men Basketball", "Men Volleyball"],
-                "women_events": ["Women Volleyball"]
-            },
-            "team_composition": {
-                "max_non_members": {
-                    "team_events": 2,
-                    "doubles_events": 1
-                }
-            },
-            "max_events_per_participant": 2
-        }
 ## New Code:
     def generate_approvals(self, chm_id_to_target: Optional[str] = None) -> bool: # New signature
         """Generate pastor approval tokens for participants with completed validation."""
@@ -456,8 +435,9 @@ class SyncManager:
         if not approved_group:
             logger.error(f"Could not find group '{Config.APPROVED_GROUP_NAME}' in ChMeetings. "
                          f"Available groups: {[g.get('name') for g in groups]}")
-            logger.info("Falling back to Excel export...")
-            return self._sync_approvals_via_excel(participants)
+            logger.error("Check APPROVED_GROUP_NAME in your .env and re-run. "
+                         "Use --excel-fallback if you need the manual Excel path.")
+            return False
 
         group_id = str(approved_group.get("id"))
         logger.info(f"Found approved group: '{Config.APPROVED_GROUP_NAME}' (ID: {group_id})")
@@ -594,53 +574,15 @@ class SyncManager:
             return False
         logger.info(f"Fetched {len(wp_participants)} participants for validation.")
 
-        rules = self.get_validation_rules()
         participants_by_church = {}
         for participant in wp_participants:
             church_id = participant["church_id"]
             participants_by_church.setdefault(church_id, []).append(participant)
 
         validation_issues = []
-        sports_fest_date = datetime.datetime.strptime(Config.SPORTS_FEST_DATE, "%Y-%m-%d").date()
-
+        team_validator = TeamValidator()
         for church_id, participants in participants_by_church.items():
-            # Team composition validation
-            team_events = {"Basketball": [], "Men Volleyball": [], "Women Volleyball": [], "Bible Challenge": []}
-            double_events = {"Badminton": {}, "Pickleball": {}, "Table Tennis": {}, "Tennis": {}}
-
-            for participant in participants:
-                is_member = participant.get("is_church_member", False)
-                if not is_member:
-                    for field, format_field in [("primary_sport", "primary_format"), ("secondary_sport", "secondary_format")]:
-                        sport = participant.get(field, "")
-                        format = participant.get(format_field, "")
-                        if sport in team_events:
-                            team_events[sport].append(participant)
-                        elif sport in double_events and format and "double" in format.lower():
-                            double_events[sport].setdefault(format, []).append(participant)
-
-            max_team_non_members = rules["team_composition"]["max_non_members"]["team_events"]
-            for sport, non_members in team_events.items():
-                if len(non_members) > max_team_non_members:
-                    validation_issues.append({
-                        "church_id": church_id,
-                        "participant_id": None,
-                        "issue_type": "team_non_member_limit",
-                        "issue_description": f"{sport} has {len(non_members)} non-members, exceeding limit of {max_team_non_members}",
-                        "status": "open"
-                    })
-
-            max_doubles_non_members = rules["team_composition"]["max_non_members"]["doubles_events"]
-            for sport, formats in double_events.items():
-                for format_name, non_members in formats.items():
-                    if len(non_members) > max_doubles_non_members:
-                        validation_issues.append({
-                            "church_id": church_id,
-                            "participant_id": None,
-                            "issue_type": "doubles_non_member_limit",
-                            "issue_description": f"{sport} {format_name} has {len(non_members)} non-members, exceeding limit of {max_doubles_non_members}",
-                            "status": "open"
-                        })
+            validation_issues.extend(team_validator.validate_church(church_id, participants))
 
         for issue in tqdm(validation_issues, desc="Creating validation issues"):
             try:

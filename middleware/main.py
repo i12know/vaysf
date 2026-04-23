@@ -266,16 +266,18 @@ def test_connectivity(system: str = "all", test_type: str = "connectivity", test
                             logger.info(f"  id={g.get('id')} | name={g.get('name')}")
                         logger.info(f"  Total: {len(groups)} groups")
 
-                        # 3. Fetch 2 people with additional_fields and dump raw
+                        # 3. Fetch 2 sample people with additional_fields (single page, no full pagination)
                         logger.info("=" * 60)
-                        logger.info("SAMPLE PEOPLE (GET /api/v1/people?include_additional_fields=true&page_size=2)")
+                        logger.info("SAMPLE PEOPLE (GET /api/v1/people?include_additional_fields=true&page_size=2&page=1)")
                         logger.info("=" * 60)
-                        sample_people = connector.get_people(params={
+                        _resp = connector._api_request("GET", "api/v1/people", params={
                             "include_additional_fields": True,
                             "include_family_members": False,
                             "include_organizations": False,
-                            "page_size": 2, "page": 1
+                            "page_size": 2, "page": 1,
                         })
+                        _resp.raise_for_status()
+                        sample_people = connector._extract_data(_resp.json())
                         for person in sample_people[:2]:
                             logger.info(f"--- Person: {person.get('first_name', '?')} {person.get('last_name', '?')} (id={person.get('id', person.get('person_id', '?'))}) ---")
                             logger.info(f"  Keys: {list(person.keys())}")
