@@ -434,6 +434,10 @@ class WordPressConnector:
     
     def get_approvals(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Get approvals from WordPress."""
+        # Coerce Python bools to 0/1 so query params don't serialize as "True"/"False"
+        # strings, which a PHP (bool) cast would read as truthy (see Issue #61).
+        if params:
+            params = {k: int(v) if isinstance(v, bool) else v for k, v in params.items()}
         try:
             response = self.session.get(
                 f"{self.custom_api_url}/approvals",
@@ -453,9 +457,20 @@ class WordPressConnector:
                 json=approval_data
             )
             response.raise_for_status()
+            # Some hosting stacks (e.g. Bluehost + nfd caching) can strip the
+            # response body on PUT even when the DB update succeeded. A 2xx
+            # with an empty body is treated as success.
+            body = response.text.strip()
+            if not body:
+                return {"approval_id": approval_id, "updated": True}
             return response.json()
         except requests.RequestException as e:
-            logger.error(f"Failed to update approval {approval_id}: {str(e)}")
+            status = getattr(getattr(e, "response", None), "status_code", "?")
+            body_preview = getattr(getattr(e, "response", None), "text", "") or ""
+            logger.error(
+                f"Failed to update approval {approval_id}: {str(e)} "
+                f"(status={status}, body={body_preview[:200]!r})"
+            )
             return None
     
     def create_validation_issue(self, issue_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:

@@ -169,6 +169,14 @@ class VAYSF_REST_API {
                 'methods' => WP_REST_Server::READABLE,
                 'callback' => array($this, 'get_approvals'),
                 'permission_callback' => array($this, 'check_api_permission'),
+                // Without 'args', WordPress silently drops unrecognized query
+                // parameters before the callback sees them (see Issue #61).
+                'args' => array(
+                    'participant_id'       => array('type' => 'integer', 'required' => false),
+                    'church_id'            => array('type' => 'integer', 'required' => false),
+                    'approval_status'      => array('type' => 'string',  'required' => false),
+                    'synced_to_chmeetings' => array('type' => 'boolean', 'required' => false),
+                ),
             ),
             array(
                 'methods' => WP_REST_Server::CREATABLE,
@@ -1888,20 +1896,16 @@ public function update_approval($request) {
             array('status' => 500)
         );
     }
-    
-    // Get the updated approval
-    $approval = $wpdb->get_row(
-        $wpdb->prepare(
-            "SELECT a.*, p.first_name, p.last_name 
-             FROM $table_approvals a
-             LEFT JOIN $table_participants p ON a.participant_id = p.participant_id
-             WHERE a.approval_id = %d",
-            $approval_id
-        ),
-        ARRAY_A
-    );
-    
-    return rest_ensure_response($approval);
+
+    // Minimal success response. We deliberately skip a second SELECT with
+    // JOIN on participants here — the caller only needs a truthy signal,
+    // and the previous JOIN path referenced an undefined $table_participants
+    // which produced a malformed response body (see Issue #61 follow-up).
+    return rest_ensure_response(array(
+        'approval_id' => $approval_id,
+        'updated'     => true,
+        'fields'      => array_keys($data),
+    ));
 }
 
 	/**
