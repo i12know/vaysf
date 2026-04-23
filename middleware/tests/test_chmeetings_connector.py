@@ -143,14 +143,17 @@ def test_get_person(chm_connector, mocker, mock_chm_people_data):
     person_id = "3505203"  # Jerry Phan - Keep as string
 
     if live_test:
-        # Discover a real person ID from the live API (page 1, first record)
-        people = chm_connector.get_people({"page": 1, "page_size": 1})
-        assert people, "Live get_people returned no records — cannot test get_person"
-        person_id = str(people[0]["id"])
-        logger.info(f"Using live person_id: {person_id}")
-
+        # Try the hardcoded ID first (season reset keeps people in ChMeetings).
+        # Only do an expensive paginated discovery if the ID is gone.
         start = time.time()
         person = chm_connector.get_person(person_id)
+        if person is None:
+            logger.info(f"Hardcoded person_id {person_id} not found; discovering a real ID...")
+            people = chm_connector.get_people({"include_additional_fields": False})
+            assert people, "Live get_people returned no records — cannot test get_person"
+            person_id = str(people[0]["id"])
+            logger.info(f"Using live person_id: {person_id}")
+            person = chm_connector.get_person(person_id)
 
         logger.info("========== FULL RAW PERSON DATA ==========")
         logger.info(f"Person ID: {person_id}")
