@@ -379,13 +379,19 @@ class ChMeetingsConnector:
         try:
             response = self._api_request("GET", "api/v1/people/fields")
             response.raise_for_status()
-            data = response.json()
-            if isinstance(data, list):
-                fields = data
-            elif "sections" in data:
-                fields = [f for section in data["sections"] for f in section.get("fields", [])]
+            raw = response.json()
+            # Peel top-level API wrapper {"status_code":..., "data": ...}
+            if isinstance(raw, dict) and "data" in raw:
+                inner = raw["data"]
             else:
-                fields = data.get("data", [])
+                inner = raw
+            # Extract fields from flat list or sections-based structure
+            if isinstance(inner, list):
+                fields = inner
+            elif isinstance(inner, dict) and "sections" in inner:
+                fields = [f for section in inner["sections"] for f in section.get("fields", [])]
+            else:
+                fields = []
             logger.info(f"Retrieved {len(fields)} custom field definitions")
             return fields
         except requests.RequestException as e:

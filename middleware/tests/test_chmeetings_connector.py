@@ -443,7 +443,9 @@ def test_update_person(chm_connector, mocker):
             first_name = person["first_name"]
             last_name = person["last_name"]
         start = time.time()
-        result = chm_connector.update_person(person_id, first_name, last_name, additional_fields)
+        # Use empty additional_fields in live mode — the hardcoded sports-fest field IDs
+        # cause HTTP 500 when applied to non-sports-fest profiles.
+        result = chm_connector.update_person(person_id, first_name, last_name, [])
         logger.info(f"Live update_person result: {result}, took {time.time() - start:.2f}s")
         assert result, "Live update_person should succeed"
     else:
