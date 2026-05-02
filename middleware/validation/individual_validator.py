@@ -31,13 +31,6 @@ class IndividualValidator:
         except Exception as e:
             logger.warning(f"Could not read event_date metadata from {self.rules_manager.rules_file}: {e}")
 
-        for rule in self.rules_manager.rules:
-            if rule.get("rule_type") == "event_date":
-                try:
-                    return datetime.strptime(rule.get("value"), "%Y-%m-%d").date()
-                except Exception:
-                    pass
-
         logger.warning(
             f"Falling back to Config.SPORTS_FEST_DATE for validation event date: "
             f"{Config.SPORTS_FEST_DATE}"

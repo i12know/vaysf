@@ -285,18 +285,14 @@ function vaysf_calculate_age($birthdate) {
  * @return bool True if age exception applies
  */
 function vaysf_has_age_exception($sport, $age) {
-    // Sports with age exceptions
-    $exceptions = array(
-        'Scripture Memorization' => true,
-        'Tug-O-War' => true,
-    );
-    
-    // Special case for 35+ Pickleball
-    if ($sport === 'Pickleball' && $age > 35) {
-        return true;
-    }
-    
-    return isset($exceptions[$sport]) && $exceptions[$sport];
+    unset($age); // Helper answers whether the event has an exception, not whether age already qualifies.
+
+    return in_array($sport, array(
+        'Scripture Memorization',
+        'Tug-of-war',
+        'Pickleball 35+',
+        'Table Tennis 35+',
+    ), true);
 }
 
 /**
@@ -357,17 +353,19 @@ function vaysf_get_rosters_by_church($church_code) {
 function vaysf_get_sport_options() {
     return array(
         '' => __('None', 'vaysf'),
-        'Basketball' => __('Basketball', 'vaysf'),
-        'Men Volleyball' => __('Men Volleyball', 'vaysf'),
-        'Women Volleyball' => __('Women Volleyball', 'vaysf'),
-        'Bible Challenge' => __('Bible Challenge', 'vaysf'),
-        'Track and Field' => __('Track and Field', 'vaysf'),
-        'Tennis' => __('Tennis', 'vaysf'),
-        'Pickleball' => __('Pickleball', 'vaysf'),
-        'Table Tennis' => __('Table Tennis', 'vaysf'),
         'Badminton' => __('Badminton', 'vaysf'),
+        'Basketball - Men Team' => __('Basketball - Men Team', 'vaysf'),
+        'Bible Challenge - Mixed Team' => __('Bible Challenge - Mixed Team', 'vaysf'),
+        'Pickleball' => __('Pickleball', 'vaysf'),
+        'Pickleball 35+' => __('Pickleball 35+', 'vaysf'),
         'Scripture Memorization' => __('Scripture Memorization', 'vaysf'),
-        'Tug-O-War' => __('Tug-O-War', 'vaysf'),
+        'Table Tennis' => __('Table Tennis', 'vaysf'),
+        'Table Tennis 35+' => __('Table Tennis 35+', 'vaysf'),
+        'Tennis' => __('Tennis', 'vaysf'),
+        'Track & Field' => __('Track & Field', 'vaysf'),
+        'Tug-of-war' => __('Tug-of-war', 'vaysf'),
+        'Volleyball - Men Team' => __('Volleyball - Men Team', 'vaysf'),
+        'Volleyball - Women Team' => __('Volleyball - Women Team', 'vaysf'),
     );
 }
 
@@ -381,7 +379,9 @@ function vaysf_get_format_options($sport) {
     switch ($sport) {
         case 'Tennis':
         case 'Pickleball':
+        case 'Pickleball 35+':
         case 'Table Tennis':
+        case 'Table Tennis 35+':
         case 'Badminton':
             return array(
                 'Singles' => __('Singles', 'vaysf'),
@@ -400,10 +400,10 @@ function vaysf_get_format_options($sport) {
  */
 function vaysf_get_team_sports() {
     return array(
-        'Basketball',
-        'Men Volleyball',
-        'Women Volleyball',
-        'Bible Challenge',
+        'Basketball - Men Team',
+        'Volleyball - Men Team',
+        'Volleyball - Women Team',
+        'Bible Challenge - Mixed Team',
     );
 }
 
@@ -414,13 +414,15 @@ function vaysf_get_team_sports() {
  */
 function vaysf_get_individual_sports() {
     return array(
-        'Track and Field',
+        'Badminton',
         'Tennis',
         'Pickleball',
+        'Pickleball 35+',
         'Table Tennis',
-        'Badminton',
+        'Table Tennis 35+',
+        'Track & Field',
         'Scripture Memorization',
-        'Tug-O-War',
+        'Tug-of-war',
     );
 }
 
@@ -451,7 +453,14 @@ function vaysf_is_individual_sport($sport) {
  * @return bool True if racquet sport
  */
 function vaysf_is_racquet_sport($sport) {
-    return in_array($sport, array('Tennis', 'Pickleball', 'Table Tennis', 'Badminton'));
+    return in_array($sport, array(
+        'Tennis',
+        'Pickleball',
+        'Pickleball 35+',
+        'Table Tennis',
+        'Table Tennis 35+',
+        'Badminton',
+    ), true);
 }
 
 /**

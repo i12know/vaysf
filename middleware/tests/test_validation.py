@@ -213,6 +213,28 @@ def test_age_validation(validator):
         "photo_url": "https://example.com/photo.jpg",
         "consent_status": True
     }
+
+    table_tennis_35_ok = {
+        "chmeetings_id": "tabletennis35",
+        "first_name": "Table",
+        "last_name": "Senior",
+        "gender": "Female",
+        "birthdate": "1985-01-01",  # 41 years old on 2026-07-18
+        "primary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True
+    }
+
+    table_tennis_35_underage = {
+        "chmeetings_id": "tabletennis35_underage",
+        "first_name": "Table",
+        "last_name": "Junior",
+        "gender": "Male",
+        "birthdate": "1995-01-01",  # 31 years old on 2026-07-18
+        "primary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True
+    }
     
     # Test too young
     is_valid, issues = validator.validate(too_young)
@@ -231,6 +253,18 @@ def test_age_validation(validator):
     # Test pickleball 35+ exception
     is_valid, issues = validator.validate(pickleball_ok)
     assert is_valid, f"Should pass Pickleball 35+ at 40yo but got issues: {issues}"
+
+    # Test table tennis 35+ exception
+    is_valid, issues = validator.validate(table_tennis_35_ok)
+    assert is_valid, f"Should pass Table Tennis 35+ at 40+yo but got issues: {issues}"
+
+    # Test under-35 table tennis 35+ rejection
+    is_valid, issues = validator.validate(table_tennis_35_underage)
+    assert not is_valid, "Should fail - under 35 for Table Tennis 35+"
+    assert any(
+        issue["type"] == "age_restriction" and issue.get("rule_code") == "MIN_AGE_TABLE_TENNIS35"
+        for issue in issues
+    ), f"Expected MIN_AGE_TABLE_TENNIS35 issue, got: {issues}"
 
 def test_gender_validation(validator):
     """Test gender validation rules."""

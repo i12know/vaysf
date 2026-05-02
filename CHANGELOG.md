@@ -15,6 +15,16 @@
   - Preserved the historical `2025-07-19` reference in `middleware/validation/Summer_2025.json`
   - Updated season-transition and usage docs to document the new team-group clearing workflow and the verified behavior that Group Leaders remain assigned after memberships are cleared
   - Confirmed via local verification that no active plugin, middleware, or current-season doc path still uses the 2025 event date fallback
+- Implemented [#72](https://github.com/i12know/vaysf/issues/72): added first-class `Table Tennis 35+` support across middleware config, 2026 validation rules, tests, and current-season docs
+  - Verified live ChMeetings dropdown option IDs on 2026-05-02: `330427` for Primary Sport and `330428` for Secondary Sport
+  - Added the event to `SPORT_TYPE`, `RACQUET_SPORTS`, `AGE_RESTRICTIONS`, and the ChMeetings option maps in `middleware/config.py`
+  - Added `MIN_AGE_TABLE_TENNIS35` and `MAX_AGE_TABLE_TENNIS35` to `middleware/validation/summer_2026.json`
+  - Removed the stale rule-scan event-date fallback from `IndividualValidator`; 2026 validation now uses rules metadata first and `Config.SPORTS_FEST_DATE` only as a final fallback
+  - Added regression coverage for passing 35+ and failing under-35 `Table Tennis 35+` participants
+- Implemented [#73](https://github.com/i12know/vaysf/issues/73): updated WordPress plugin helpers to keep `Table Tennis 35+` in sync with the live 2026 registration form
+  - Added `Table Tennis 35+` and `Pickleball 35+` to plugin sport/racquet helper lists where appropriate
+  - Updated plugin helper labels to match middleware and ChMeetings exact event names such as `Basketball - Men Team`, `Volleyball - Men Team`, `Track & Field`, and `Tug-of-war`
+  - Replaced the stale Pickleball-only age-exception special case with explicit event support for `Scripture Memorization`, `Tug-of-war`, `Pickleball 35+`, and `Table Tennis 35+`
 ## Version 1.08 (2026-04-23)
 
 ### Bug Fixes

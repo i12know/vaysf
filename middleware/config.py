@@ -74,6 +74,7 @@ SPORT_TYPE = {
     "PICKLEBALL": "Pickleball",
     "PICKLEBALL_35": "Pickleball 35+",
     "TABLE_TENNIS": "Table Tennis",
+    "TABLE_TENNIS_35": "Table Tennis 35+",
     "TENNIS": "Tennis",
     
     # Other events
@@ -106,6 +107,7 @@ SPORT_BY_CATEGORY = {
         SPORT_TYPE["PICKLEBALL"],
         SPORT_TYPE["PICKLEBALL_35"],
         SPORT_TYPE["TABLE_TENNIS"],
+        SPORT_TYPE["TABLE_TENNIS_35"],
         SPORT_TYPE["TENNIS"]
     ],
     SPORT_CATEGORY["INDIVIDUAL"]: [
@@ -236,6 +238,7 @@ SF_PRIMARY_SPORT_OPTIONS = {
     199346: "Pickleball",
     212136: "Unselected/NA",
     212137: "Pickleball 35+",
+    330427: "Table Tennis 35+",
 }
 
 # Secondary Sport dropdown option_id → label (field_id: 1281848)
@@ -250,6 +253,7 @@ SF_SECONDARY_SPORT_OPTIONS = {
     199350: "Pickleball",
     199352: "Unselected/NA",
     212143: "Pickleball 35+",
+    330428: "Table Tennis 35+",
 }
 
 # My Role checkbox option_id → label (field_id: 1282085)
@@ -352,7 +356,8 @@ AGE_RESTRICTIONS = {
     "DEFAULT": {"min": 13, "max": 35},
     SPORT_TYPE["SCRIPTURE"]: {"min": 10, "max": 99},
     SPORT_TYPE["TUG_OF_WAR"]: {"min": 13, "max": 99},
-    SPORT_TYPE["PICKLEBALL_35"]: {"min": 35, "max": 99}
+    SPORT_TYPE["PICKLEBALL_35"]: {"min": 35, "max": 99},
+    SPORT_TYPE["TABLE_TENNIS_35"]: {"min": 35, "max": 99},
 }
 
 def is_racquet_sport(sport: str) -> bool:

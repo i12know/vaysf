@@ -13,6 +13,7 @@ Each Sports Fest season produces data across all three systems:
 - **"20XX Staff"** and **"20XX Volunteers & Church Reps"** groups — seasonal support groups
 - **Church Application Form responses** — Church rep's application form for each church team with pastor contact info, etc. — these are per-church fields that carry over (they reflect the last submission, and need to be reviewed, cleanup, and transfer/correct Google Shared Folder link for each church reps)
 - **Individual Application Form responses** — sport selections, church team, roles, consent — these are per-person fields that carry over (they reflect the last submission, and need to be cleanup before a new season)
+- **Consent Form submissions** — old submission records should be cleared before the new season opens so the 2026/2027 form inbox starts clean
 - **Completion Check List** (Boxes 1–6) — Church Rep verification status per participant, set via the "Church Rep Verification" section on each person's record, and need to be archived and reset by the middleware
 
 ### WordPress (Operations Hub)
@@ -74,9 +75,16 @@ Each Sports Fest season produces data across all three systems:
 
    > **Why:** The `assign-groups` command checks which people have a Church Team code but are NOT in their Team group. If old members remain, the script won't flag returning participants who need re-assignment, and the groups will mix seasons.
 
-5. **Create the new season's approved group** — e.g., "2026 Sports Fest". Do NOT delete the old "2025 Sports Fest" group; keep it for historical reference.
+5. **Create the new season's approved group** — e.g., "2026 Sports Fest". Do NOT delete the old "2025 Sports Fest" group; rename it "x 2025 Sports Fest" for historical reference.
 
 6. **Optionally rename or archive** "2025 Staff" and "2025 Volunteers & Church Reps" groups, and create 2026 equivalents if needed.
+
+7. **Prepare the ChMeetings forms for the new season**:
+   - Enable the **Church Application Form** so church reps can begin signing up for the new season
+   - As new church application records come in, transfer forward any church-specific operational data that is not re-entered cleanly each year, especially Google Shared Folder links and similar admin notes
+   - After the needed information is transferred, clear the old Church Application Form records so the active list reflects only the new season
+   - Clear old submission records from the **Individual Application Form**
+   - Clear old submission records from the **Consent Form**
 
 ### Phase 3: Update Middleware Configuration
 
@@ -110,6 +118,16 @@ IMPORTANT DEV. NOTE: Since ChMeetings are in active development, it would be wis
 
     > **Note:** `sf_churches` can usually be kept, since churches tend to return. Update the Church Application Form Excel and re-sync if church details change.
 
+    Operational note from the 2026 reset:
+    - If you want a completely clean season start, it is safe to truncate `sf_churches` too, then immediately reload churches from the latest `Church Application Form.xlsx`
+    - Do **not** try to import the Excel file directly with phpMyAdmin; the sheet columns do not map cleanly to the WordPress table schema
+    - Preferred reload command:
+      ```bash
+      cd middleware
+      python main.py sync-churches --file "data/Church Application Form.xlsx"
+      ```
+    - Verified on 2026-05-02: after truncating the Sports Fest tables, this command recreated 19 churches with `created=19, updated=0, errors=0`
+
 ### Phase 5: Verify and Begin New Season
 
 NOTE: At this point, Admin manually create the new season group ("2026 Sports Fest"), set up the initial Group Leaders for it, then rename the old Sports Fest group with an "x" prefix for archival. (ChMeetings listed groups by alphabetical order so "x 2025 Sports Fest" would fell off to the bottom of the group list.)
@@ -123,6 +141,14 @@ NOTE: At this point, Admin manually create the new season group ("2026 Sports Fe
     ```bash
     python main.py test --system chmeetings --test-type api-inspect
     ```
+
+    Current 2026 checkpoint from the 2026-05-02 live inspect:
+    - `Primary Sport` includes `Table Tennis 35+` as option_id `330427`
+    - `Secondary Sport` includes `Table Tennis 35+` as option_id `330428`
+
+    If the form changes again for 2027, update `middleware/config.py` before the
+    first participant sync or WordPress DB insertion test. Do not assume these
+    option IDs are stable across field recreation.
 
 14. **Sync churches** from the new season's Excel:
     ```bash
@@ -165,6 +191,23 @@ Starter checklist for future notes:
 - Manual prerequisites that must happen before the first `sync --type participants`
 - WordPress cleanup or backup steps that were easy to miss
 - Any one-time 2026 lessons that should become permanent process notes for 2027+
+
+Current 2026 lesson to preserve:
+
+- **When it applies** - right after ChMeetings form edits and before the first live participant sync of a new season
+- **What to do** - run `python main.py test --system chmeetings --test-type api-inspect` and confirm that any newly added sport choices appear in the live `Primary Sport` and `Secondary Sport` option lists
+- **Why it matters** - the middleware maps ChMeetings dropdown option IDs in `middleware/config.py`; if ChMeetings recreates or renumbers options, sync can silently drift from the registration form
+- **How to verify** - compare the live option IDs in the inspect output against `SF_PRIMARY_SPORT_OPTIONS` and `SF_SECONDARY_SPORT_OPTIONS`; for 2026, `Table Tennis 35+` was confirmed as `330427` / `330428`
+
+- **When it applies** - right after truncating/resetting the seasonal WordPress tables for a brand-new season
+- **What to do** - reload churches through the middleware with `python main.py sync-churches --file "data/Church Application Form.xlsx"`
+- **Why it matters** - phpMyAdmin imports the spreadsheet poorly because the church application columns are not a clean 1:1 match for `sf_churches`; the middleware already knows how to map the Excel into WordPress correctly
+- **How to verify** - the sync log should show each church as `Creating church XYZ` on a clean DB and finish with zero errors; in 2026 the first clean reload created 19 churches successfully
+
+- **When it applies** - after the previous season is archived and before opening registration for the next season
+- **What to do** - enable the new season's Church Application Form, transfer forward any important per-church admin details from old records into the new church records, then clear old Church Application, Individual Application, and Consent Form submission records
+- **Why it matters** - ChMeetings form submission lists otherwise stay cluttered with stale season data, and some operational details like Google Shared Folder links may be lost if they are not copied forward before cleanup
+- **How to verify** - the Church Application Form shows only current-season church submissions, the old per-church notes have been copied where needed, and the Individual/Consent form submission lists are empty before the first new-season registrations arrive
 
 ## Known Gaps / Future Improvements
 

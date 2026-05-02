@@ -73,6 +73,32 @@
       "collection": "SUMMER_2026"
     },
     {
+      "rule_id": 16,
+      "rule_code": "MIN_AGE_TABLE_TENNIS35",
+      "rule_level": "INDIVIDUAL",
+      "rule_type": "age",
+      "category": "min",
+      "sport_event": "Table Tennis 35+",
+      "parameter": null,
+      "value": "35",
+      "severity": "ERROR",
+      "description": "Table Tennis 35+ participants must be at least 35 years old",
+      "collection": "SUMMER_2026"
+    },
+    {
+      "rule_id": 17,
+      "rule_code": "MAX_AGE_TABLE_TENNIS35",
+      "rule_level": "INDIVIDUAL",
+      "rule_type": "age",
+      "category": "max",
+      "sport_event": "Table Tennis 35+",
+      "parameter": null,
+      "value": "99",
+      "severity": "ERROR",
+      "description": "Table Tennis 35+ has no practical upper age limit",
+      "collection": "SUMMER_2026"
+    },
+    {
       "rule_id": 11,
       "rule_code": "MAX_AGE_TUGOWAR",
       "rule_level": "INDIVIDUAL",

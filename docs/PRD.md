@@ -21,7 +21,7 @@
 
 The event spans four days (two consecutive Saturday/Sunday weekends, typically in July) and includes both competitive events and community gatherings:
 
-**Competitive Events:** Men's Basketball, Men's Volleyball, Women's Volleyball, Bible Challenge (Mixed), Badminton, Pickleball, Pickleball 35+, Table Tennis, Tennis, Track & Field, Scripture Memorization, Tug-O-War.
+**Competitive Events:** Men's Basketball, Men's Volleyball, Women's Volleyball, Bible Challenge (Mixed), Badminton, Pickleball, Pickleball 35+, Table Tennis, Table Tennis 35+, Tennis, Track & Field, Scripture Memorization, Tug-O-War.
 
 **Community Events:** Opening Ceremony, Closing Ceremony, Chapel Services, Community Potlucks.
 
@@ -50,7 +50,7 @@ The pastoral authority for each participating church. Their primary function in 
 The operational liaison between VAY-SM Staff and each local church. Must be at least 18 years old. Church Reps are the primary data-entry users — they submit the Church Application Form, coordinate individual participant registrations, collect fees, and facilitate the pastor approval process. A church must register its Rep before any participants can sign up. Church Reps interact with both the ChMeetings registration forms and the WordPress admin interface.
 
 ### 3.4 Individual Participant (Athlete)
-Any person (athlete, fan, volunteer, or leader) registering to participate. Athletes must be at least 13 and under 35 at the start of Sports Fest (with exceptions for Scripture Memorization, Tug-O-War, and 35+ Pickleball). Participants register via the Individual Participant Application Form in ChMeetings and are subject to multi-level validation before they may compete.
+Any person (athlete, fan, volunteer, or leader) registering to participate. Athletes must be at least 13 and under 35 at the start of Sports Fest (with exceptions for Scripture Memorization, Tug-O-War, Pickleball 35+, and Table Tennis 35+). Participants register via the Individual Participant Application Form in ChMeetings and are subject to multi-level validation before they may compete.
 
 ---
 
@@ -103,7 +103,7 @@ These two forms in ChMeetings are the **primary data entry points** for the enti
 | How did you hear about us | No | Used for outreach tracking |
 | Primary Sport | No | One of: Basketball (Men), Bible Challenge (Mixed), Volleyball (Men), Volleyball (Women), Badminton. Stored in `sf_participants.primary_sport` |
 | Primary Sport Format confirmation | No | Unselected/Other, Team Sport, or Racquet Sport. Stored in `sf_participants.primary_format` |
-| Secondary Sport | No | One of: Badminton, Tennis, Table Tennis, Pickleball, Pickleball 35+. Stored in `sf_participants.secondary_sport` |
+| Secondary Sport | No | One of: Badminton, Tennis, Table Tennis, Table Tennis 35+, Pickleball, Pickleball 35+. Stored in `sf_participants.secondary_sport` |
 | Secondary Sport Format confirmation | No | Same options as primary. Stored in `sf_participants.secondary_format` |
 | Mobile Phone | Yes | Required for 2FA and emergency mass texting |
 | Email | Yes | Required for account and notification |
@@ -171,7 +171,7 @@ These rules are the source of truth for the JSON validation system (`validation/
 ### 6.1 Age Rules
 - **Minimum age:** 13 years old at the start of Sports Fest (rule code: `MIN_AGE_DEFAULT`)
 - **Maximum age:** Under 35 at the start of Sports Fest (rule code: `MAX_AGE_DEFAULT`)
-- **Exceptions:** Scripture Memorization, Tug-O-War, and 35+ Pickleball allow participants over 35
+- **Exceptions:** Scripture Memorization, Tug-O-War, Pickleball 35+, and Table Tennis 35+ allow participants over 35
 - Age is always calculated relative to the **first day of Sports Fest**, not the registration date
 
 ### 6.2 Church Membership and the Pastor Approval Decision Tree
@@ -295,7 +295,7 @@ The JSON validation rules file (`validation/summer_YYYY.json`) must be updated e
 - `event_date`: First day of Sports Fest for the current year (affects all age calculations)
 - `MIN_AGE_DEFAULT`: Currently 13
 - `MAX_AGE_DEFAULT`: Currently 35
-- Sport-specific age exceptions (Scripture Memorization, Tug-O-War, 35+ Pickleball)
+- Sport-specific age exceptions (Scripture Memorization, Tug-O-War, Pickleball 35+, Table Tennis 35+)
 - Non-member quotas per team type
 - Partner requirement rules for doubles events
 
