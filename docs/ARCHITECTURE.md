@@ -661,6 +661,8 @@ The `PUT /api/v1/people/{id}` endpoint accepts an `additional_fields` array of `
 
 These are manual admin steps that currently have no automation and must be performed before or alongside the middleware sync pipeline. They are tracked as GitHub Issues for future automation.
 
+For season rollover and other operator-discovered runbook details, keep the step-by-step notes in [SEASON_TRANSITION.md](SEASON_TRANSITION.md) under `Admin Operator Notes`. This section should stay focused on durable categories of manual prerequisites, while the transition guide captures the practical checklist and lessons learned.
+
 ### 1. Form Submission → VAY-SM Member Promotion (Issue #62)
 
 **Problem:** When a participant submits the Individual Participant Application Form in ChMeetings, they appear in the Form Submissions list but are **not** automatically added as a Member of the VAY-SM church group. The `sync_participants` command only reads VAY-SM Members, so unpromotied submitters are silently invisible to the middleware.

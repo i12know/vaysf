@@ -11,22 +11,23 @@ Each Sports Fest season produces data across all three systems:
 - **"Team XXX" groups** (e.g., Team NHC, Team RPC) — contain that church's registrants **for the current season only**. These must be cleared between seasons.
 - **"20XX Sports Fest" group** — contains pastor-approved participants for the season
 - **"20XX Staff"** and **"20XX Volunteers & Church Reps"** groups — seasonal support groups
-- **Individual Application Form responses** — sport selections, church team, roles, consent — these are per-person fields that carry over (they reflect the last submission)
-- **Completion Check List** (Boxes 1–6) — Church Rep verification status per participant, set via the "Church Rep Verification" section on each person's record
+- **Church Application Form responses** — Church rep's application form for each church team with pastor contact info, etc. — these are per-church fields that carry over (they reflect the last submission, and need to be reviewed, cleanup, and transfer/correct Google Shared Folder link for each church reps)
+- **Individual Application Form responses** — sport selections, church team, roles, consent — these are per-person fields that carry over (they reflect the last submission, and need to be cleanup before a new season)
+- **Completion Check List** (Boxes 1–6) — Church Rep verification status per participant, set via the "Church Rep Verification" section on each person's record, and need to be archived and reset by the middleware
 
 ### WordPress (Operations Hub)
-- **sf_churches** — church records (largely stable year to year)
-- **sf_participants** — synced from ChMeetings; contains sport selections, approval status
-- **sf_rosters** — sport roster entries derived from participant data
-- **sf_approvals** — pastor approval tokens and decisions; includes `synced_to_chmeetings` flag
-- **sf_validation_issues** — eligibility issues found during validation
-- **sf_sync_log** / **sf_email_log** — operational logs
+- **sf_churches** — church records (largely stable year to year), need to be reloaded from Church Application Form
+- **sf_participants** — synced from ChMeetings; contains sport selections, approval status, need to be reset.
+- **sf_rosters** — sport roster entries derived from participant data, need to be reset.
+- **sf_approvals** — pastor approval tokens and decisions; includes `synced_to_chmeetings` flag, need to be reset.
+- **sf_validation_issues** — eligibility issues found during validation, need to be reset.
+- **sf_sync_log** / **sf_email_log** — operational logs, need to be reset.
 
 ### Middleware (Local Files)
-- **`data/Church Application Form.xlsx`** — Excel export of church registrations from ChMeetings
+- **`data/Church Application Form.xlsx`** — Excel export of church registrations from ChMeetings, need to be replaced every year
 - **`data/chm_group_import.xlsx`** — output from `assign-groups` (people needing Team group assignment)
 - **`data/group_import_approved_participants.xlsx`** — legacy Excel output from approval sync (before v1.05 API-based sync)
-- **`logs/`** — daily log files from sync operations
+- **`logs/`** — daily log files from sync operations, need to be reset - perhaps keep one comprehensive run from the prior year just in case comparision is needed.
 - **`.env`** — contains `APPROVED_GROUP_NAME` pointing to the current season's approved group
 
 ## Season Transition Checklist
@@ -68,6 +69,8 @@ Each Sports Fest season produces data across all three systems:
 6. **Optionally rename or archive** "2025 Staff" and "2025 Volunteers & Church Reps" groups, and create 2026 equivalents if needed.
 
 ### Phase 3: Update Middleware Configuration
+
+IMPORTANT DEV. NOTE: Since ChMeetings are in active development, it would be wise to spend a week upgrading the system to take advantage of the new capability from them.
 
 7. **Update `.env`**:
    ```
@@ -130,6 +133,26 @@ Each Sports Fest season produces data across all three systems:
     python main.py sync --type approvals
     ```
     This now uses the API to add approved participants directly to the "2026 Sports Fest" group (no manual Excel import needed as of v1.05).
+
+## Admin Operator Notes
+
+Use this section as the living runbook for tedious or easy-to-forget season rollover steps discovered during a real transition. Keep entries practical and operator-facing.
+
+Suggested format for each note:
+
+- **When it applies** - what phase, screen, or trigger caused this step
+- **What to do** - the exact manual action in ChMeetings, WordPress, or local middleware
+- **Why it matters** - what breaks or becomes confusing if skipped
+- **How to verify** - the quick check that confirms the step worked
+
+Starter checklist for future notes:
+
+- ChMeetings screens or filters that were non-obvious during the rollover
+- Group cleanup steps that are safe to repeat and steps that are not
+- Manual prerequisites that must happen before running `reset-season`
+- Manual prerequisites that must happen before the first `sync --type participants`
+- WordPress cleanup or backup steps that were easy to miss
+- Any one-time 2026 lessons that should become permanent process notes for 2027+
 
 ## Known Gaps / Future Improvements
 

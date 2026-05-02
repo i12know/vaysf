@@ -139,7 +139,7 @@ def test_sync_churches(sync_manager, tmp_path, mocker):
 def test_validate_participant(sync_manager, mocker):
     """Test participant validation logic using ParticipantSyncer with IndividualValidator."""
     # Mock SPORTS_FEST_DATE to match IndividualValidator’s default (July 19, 2025)
-    mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2025-07-19")
+    mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2026-07-18")
 
     # Create a ParticipantSyncer instance with mocked dependencies
     participant_syncer = ParticipantSyncer(
@@ -155,7 +155,7 @@ def test_validate_participant(sync_manager, mocker):
         "first_name": "John",
         "last_name": "Doe",
         "gender": "Male",
-        "birthdate": "2000-01-01",  # Age 25 on 2025-07-19
+        "birthdate": "2000-01-01",  # Age 26 on 2026-07-18
         "primary_sport": SPORT_TYPE["BIBLE_CHALLENGE"],
         "secondary_sport": SPORT_UNSELECTED,
         "other_events": SPORT_TYPE["TUG_OF_WAR"],
@@ -172,7 +172,7 @@ def test_validate_participant(sync_manager, mocker):
         "first_name": "Old",
         "last_name": "Timer",
         "gender": "Male",
-        "birthdate": "1990-07-19",  # Age 35 on 2025-07-19
+        "birthdate": "1991-07-18",  # Age 35 on 2026-07-18
         "primary_sport": SPORT_TYPE["BASKETBALL"],
         "photo_url": "https://dnadoeproject.org/wp-content/uploads/2022/11/JD-183-website-image-id.png",
         "consent_status": True
@@ -187,7 +187,7 @@ def test_validate_participant(sync_manager, mocker):
         "first_name": "Young",
         "last_name": "Kid",
         "gender": "Male",
-        "birthdate": "2016-01-01",  # Age 9 on 2025-07-19
+        "birthdate": "2017-01-01",  # Age 9 on 2026-07-18
         "primary_sport": SPORT_TYPE["BASKETBALL"],
         "photo_url": "https://dnadoeproject.org/wp-content/uploads/2022/11/JD-183-website-image-id.png",
         "consent_status": True
@@ -236,7 +236,7 @@ def test_sync_participants(sync_manager, mocker, mock_chmeetings_data):
 
     # Patch config values
     mocker.patch("sync.participants.Config.TEAM_PREFIX", "Team")
-    mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2025-07-19")
+    mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2026-07-18")
 
     if not live_test:
         # Mock ChMeetings responses
@@ -385,7 +385,7 @@ def test_sync_participants(sync_manager, mocker, mock_chmeetings_data):
 def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data):
     """Test retrieving a participant by ChMeetings ID."""
     # Mock SPORTS_FEST_DATE
-    mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2025-07-19")  # Updated path
+    mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2026-07-18")  # Updated path
 
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
     chmeetings_id = "3505203"  # Jerry Phan from mock data
@@ -535,7 +535,7 @@ def test_sync_approvals_api_happy(sync_manager, mocker):
     mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
                         return_value=participants)
 
-    groups = [{"id": 999, "name": "2025 Sports Fest"}]
+    groups = [{"id": 999, "name": "2026 Sports Fest"}]
     mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=groups)
     mocker.patch.object(sync_manager.chm_connector, "add_person_to_group", return_value=True)
 
@@ -548,7 +548,7 @@ def test_sync_approvals_api_happy(sync_manager, mocker):
     mocker.patch.object(sync_manager.wordpress_connector, "update_approval",
                         return_value=True)
 
-    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2025 Sports Fest")
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2026 Sports Fest")
 
     result = sync_manager.sync_approvals_to_chmeetings()
 
@@ -575,7 +575,7 @@ def test_sync_approvals_group_not_found(sync_manager, mocker):
     mock_update = mocker.patch.object(sync_manager.wordpress_connector, "update_approval",
                                       return_value=True)
 
-    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2025 Sports Fest")
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2026 Sports Fest")
 
     result = sync_manager.sync_approvals_to_chmeetings()
 
@@ -593,7 +593,7 @@ def test_sync_approvals_partial_failure(sync_manager, mocker):
     mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
                         return_value=participants)
 
-    groups = [{"id": 999, "name": "2025 Sports Fest"}]
+    groups = [{"id": 999, "name": "2026 Sports Fest"}]
     mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=groups)
     # First call True, second False
     mocker.patch.object(sync_manager.chm_connector, "add_person_to_group",
@@ -608,7 +608,7 @@ def test_sync_approvals_partial_failure(sync_manager, mocker):
     mock_update = mocker.patch.object(sync_manager.wordpress_connector, "update_approval",
                                       return_value=True)
 
-    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2025 Sports Fest")
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2026 Sports Fest")
 
     result = sync_manager.sync_approvals_to_chmeetings()
 

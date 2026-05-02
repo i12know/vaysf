@@ -23,6 +23,8 @@ TEMP_DIR = BASE_DIR / "temp"
 # Export settings - default to G:\VAYSF-data to share the files with Church Rep from my Google Drive 
 DEFAULT_EXPORT_PATH_STR = r"G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data"
 EXPORT_DIR = Path(os.getenv("EXPORT_DIR", DEFAULT_EXPORT_PATH_STR))
+DEFAULT_APPROVED_GROUP_NAME = "2026 Sports Fest"
+DEFAULT_SPORTS_FEST_DATE = "2026-07-18"
 
 # Ensure directories exist with error handling
 for directory in [LOG_DIR, DATA_DIR, TEMP_DIR, EXPORT_DIR]:
@@ -389,7 +391,7 @@ class Config:
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
     TOKEN_EXPIRY_DAYS = int(os.getenv("TOKEN_EXPIRY_DAYS", 30))
     CHURCH_EXCEL_FILE = DATA_DIR / os.getenv("CHURCH_EXCEL_FILE", "Church Application Form.xlsx")
-    APPROVED_GROUP_NAME = os.getenv("APPROVED_GROUP_NAME", "2025 Sports Fest")
+    APPROVED_GROUP_NAME = os.getenv("APPROVED_GROUP_NAME", DEFAULT_APPROVED_GROUP_NAME)
     APPROVED_EXCEL_FILE = DATA_DIR / os.getenv("APPROVED_EXCEL_FILE", "group_import_approved_participants.xlsx")
     VAYSM_GROUP_ID = os.getenv("VAYSM_GROUP_ID", "")
     
@@ -397,7 +399,7 @@ class Config:
     SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", 60))
     BATCH_SIZE = int(os.getenv("BATCH_SIZE", 50))
     TEAM_PREFIX = os.getenv("TEAM_PREFIX", "Team")
-    SPORTS_FEST_DATE = os.getenv("SPORTS_FEST_DATE", "2025-03-17")
+    SPORTS_FEST_DATE = os.getenv("SPORTS_FEST_DATE", DEFAULT_SPORTS_FEST_DATE)
 
     @classmethod
     def validate(cls) -> bool:
@@ -440,7 +442,7 @@ class Config:
             datetime.datetime.strptime(cls.SPORTS_FEST_DATE, "%Y-%m-%d")
         except ValueError:
             logger.error(f"Invalid SPORTS_FEST_DATE: {cls.SPORTS_FEST_DATE} (must be YYYY-MM-DD)")
-            cls.SPORTS_FEST_DATE = "2025-07-19"
+            cls.SPORTS_FEST_DATE = DEFAULT_SPORTS_FEST_DATE
 
         # Warn if CHURCH_EXCEL_FILE doesn’t exist in LIVE_TEST mode
         if os.getenv("LIVE_TEST", "false").lower() == "true" and not os.path.exists(cls.CHURCH_EXCEL_FILE):
@@ -499,12 +501,12 @@ TOKEN_EXPIRY_DAYS=7
 SYNC_INTERVAL_MINUTES=60
 BATCH_SIZE=50
 CHURCH_EXCEL_FILE=Church Application Form.xlsx
-APPROVED_GROUP_NAME=2025 Sports Fest
+APPROVED_GROUP_NAME={DEFAULT_APPROVED_GROUP_NAME}
 APPROVED_EXCEL_FILE=group_import_approved_participants.xlsx
 
 # Sync settings
 TEAM_PREFIX=Team
-SPORTS_FEST_DATE=2025-07-19
+SPORTS_FEST_DATE={DEFAULT_SPORTS_FEST_DATE}
 VAYSM_GROUP_ID=
 
 # Export directory

@@ -24,7 +24,7 @@ from season_reset import SeasonResetter                       # Import for reset
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for the VAYSF middleware."""
-    parser = argparse.ArgumentParser(description="Sports Fest 2025 ChMeetings Integration")
+    parser = argparse.ArgumentParser(description="Sports Fest 2026 ChMeetings Integration")
     subparsers = parser.add_subparsers(dest="command", help="Command to run", required=True)
 
     # Sync command
