@@ -42,6 +42,7 @@ class ChMeetingsConnector:
         self.api_url = Config.CHM_API_URL
         self.api_key = Config.CHM_API_KEY
         self.use_api = use_api
+        self.last_group_membership_delete_status: Optional[str] = None
         self.session = requests.Session()
         # Set headers with API key (new API uses lowercase "apikey")
         self.session.headers.update({
@@ -311,27 +312,40 @@ class ChMeetingsConnector:
             logger.error(f"Failed to add person {person_id} to group {group_id}: {e}")
             return False
 
-    def remove_person_from_group(self, group_id: str, person_id: str) -> bool:
+    def remove_person_from_group(self, group_id: str, person_id: str, not_found_ok: bool = False) -> bool:
         """
         Remove a person from a ChMeetings group.
 
-        Returns True if successful, False if not found or error.
+        Returns True if successful. Optionally treats 404 as success when the
+        caller only needs the person to no longer be a member.
 
         Args:
             group_id: The group ID
             person_id: The person ID to remove
+            not_found_ok: If True, a 404 is treated as "already absent" instead
+                of a hard failure. Useful for cleaning up orphaned memberships.
         """
         if not self.use_api:
             logger.error("API usage is disabled")
+            self.last_group_membership_delete_status = "failed"
             return False
         try:
             response = self._api_request(
                 "DELETE", f"api/v1/groups/{group_id}/memberships/{person_id}"
             )
+            if response.status_code == 404 and not_found_ok:
+                self.last_group_membership_delete_status = "already_absent"
+                logger.warning(
+                    f"Person {person_id} was already absent from group {group_id} "
+                    f"(DELETE returned 404; likely orphaned membership)."
+                )
+                return True
             response.raise_for_status()
+            self.last_group_membership_delete_status = "removed"
             logger.info(f"Removed person {person_id} from group {group_id}")
             return True
         except requests.RequestException as e:
+            self.last_group_membership_delete_status = "failed"
             logger.error(f"Failed to remove person {person_id} from group {group_id}: {e}")
             return False
 

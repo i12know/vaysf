@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## Version 1.09 (2026-05-02)
+
+### New Features
+- Implemented [#70](https://github.com/i12know/vaysf/issues/70): added `python main.py clear-team-groups` to remove seasonal `Team XXX` memberships directly through the ChMeetings API
+  - Supports `--dry-run` preview mode and explicit `--execute` live mode
+  - Supports `--church-code ABC` for safe single-group testing before a full rollout
+  - Writes `middleware/data/team_group_clearing_audit.xlsx` with group, person, and outcome details
+  - Treats empty groups as a clean no-op and logs orphaned DELETE `404` rows as `already absent`
+  - Added mock-test coverage for dry run, scoped execution, partial failures, empty groups, and orphaned membership cleanup
+
+### Housekeeping
+- Completed [#71](https://github.com/i12know/vaysf/issues/71): swept remaining live `2025-07-19` event-date defaults and stale 2025 fallback logic from active middleware/plugin paths and current-season docs
+  - Preserved the historical `2025-07-19` reference in `middleware/validation/Summer_2025.json`
+  - Updated season-transition and usage docs to document the new team-group clearing workflow and the verified behavior that Group Leaders remain assigned after memberships are cleared
+  - Confirmed via local verification that no active plugin, middleware, or current-season doc path still uses the 2025 event date fallback
 ## Version 1.08 (2026-04-23)
 
 ### Bug Fixes

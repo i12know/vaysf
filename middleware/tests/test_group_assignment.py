@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 # Ensure the middleware package root is importable (mirrors conftest.py / pytest.ini)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from group_assignment import assign_people_to_church_team_groups
+from group_assignment import assign_people_to_church_team_groups, clear_team_groups
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +38,7 @@ def mock_connector(mocker):
     connector.get_groups.return_value = []
     connector.get_group_people.return_value = []
     connector.add_person_to_group.return_value = True
+    connector.remove_person_from_group.return_value = True
 
     mock_cls = mocker.patch("group_assignment.ChMeetingsConnector")
     mock_cls.return_value.__enter__ = lambda s: connector
@@ -171,3 +172,108 @@ def test_assign_auth_failure(mock_connector, mocker, tmp_path):
 
     assert result is False
     mock_connector.get_people.assert_not_called()
+
+
+def test_clear_team_groups_dry_run(mock_connector, mocker, tmp_path):
+    """dry_run=True previews removals and ignores non-Team groups."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    mock_connector.get_groups.return_value = [
+        {"id": "870578", "name": "Team RPC"},
+        {"id": "999999", "name": "2026 Sports Fest"},
+    ]
+    mock_connector.get_group_people.side_effect = [
+        [
+            {"person_id": "701", "first_name": "Amy", "last_name": "Nguyen", "email": "amy@test.com"},
+            {"person_id": "702", "first_name": "Ben", "last_name": "Tran", "email": "ben@test.com"},
+        ]
+    ]
+
+    result = clear_team_groups(dry_run=True, execute=False)
+
+    assert result is True
+    mock_connector.remove_person_from_group.assert_not_called()
+
+    audit_file = tmp_path / "team_group_clearing_audit.xlsx"
+    assert audit_file.exists(), "Audit xlsx must be written in dry-run mode"
+
+
+def test_clear_team_groups_scoped_execute(mock_connector, mocker, tmp_path):
+    """--church-code scopes the run to one Team XXX group in live mode."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    mock_connector.get_groups.return_value = [
+        {"id": "870578", "name": "Team RPC"},
+        {"id": "872490", "name": "Team ORN"},
+    ]
+    mock_connector.get_group_people.return_value = [
+        {"person_id": "801", "first_name": "Test", "last_name": "Person801", "email": "p801@test.com"},
+    ]
+
+    result = clear_team_groups(church_code="rpc", dry_run=False, execute=True)
+
+    assert result is True
+    mock_connector.remove_person_from_group.assert_called_once_with(
+        "870578", "801", not_found_ok=True
+    )
+
+
+def test_clear_team_groups_partial_failure(mock_connector, mocker, tmp_path):
+    """A failed removal should make the command return False."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    mock_connector.get_groups.return_value = [{"id": "870578", "name": "Team RPC"}]
+    mock_connector.get_group_people.return_value = [
+        {"person_id": "901", "first_name": "A", "last_name": "One", "email": "a@test.com"},
+        {"person_id": "902", "first_name": "B", "last_name": "Two", "email": "b@test.com"},
+    ]
+    mock_connector.remove_person_from_group.side_effect = [True, False]
+
+    result = clear_team_groups(dry_run=False, execute=True)
+
+    assert result is False
+    assert mock_connector.remove_person_from_group.call_count == 2
+
+
+def test_clear_team_groups_orphaned_membership_404_is_nonfatal(mock_connector, mocker, tmp_path):
+    """A DELETE 404 should be treated as already absent, not a failed cleanup."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    mock_connector.get_groups.return_value = [{"id": "885446", "name": "Team SGV"}]
+    mock_connector.get_group_people.return_value = [
+        {"person_id": "3616813", "first_name": "Ghost", "last_name": "Member", "email": "ghost@test.com"},
+    ]
+
+    def fake_remove(group_id, person_id, not_found_ok=False):
+        mock_connector.last_group_membership_delete_status = "already_absent"
+        return True
+
+    mock_connector.remove_person_from_group.side_effect = fake_remove
+
+    result = clear_team_groups(church_code="SGV", dry_run=False, execute=True)
+
+    assert result is True
+    mock_connector.remove_person_from_group.assert_called_once_with("885446", "3616813", not_found_ok=True)
+
+
+def test_clear_team_groups_empty_group(mock_connector, mocker, tmp_path):
+    """Already-empty Team XXX groups should be treated as a clean no-op."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    mock_connector.get_groups.return_value = [{"id": "870578", "name": "Team RPC"}]
+    mock_connector.get_group_people.return_value = []
+
+    result = clear_team_groups(dry_run=False, execute=True)
+
+    assert result is True
+    mock_connector.remove_person_from_group.assert_not_called()
+
+
+def test_clear_team_groups_requires_execute_for_live_mode(mock_connector, mocker, tmp_path):
+    """Live mode without --execute should be rejected before any API work."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    result = clear_team_groups(dry_run=False, execute=False)
+
+    assert result is False
+    mock_connector.authenticate.assert_not_called()

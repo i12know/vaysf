@@ -13,7 +13,8 @@ This guide provides instructions for using the Sports Fest ChMeetings Integratio
   - [Running Synchronization Tasks](#running-synchronization-tasks)
   - [Exporting Church Team Reports](#exporting-church-team-reports)
   - [Season Reset (Year-End Archive and Field Clear)](#season-reset-year-end-archive-and-field-clear)
-  - [Church Group Assignment Export](#church-group-assignment-export)
+  - [Church Team Group Assignment](#church-team-group-assignment)
+  - [Clearing Seasonal Team Groups](#clearing-seasonal-team-groups)
   - [Scheduled Syncs](#scheduled-syncs)
   - [Testing and Configuration](#testing-and-configuration)
 - [WordPress Plugin](#wordpress-plugin)
@@ -259,6 +260,61 @@ python main.py reset-season --year 2025 --person-id 3139537 --dry-run
 # Diagnostic: probe what the PUT endpoint accepts for a single person
 python main.py reset-season --year 2025 --probe --person-id 3139537
 ```
+
+### Church Team Group Assignment
+
+Use the assignment command to add people with a Church Team code into their
+matching `Team XXX` group directly via the ChMeetings API:
+
+```bash
+python main.py assign-groups
+```
+
+Preview the changes without making API calls:
+
+```bash
+python main.py assign-groups --dry-run
+```
+
+This command writes an audit workbook to `data/church_team_assignments.xlsx`
+on every run.
+
+### Clearing Seasonal Team Groups
+
+Use the clearing command during season transition to remove current members
+from `Team XXX` groups without deleting the groups themselves.
+
+Preview one church first:
+
+```bash
+python main.py clear-team-groups --church-code RPC --dry-run
+```
+
+Then execute for that church:
+
+```bash
+python main.py clear-team-groups --church-code RPC --execute
+```
+
+When ready, preview all team groups:
+
+```bash
+python main.py clear-team-groups --dry-run
+```
+
+Then execute for all team groups:
+
+```bash
+python main.py clear-team-groups --execute
+```
+
+Notes:
+- Only groups matching the `TEAM_PREFIX` pattern (for example `Team RPC`) are targeted.
+- Approved, staff, and volunteer groups are never touched by this command.
+- Empty groups are treated as a clean no-op.
+- Orphaned membership rows that return DELETE `404` are logged as `already absent` and do not fail the run.
+- The audit workbook is written to `data/team_group_clearing_audit.xlsx`.
+- Group Leaders remain assigned to the group after members are cleared; that is expected.
 
 **Recommended run order**
 

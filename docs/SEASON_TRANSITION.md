@@ -62,6 +62,16 @@ Each Sports Fest season produces data across all three systems:
 
 4. **Clear all "Team XXX" groups** — remove all members from each church team group (e.g., Team NHC, Team RPC, etc.). These groups contained last season's registrants. The groups themselves stay; only the memberships are removed.
 
+   Recommended sequence:
+   ```bash
+   python main.py clear-team-groups --church-code RPC --dry-run
+   python main.py clear-team-groups --church-code RPC --execute
+   python main.py clear-team-groups --dry-run
+   python main.py clear-team-groups --execute
+   ```
+
+   Operational note from 2026 testing: clearing a Team group removes the member list, but any assigned **Group Leaders** remain attached to that group. That is the desired behavior — do not treat remaining Group Leaders as a failed cleanup.
+
    > **Why:** The `assign-groups` command checks which people have a Church Team code but are NOT in their Team group. If old members remain, the script won't flag returning participants who need re-assignment, and the groups will mix seasons.
 
 5. **Create the new season's approved group** — e.g., "2026 Sports Fest". Do NOT delete the old "2025 Sports Fest" group; keep it for historical reference.
@@ -102,6 +112,8 @@ IMPORTANT DEV. NOTE: Since ChMeetings are in active development, it would be wis
 
 ### Phase 5: Verify and Begin New Season
 
+NOTE: At this point, Admin manually create the new season group ("2026 Sports Fest"), set up the initial Group Leaders for it, then rename the old Sports Fest group with an "x" prefix for archival. (ChMeetings listed groups by alphabetical order so "x 2025 Sports Fest" would fell off to the bottom of the group list.)
+
 12. **Test connectivity** with updated config:
     ```bash
     python main.py test --system all --test-type connectivity
@@ -126,7 +138,7 @@ IMPORTANT DEV. NOTE: Since ChMeetings are in active development, it would be wis
     ```bash
     python main.py assign-groups
     ```
-    Then import the generated `chm_group_import.xlsx` into ChMeetings.
+    This now uses the API directly and writes `church_team_assignments.xlsx` as an audit log. No manual ChMeetings import is needed.
 
 17. **Generate approvals** and **sync to ChMeetings** as pastors approve:
     ```bash
@@ -156,5 +168,4 @@ Starter checklist for future notes:
 
 ## Known Gaps / Future Improvements
 
-- **Clearing Team groups** is currently a manual process in ChMeetings. A future middleware command could automate this using the API.
 - **WordPress table reset** is manual (SQL or phpMyAdmin). A future command could automate the truncation with confirmation prompts.

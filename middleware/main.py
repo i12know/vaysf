@@ -53,6 +53,27 @@ def parse_args() -> argparse.Namespace:
         help="Preview only — show who would be assigned without making API calls",
     )
 
+    # Team-group clearing command
+    clear_team_groups_parser = subparsers.add_parser(
+        "clear-team-groups",
+        help="Clear memberships from ChMeetings Team XXX groups via direct API calls",
+    )
+    clear_team_groups_parser.add_argument(
+        "--church-code",
+        help="Limit the run to a single team group such as Team RPC",
+    )
+    clear_mode = clear_team_groups_parser.add_mutually_exclusive_group(required=True)
+    clear_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview only — show who would be removed without making API calls",
+    )
+    clear_mode.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually remove current members from the target Team XXX groups",
+    )
+
     # Export command
     export_parser = subparsers.add_parser("export-church-teams", help="Export church team status reports")
     export_parser.add_argument("--church-code", help="Export for specific church code (if omitted, exports for all churches)")
@@ -475,6 +496,18 @@ def main() -> None:
                 logger.info("Dry-run complete. Check data/church_team_assignments.xlsx for the preview.")
             else:
                 logger.info("Group assignment complete. Check data/church_team_assignments.xlsx for the audit log.")
+    elif args.command == "clear-team-groups":
+        from group_assignment import clear_team_groups
+        success = clear_team_groups(
+            church_code=args.church_code,
+            dry_run=args.dry_run,
+            execute=args.execute,
+        )
+        if success:
+            if args.dry_run:
+                logger.info("Dry-run complete. Check data/team_group_clearing_audit.xlsx for the preview.")
+            else:
+                logger.info("Team-group clearing complete. Check data/team_group_clearing_audit.xlsx for the audit log.")
     elif args.command == "export-church-teams":
         output_path = Path(args.output) 
         try:
