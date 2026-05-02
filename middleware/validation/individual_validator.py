@@ -21,16 +21,28 @@ class IndividualValidator:
         self.sports_fest_date = self._parse_event_date()
     
     def _parse_event_date(self):
-        """Parse the event date from rules."""
+        """Parse the event date from rules metadata or fall back to config."""
+        try:
+            with open(self.rules_manager.rules_file, "r") as f:
+                data = json.load(f)
+            event_date = data.get("metadata", {}).get("event_date")
+            if event_date:
+                return datetime.strptime(event_date, "%Y-%m-%d").date()
+        except Exception as e:
+            logger.warning(f"Could not read event_date metadata from {self.rules_manager.rules_file}: {e}")
+
         for rule in self.rules_manager.rules:
             if rule.get("rule_type") == "event_date":
                 try:
                     return datetime.strptime(rule.get("value"), "%Y-%m-%d").date()
                 except Exception:
                     pass
-        
-        # Default to July 19, 2025 if not found
-        return datetime(2025, 7, 19).date()
+
+        logger.warning(
+            f"Falling back to Config.SPORTS_FEST_DATE for validation event date: "
+            f"{Config.SPORTS_FEST_DATE}"
+        )
+        return datetime.strptime(Config.SPORTS_FEST_DATE, "%Y-%m-%d").date()
     
     def validate(self, participant_data: Dict[str, Any]) -> Tuple[bool, List[Dict[str, str]]]:
         """Validate a participant and return (is_valid, issues)."""

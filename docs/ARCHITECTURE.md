@@ -402,11 +402,11 @@ The middleware implements a sophisticated validation system using JSON-based rul
 ```json
 {
   "metadata": {
-    "version": "2025.1.0",
-    "collection": "SUMMER_2025",
-    "event_date": "2025-07-19",
-    "last_updated": "2025-03-20",
-    "description": "Rules for Sports Fest 2025"
+    "version": "2026.1.0",
+    "collection": "SUMMER_2026",
+    "event_date": "2026-07-18",
+    "last_updated": "2026-04-22",
+    "description": "Rules for Sports Fest 2026"
   },
   "rules": [
     {

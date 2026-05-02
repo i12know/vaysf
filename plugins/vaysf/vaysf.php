@@ -250,7 +250,7 @@ class VAYSF_Integration {
 
         register_setting('vaysf_settings', 'vaysf_sports_fest_date', array(
             'type' => 'string',
-            'default' => '2025-07-19',
+            'default' => '2026-07-18',
             'sanitize_callback' => 'sanitize_text_field'
         ));
     }
@@ -262,7 +262,7 @@ class VAYSF_Integration {
         add_option('vaysf_token_expiry_days', 7);
         add_option('vaysf_email_from', get_option('admin_email'));
         add_option('vaysf_approval_email_subject', 'Sports Fest 2025: Approval Request');
-        add_option('vaysf_sports_fest_date', '2025-07-19');
+        add_option('vaysf_sports_fest_date', '2026-07-18');
 		add_option('vaysf_api_key', '');
     }
     
@@ -525,7 +525,7 @@ class VAYSF_Integration {
      * @return string Formatted date
      */
     public static function get_sports_fest_date_formatted($format = 'F j, Y') {
-        $date = get_option('vaysf_sports_fest_date', '2025-07-19');
+        $date = get_option('vaysf_sports_fest_date', '2026-07-18');
         return date($format, strtotime($date));
     }
 }

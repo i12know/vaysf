@@ -1280,7 +1280,7 @@ public function display_participants_page() {
      * Display sports fest date field
      */
     public function display_field_sports_fest_date() {
-        $value = get_option('vaysf_sports_fest_date', '2025-07-19');
+        $value = get_option('vaysf_sports_fest_date', '2026-07-18');
         echo '<input type="date" id="vaysf_sports_fest_date" name="vaysf_sports_fest_date" value="' . esc_attr($value) . '" class="regular-text">';
         echo '<p class="description">The date of the Sports Fest event (stored as YYYY-MM-DD).</p>';
     }
