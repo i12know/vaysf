@@ -6,15 +6,15 @@ Context and conventions for Codex when working on the VAY Sports Fest integratio
 
 This project uses the shared ChMeetings skill, vendored as a git submodule at:
 
-    .Codex/skills/vay-chmeetings/skill/SKILL.md
+    .claude/skills/vay-chmeetings/skill/SKILL.md
 
 Codex should read that file before writing any ChMeetings integration code, whenever a task touches the ChMeetings API, MCP server, webhooks, or the `CHM_FIELDS` mapping. The skill is authoritative for conventions shared across `vaysf`, `rp-pathway-app`, and `vdmansys`. Project-specific notes that don't belong in the shared skill are captured below in this file.
 
 To update the skill to the latest upstream version:
 
-    git submodule update --remote .Codex/skills/vay-chmeetings
-    git add .Codex/skills/vay-chmeetings
-    git commit -m "update vay-chmeetings skill to $(cat .Codex/skills/vay-chmeetings/VERSION)"
+    git submodule update --remote .claude/skills/vay-chmeetings
+    git add .claude/skills/vay-chmeetings
+    git commit -m "update vay-chmeetings skill to $(cat .claude/skills/vay-chmeetings/VERSION)"
 
 Upstream: https://github.com/i12know/vay-chmeetings-skill
 
@@ -40,7 +40,7 @@ Data generally flows: ChMeetings → middleware → WordPress for registration/v
 
 ```
 vaysf/
-├── .Codex/skills/vay-chmeetings/   # shared skill (submodule, do not edit here)
+├── .claude/skills/vay-chmeetings/   # shared skill (submodule, do not edit here)
 ├── docs/
 │   ├── INSTALLATION.md
 │   ├── USAGE.md
