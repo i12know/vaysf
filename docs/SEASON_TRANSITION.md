@@ -162,9 +162,9 @@ NOTE: At this point, Admin manually create the new season group ("2026 Sports Fe
 
 16. **Run group assignments** periodically to add new registrants to their Team groups:
     ```bash
-    python main.py assign-groups
+    python main.py assign-groups --file "data/Individual Application Form.xlsx"
     ```
-    This now uses the API directly and writes `church_team_assignments.xlsx` as an audit log. No manual ChMeetings import is needed.
+    This now uses the API directly and writes `church_team_assignments.xlsx` as an audit log. No manual ChMeetings import is needed. If older ChMeetings people still retain stale team fields after reset, use the current-season Individual Application export as the source filter for this command.
 
 17. **Generate approvals** and **sync to ChMeetings** as pastors approve:
     ```bash
@@ -208,6 +208,51 @@ Current 2026 lesson to preserve:
 - **What to do** - enable the new season's Church Application Form, transfer forward any important per-church admin details from old records into the new church records, then clear old Church Application, Individual Application, and Consent Form submission records
 - **Why it matters** - ChMeetings form submission lists otherwise stay cluttered with stale season data, and some operational details like Google Shared Folder links may be lost if they are not copied forward before cleanup
 - **How to verify** - the Church Application Form shows only current-season church submissions, the old per-church notes have been copied where needed, and the Individual/Consent form submission lists are empty before the first new-season registrations arrive
+
+- **When it applies** - during the first live single-participant sync of a new season after the forms have been reset
+- **What to do** - treat consent as driven by the Church Rep Verification checklist, not by the old standalone consent submission history; after a participant registers, confirm whether Box 2 (`2. Consent Form Signed by Self or Parents`) is checked on that person's ChMeetings record before expecting `pending_approval`
+- **Why it matters** - the middleware currently maps `consent_status` from `Completion Check List`, so a participant can sync successfully into WordPress and rosters while still staying at `validated` with a `missing_consent` warning if Box 2 is not checked
+- **How to verify** - on 2026-05-02, `python main.py sync --type participants --chm-id 3139537` created Timmy Ho in WordPress with two rosters and one `missing_consent` validation issue, leaving `approval_status=validated`; after checking Box 2 (and the other required Boxes 1, 3, and 4 if ready), rerun the same single-participant sync and confirm the participant advances to `pending_approval` with the consent warning cleared
+
+- **When it applies** - after clearing old `Team XXX` memberships and before church reps begin checklist review for the new season
+- **What to do** - run `python main.py assign-groups --file "data/Individual Application Form.xlsx"` using a current-season Individual Application export as the source filter
+- **Why it matters** - a tenant-wide ChMeetings scan can still see historical people records with stale `Church Team` values even after the 2025 reset; the current-season export limits assignment to the actual new registrants while still letting the middleware resolve the real ChMeetings person IDs by name/email/phone
+- **How to verify** - on 2026-05-02, a dry run with a 3-row export for Sam Le, Thomas Chau, and Timmy Ho found only those 3 people, and the live run added all 3 to `Team RPC` with HTTP `201` responses
+
+- **When it applies** - right after a successful `assign-groups --file ...` live run and before repeating the same import for confirmation
+- **What to do** - rerun the same export once in `--dry-run` mode
+- **Why it matters** - this gives a quick idempotence check that the exact people from that export are now already in their Team groups, without risking duplicate API writes
+- **How to verify** - on 2026-05-02, rerunning `python main.py assign-groups --file "S:\MyDownloads\Screenpresso\Individual Application Form (3).xlsx" --dry-run` after the live Team RPC import returned `Found 0 people needing team assignment`
+
+- **When it applies** - when you move from a tiny spot-check export to a broader current-season Individual Application export
+- **What to do** - expect the command to surface only the remaining unassigned people from that larger export, while still skipping church codes that do not have a real `Team XXX` group in ChMeetings
+- **Why it matters** - this confirms the current-season file filter and the existing "already in team groups" check work together; you can safely expand from a 3-row test file to a fuller season export without re-adding the people you already imported
+- **How to verify** - on 2026-05-02, after Sam Le, Thomas Chau, and Timmy Ho were already re-added to `Team RPC`, a dry run against `Individual Application Form (2).xlsx` found only 10 remaining assignments: 8 real adds and 2 `Team OTHER` skips (`Hanh Nguyen` and `Thanh Dang`)
+
+- **When it applies** - when a current-season export count looks lower than the number of rows selected in ChMeetings Forms
+- **What to do** - compare the selected-row count against the number of unique people represented in the export, and subtract anyone already in the Team group or added manually before assuming the filter missed someone
+- **Why it matters** - ChMeetings Forms can include multiple submission rows for the same linked person, so the selected count in the UI is not always the same as the number of new Team assignments you should expect
+- **How to verify** - on 2026-05-02, `Individual Application Form (4).xlsx` contained 13 selected RPC rows, but one was a duplicate `Julianna Faith Ramirez` submission; after subtracting the already-handled Thomas Chau, Sam Le, Timmy Ho, and the manually added Ayden Luu, the expected live assignment count was 8, which matched the dry run and live run exactly
+
+- **When it applies** - when a form row name does not exactly match the ChMeetings person profile name
+- **What to do** - if the form response has already been linked to an existing person, trust the linkage and compare email/phone before assuming the assignment matched the wrong person
+- **Why it matters** - ChMeetings lets an operator link a form submission to an existing profile without overwriting the original form-submitted name, so the form list may still show the submitted name while the linked profile keeps a different legal or preferred name
+- **How to verify** - on 2026-05-02, the RPC export showed `Troy Quach` on the form row, while the linked ChMeetings person assigned by `assign-groups --file` was `Khoi Quach (3319105)`; this was confirmed to be the same linked person, and the live run added that person to `Team RPC` with HTTP `201`
+
+- **When it applies** - when you are ready to move from church-by-church spot checks to the larger same-day Individual Application batch
+- **What to do** - run `assign-groups --file "current export.xlsx" --dry-run`, verify the expected names and zero missing groups, then run the same file live and immediately rerun that exact file in `--dry-run`
+- **Why it matters** - this gives a safe three-step pattern for bulk current-season assignment: preview, apply, then prove idempotence on the exact same batch before moving on
+- **How to verify** - on 2026-05-02, a same-day 80-row export in `Individual Application Form (5).xlsx` produced 60 pending assignments with `0` missing groups; the live run added all 60 with HTTP `201`, and the immediate rerun of that same file returned `Found 0 people needing team assignment`
+
+- **When it applies** - during the first full `sync --type participants` run after team assignments are in place
+- **What to do** - if the sync reports ChMeetings `404` errors for some Team-group member IDs, compare the API group-member count against the visible member count in the ChMeetings app before taking any cleanup action
+- **Why it matters** - some `Team XXX` groups can retain orphaned API-only memberships that do not appear in the app and no longer resolve through `GET /people/{id}`; clearing the whole group would remove real current-season members along with those ghosts
+- **How to verify** - on 2026-05-02, `Team NHC` returned 5 memberships by API but only showed 3 real people in the app, and `Team GLA` returned 12 by API but showed 8 in the app; the missing IDs all failed `GET /people/{id}` with `404`
+
+- **When it applies** - after orphaned Team-group memberships have been confirmed during participant sync
+- **What to do** - rerun `python main.py sync --type participants` with the current middleware so orphaned memberships are skipped as non-fatal warnings instead of counted as participant-sync errors
+- **Why it matters** - this lets the full participant sync finish cleanly without risky whole-group clearing, while still processing all real current-season participants and preserving roster consistency
+- **How to verify** - on 2026-05-02, the first full participant sync created 66 participants and reported 19 errors from orphaned group-member IDs; after the middleware update, the rerun completed with `Participants {'created': 0, 'updated': 69, 'errors': 0, 'skipped_missing_people': 19}` and `Rosters {'created': 0, 'deleted': 0, 'errors': 0}`
 
 ## Known Gaps / Future Improvements
 

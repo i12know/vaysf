@@ -45,7 +45,72 @@ def _write_audit_file(filename: str, rows: List[Dict[str, str]]) -> None:
         )
 
 
-def assign_people_to_church_team_groups(dry_run: bool = False) -> bool:
+def _normalize_text(value: Optional[str]) -> str:
+    return str(value or "").strip().lower()
+
+
+def _normalize_phone(value: Optional[str]) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _load_source_export_rows(source_file: str) -> List[Dict[str, str]]:
+    """Load current-season registrants from an Individual Application export."""
+    df = pd.read_excel(source_file)
+    required_columns = ["First Name", "Last Name", "Church Team"]
+    missing = [col for col in required_columns if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required column(s) in source export: {missing}")
+
+    rows: List[Dict[str, str]] = []
+    for _, row in df.iterrows():
+        church_code = str(row.get("Church Team", "") or "").strip().upper()
+        if not church_code:
+            continue
+        rows.append({
+            "first_name": str(row.get("First Name", "") or "").strip(),
+            "last_name": str(row.get("Last Name", "") or "").strip(),
+            "email": _normalize_text(row.get("Email", "")),
+            "mobile_phone": _normalize_phone(row.get("Mobile Phone", "")),
+            "church_code": church_code,
+        })
+    return rows
+
+
+def _person_matches_source_export(
+    person: Dict[str, str],
+    church_code: str,
+    source_rows: List[Dict[str, str]],
+) -> bool:
+    """True when a ChMeetings person is present in the source export rows."""
+    first_name = _normalize_text(person.get("first_name", ""))
+    last_name = _normalize_text(person.get("last_name", ""))
+    email = _normalize_text(person.get("email", ""))
+    mobile = _normalize_phone(person.get("mobile", ""))
+    church_code = church_code.strip().upper()
+
+    for row in source_rows:
+        if row["church_code"] != church_code:
+            continue
+        if row["email"] and email and row["email"] == email:
+            return True
+        if row["mobile_phone"] and mobile and row["mobile_phone"] == mobile:
+            if (
+                _normalize_text(row["first_name"]) == first_name
+                and _normalize_text(row["last_name"]) == last_name
+            ):
+                return True
+        if (
+            _normalize_text(row["first_name"]) == first_name
+            and _normalize_text(row["last_name"]) == last_name
+        ):
+            return True
+    return False
+
+
+def assign_people_to_church_team_groups(
+    dry_run: bool = False,
+    source_file: Optional[str] = None,
+) -> bool:
     """
     Assign people in ChMeetings to their church team groups via direct API calls.
 
@@ -61,7 +126,21 @@ def assign_people_to_church_team_groups(dry_run: bool = False) -> bool:
         False if authentication failed, an unexpected error occurred,
         or any add_person_to_group() call returned False.
     """
-    logger.info(f"Starting church team group assignment (dry_run={dry_run})...")
+    logger.info(
+        f"Starting church team group assignment (dry_run={dry_run}, "
+        f"source_file={source_file or 'ALL_CHM_PEOPLE'})..."
+    )
+
+    source_rows: Optional[List[Dict[str, str]]] = None
+    if source_file:
+        try:
+            source_rows = _load_source_export_rows(source_file)
+        except Exception as exc:
+            logger.error(f"Failed to load source export '{source_file}': {exc}")
+            return False
+        logger.info(
+            f"Loaded {len(source_rows)} row(s) from source export for current-season filtering"
+        )
 
     with ChMeetingsConnector() as chm_connector:
         if not chm_connector.authenticate():
@@ -98,6 +177,9 @@ def assign_people_to_church_team_groups(dry_run: bool = False) -> bool:
 
             # Check if they have a church code
             church_code = additional_fields.get(CHM_FIELDS["CHURCH_TEAM"], "").strip().upper()
+            if church_code and source_rows is not None:
+                if not _person_matches_source_export(person, church_code, source_rows):
+                    continue
             if church_code:
                 people_for_assignment.append({
                     "person_id": person_id,

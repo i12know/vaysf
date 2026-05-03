@@ -49,6 +49,12 @@ def parse_args() -> argparse.Namespace:
     group_assignment_parser.add_argument("--output", help="Output directory path",
                                          default=DATA_DIR)
     group_assignment_parser.add_argument(
+        "--file",
+        default=None,
+        help="Optional path to the current-season Individual Application export "
+             "used to limit assignments to this year's registrants",
+    )
+    group_assignment_parser.add_argument(
         "--dry-run", action="store_true",
         help="Preview only — show who would be assigned without making API calls",
     )
@@ -490,7 +496,10 @@ def main() -> None:
     elif args.command == "assign-groups":
         from group_assignment import assign_people_to_church_team_groups
         dry_run = getattr(args, "dry_run", False)
-        success = assign_people_to_church_team_groups(dry_run=dry_run)
+        success = assign_people_to_church_team_groups(
+            dry_run=dry_run,
+            source_file=getattr(args, "file", None),
+        )
         if success:
             if dry_run:
                 logger.info("Dry-run complete. Check data/church_team_assignments.xlsx for the preview.")

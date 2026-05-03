@@ -126,7 +126,11 @@ class ParticipantSyncer:
                     
                     # Call the helper method for each person_chm_id
                     # TARGET_CHM_ID_FOR_DEBUG is passed for detailed logging if current_chm_id matches
-                    if not self._sync_single_participant(current_chm_id, TARGET_CHM_ID_FOR_DEBUG):
+                    if not self._sync_single_participant(
+                        current_chm_id,
+                        TARGET_CHM_ID_FOR_DEBUG,
+                        allow_missing_person_skip=True,
+                    ):
                         # _sync_single_participant already logs its own errors and updates stats
                         logger.warning(f"Failed to sync participant ChM ID {current_chm_id} from group '{group['name']}'.")
                         all_participants_processed_successfully = False # Mark overall as not entirely successful
@@ -145,7 +149,12 @@ class ParticipantSyncer:
             # If you want it to return False if ANY participant fails, change the return to `all_participants_processed_successfully`.
             return True
 # START --- New helper method for ParticipantSyncer in participants.py ---
-    def _sync_single_participant(self, chm_id: str, target_chm_id_for_debug: Optional[str] = None) -> bool:
+    def _sync_single_participant(
+        self,
+        chm_id: str,
+        target_chm_id_for_debug: Optional[str] = None,
+        allow_missing_person_skip: bool = False,
+    ) -> bool:
         """
         Synchronizes a single participant from ChMeetings to WordPress.
 
@@ -162,6 +171,19 @@ class ParticipantSyncer:
 
         person_data_from_chm = self.chm_connector.get_person(chm_id)
         if not person_data_from_chm:
+            if (
+                allow_missing_person_skip
+                and getattr(self.chm_connector, "last_get_person_status", None) == "not_found"
+            ):
+                logger.warning(
+                    f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Skipping orphaned Team-group "
+                    "membership: group membership exists but GET /people/{id} returned 404."
+                )
+                self.stats["participants"].setdefault("skipped_missing_people", 0)
+                self.stats["participants"]["skipped_missing_people"] += 1
+                if chm_id == target_chm_id_for_debug:
+                    logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] END PROCESSING (ORPHANED MEMBERSHIP SKIP)")
+                return True
             logger.warning(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Could not fetch details for person {chm_id}.")
             self.stats["participants"]["errors"] += 1
             if chm_id == target_chm_id_for_debug:

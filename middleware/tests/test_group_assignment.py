@@ -4,6 +4,7 @@
 import os
 import sys
 import pytest
+import pandas as pd
 from unittest.mock import MagicMock
 
 # Ensure the middleware package root is importable (mirrors conftest.py / pytest.ini)
@@ -172,6 +173,51 @@ def test_assign_auth_failure(mock_connector, mocker, tmp_path):
 
     assert result is False
     mock_connector.get_people.assert_not_called()
+
+
+def test_assign_source_export_filters_historical_people(mock_connector, mocker, tmp_path):
+    """A source export should limit assignment to current-season rows only."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([
+        {
+            "First Name": "Sam",
+            "Last Name": "Le",
+            "Church Team": "RPC",
+            "Email": "samuel93le@yahoo.com",
+            "Mobile Phone": "562-519-9430",
+        }
+    ]).to_excel(source_file, index=False)
+
+    mock_connector.get_people.return_value = [
+        {
+            "id": "3318927",
+            "first_name": "Sam",
+            "last_name": "Le",
+            "email": "samuel93le@yahoo.com",
+            "mobile": "5625199430",
+            "additional_fields": [{"field_name": "Church Team", "value": "RPC"}],
+        },
+        {
+            "id": "3139537",
+            "first_name": "Timmy",
+            "last_name": "Ho",
+            "email": "timmyho@gmail.com",
+            "mobile": "7144020871",
+            "additional_fields": [{"field_name": "Church Team", "value": "RPC"}],
+        },
+    ]
+    mock_connector.get_groups.return_value = [{"id": "870578", "name": "Team RPC"}]
+    mock_connector.get_group_people.return_value = []
+
+    result = assign_people_to_church_team_groups(
+        dry_run=False,
+        source_file=str(source_file),
+    )
+
+    assert result is True
+    mock_connector.add_person_to_group.assert_called_once_with("870578", "3318927")
 
 
 def test_clear_team_groups_dry_run(mock_connector, mocker, tmp_path):

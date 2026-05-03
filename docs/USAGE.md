@@ -383,6 +383,9 @@ python main.py assign-groups --dry-run
 
 # Live: assign unassigned participants to their Team groups
 python main.py assign-groups
+
+# Limit the run to the current-season Individual Application export
+python main.py assign-groups --file "data/Individual Application Form.xlsx" --dry-run
 ```
 
 This command:
@@ -392,8 +395,9 @@ This command:
 - Logs a warning and skips any church code that has no matching group in ChMeetings (e.g. `Team OTHER` if that group doesn't exist)
 - Safe to re-run — participants already in their group are detected during identification and skipped
 
-> **Note:** Close `church_team_assignments.xlsx` in Excel before running, or you will see a warning that the audit file could not be written (the API calls still complete successfully).
+> **Current-season filter:** When `--file` is provided, only registrants present in that Individual Application export are considered for assignment; this is useful after a season reset when older ChMeetings people still retain stale church-team values.
 
+> **Note:** Close `church_team_assignments.xlsx` in Excel before running, or you will see a warning that the audit file could not be written (the API calls still complete successfully).
 After assigning participants to their Team groups, run the approval sync to add approved participants to the `2025 Sports Fest` group:
 
 ```bash

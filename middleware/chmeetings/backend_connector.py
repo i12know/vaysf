@@ -43,6 +43,7 @@ class ChMeetingsConnector:
         self.api_key = Config.CHM_API_KEY
         self.use_api = use_api
         self.last_group_membership_delete_status: Optional[str] = None
+        self.last_get_person_status: Optional[str] = None
         self.session = requests.Session()
         # Set headers with API key (new API uses lowercase "apikey")
         self.session.headers.update({
@@ -200,10 +201,12 @@ class ChMeetingsConnector:
         """
         if not self.use_api:
             logger.error("API usage is disabled")
+            self.last_get_person_status = "failed"
             return None
         try:
             response = self._api_request("GET", f"api/v1/people/{person_id}")
             if response.status_code == 404:
+                self.last_get_person_status = "not_found"
                 logger.error(
                     f"Failed to get person {person_id}: "
                     f"404 Client Error: Not Found for url: {response.url}"
@@ -211,9 +214,11 @@ class ChMeetingsConnector:
                 return None
             response.raise_for_status()
             raw = response.json()
+            self.last_get_person_status = "ok"
             # New API may return person directly or wrapped in data
             return self._extract_data(raw)
         except requests.RequestException as e:
+            self.last_get_person_status = "failed"
             logger.error(f"Failed to get person {person_id}: {str(e)}")
             return None
 

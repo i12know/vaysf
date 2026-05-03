@@ -25,6 +25,16 @@
   - Added `Table Tennis 35+` and `Pickleball 35+` to plugin sport/racquet helper lists where appropriate
   - Updated plugin helper labels to match middleware and ChMeetings exact event names such as `Basketball - Men Team`, `Volleyball - Men Team`, `Track & Field`, and `Tug-of-war`
   - Replaced the stale Pickleball-only age-exception special case with explicit event support for `Scripture Memorization`, `Tug-of-war`, `Pickleball 35+`, and `Table Tennis 35+`
+- Added an optional `--file` source filter to `assign-groups` so current-season team assignment can be limited to rows from an Individual Application export while still resolving real ChMeetings person IDs through the API
+  - Supports post-reset 2026 operations where older ChMeetings people may still retain stale `Church Team` values outside the current registration batch
+  - Verified live on 2026-05-02 with a 3-row export: Sam Le (`3318927`), Thomas Chau (`3631500`), and Timmy Ho (`3139537`) were added to `Team RPC`
+  - Verified idempotence on 2026-05-02: rerunning that same 3-row export in `--dry-run` mode immediately afterward found `0` remaining assignments
+  - Verified broader current-season backlog detection on 2026-05-02: a dry run against `Individual Application Form (2).xlsx` surfaced 10 remaining assignments after the RPC spot-check, including 2 expected `Team OTHER` skips
+  - Verified another live RPC batch on 2026-05-02 with `Individual Application Form (4).xlsx`: 8 additional linked current-season registrants were added to `Team RPC` with HTTP `201` responses for Daniel Kang (`3618011`), Emily Duong (`3615935`), Jacob Le (`3618796`), James Nguyen (`3555636`), Johnny Nguyen (`3318764`), Julianna Faith Ramirez (`3623153`), Khoi Quach (`3319105`), and Serena Mai (`3622254`)
+  - Documented two operator gotchas from that live batch: ChMeetings Forms exports can include duplicate submission rows for the same linked person, and a linked form row name can differ from the underlying ChMeetings profile name without indicating a bad match
+  - Verified the full same-day current-season batch on 2026-05-02 with `Individual Application Form (5).xlsx`: a dry run found 60 pending assignments across GAC, SDC, LBC, FVC, ORN, GLA, RPC, NHC, and TLC with `0` missing groups; the live run added all 60 with HTTP `201`, and an immediate rerun of the same file returned `0` remaining assignments
+  - Hardened full participant sync against orphaned Team-group memberships that still appear in the ChMeetings group-membership API but return `404` on `GET /people/{id}`; those rows are now skipped as `skipped_missing_people` warnings instead of counted as participant-sync errors
+  - Verified live on 2026-05-02: the initial full participant sync created 66 participants but surfaced 19 `404` group-member fetch errors; after the middleware change, the rerun completed cleanly with `created=0`, `updated=69`, `errors=0`, and `skipped_missing_people=19`
 ## Version 1.08 (2026-04-23)
 
 ### Bug Fixes

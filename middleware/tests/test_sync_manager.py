@@ -520,6 +520,39 @@ def test_sync_validation_issues_per_page(sync_manager, mocker):
     assert captured["params"].get("status") == "open"
 
 
+def test_sync_participants_skips_orphaned_group_membership(sync_manager, mocker):
+    """Full Team-group sync should skip API-only orphaned memberships whose person lookup returns 404."""
+    mocker.patch("sync.participants.Config.TEAM_PREFIX", "Team")
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "pastor_email": "pastor@rpc.org"}],
+    )
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_groups",
+        return_value=[{"id": "870578", "name": "Team RPC"}],
+    )
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_group_people",
+        return_value=[{"person_id": "999999"}],
+    )
+
+    def missing_person(_person_id):
+        sync_manager.chm_connector.last_get_person_status = "not_found"
+        return None
+
+    mocker.patch.object(sync_manager.chm_connector, "get_person", side_effect=missing_person)
+
+    result = sync_manager.sync_participants()
+
+    assert result is True
+    assert sync_manager.stats["participants"]["errors"] == 0
+    assert sync_manager.stats["participants"]["skipped_missing_people"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Tests for sync_approvals_to_chmeetings() — Issue #60
 # All three tests are pure mock tests (no LIVE_TEST guard needed).
