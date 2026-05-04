@@ -150,6 +150,36 @@ ChMeetings updated their API in 2026 with breaking changes. See [CHMEETINGS_API_
    Then import the generated file into ChMeetings to assign those people to their groups
 4. Verify that your ChMeetings Church Rep user has permission to manage groups (lack of permission could prevent them from reading group memberships)
 
+### Team Group Contains Dead Person IDs
+
+**Issue**: `export-church-teams` or a participant sync shows warnings such as:
+
+```text
+Could not fetch details for ChM Person ID: 3628898 from group 'Team GAC'
+Failed to get person 3628898: 404 Client Error: Not Found
+```
+
+**What it means**:
+- The person ID still appears in the `Team XXX` group membership list.
+- ChMeetings no longer has a live person record for that ID.
+- This usually means the Team-group membership is stale or orphaned.
+
+**Solutions**:
+1. Inspect the single ID:
+   ```bash
+   python main.py inspect-person --chm-id 3628898
+   ```
+2. Audit the whole team group for orphaned IDs:
+   ```bash
+   python main.py audit-team-groups --church-code GAC
+   ```
+3. Open `middleware/data/team_group_orphan_audit.xlsx` and filter `Lookup Status = not_found`.
+4. Remove those orphaned memberships manually from the affected `Team XXX` group in ChMeetings.
+
+**Important**:
+If both ChMeetings and WordPress return no record for that ID, the person is
+almost certainly gone and the Team-group row is just stale membership data.
+
 ## Data Synchronization Issues
 
 ### Missing Participants
@@ -166,6 +196,10 @@ ChMeetings updated their API in 2026 with breaking changes. See [CHMEETINGS_API_
    python main.py sync --type participants --chm-id <Their_ChMeetings_ID>
    ```
    This can reveal if there's a data issue with that record alone, especially with a specific Debug Target ID (added in v1.02 for `participants.py`). This direct approach can help debug one participant's data without running a full sync.
+6. If you only need a read-only identity check instead of a full sync attempt, use:
+   ```bash
+   python main.py inspect-person --chm-id <Their_ChMeetings_ID>
+   ```
 
 ### Roster Creation Failures
 

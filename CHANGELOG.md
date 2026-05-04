@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## Unreleased
+
+### New Features
+- Added `python main.py inspect-person --chm-id <ID>` for read-only ChMeetings person inspection with WordPress fallback context
+  - Prints the raw ChMeetings record when the person still exists
+  - Reports cleanly when ChMeetings returns `404 Not Found`
+  - Also shows any matching WordPress participant, rosters, approvals, and validation issues for the same `chmeetings_id`
+- Added `python main.py audit-team-groups [--church-code ABC]` to audit `Team XXX` memberships for orphaned ChMeetings IDs
+  - Flags rows where the Team-group membership still exists but `GET /people/{id}` returns `404`
+  - Writes `middleware/data/team_group_orphan_audit.xlsx` with ChMeetings membership details, lookup status, and any matching WordPress participants
+
+### Documentation
+- Added `EXPORT_DIR` to `middleware/.env.template` with the shared Google Drive example used for church-team report exports
+- Updated `docs/USAGE.md` and `docs/TROUBLESHOOTING.md` with operator guidance for `inspect-person`, `audit-team-groups`, orphaned Team-group memberships, and shared-drive export configuration
+
 ## Version 1.09 (2026-05-02)
 
 ### New Features

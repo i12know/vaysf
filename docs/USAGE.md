@@ -206,6 +206,14 @@ By default, reports are saved to the export directory (`EXPORT_DIR`) configured 
 python main.py export-church-teams --output "path/to/custom/directory"
 ```
 
+For normal church-rep sharing, set `EXPORT_DIR` in `middleware/.env` to your
+shared Google Drive folder so `run-me.bat` and `export-church-teams` write the
+reports there automatically. Example:
+
+```env
+EXPORT_DIR=G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data
+```
+
 The Excel reports contain:
 - List of all participants with their details
 - Sports and formats they're registered for
@@ -315,6 +323,49 @@ Notes:
 - Orphaned membership rows that return DELETE `404` are logged as `already absent` and do not fail the run.
 - The audit workbook is written to `data/team_group_clearing_audit.xlsx`.
 - Group Leaders remain assigned to the group after members are cleared; that is expected.
+
+### Inspecting One ChMeetings Person ID
+
+Use this command when you need to debug one ChMeetings ID without running a
+full participant sync:
+
+```bash
+python main.py inspect-person --chm-id 3628898
+```
+
+This command:
+- fetches the raw ChMeetings person record if it still exists
+- reports a clean `404 Not Found` if the ChMeetings record is gone
+- looks for any matching WordPress participant with the same `chmeetings_id`
+- prints any matching WordPress participant, roster, approval, and validation-issue data
+
+This is useful when a Team-group membership looks stale and you need to confirm
+whether the person still exists in ChMeetings, WordPress, both, or neither.
+
+### Auditing Team Groups for Orphaned IDs
+
+Use this command when `export-church-teams` or `sync --type participants`
+reports Team-group members whose ChMeetings person records return `404`:
+
+```bash
+python main.py audit-team-groups --church-code GAC
+```
+
+To audit all Team groups:
+
+```bash
+python main.py audit-team-groups
+```
+
+This command:
+- reads the current memberships in each `Team XXX` group
+- checks each membership ID with `GET /people/{id}`
+- flags rows as orphaned when the Team-group membership exists but the person record is gone
+- looks for any matching WordPress participant with the same `chmeetings_id`
+- writes the audit workbook to `data/team_group_orphan_audit.xlsx`
+
+This is the safest way to confirm stale Team-group memberships before manually
+cleaning them up in ChMeetings.
 
 **Recommended run order**
 
