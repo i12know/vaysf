@@ -26,6 +26,8 @@ class WordPressConnector:
         self.custom_api_url = f"{Config.WP_URL}/wp-json/vaysf/v1"
         self.total_participants = 0
         self.total_participant_pages = 0
+        self.last_get_rosters_status = "unknown"
+        self.last_update_validation_issue_status = "unknown"
     
         # Create a session to maintain cookies
         self.session = requests.Session()
@@ -268,8 +270,10 @@ class WordPressConnector:
                 params=params
             )
             response.raise_for_status()
+            self.last_get_rosters_status = "ok"
             return response.json()
         except requests.RequestException as e:
+            self.last_get_rosters_status = "failed"
             logger.error(f"Failed to get rosters: {str(e)}")
             return []
             
@@ -508,14 +512,18 @@ class WordPressConnector:
             )
             logger.debug(f"Raw response for updating issue {issue_id}: {response.text}")
             response.raise_for_status()
-            if not response.text.strip():
-                logger.error(f"Empty response received for updating issue {issue_id}")
-                return None
+            if response.status_code in (200, 201, 204) and not response.text.strip():
+                self.last_update_validation_issue_status = "empty_success"
+                logger.info(f"Validation issue {issue_id} updated successfully (empty response)")
+                return {"issue_id": issue_id, **issue_data}
+            self.last_update_validation_issue_status = "ok"
             return response.json()
         except requests.RequestException as e:
+            self.last_update_validation_issue_status = "failed"
             logger.error(f"Failed to update validation issue {issue_id}: {str(e)}")
             return None
         except json.JSONDecodeError as e:
+            self.last_update_validation_issue_status = "failed"
             logger.error(f"JSON decode error for issue {issue_id}: {e}, response: {response.text}")
             return None
         

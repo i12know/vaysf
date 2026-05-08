@@ -23,6 +23,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         self.wp_connector = WordPressConnector()
         self.sports_fest_date = datetime.strptime(Config.SPORTS_FEST_DATE, "%Y-%m-%d").date()
         self.latest_chm_update_by_church: Dict[str, str] = {} # Initialize here
+        self.last_orphaned_memberships_by_church: Dict[str, int] = {}
         logger.info("ChurchTeamsExporter initialized.") # MODIFIED LOGGER MESSAGE
 
     def _calculate_age(self, birthdate_str: Optional[str]) -> Optional[int]:
@@ -64,6 +65,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         If target_church_code is specified, only fetches for that church.
         """
         logger.info(f"Fetching ChMeetings data. Target church: {target_church_code or 'ALL'}")
+        self.last_orphaned_memberships_by_church = {}
         all_chm_groups = self.chm_connector.get_groups()
         if not all_chm_groups:
             logger.warning("No groups found in ChMeetings.")
@@ -72,6 +74,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         chm_data_by_church: Dict[str, List[Dict[str, Any]]] = {}
         # Renamed from latest_chm_update_by_church to avoid conflict with instance variable if used directly
         _latest_chm_update_by_church_dt: Dict[str, Optional[datetime]] = {}
+        orphaned_memberships_by_church: Dict[str, int] = {}
 
 
         team_groups = [g for g in all_chm_groups if g.get("name", "").startswith(Config.TEAM_PREFIX + " ")]
@@ -106,7 +109,20 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                 person_details_response = self.chm_connector.get_person(person_id_str)
                 if not person_details_response:
-                    logger.warning(f"Could not fetch details for ChM Person ID: {person_id_str} from group '{group_name}'.")
+                    if getattr(self.chm_connector, "last_get_person_status", None) == "not_found":
+                        orphaned_memberships_by_church[church_code] = (
+                            orphaned_memberships_by_church.get(church_code, 0) + 1
+                        )
+                        logger.warning(
+                            f"Skipping orphaned Team-group membership in '{group_name}': "
+                            f"person_id={person_id_str} appears in the group, but "
+                            f"ChMeetings GET /people/{person_id_str} returned 404."
+                        )
+                    else:
+                        logger.warning(
+                            f"Could not fetch details for ChM Person ID: {person_id_str} "
+                            f"from group '{group_name}'."
+                        )
                     continue
                 
                 person_data = person_details_response if isinstance(person_details_response, dict) and "data" not in person_details_response else person_details_response.get("data", {})
@@ -155,6 +171,15 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             code: dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "N/A"
             for code, dt in _latest_chm_update_by_church_dt.items()
         }
+        self.last_orphaned_memberships_by_church = orphaned_memberships_by_church
+
+        total_orphaned_memberships = sum(orphaned_memberships_by_church.values())
+        if total_orphaned_memberships:
+            logger.warning(
+                f"Skipped {total_orphaned_memberships} orphaned Team-group membership(s) "
+                f"across {len(orphaned_memberships_by_church)} church(es). "
+                "Run 'python main.py audit-team-groups' to inspect lingering IDs."
+            )
         
         if target_church_code and not chm_data_by_church.get(target_church_code.upper()):
              logger.warning(f"No ChMeetings group found or no members in group for target church: {target_church_code}")

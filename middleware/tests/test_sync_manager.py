@@ -687,4 +687,111 @@ def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
     assert row["church_code"] == "RPC"
 
 
+def test_sync_rosters_skips_create_when_lookup_fails_after_retry(sync_manager, mocker):
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    participant = {
+        "church_code": "RPC",
+        "primary_sport": SPORT_UNSELECTED,
+        "secondary_sport": SPORT_UNSELECTED,
+        "other_events": "Soccer - Coed Exhibition",
+    }
+
+    call_counter = {"count": 0}
+
+    def get_rosters_side_effect(params):
+        call_counter["count"] += 1
+        if call_counter["count"] <= 2:
+            sync_manager.wordpress_connector.last_get_rosters_status = "failed"
+            return []
+        sync_manager.wordpress_connector.last_get_rosters_status = "ok"
+        return []
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        side_effect=get_rosters_side_effect,
+    )
+    mock_create = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_roster",
+        return_value={"roster_id": "501"},
+    )
+    mock_delete = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "delete_roster",
+        return_value=True,
+    )
+
+    participant_syncer._sync_rosters("131", participant)
+
+    mock_create.assert_not_called()
+    mock_delete.assert_not_called()
+    assert sync_manager.stats["rosters"]["errors"] == 1
+
+
+def test_sync_rosters_deletes_duplicate_current_rosters(sync_manager, mocker):
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    participant = {
+        "church_code": "RPC",
+        "primary_sport": SPORT_UNSELECTED,
+        "secondary_sport": SPORT_UNSELECTED,
+        "other_events": "Soccer - Coed Exhibition",
+    }
+
+    duplicate_rosters = [
+        {
+            "roster_id": "10",
+            "participant_id": 131,
+            "sport_type": "Soccer - Coed Exhibition",
+            "sport_format": SPORT_FORMAT["TEAM"],
+            "sport_gender": GENDER["MIXED"],
+            "team_order": None,
+            "partner_name": None,
+        },
+        {
+            "roster_id": "11",
+            "participant_id": 131,
+            "sport_type": "Soccer - Coed Exhibition",
+            "sport_format": SPORT_FORMAT["TEAM"],
+            "sport_gender": GENDER["MIXED"],
+            "team_order": None,
+            "partner_name": None,
+        },
+    ]
+
+    def get_rosters_side_effect(_params):
+        sync_manager.wordpress_connector.last_get_rosters_status = "ok"
+        return [dict(r) for r in duplicate_rosters]
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        side_effect=get_rosters_side_effect,
+    )
+    mock_create = mocker.patch.object(sync_manager.wordpress_connector, "create_roster")
+    mock_delete = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "delete_roster",
+        return_value=True,
+    )
+
+    participant_syncer._sync_rosters("131", participant)
+
+    mock_create.assert_not_called()
+    mock_delete.assert_called_once_with("11")
+    assert sync_manager.stats["rosters"]["deleted"] == 1
+
+
 ##### End of tests/test_sync_manager
