@@ -24,6 +24,12 @@
   - Church-team Excel exports now enrich `missing_doubles_partner` rows with reverse partner suggestions when one same-event participant uniquely points back to the missing-partner player
   - Reverse partner suggestions in church-team Excel exports now also learn from existing TEAM partner-warning rows, which helps when roster-side partner data is incomplete
   - Participant issue sync now keys individual validation issues by `issue_type + rule_code + sport_type + sport_format`, so distinct partner issues for multiple doubles events are preserved in WordPress
+- Added 2026 co-ed soccer TEAM validation rules
+  - `Soccer - Coed Exhibition` now requires at least 4 participants per church team
+  - `Soccer - Coed Exhibition` now allows 0 non-members
+  - Added JSON-driven minimum playable roster rules for Basketball (5), Men's Volleyball (6), Women's Volleyball (6), and Bible Challenge (3)
+  - `TeamValidator` now reads sport-specific TEAM non-member limits from `middleware/validation/summer_2026.json`
+  - `TeamValidator` now enforces JSON-driven minimum team sizes for team/exhibition events, including `other_events` selections such as soccer
 
 ### Documentation
 - Added `EXPORT_DIR` to `middleware/.env.template` with the shared Google Drive example used for church-team report exports

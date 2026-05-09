@@ -31,6 +31,7 @@ def test_rules_manager_loads_rules(rules_manager):
     assert any(r.get("rule_type") == "photo" for r in rules_manager.rules), "Should have photo rules"
     assert any(r.get("rule_type") == "consent" for r in rules_manager.rules), "Should have consent rules"
     assert any(r.get("rule_type") == "partner" for r in rules_manager.rules), "Should have partner rules"
+    assert any(r.get("rule_type") == "team_size" for r in rules_manager.rules), "Should have team size rules"
 
 def test_participant_model():
     """Test Participant Pydantic model."""
@@ -541,7 +542,7 @@ def team_validator():
 
 def _make_participant(church_id=1, is_member=False,
                       primary_sport="", primary_format="",
-                      secondary_sport="", secondary_format=""):
+                      secondary_sport="", secondary_format="", other_events=""):
     return {
         "church_id": church_id,
         "is_church_member": is_member,
@@ -549,6 +550,7 @@ def _make_participant(church_id=1, is_member=False,
         "primary_format": primary_format,
         "secondary_sport": secondary_sport,
         "secondary_format": secondary_format,
+        "other_events": other_events,
     }
 
 
@@ -557,6 +559,9 @@ def test_team_validator_under_team_limit(team_validator):
     participants = [
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
     ]
     issues = team_validator.validate_church(1, participants)
     assert issues == []
@@ -568,6 +573,8 @@ def test_team_validator_exceeds_team_limit(team_validator):
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
     ]
     issues = team_validator.validate_church(1, participants)
     assert len(issues) == 1
@@ -585,8 +592,15 @@ def test_team_validator_each_team_sport_independent(team_validator):
     participants = [
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
         _make_participant(primary_sport=SPORT_TYPE["VOLLEYBALL_MEN"]),
         _make_participant(primary_sport=SPORT_TYPE["VOLLEYBALL_MEN"]),
+        _make_participant(primary_sport=SPORT_TYPE["VOLLEYBALL_MEN"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["VOLLEYBALL_MEN"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["VOLLEYBALL_MEN"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["VOLLEYBALL_MEN"], is_member=True),
     ]
     issues = team_validator.validate_church(1, participants)
     assert issues == [], "Two sports each at the limit should produce no issues"
@@ -611,10 +625,86 @@ def test_team_validator_secondary_sport_also_counted(team_validator):
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
         _make_participant(secondary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
     ]
     issues = team_validator.validate_church(1, participants)
     assert len(issues) == 1
     assert issues[0]["issue_type"] == "team_non_member_limit"
+
+
+def test_team_validator_basketball_requires_minimum_of_five(team_validator):
+    """Basketball should use the generic minimum team-size rule path."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue["issue_type"] == "team_min_size"
+    assert issue["rule_code"] == "MIN_TEAM_SIZE_BASKETBALL"
+    assert issue["rule_level"] == "TEAM"
+    assert issue["severity"] == VALIDATION_SEVERITY["ERROR"]
+    assert issue["sport_type"] == SPORT_TYPE["BASKETBALL"]
+    assert "below minimum size of 5" in issue["issue_description"]
+
+
+def test_team_validator_soccer_requires_minimum_of_four(team_validator):
+    """Soccer - Coed Exhibition should fail until a church has 4 participants."""
+    participants = [
+        _make_participant(is_member=True, other_events="Soccer - Coed Exhibition"),
+        _make_participant(is_member=True, other_events="Soccer - Coed Exhibition"),
+        _make_participant(is_member=True, other_events="Soccer - Coed Exhibition"),
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue["issue_type"] == "team_min_size"
+    assert issue["rule_code"] == "MIN_TEAM_SIZE_SOCCER_COED"
+    assert issue["rule_level"] == "TEAM"
+    assert issue["severity"] == VALIDATION_SEVERITY["ERROR"]
+    assert issue["sport_type"] == "Soccer - Coed Exhibition"
+    assert "below minimum size of 4" in issue["issue_description"]
+
+
+def test_team_validator_soccer_passes_at_four(team_validator):
+    """Soccer - Coed Exhibition should pass the minimum-size check at 4 participants."""
+    participants = [
+        _make_participant(is_member=True, other_events="Soccer - Coed Exhibition"),
+        _make_participant(is_member=True, other_events="Soccer - Coed Exhibition"),
+        _make_participant(is_member=True, other_events="Soccer - Coed Exhibition"),
+        _make_participant(is_member=True, other_events="Soccer - Coed Exhibition"),
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert not any(issue["issue_type"] == "team_min_size" for issue in issues), issues
+
+
+def test_team_validator_soccer_disallows_non_members(team_validator):
+    """Soccer - Coed Exhibition should not allow any non-members."""
+    participants = [
+        _make_participant(is_member=False, other_events="Soccer - Coed Exhibition"),
+        _make_participant(is_member=True, other_events="Soccer - Coed Exhibition"),
+        _make_participant(is_member=True, other_events="Soccer - Coed Exhibition"),
+        _make_participant(is_member=True, other_events="Soccer - Coed Exhibition"),
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    non_member_issue = next(issue for issue in issues if issue["issue_type"] == "team_non_member_limit")
+    assert non_member_issue["rule_code"] == "MAX_NON_MEMBERS_SOCCER_COED"
+    assert non_member_issue["rule_level"] == "TEAM"
+    assert non_member_issue["severity"] == VALIDATION_SEVERITY["ERROR"]
+    assert non_member_issue["sport_type"] == "Soccer - Coed Exhibition"
+    assert "exceeding limit of 0" in non_member_issue["issue_description"]
 
 
 def test_team_validator_under_doubles_limit(team_validator):
@@ -728,6 +818,8 @@ def test_team_validator_issues_include_rule_metadata(team_validator):
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
         _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"], is_member=True),
     ]
 
     issues = team_validator.validate_church(1, participants)

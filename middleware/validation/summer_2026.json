@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "version": "2026.1.2",
+    "version": "2026.1.4",
     "collection": "SUMMER_2026",
     "event_date": "2026-07-18",
-    "last_updated": "2026-05-09T14:00:00",
+    "last_updated": "2026-05-09T19:00:00",
     "description": "Rules for Sports Fest 2026"
   },
   "rules": [
@@ -239,6 +239,84 @@
       "value": "true",
       "severity": "WARNING",
       "description": "Doubles partner selections should reciprocally match within the same church roster",
+      "collection": "SUMMER_2026"
+    },
+    {
+      "rule_id": 20,
+      "rule_code": "MIN_TEAM_SIZE_SOCCER_COED",
+      "rule_level": "TEAM",
+      "rule_type": "team_size",
+      "category": "min",
+      "sport_event": "Soccer - Coed Exhibition",
+      "parameter": null,
+      "value": "4",
+      "severity": "ERROR",
+      "description": "Soccer - Coed Exhibition requires at least 4 participants per church team",
+      "collection": "SUMMER_2026"
+    },
+    {
+      "rule_id": 21,
+      "rule_code": "MAX_NON_MEMBERS_SOCCER_COED",
+      "rule_level": "TEAM",
+      "rule_type": "max_non_members",
+      "category": "team",
+      "sport_event": "Soccer - Coed Exhibition",
+      "parameter": null,
+      "value": "0",
+      "severity": "ERROR",
+      "description": "Soccer - Coed Exhibition does not allow non-members",
+      "collection": "SUMMER_2026"
+    },
+    {
+      "rule_id": 22,
+      "rule_code": "MIN_TEAM_SIZE_BASKETBALL",
+      "rule_level": "TEAM",
+      "rule_type": "team_size",
+      "category": "min",
+      "sport_event": "Basketball - Men Team",
+      "parameter": null,
+      "value": "5",
+      "severity": "ERROR",
+      "description": "Basketball - Men Team requires at least 5 participants per church team",
+      "collection": "SUMMER_2026"
+    },
+    {
+      "rule_id": 23,
+      "rule_code": "MIN_TEAM_SIZE_VOLLEYBALL_MEN",
+      "rule_level": "TEAM",
+      "rule_type": "team_size",
+      "category": "min",
+      "sport_event": "Volleyball - Men Team",
+      "parameter": null,
+      "value": "6",
+      "severity": "ERROR",
+      "description": "Volleyball - Men Team requires at least 6 participants per church team",
+      "collection": "SUMMER_2026"
+    },
+    {
+      "rule_id": 24,
+      "rule_code": "MIN_TEAM_SIZE_VOLLEYBALL_WOMEN",
+      "rule_level": "TEAM",
+      "rule_type": "team_size",
+      "category": "min",
+      "sport_event": "Volleyball - Women Team",
+      "parameter": null,
+      "value": "6",
+      "severity": "ERROR",
+      "description": "Volleyball - Women Team requires at least 6 participants per church team",
+      "collection": "SUMMER_2026"
+    },
+    {
+      "rule_id": 25,
+      "rule_code": "MIN_TEAM_SIZE_BIBLE_CHALLENGE",
+      "rule_level": "TEAM",
+      "rule_type": "team_size",
+      "category": "min",
+      "sport_event": "Bible Challenge - Mixed Team",
+      "parameter": null,
+      "value": "3",
+      "severity": "ERROR",
+      "description": "Bible Challenge - Mixed Team requires at least 3 participants per church team",
       "collection": "SUMMER_2026"
     }
   ]

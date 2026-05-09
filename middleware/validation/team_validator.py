@@ -3,13 +3,14 @@ from typing import List, Dict, Any
 
 from .models import RulesManager
 from config import (SPORT_BY_CATEGORY, SPORT_CATEGORY, RACQUET_SPORTS,
-                   FORMAT_MAPPINGS, SPORT_FORMAT)
+                   FORMAT_MAPPINGS, SPORT_FORMAT, DEFAULT_SPORT)
 
 
 class TeamValidator:
     """Validates team-composition rules for a single church's participants."""
 
     ISSUE_TYPES = frozenset({
+        "team_min_size",
         "team_non_member_limit",
         "doubles_non_member_limit",
         "doubles_partner_unmatched",
@@ -18,12 +19,19 @@ class TeamValidator:
     def __init__(self, collection: str = "SUMMER_2026"):
         self.rules_manager = RulesManager(collection)
         rules = self.rules_manager.get_rules_by_type("max_non_members")
+        team_rules = [r for r in rules if r.get("category") == "team"]
         self.team_rule = next(
-            r for r in rules if r.get("category") == "team"
+            r for r in team_rules if r.get("sport_event") == DEFAULT_SPORT
         )
         self.doubles_rule = next(
             r for r in rules if r.get("category") == "doubles"
         )
+        self.team_rules_by_sport = {
+            str(rule["sport_event"]).strip(): rule
+            for rule in team_rules
+            if str(rule.get("sport_event") or "").strip()
+            and str(rule.get("sport_event")).strip() != DEFAULT_SPORT
+        }
         partner_rules = self.rules_manager.get_rules_by_type("partner")
         self.reciprocal_partner_rule = next(
             (
@@ -33,13 +41,26 @@ class TeamValidator:
             ),
             None,
         )
+        team_size_rules = self.rules_manager.get_rules_by_type("team_size")
+        self.min_team_size_rules = {
+            str(rule["sport_event"]).strip(): rule
+            for rule in team_size_rules
+            if rule.get("category") == "min"
+            and str(rule.get("sport_event") or "").strip()
+        }
         self.team_limit = int(self.team_rule["value"])
         self.doubles_limit = int(self.doubles_rule["value"])
         self.team_sports = set(SPORT_BY_CATEGORY[SPORT_CATEGORY["TEAM"]])
+        self.team_rule_sports = (
+            self.team_sports
+            | set(self.team_rules_by_sport)
+            | set(self.min_team_size_rules)
+        )
 
     def validate_church(self, church_id: Any, participants: List[Dict]) -> List[Dict]:
         """Return team-level validation issue dicts for one church."""
         issues = []
+        issues.extend(self._check_team_min_size(church_id, participants))
         issues.extend(self._check_team_non_members(church_id, participants))
         issues.extend(self._check_doubles_non_members(church_id, participants))
         issues.extend(self._check_doubles_partner_matching(church_id, participants))
@@ -111,29 +132,96 @@ class TeamValidator:
             "status": "open",
         }
 
+    @staticmethod
+    def _parse_other_events(other_events: Any) -> List[str]:
+        return [
+            sport.strip()
+            for sport in str(other_events or "").split(",")
+            if sport.strip()
+        ]
+
+    def _selected_team_events(
+        self,
+        participant: Dict[str, Any],
+        allowed_sports: set[str],
+    ) -> set[str]:
+        selected_sports: set[str] = set()
+
+        for sport_field in ("primary_sport", "secondary_sport"):
+            sport = str(participant.get(sport_field, "") or "").strip()
+            if sport in allowed_sports:
+                selected_sports.add(sport)
+
+        for sport in self._parse_other_events(participant.get("other_events")):
+            if sport in allowed_sports:
+                selected_sports.add(sport)
+
+        return selected_sports
+
+    def _team_rule_for_sport(self, sport: str) -> Dict[str, Any] | None:
+        if sport in self.team_rules_by_sport:
+            return self.team_rules_by_sport[sport]
+        if sport in self.team_sports:
+            return self.team_rule
+        return None
+
+    def _check_team_min_size(self, church_id: Any, participants: List[Dict]) -> List[Dict]:
+        if not self.min_team_size_rules:
+            return []
+
+        sport_counts = {
+            sport: 0 for sport in self.min_team_size_rules
+        }
+        tracked_sports = set(self.min_team_size_rules)
+
+        for participant in participants:
+            for sport in self._selected_team_events(participant, tracked_sports):
+                sport_counts[sport] += 1
+
+        issues = []
+        for sport, participant_count in sport_counts.items():
+            rule = self.min_team_size_rules[sport]
+            min_size = int(rule["value"])
+            if 0 < participant_count < min_size:
+                issues.append(self._build_issue(
+                    church_id=church_id,
+                    issue_type="team_min_size",
+                    description=(
+                        f"{sport} has {participant_count} participants, "
+                        f"below minimum size of {min_size}"
+                    ),
+                    rule=rule,
+                    sport_type=sport,
+                ))
+
+        return issues
+
     def _check_team_non_members(self, church_id: Any, participants: List[Dict]) -> List[Dict]:
-        sport_non_members: Dict[str, List[Dict]] = {s: [] for s in self.team_sports}
+        sport_non_members: Dict[str, List[Dict]] = {}
         for participant in participants:
             if participant.get("is_church_member"):
                 continue
-            # Intentionally excludes "other_events" so exhibition entries
-            # (e.g. "Soccer - Coed Exhibition") bypass the non-member team limit.
-            for sport_field in ("primary_sport", "secondary_sport"):
-                sport = participant.get(sport_field, "")
-                if sport in sport_non_members:
-                    sport_non_members[sport].append(participant)
+            for sport in self._selected_team_events(participant, self.team_rule_sports):
+                rule = self._team_rule_for_sport(sport)
+                if rule:
+                    sport_non_members.setdefault(sport, []).append(participant)
 
         issues = []
         for sport, non_members in sport_non_members.items():
-            if len(non_members) > self.team_limit:
+            rule = self._team_rule_for_sport(sport)
+            if not rule:
+                continue
+
+            team_limit = int(rule["value"])
+            if len(non_members) > team_limit:
                 issues.append(self._build_issue(
                     church_id=church_id,
                     issue_type="team_non_member_limit",
                     description=(
                         f"{sport} has {len(non_members)} non-members, "
-                        f"exceeding limit of {self.team_limit}"
+                        f"exceeding limit of {team_limit}"
                     ),
-                    rule=self.team_rule,
+                    rule=rule,
                     sport_type=sport,
                 ))
         return issues

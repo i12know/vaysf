@@ -199,10 +199,16 @@ Vietnamese churches that cannot field a full team may merge their youth into ano
 ### 6.4 Non-Member (Ringer) Quotas
 These are enforced at the **team level** by the middleware validator:
 - Basketball, Men's Volleyball, Women's Volleyball, Bible Challenge: **max 2 non-members per team**
+- Soccer - Coed Exhibition: **max 0 non-members**
 - Doubles events (Badminton, Pickleball, Table Tennis, Tennis): **max 1 non-member per pair**
 
 ### 6.5 Team Event Roster Rules
-- Unlimited athletes may register for team events (Basketball, Volleyball, Bible Challenge)
+- Team events are open above their minimum playable roster:
+- Basketball: minimum 5 participants
+- Men's Volleyball: minimum 6 participants
+- Women's Volleyball: minimum 6 participants
+- Bible Challenge: minimum 3 participants
+- Soccer - Coed Exhibition: minimum 4 participants
 - Individual/racquet events have limited slots — Church Rep is responsible for compliance
 - Each athlete may register for max 2 events (Primary + Secondary), excluding Track & Field and Scripture Memorization
 

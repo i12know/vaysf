@@ -486,11 +486,26 @@ def test_validate_data_pagination(sync_manager, mocker):
 def test_validate_data_syncs_team_issues_idempotently(sync_manager, mocker):
     """Repeated validation should reuse matching TEAM issues and resolve stale ones."""
     participants = [
-        {"participant_id": i, "church_id": 1, "is_church_member": False,
-         "first_name": f"Player{i}", "last_name": "Test",
+        {"participant_id": 1, "church_id": 1, "is_church_member": False,
+         "first_name": "Player1", "last_name": "Test",
          "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
-         "secondary_sport": "", "secondary_format": ""}
-        for i in range(1, 4)
+         "secondary_sport": "", "secondary_format": ""},
+        {"participant_id": 2, "church_id": 1, "is_church_member": False,
+         "first_name": "Player2", "last_name": "Test",
+         "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""},
+        {"participant_id": 3, "church_id": 1, "is_church_member": False,
+         "first_name": "Player3", "last_name": "Test",
+         "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""},
+        {"participant_id": 4, "church_id": 1, "is_church_member": True,
+         "first_name": "Player4", "last_name": "Test",
+         "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""},
+        {"participant_id": 5, "church_id": 1, "is_church_member": True,
+         "first_name": "Player5", "last_name": "Test",
+         "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""},
     ]
     existing_issues = [
         {
@@ -541,17 +556,60 @@ def test_validate_data_resolves_church_id_from_church_code(sync_manager, mocker)
     """TEAM validation should work with live-shaped WP participants that only include church_code."""
     participants = [
         {
-            "participant_id": str(i),
+            "participant_id": "1",
             "church_code": "RPC",
             "is_church_member": False,
-            "first_name": f"Player{i}",
+            "first_name": "Player1",
             "last_name": "Test",
             "primary_sport": SPORT_TYPE["BASKETBALL"],
             "primary_format": "",
             "secondary_sport": "",
             "secondary_format": "",
-        }
-        for i in range(1, 4)
+        },
+        {
+            "participant_id": "2",
+            "church_code": "RPC",
+            "is_church_member": False,
+            "first_name": "Player2",
+            "last_name": "Test",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "3",
+            "church_code": "RPC",
+            "is_church_member": False,
+            "first_name": "Player3",
+            "last_name": "Test",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "4",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Player4",
+            "last_name": "Test",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "5",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Player5",
+            "last_name": "Test",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
     ]
 
     mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
