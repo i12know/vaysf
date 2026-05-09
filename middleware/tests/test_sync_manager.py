@@ -520,6 +520,47 @@ def test_sync_validation_issues_per_page(sync_manager, mocker):
     assert captured["params"].get("status") == "open"
 
 
+def test_sync_validation_issues_resolves_stale_issues_when_current_list_is_empty(sync_manager, mocker):
+    """A now-clean participant should still resolve previously open validation issues."""
+
+    from sync.participants import ParticipantSyncer
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    existing_issue = {
+        "issue_id": "99",
+        "participant_id": "42",
+        "issue_type": "missing_consent",
+        "rule_code": "CONSENT_REQUIRED",
+        "status": "open",
+    }
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=[existing_issue],
+    )
+    update_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_validation_issue",
+        return_value=True,
+    )
+
+    participant_syncer._sync_validation_issues("42", "RPC", [], "2025-01-01")
+
+    update_issue.assert_called_once()
+    assert update_issue.call_args.args[0] == "99"
+    payload = update_issue.call_args.args[1]
+    assert payload["status"] == "resolved"
+    assert "resolved_at" in payload
+    assert sync_manager.stats["validation_issues"]["resolved"] == 1
+
+
 def test_sync_participants_skips_orphaned_group_membership(sync_manager, mocker):
     """Full Team-group sync should skip API-only orphaned memberships whose person lookup returns 404."""
     mocker.patch("sync.participants.Config.TEAM_PREFIX", "Team")

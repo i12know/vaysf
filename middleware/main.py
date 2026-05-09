@@ -102,6 +102,8 @@ def parse_args() -> argparse.Namespace:
                             help="Resend approval emails for 'validated' participants with NO data in Box 1-6 (not reviewed yet)")
     export_parser.add_argument("--dry-run", action="store_true",
                             help="Show what would be resent without actually sending emails")
+    export_parser.add_argument("--chm-id",
+                            help="Limit force-resend operations to one ChMeetings ID")
 
     # Config command
     config_parser = subparsers.add_parser("config", help="Configure system settings")
@@ -640,7 +642,8 @@ def main() -> None:
                         force_resend_pending=args.force_resend_pending,
                         force_resend_validated1=args.force_resend_validated1,
                         force_resend_validated2=args.force_resend_validated2,
-                        dry_run=args.dry_run
+                        dry_run=args.dry_run,
+                        target_resend_chm_id=args.chm_id,
                     )
                 if success: 
                     logger.info(f"Church team reports generated successfully in {output_path.resolve()}.")

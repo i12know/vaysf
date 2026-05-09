@@ -65,3 +65,47 @@ def test_fetch_chm_church_team_data_skips_orphaned_memberships(mock_connectors):
     assert len(data["RPC"]) == 1
     assert data["RPC"][0]["ChMeetings ID"] == "101"
     assert exporter.last_orphaned_memberships_by_church == {"RPC": 1}
+
+
+def test_handle_force_resend_filters_to_one_chm_id(mock_connectors, mocker):
+    _, wp_connector = mock_connectors
+
+    fake_sync_manager = MagicMock()
+    fake_sync_manager.wordpress_connector.get_churches.return_value = [
+        {"church_code": "RPC", "pastor_email": "pastor@rpc.org", "church_rep_email": "rep@rpc.org"}
+    ]
+    fake_sync_manager.__enter__.return_value = fake_sync_manager
+    fake_sync_manager.__exit__.return_value = None
+
+    mocker.patch("sync.manager.SyncManager", return_value=fake_sync_manager)
+
+    exporter = ChurchTeamsExporter()
+    contacts = [
+        {
+            "ChMeetings ID": "3318927",
+            "First Name": "Sam",
+            "Last Name": "Le",
+            "Church Team": "RPC",
+            "Email": "sam@example.com",
+            "Approval_Status (WP)": "pending_approval",
+        },
+        {
+            "ChMeetings ID": "4363698",
+            "First Name": "Thomas",
+            "Last Name": "Phan",
+            "Church Team": "RPC",
+            "Email": "thomas@example.com",
+            "Approval_Status (WP)": "pending_approval",
+        },
+    ]
+
+    resend_count = exporter._handle_force_resend(
+        contacts,
+        force_pending=True,
+        force_validated1=False,
+        force_validated2=False,
+        dry_run=True,
+        target_resend_chm_id="3318927",
+    )
+
+    assert resend_count == 1

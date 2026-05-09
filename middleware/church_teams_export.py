@@ -189,7 +189,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
     def generate_reports(self, target_church_code: Optional[str], output_dir: Path,
                         force_resend_pending: bool = False, force_resend_validated1: bool = False, 
-                        force_resend_validated2: bool = False, dry_run: bool = False) -> bool:
+                        force_resend_validated2: bool = False, dry_run: bool = False,
+                        target_resend_chm_id: Optional[str] = None) -> bool:
         """
         Generates Excel status reports for church teams.
         If target_church_code is provided, generates a single report for that church.
@@ -197,6 +198,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         Furthermore, the flags force_resend_pending, force_resend_validated1, and force_resend_validated2
         control whether to resend pastoral approval for participants with approval pending, validated1 (under church rep's review),
         and validated2 (no review yet).
+        If target_resend_chm_id is provided, resend actions are limited to that participant.
         Dry run mode does not send the email yet but note the actions would be taken.
         """
         if not self.chm_connector.authenticate(): 
@@ -370,7 +372,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         if force_resend_pending or force_resend_validated1 or force_resend_validated2:
             resend_count = self._handle_force_resend(
                 all_contacts_data, force_resend_pending, force_resend_validated1, 
-                force_resend_validated2, dry_run
+                force_resend_validated2, dry_run, target_resend_chm_id=target_resend_chm_id
             )
             logger.info(f"Force resend completed. Total emails {'would be sent' if dry_run else 'sent'}: {resend_count}")
         
@@ -565,7 +567,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
     def _handle_force_resend(self, contacts_data: List[Dict[str, Any]], 
                             force_pending: bool, force_validated1: bool, force_validated2: bool,
-                            dry_run: bool) -> int:
+                            dry_run: bool, target_resend_chm_id: Optional[str] = None) -> int:
         """Handle force resend based on participant categories."""
         
         from sync.manager import SyncManager  # Import here to avoid circular imports
@@ -593,6 +595,18 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     # Not reviewed yet by church rep
                     participants_to_resend.append(contact)
                     logger.debug(f"Added validated-not-reviewed participant: {contact.get('First Name')} {contact.get('Last Name')} ({contact.get('Church Team')})")
+
+        if target_resend_chm_id:
+            normalized_target = str(target_resend_chm_id).strip()
+            participants_to_resend = [
+                contact
+                for contact in participants_to_resend
+                if str(contact.get("ChMeetings ID", "")).strip() == normalized_target
+            ]
+            logger.info(
+                f"Applied resend filter for ChMeetings ID {normalized_target}. "
+                f"Matching participants: {len(participants_to_resend)}"
+            )
         
         logger.info(f"Found {len(participants_to_resend)} participants matching criteria")
         
