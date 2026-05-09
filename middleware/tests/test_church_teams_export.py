@@ -2,6 +2,7 @@ import os
 import sys
 from unittest.mock import MagicMock
 
+import pandas as pd
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -109,3 +110,232 @@ def test_handle_force_resend_filters_to_one_chm_id(mock_connectors, mocker):
     )
 
     assert resend_count == 1
+
+
+def test_generate_reports_surfaces_open_validation_issues(mock_connectors, mocker, tmp_path):
+    chm_connector, wp_connector = mock_connectors
+    chm_connector.authenticate.return_value = True
+
+    exporter = ChurchTeamsExporter()
+    exporter.latest_chm_update_by_church = {"RPC": "2026-05-08 10:00:00"}
+    mocker.patch.object(
+        exporter,
+        "_fetch_chm_church_team_data",
+        return_value={
+            "RPC": [
+                {
+                    "Church Team": "RPC",
+                    "ChMeetings ID": "101",
+                    "First Name": "Alice",
+                    "Last Name": "Nguyen",
+                    "Gender": "Female",
+                    "Birthdate": "2000-01-02",
+                    "Mobile Phone": "555-0101",
+                    "Email": "alice@test.com",
+                    "Is_Member_ChM": True,
+                    "ChM_Roles": "Athlete",
+                    "ChM_Completion_Checklist": "",
+                    "Update_on_ChM": "2026-05-08 10:00:00",
+                }
+            ]
+        },
+    )
+
+    wp_connector.get_church_by_code.return_value = {"church_id": 1, "church_code": "RPC"}
+    wp_connector.get_participants.return_value = [
+        {
+            "participant_id": 42,
+            "approval_status": "pending",
+            "photo_url": "https://example.com/photo.jpg",
+        }
+    ]
+    wp_connector.get_validation_issues.return_value = [
+        {
+            "issue_id": 1,
+            "participant_id": 42,
+            "issue_type": "missing_photo",
+            "issue_description": "No photo uploaded",
+            "rule_code": "PHOTO_REQUIRED",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "status": "open",
+            "sport_type": None,
+            "sport_format": None,
+        },
+        {
+            "issue_id": 2,
+            "participant_id": None,
+            "issue_type": "team_non_member_limit",
+            "issue_description": "Basketball - Men Team has 3 non-members, exceeding limit of 2",
+            "rule_code": "MAX_NON_MEMBERS_TEAM",
+            "rule_level": "TEAM",
+            "severity": "ERROR",
+            "status": "open",
+            "sport_type": "Basketball - Men Team",
+            "sport_format": None,
+        },
+        {
+            "issue_id": 3,
+            "participant_id": None,
+            "issue_type": "doubles_non_member_limit",
+            "issue_description": "Badminton Men Double pair Alice / Guest has 2 non-members, exceeding limit of 1",
+            "rule_code": "MAX_NON_MEMBERS_DOUBLES",
+            "rule_level": "TEAM",
+            "severity": "ERROR",
+            "status": "open",
+            "sport_type": "Badminton",
+            "sport_format": "Men Double",
+        },
+        {
+            "issue_id": 4,
+            "participant_id": 42,
+            "issue_type": "missing_consent",
+            "issue_description": "Missing consent form",
+            "rule_code": "CONSENT_REQUIRED",
+            "rule_level": "INDIVIDUAL",
+            "severity": "WARNING",
+            "status": "open",
+            "sport_type": None,
+            "sport_format": None,
+        },
+    ]
+    wp_connector.get_rosters.return_value = [
+        {
+            "sport_type": "Basketball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "team_order": None,
+            "partner_name": None,
+        },
+        {
+            "sport_type": "Badminton",
+            "sport_gender": "Men",
+            "sport_format": "Doubles",
+            "team_order": None,
+            "partner_name": "Guest",
+        },
+    ]
+
+    write_report = mocker.patch.object(exporter, "_write_excel_report")
+
+    result = exporter.generate_reports("RPC", tmp_path)
+
+    assert result is True
+    write_report.assert_called_once()
+    _, summary_rows, contacts_rows, roster_rows, validation_rows = write_report.call_args.args
+
+    assert summary_rows[0]["Total Participants w/ Open ERRORs (WP)"] == 1
+    assert summary_rows[0]["Total Open Individual ERRORs (WP)"] == 1
+    assert summary_rows[0]["Total Open TEAM ERRORs (WP)"] == 2
+    assert summary_rows[0]["Total Open WARNINGs (WP)"] == 1
+    assert summary_rows[0]["Total Sports w/ Open TEAM Issues (WP)"] == 2
+
+    assert contacts_rows[0]["Total_Open_ERRORs (WP)"] == 1
+    assert contacts_rows[0]["First_Open_ERROR_Desc (WP)"] == "No photo uploaded"
+
+    basketball_row = next(row for row in roster_rows if row["sport_type"] == "Basketball")
+    badminton_row = next(row for row in roster_rows if row["sport_type"] == "Badminton")
+    assert basketball_row["Open_TEAM_Issue_Count (WP)"] == 1
+    assert "Basketball - Men Team has 3 non-members" in basketball_row["Open_TEAM_Issue_Desc (WP)"]
+    assert badminton_row["Open_TEAM_Issue_Count (WP)"] == 1
+    assert "Badminton Men Double pair Alice / Guest" in badminton_row["Open_TEAM_Issue_Desc (WP)"]
+
+    assert len(validation_rows) == 4
+    participant_issue = next(row for row in validation_rows if row["Issue Type"] == "missing_photo")
+    assert participant_issue["Participant Name"] == "Alice Nguyen"
+    team_issue = next(row for row in validation_rows if row["Issue Type"] == "team_non_member_limit")
+    assert team_issue["Rule Level"] == "TEAM"
+    assert team_issue["Participant Name"] == ""
+
+
+def test_write_excel_report_adds_validation_issues_tab(mock_connectors, tmp_path):
+    exporter = ChurchTeamsExporter()
+    filepath = tmp_path / "church-report.xlsx"
+
+    summary_rows = [{
+        "Church Code": "RPC",
+        "Total Members (ChM Team Group)": 1,
+        "Total Participants (in WP)": 1,
+        "Total Approved (WP)": 0,
+        "Total Pending Approval (WP)": 1,
+        "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 1,
+        "Total Open Individual ERRORs (WP)": 1,
+        "Total Open TEAM ERRORs (WP)": 1,
+        "Total Open WARNINGs (WP)": 0,
+        "Total Sports w/ Open TEAM Issues (WP)": 1,
+        "Latest ChM Record Update for Team": "2026-05-08 10:00:00",
+    }]
+    contacts_rows = [{
+        "Church Team": "RPC",
+        "ChMeetings ID": "101",
+        "First Name": "Alice",
+        "Last Name": "Nguyen",
+        "Is_Participant": "Yes",
+        "Is_Member_ChM": "Yes",
+        "Participant ID (WP)": 42,
+        "Approval_Status (WP)": "pending",
+        "Total_Open_ERRORs (WP)": 1,
+        "Gender": "Female",
+        "Birthdate": "2000-01-02",
+        "Age (at Event)": 26,
+        "Mobile Phone": "555-0101",
+        "Email": "alice@test.com",
+        "First_Open_ERROR_Desc (WP)": "No photo uploaded",
+        "Box 1": "",
+        "Box 2": "",
+        "Box 3": "",
+        "Box 4": "",
+        "Box 5": "",
+        "Box 6": "",
+        "Photo URL (WP)": "N/A",
+        "Update_on_ChM": "2026-05-08 10:00:00",
+    }]
+    roster_rows = [{
+        "Church Team": "RPC",
+        "ChMeetings ID": "101",
+        "Participant ID (WP)": 42,
+        "Approval_Status (WP)": "pending",
+        "Is_Member_ChM": True,
+        "Photo": "",
+        "First Name": "Alice",
+        "Last Name": "Nguyen",
+        "Gender": "Female",
+        "Age (at Event)": 26,
+        "Mobile Phone": "555-0101",
+        "Email": "alice@test.com",
+        "sport_type": "Badminton",
+        "sport_gender": "Men",
+        "sport_format": "Doubles",
+        "team_order": None,
+        "partner_name": "Guest",
+        "Open_TEAM_Issue_Count (WP)": 1,
+        "Open_TEAM_Issue_Desc (WP)": "Badminton Men Double pair Alice / Guest has 2 non-members, exceeding limit of 1",
+    }]
+    validation_rows = [{
+        "Church Team": "RPC",
+        "Rule Level": "TEAM",
+        "Severity": "ERROR",
+        "Status": "open",
+        "Issue Type": "doubles_non_member_limit",
+        "Rule Code": "MAX_NON_MEMBERS_DOUBLES",
+        "Participant ID (WP)": "",
+        "ChMeetings ID": "",
+        "Participant Name": "",
+        "Approval_Status (WP)": "",
+        "sport_type": "Badminton",
+        "sport_format": "Men Double",
+        "Issue Description": "Badminton Men Double pair Alice / Guest has 2 non-members, exceeding limit of 1",
+    }]
+
+    exporter._write_excel_report(filepath, summary_rows, contacts_rows, roster_rows, validation_rows)
+
+    workbook = pd.ExcelFile(filepath)
+    assert "Validation-Issues" in workbook.sheet_names
+
+    validation_df = pd.read_excel(filepath, sheet_name="Validation-Issues")
+    roster_df = pd.read_excel(filepath, sheet_name="Roster")
+    assert "Rule Level" in validation_df.columns
+    assert validation_df.loc[0, "Issue Type"] == "doubles_non_member_limit"
+    assert "Open_TEAM_Issue_Count (WP)" in roster_df.columns
+    assert int(roster_df.loc[0, "Open_TEAM_Issue_Count (WP)"]) == 1

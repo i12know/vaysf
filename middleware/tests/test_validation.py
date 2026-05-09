@@ -419,6 +419,45 @@ def test_severity_levels(validator):
     assert len(warnings) == 2, "Should have both photo and consent warnings"
 
 
+def test_invalid_birthdate_does_not_crash_consent_validation(validator):
+    """Malformed birthdates should return an issue instead of raising."""
+    participant = {
+        "chmeetings_id": "bad_birthdate",
+        "first_name": "Bad",
+        "last_name": "Birthdate",
+        "gender": "Male",
+        "birthdate": "2008/07/19",
+        "primary_sport": SPORT_TYPE["BASKETBALL"],
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": False,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert not is_valid, "Malformed birthdates should fail validation"
+    assert any(issue["type"] == "invalid_birthdate" for issue in issues), issues
+
+
+def test_missing_consent_stays_error_until_18th_birthday(validator):
+    """A participant who is still 17 on event day must keep ERROR severity for consent."""
+    participant = {
+        "chmeetings_id": "minor_boundary",
+        "first_name": "Boundary",
+        "last_name": "Minor",
+        "gender": "Male",
+        "birthdate": "2008-07-19",
+        "primary_sport": SPORT_TYPE["BASKETBALL"],
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": False,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert not is_valid, "A 17-year-old with missing consent should not validate"
+    consent_issue = next(issue for issue in issues if issue["type"] == "missing_consent")
+    assert consent_issue["severity"] == VALIDATION_SEVERITY["ERROR"]
+
+
 # ---------------------------------------------------------------------------
 # TeamValidator tests
 # ---------------------------------------------------------------------------
@@ -545,3 +584,66 @@ def test_team_validator_doubles_format_isolated_by_format(team_validator):
     ]
     issues = team_validator.validate_church(1, participants)
     assert issues == [], "Different formats must be tracked separately"
+
+
+def test_team_validator_doubles_limit_is_per_pair(team_validator):
+    """Two separate pairs with one non-member each must not trip the per-pair cap."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "first_name": "Andy",
+            "last_name": "Nguyen",
+            "primary_partner": "Brian Tran",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "first_name": "Chris",
+            "last_name": "Pham",
+            "primary_partner": "David Le",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert issues == [], "Separate pairs with one non-member each should not be grouped together"
+
+
+def test_team_validator_doubles_limit_flags_two_non_members_in_same_pair(team_validator):
+    """A single doubles pair with two non-members must still fail."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "first_name": "Andy",
+            "last_name": "Nguyen",
+            "primary_partner": "Brian Tran",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "first_name": "Brian",
+            "last_name": "Tran",
+            "primary_partner": "Andy Nguyen",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert len(issues) == 1
+    assert issues[0]["issue_type"] == "doubles_non_member_limit"
+
+
+def test_team_validator_issues_include_rule_metadata(team_validator):
+    """Team issues should carry TEAM-level rule metadata into WordPress."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+        _make_participant(primary_sport=SPORT_TYPE["BASKETBALL"]),
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue["rule_code"] == "MAX_NON_MEMBERS_TEAM"
+    assert issue["rule_level"] == "TEAM"
+    assert issue["severity"] == "ERROR"
+    assert issue["sport_type"] == SPORT_TYPE["BASKETBALL"]

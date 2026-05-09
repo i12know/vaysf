@@ -56,6 +56,14 @@ class IndividualValidator:
         is_valid = not any(issue.get("severity") == VALIDATION_SEVERITY["ERROR"] for issue in issues)
         return is_valid, issues
 
+    def _calculate_age(self, birthdate: str) -> int:
+        """Calculate age on the event date using birthday-aware logic."""
+        birth_date = datetime.strptime(birthdate, "%Y-%m-%d").date()
+        age = self.sports_fest_date.year - birth_date.year
+        if (self.sports_fest_date.month, self.sports_fest_date.day) < (birth_date.month, birth_date.day):
+            age -= 1
+        return age
+
     def _validate_age(self, participant: Participant) -> List[Dict[str, str]]:
         """Validate participant age against rules."""
         issues = []
@@ -64,13 +72,7 @@ class IndividualValidator:
             return [{"type": "missing_birthdate", "description": "Birthdate required for age validation", "severity": VALIDATION_SEVERITY["ERROR"]}]
         
         try:
-            # Parse birthdate
-            birth_date = datetime.strptime(participant.birthdate, "%Y-%m-%d").date()
-            
-            # Calculate age on sports fest date
-            age = self.sports_fest_date.year - birth_date.year
-            if (self.sports_fest_date.month, self.sports_fest_date.day) < (birth_date.month, birth_date.day):
-                age -= 1
+            age = self._calculate_age(participant.birthdate)
             
             # Get sports for this participant
             sports = []
@@ -270,12 +272,13 @@ class IndividualValidator:
         issues = []
         
         # Calculate age
-        birthdate = participant.birthdate
-        sports_fest_date = datetime.strptime(Config.SPORTS_FEST_DATE, "%Y-%m-%d")
         age = None
-        if birthdate:
-            birthdate_dt = datetime.strptime(birthdate, "%Y-%m-%d")
-            age = (sports_fest_date - birthdate_dt).days // 365
+        if participant.birthdate:
+            try:
+                age = self._calculate_age(participant.birthdate)
+            except ValueError:
+                # _validate_age() already reports malformed birthdates.
+                age = None
         
         # Get consent rules
         rules = [r for r in self.rules_manager.get_rules_by_type("consent") 

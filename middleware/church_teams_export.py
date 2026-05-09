@@ -7,7 +7,15 @@ from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 import re
 
-from config import Config, CHECK_BOXES, CHM_FIELDS, MEMBERSHIP_QUESTION
+from config import (
+    Config,
+    CHECK_BOXES,
+    CHM_FIELDS,
+    MEMBERSHIP_QUESTION,
+    FORMAT_MAPPINGS,
+    RULE_LEVEL,
+    VALIDATION_SEVERITY,
+)
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
 
@@ -57,6 +65,133 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             if text_value in checklist_str:
                 statuses[f"Box {i+1}"] = text_value # Store the constant text
         return statuses
+
+    def _fetch_open_validation_issues(self, church_id: Optional[int]) -> List[Dict[str, Any]]:
+        """Fetch all open validation issues for one church from WordPress."""
+        if not church_id:
+            return []
+
+        issues: List[Dict[str, Any]] = []
+        current_page = 1
+        fetch_per_page = 200
+
+        while True:
+            page_issues = self.wp_connector.get_validation_issues({
+                "church_id": church_id,
+                "status": "open",
+                "page": current_page,
+                "per_page": fetch_per_page,
+            })
+            if not page_issues:
+                break
+
+            issues.extend(page_issues)
+            if len(page_issues) < fetch_per_page:
+                break
+
+            current_page += 1
+            if current_page > 50:
+                logger.warning(
+                    f"Reached validation-issue page limit while exporting church_id={church_id}. "
+                    "Stopping after 50 pages."
+                )
+                break
+
+        return issues
+
+    @staticmethod
+    def _normalized_sport_type(sport_type: Optional[str]) -> str:
+        """Normalize sport labels so team issues can match roster rows."""
+        return str(sport_type or "").split(" - ")[0].strip().casefold()
+
+    @staticmethod
+    def _issue_rule_level(issue: Dict[str, Any]) -> str:
+        return str(issue.get("rule_level") or "").strip() or RULE_LEVEL["INDIVIDUAL"]
+
+    @staticmethod
+    def _issue_severity(issue: Dict[str, Any]) -> str:
+        return str(issue.get("severity") or "").strip() or VALIDATION_SEVERITY["ERROR"]
+
+    @staticmethod
+    def _issue_format_type(issue: Dict[str, Any]) -> str:
+        issue_format = str(issue.get("sport_format") or "").strip()
+        if issue_format in FORMAT_MAPPINGS:
+            return FORMAT_MAPPINGS[issue_format][0]
+        return issue_format
+
+    @staticmethod
+    def _issue_gender(issue: Dict[str, Any]) -> str:
+        issue_format = str(issue.get("sport_format") or "").strip()
+        if issue_format in FORMAT_MAPPINGS:
+            return str(FORMAT_MAPPINGS[issue_format][1])
+
+        sport_type = str(issue.get("sport_type") or "")
+        for gender in ("Women", "Men", "Mixed"):
+            if gender.casefold() in sport_type.casefold():
+                return gender
+        return ""
+
+    def _team_issue_matches_roster(self, issue: Dict[str, Any], roster_entry: Dict[str, Any]) -> bool:
+        """Return True when a TEAM issue applies to a roster row."""
+        if self._issue_rule_level(issue) != RULE_LEVEL["TEAM"]:
+            return False
+
+        if self._normalized_sport_type(issue.get("sport_type")) != self._normalized_sport_type(roster_entry.get("sport_type")):
+            return False
+
+        issue_gender = self._issue_gender(issue)
+        roster_gender = str(roster_entry.get("sport_gender") or "").strip()
+        if issue_gender and roster_gender and issue_gender.casefold() != roster_gender.casefold():
+            return False
+
+        issue_format_type = self._issue_format_type(issue)
+        roster_format = str(roster_entry.get("sport_format") or "").strip()
+        if issue_format_type and roster_format and issue_format_type.casefold() != roster_format.casefold():
+            return False
+
+        return True
+
+    @staticmethod
+    def _team_issue_scope_key(issue: Dict[str, Any]) -> Tuple[str, str, str]:
+        return (
+            ChurchTeamsExporter._normalized_sport_type(issue.get("sport_type")),
+            ChurchTeamsExporter._issue_gender(issue).casefold(),
+            ChurchTeamsExporter._issue_format_type(issue).casefold(),
+        )
+
+    def _build_validation_issue_rows(
+        self,
+        church_code: str,
+        issues: List[Dict[str, Any]],
+        participants_by_wp_id: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Build export rows for the Validation-Issues tab."""
+        rows: List[Dict[str, Any]] = []
+        for issue in issues:
+            participant_id = issue.get("participant_id")
+            participant_key = str(participant_id) if participant_id not in (None, "", 0, "0") else ""
+            participant_info = participants_by_wp_id.get(participant_key, {})
+            first_name = str(issue.get("first_name") or participant_info.get("First Name") or "").strip()
+            last_name = str(issue.get("last_name") or participant_info.get("Last Name") or "").strip()
+            participant_name = " ".join(part for part in (first_name, last_name) if part).strip()
+
+            rows.append({
+                "Church Team": church_code,
+                "Rule Level": self._issue_rule_level(issue),
+                "Severity": self._issue_severity(issue),
+                "Status": issue.get("status", "open"),
+                "Issue Type": issue.get("issue_type", ""),
+                "Rule Code": issue.get("rule_code", ""),
+                "Participant ID (WP)": participant_id or "",
+                "ChMeetings ID": participant_info.get("ChMeetings ID", ""),
+                "Participant Name": participant_name,
+                "Approval_Status (WP)": participant_info.get("Approval_Status (WP)", ""),
+                "sport_type": issue.get("sport_type"),
+                "sport_format": issue.get("sport_format"),
+                "Issue Description": issue.get("issue_description", ""),
+            })
+
+        return rows
 
     def _fetch_chm_church_team_data(self, target_church_code: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
         """
@@ -214,6 +349,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         all_contacts_data: List[Dict[str, Any]] = []
         all_rosters_data: List[Dict[str, Any]] = []
+        all_validation_data: List[Dict[str, Any]] = []
         summary_data_list: List[Dict[str, Any]] = []
 
         churches_to_process_codes = [target_church_code.upper()] if target_church_code else sorted(list(chm_data_by_church.keys()))
@@ -226,6 +362,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             logger.info(f"Processing data for church: {church_code_iter}")
             church_contacts_rows: List[Dict[str, Any]] = []
             church_rosters_rows: List[Dict[str, Any]] = []
+            church_validation_rows: List[Dict[str, Any]] = []
+            participants_by_wp_id: Dict[str, Dict[str, Any]] = {}
 
             total_members_chm = len(chm_data_by_church[church_code_iter])
             total_participants_wp = 0
@@ -233,7 +371,22 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             total_denied_wp = 0
             total_pending_participants_wp = 0 
             total_with_open_errors_wp = 0
-            participants_with_errors_set = set() # To count unique participants with errors
+            church_wp = self.wp_connector.get_church_by_code(church_code_iter)
+            church_wp_id = church_wp.get("church_id") if church_wp else None
+            open_validation_issues = self._fetch_open_validation_issues(church_wp_id)
+            participant_error_lookup: Dict[str, List[Dict[str, Any]]] = {}
+            team_validation_issues = [
+                issue for issue in open_validation_issues
+                if self._issue_rule_level(issue) == RULE_LEVEL["TEAM"]
+            ]
+
+            for issue in open_validation_issues:
+                participant_id = issue.get("participant_id")
+                if participant_id in (None, "", 0, "0"):
+                    continue
+                if self._issue_severity(issue) != VALIDATION_SEVERITY["ERROR"]:
+                    continue
+                participant_error_lookup.setdefault(str(participant_id), []).append(issue)
 
             for chm_person in chm_data_by_church[church_code_iter]:
                 chm_id = chm_person["ChMeetings ID"]
@@ -254,6 +407,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         wp_participant_id_val = wp_participant.get("participant_id", 0)
                         approval_status_val = wp_participant.get("approval_status", "pending")
                         photo_url_val = wp_participant.get("photo_url", "N/A")
+                        participant_issue_list = participant_error_lookup.get(str(wp_participant_id_val), [])
                         total_participants_wp += 1
 
                         if approval_status_val == "approved":
@@ -264,18 +418,22 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                             total_pending_participants_wp +=1
 
                         if wp_participant_id_val:
-                            validation_issues = self.wp_connector.get_validation_issues({
-                                "participant_id": wp_participant_id_val,
-                                "severity": "ERROR",
-                                "status": "open"
-                            })
-                            total_open_errors_val = len(validation_issues)
-                            if validation_issues:
-                                first_open_error_desc_val = validation_issues[0].get("issue_description", "")
-                                participants_with_errors_set.add(wp_participant_id_val)
+                            total_open_errors_val = len(participant_issue_list)
+                            if participant_issue_list:
+                                first_open_error_desc_val = participant_issue_list[0].get("issue_description", "")
 
+                            participants_by_wp_id[str(wp_participant_id_val)] = {
+                                "ChMeetings ID": chm_id,
+                                "First Name": chm_person["First Name"],
+                                "Last Name": chm_person["Last Name"],
+                                "Approval_Status (WP)": approval_status_val,
+                            }
                             wp_rosters = self.wp_connector.get_rosters({"participant_id": wp_participant_id_val})
                             for roster_entry in wp_rosters:
+                                matching_team_issues = [
+                                    issue for issue in team_validation_issues
+                                    if self._team_issue_matches_roster(issue, roster_entry)
+                                ]
                                 church_rosters_rows.append({
                                     "Church Team": church_code_iter,
                                     "ChMeetings ID": chm_id,
@@ -294,7 +452,13 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                     "sport_gender": roster_entry.get("sport_gender"),
                                     "sport_format": roster_entry.get("sport_format"),
                                     "team_order": roster_entry.get("team_order"),
-                                    "partner_name": roster_entry.get("partner_name")
+                                    "partner_name": roster_entry.get("partner_name"),
+                                    "Open_TEAM_Issue_Count (WP)": len(matching_team_issues),
+                                    "Open_TEAM_Issue_Desc (WP)": " | ".join(
+                                        str(issue.get("issue_description", "")).strip()
+                                        for issue in matching_team_issues
+                                        if str(issue.get("issue_description", "")).strip()
+                                    ),
                                 })
                     else: 
                         approval_status_val = "Not in WordPress"
@@ -322,8 +486,36 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "Update_on_ChM": chm_person["Update_on_ChM"]
                 }
                 church_contacts_rows.append(contact_row)
-            
-            total_with_open_errors_wp = len(participants_with_errors_set) # Count unique participants
+
+            church_validation_rows = self._build_validation_issue_rows(
+                church_code_iter,
+                open_validation_issues,
+                participants_by_wp_id,
+            )
+
+            individual_open_errors = [
+                issue for issue in open_validation_issues
+                if self._issue_rule_level(issue) == RULE_LEVEL["INDIVIDUAL"]
+                and self._issue_severity(issue) == VALIDATION_SEVERITY["ERROR"]
+            ]
+            team_open_errors = [
+                issue for issue in team_validation_issues
+                if self._issue_severity(issue) == VALIDATION_SEVERITY["ERROR"]
+            ]
+            open_warnings = [
+                issue for issue in open_validation_issues
+                if self._issue_severity(issue) == VALIDATION_SEVERITY["WARNING"]
+            ]
+            participant_ids_with_errors = {
+                str(issue.get("participant_id"))
+                for issue in individual_open_errors
+                if issue.get("participant_id") not in (None, "", 0, "0")
+            }
+            total_with_open_errors_wp = len(participant_ids_with_errors)
+            total_sports_with_team_issues = len({
+                self._team_issue_scope_key(issue)
+                for issue in team_validation_issues
+            })
 
             summary_data_list.append({
                 "Church Code": church_code_iter,
@@ -333,11 +525,16 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "Total Denied (WP)": total_denied_wp, # ADD THIS LINE
                 "Total Pending Approval (WP)": total_pending_participants_wp, 
                 "Total Participants w/ Open ERRORs (WP)": total_with_open_errors_wp,
+                "Total Open Individual ERRORs (WP)": len(individual_open_errors),
+                "Total Open TEAM ERRORs (WP)": len(team_open_errors),
+                "Total Open WARNINGs (WP)": len(open_warnings),
+                "Total Sports w/ Open TEAM Issues (WP)": total_sports_with_team_issues,
                 "Latest ChM Record Update for Team": self.latest_chm_update_by_church.get(church_code_iter, "N/A")
             })
             
             all_contacts_data.extend(church_contacts_rows)
             all_rosters_data.extend(church_rosters_rows)
+            all_validation_data.extend(church_validation_rows)
 
             if target_church_code: 
                 safe_code = "".join(c if c.isalnum() else "_" for c in church_code_iter)
@@ -345,7 +542,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 self._write_excel_report(output_dir / filename,
                                          [summary_data_list[-1]], 
                                          church_contacts_rows,
-                                         church_rosters_rows)
+                                         church_rosters_rows,
+                                         church_validation_rows)
                 
         if not target_church_code: 
             for church_code_iter in churches_to_process_codes: # Iterate using the original list of codes
@@ -353,6 +551,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                 current_church_contacts = [row for row in all_contacts_data if row["Church Team"] == church_code_iter]
                 current_church_rosters = [row for row in all_rosters_data if row["Church Team"] == church_code_iter]
+                current_church_validation = [row for row in all_validation_data if row["Church Team"] == church_code_iter]
                 current_church_summary = [s_data for s_data in summary_data_list if s_data["Church Code"] == church_code_iter]
 
                 safe_code = "".join(c if c.isalnum() else "_" for c in church_code_iter)
@@ -360,13 +559,15 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 self._write_excel_report(output_dir / filename,
                                          current_church_summary,
                                          current_church_contacts,
-                                         current_church_rosters)
+                                         current_church_rosters,
+                                         current_church_validation)
             
             all_filename = f"Church_Team_Status_ALL_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
             self._write_excel_report(output_dir / all_filename,
                                      summary_data_list, 
                                      all_contacts_data, 
-                                     all_rosters_data)   
+                                     all_rosters_data,
+                                     all_validation_data)   
 
         # Handle force resend options
         if force_resend_pending or force_resend_validated1 or force_resend_validated2:
@@ -382,7 +583,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
     def _write_excel_report(self, filepath: Path,
                             summary_rows: List[Dict[str, Any]],
                             contacts_rows: List[Dict[str, Any]],
-                            roster_rows: List[Dict[str, Any]]):
+                            roster_rows: List[Dict[str, Any]],
+                            validation_rows: List[Dict[str, Any]]):
         """Writes the collected data to an Excel file with specified tabs and formatting."""
         logger.info(f"Writing Excel report to: {filepath}")
         try:
@@ -393,7 +595,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     summary_cols = [
                         "Church Code", "Total Members (ChM Team Group)", "Total Participants (in WP)",
                         "Total Approved (WP)", "Total Pending Approval (WP)", "Total Denied (WP)", # ADD THIS LINE
-                        "Total Participants w/ Open ERRORs (WP)", "Latest ChM Record Update for Team"
+                        "Total Participants w/ Open ERRORs (WP)",
+                        "Total Open Individual ERRORs (WP)", "Total Open TEAM ERRORs (WP)",
+                        "Total Open WARNINGs (WP)", "Total Sports w/ Open TEAM Issues (WP)",
+                        "Latest ChM Record Update for Team"
                     ]
                     # Ensure all summary columns exist
                     for col in summary_cols:
@@ -442,7 +647,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         "Church Team", "ChMeetings ID", "Participant ID (WP)", "Approval_Status (WP)",
                         "Is_Member_ChM", "Photo",          # ADD THIS LINE
                         "First Name", "Last Name", "Gender", "Age (at Event)", "Mobile Phone", "Email",
-                        "sport_type", "sport_gender", "sport_format", "team_order", "partner_name"
+                        "sport_type", "sport_gender", "sport_format", "team_order", "partner_name",
+                        "Open_TEAM_Issue_Count (WP)", "Open_TEAM_Issue_Desc (WP)"
                     ]
                     for col in roster_cols: # Ensure all roster columns exist
                         if col not in df_roster.columns:
@@ -453,6 +659,26 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     )
                 df_roster.to_excel(writer, sheet_name="Roster", index=False)
                 logger.debug(f"Roster tab: {len(df_roster)} rows.")
+
+                # Validation-Issues Tab
+                df_validation = pd.DataFrame(validation_rows)
+                if not df_validation.empty:
+                    validation_cols = [
+                        "Church Team", "Rule Level", "Severity", "Status",
+                        "Issue Type", "Rule Code",
+                        "Participant ID (WP)", "ChMeetings ID", "Participant Name",
+                        "Approval_Status (WP)", "sport_type", "sport_format",
+                        "Issue Description"
+                    ]
+                    for col in validation_cols:
+                        if col not in df_validation.columns:
+                            df_validation[col] = None
+                    df_validation = df_validation.reindex(columns=validation_cols).sort_values(
+                        by=["Church Team", "Rule Level", "Severity", "Participant Name", "Issue Type"],
+                        ascending=[True, True, True, True, True]
+                    )
+                df_validation.to_excel(writer, sheet_name="Validation-Issues", index=False)
+                logger.debug(f"Validation-Issues tab: {len(df_validation)} rows.")
 
                 # Add yellow note to Photo column in Roster sheet
                 if not df_roster.empty:
@@ -514,7 +740,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                             "Church Team", "ChMeetings ID", "Participant ID (WP)", "Approval_Status (WP)",
                             "Is_Member_ChM", "Photo", "Full Name", "Gender", "Age (at Event)", 
                             "Mobile Phone", "Email", "sport_type", "sport_gender", "sport_format", 
-                            "team_order", "partner_name"
+                            "team_order", "partner_name",
+                            "Open_TEAM_Issue_Count (WP)", "Open_TEAM_Issue_Desc (WP)"
                         ]
                         
                         # Create Full Name column

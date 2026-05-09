@@ -295,6 +295,7 @@ def test_sync_participants(sync_manager, mocker, mock_chmeetings_data):
             return None
 
         def get_rosters_side_effect(params):
+            sync_manager.wordpress_connector.last_get_rosters_status = "ok"
             participant_id = params.get("participant_id")
             sport_type = params.get("sport_type")
             sport_format = params.get("sport_format")
@@ -467,8 +468,12 @@ def test_validate_data_pagination(sync_manager, mocker):
 
     mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
                         side_effect=paged_get_participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues",
+                        return_value=[])
     mocker.patch.object(sync_manager.wordpress_connector, "create_validation_issue",
                         return_value={"issue_id": 1})
+    mocker.patch.object(sync_manager.wordpress_connector, "update_validation_issue",
+                        return_value=True)
 
     result = sync_manager.validate_data()
 
@@ -476,6 +481,100 @@ def test_validate_data_pagination(sync_manager, mocker):
     assert call_count["n"] == 2, (
         f"Expected exactly 2 page requests (page 1 full, page 2 partial), got {call_count['n']}"
     )
+
+
+def test_validate_data_syncs_team_issues_idempotently(sync_manager, mocker):
+    """Repeated validation should reuse matching TEAM issues and resolve stale ones."""
+    participants = [
+        {"participant_id": i, "church_id": 1, "is_church_member": False,
+         "first_name": f"Player{i}", "last_name": "Test",
+         "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""}
+        for i in range(1, 4)
+    ]
+    existing_issues = [
+        {
+            "issue_id": 10,
+            "church_id": 1,
+            "participant_id": None,
+            "issue_type": "team_non_member_limit",
+            "issue_description": "Basketball - Men Team has 3 non-members, exceeding limit of 2",
+            "rule_code": "MAX_NON_MEMBERS_TEAM",
+            "rule_level": "TEAM",
+            "severity": "ERROR",
+            "sport_type": SPORT_TYPE["BASKETBALL"],
+            "sport_format": None,
+            "status": "open",
+        },
+        {
+            "issue_id": 11,
+            "church_id": 1,
+            "participant_id": None,
+            "issue_type": "doubles_non_member_limit",
+            "issue_description": "stale",
+            "rule_code": "MAX_NON_MEMBERS_DOUBLES",
+            "rule_level": "TEAM",
+            "severity": "ERROR",
+            "sport_type": SPORT_TYPE["BADMINTON"],
+            "sport_format": "Men Double",
+            "status": "open",
+        },
+    ]
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=existing_issues)
+    create_issue = mocker.patch.object(sync_manager.wordpress_connector, "create_validation_issue", return_value={"issue_id": 12})
+    update_issue = mocker.patch.object(sync_manager.wordpress_connector, "update_validation_issue", return_value=True)
+
+    result = sync_manager.validate_data()
+
+    assert result, "validate_data() should succeed"
+    create_issue.assert_not_called()
+    update_issue.assert_called_once()
+    assert update_issue.call_args.args[0] == 11
+    assert update_issue.call_args.args[1]["status"] == "resolved"
+    assert sync_manager.stats["validation_issues"]["unchanged"] == 1
+    assert sync_manager.stats["validation_issues"]["resolved"] == 1
+
+
+def test_validate_data_resolves_church_id_from_church_code(sync_manager, mocker):
+    """TEAM validation should work with live-shaped WP participants that only include church_code."""
+    participants = [
+        {
+            "participant_id": str(i),
+            "church_code": "RPC",
+            "is_church_member": False,
+            "first_name": f"Player{i}",
+            "last_name": "Test",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        }
+        for i in range(1, 4)
+    ]
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "church_name": "Redemption Point Church"}],
+    )
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=[])
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 21},
+    )
+
+    result = sync_manager.validate_data()
+
+    assert result, "validate_data() should succeed when church_id is resolved from church_code"
+    create_issue.assert_called_once()
+    issue_payload = create_issue.call_args.args[0]
+    assert issue_payload["church_id"] == 1
+    assert issue_payload["issue_type"] == "team_non_member_limit"
+    assert issue_payload["rule_level"] == "TEAM"
 
 
 def test_sync_validation_issues_per_page(sync_manager, mocker):

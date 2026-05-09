@@ -14,6 +14,11 @@ import sys
 # Load environment variables
 load_dotenv()
 
+def _running_under_pytest() -> bool:
+    """Return True when the module is imported as part of a pytest run."""
+    argv0 = Path(sys.argv[0]).name.lower()
+    return "pytest" in argv0 or "PYTEST_CURRENT_TEST" in os.environ
+
 # Base directories - Windows-compatible using Path for robustness
 BASE_DIR = Path(__file__).parent.resolve()
 LOG_DIR = BASE_DIR / "logs"
@@ -22,14 +27,22 @@ TEMP_DIR = BASE_DIR / "temp"
 
 # Export settings - default to G:\VAYSF-data to share the files with Church Rep from my Google Drive 
 DEFAULT_EXPORT_PATH_STR = r"G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data"
-EXPORT_DIR = Path(os.getenv("EXPORT_DIR", DEFAULT_EXPORT_PATH_STR))
+DEFAULT_TEST_EXPORT_DIR = TEMP_DIR / "pytest-export"
+
+export_dir_env = os.getenv("EXPORT_DIR")
+if export_dir_env:
+    EXPORT_DIR = Path(export_dir_env)
+elif _running_under_pytest():
+    EXPORT_DIR = DEFAULT_TEST_EXPORT_DIR
+else:
+    EXPORT_DIR = Path(DEFAULT_EXPORT_PATH_STR)
 DEFAULT_APPROVED_GROUP_NAME = "2026 Sports Fest"
 DEFAULT_SPORTS_FEST_DATE = "2026-07-18"
 
 # Ensure directories exist with error handling
 for directory in [LOG_DIR, DATA_DIR, TEMP_DIR, EXPORT_DIR]:
     try:
-        directory.mkdir(exist_ok=True)
+        directory.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         print(f"Failed to create directory {directory}: {e}")
         raise
