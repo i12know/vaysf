@@ -577,6 +577,64 @@ def test_validate_data_resolves_church_id_from_church_code(sync_manager, mocker)
     assert issue_payload["rule_level"] == "TEAM"
 
 
+def test_validate_data_creates_participant_scoped_team_warning(sync_manager, mocker):
+    """Reciprocal doubles-partner mismatches should sync as TEAM warnings with participant_id."""
+    participants = [
+        {
+            "participant_id": "1",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Andy",
+            "last_name": "Nguyen",
+            "primary_sport": SPORT_TYPE["BADMINTON"],
+            "primary_format": "Men Double",
+            "primary_partner": "Brian Tran",
+            "secondary_sport": "",
+            "secondary_format": "",
+            "secondary_partner": "",
+        },
+        {
+            "participant_id": "2",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Brian",
+            "last_name": "Tran",
+            "primary_sport": SPORT_TYPE["BADMINTON"],
+            "primary_format": "Men Double",
+            "primary_partner": "Chris Pham",
+            "secondary_sport": "",
+            "secondary_format": "",
+            "secondary_partner": "",
+        },
+    ]
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "church_name": "Redemption Point Church"}],
+    )
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=[])
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 22},
+    )
+
+    result = sync_manager.validate_data()
+
+    assert result
+    warning_payload = next(
+        call.args[0]
+        for call in create_issue.call_args_list
+        if call.args[0]["issue_type"] == "doubles_partner_unmatched"
+    )
+    assert warning_payload["participant_id"] == "1"
+    assert warning_payload["rule_code"] == "PARTNER_RECIPROCAL_DOUBLES"
+    assert warning_payload["rule_level"] == "TEAM"
+    assert warning_payload["severity"] == "WARNING"
+
+
 def test_sync_validation_issues_per_page(sync_manager, mocker):
     """_sync_validation_issues() must pass per_page=200 to avoid silent PHP-default truncation.
     Runs in both mock and live mode — all external calls are patched by this test itself."""
@@ -658,6 +716,64 @@ def test_sync_validation_issues_resolves_stale_issues_when_current_list_is_empty
     assert payload["status"] == "resolved"
     assert "resolved_at" in payload
     assert sync_manager.stats["validation_issues"]["resolved"] == 1
+
+
+def test_sync_validation_issues_distinguishes_same_rule_by_sport_and_format(sync_manager, mocker):
+    """Two doubles-partner issues should both sync when they target different events."""
+
+    from sync.participants import ParticipantSyncer
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    sync_manager.churches_cache["RPC"] = {"church_id": 1}
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=[],
+    )
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 1},
+    )
+
+    issues = [
+        {
+            "type": "missing_doubles_partner",
+            "description": "Partner name required for Badminton (Men Double)",
+            "rule_code": "PARTNER_REQUIRED_DOUBLES",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "sport": SPORT_TYPE["BADMINTON"],
+            "sport_format": "Men Double",
+        },
+        {
+            "type": "missing_doubles_partner",
+            "description": "Partner name required for Pickleball (Mixed Double)",
+            "rule_code": "PARTNER_REQUIRED_DOUBLES",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "sport": SPORT_TYPE["PICKLEBALL"],
+            "sport_format": "Mixed Double",
+        },
+    ]
+
+    participant_syncer._sync_validation_issues("42", "RPC", issues, "2026-05-09 00:00:00")
+
+    assert create_issue.call_count == 2
+    created_payloads = [call.args[0] for call in create_issue.call_args_list]
+    assert {
+        (payload["sport_type"], payload["sport_format"])
+        for payload in created_payloads
+    } == {
+        (SPORT_TYPE["BADMINTON"], "Men Double"),
+        (SPORT_TYPE["PICKLEBALL"], "Mixed Double"),
+    }
 
 
 def test_sync_participants_skips_orphaned_group_membership(sync_manager, mocker):

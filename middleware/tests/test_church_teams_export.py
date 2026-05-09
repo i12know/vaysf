@@ -339,3 +339,215 @@ def test_write_excel_report_adds_validation_issues_tab(mock_connectors, tmp_path
     assert validation_df.loc[0, "Issue Type"] == "doubles_non_member_limit"
     assert "Open_TEAM_Issue_Count (WP)" in roster_df.columns
     assert int(roster_df.loc[0, "Open_TEAM_Issue_Count (WP)"]) == 1
+
+
+def test_validation_issue_rows_add_reverse_partner_suggestion(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    roster_rows = [
+        {
+            "Church Team": "RPC",
+            "Participant ID (WP)": 72,
+            "First Name": "Dean",
+            "Last Name": "Nguyen",
+            "sport_type": "Pickleball",
+            "sport_gender": "Mixed",
+            "sport_format": "Doubles",
+            "partner_name": "Janice",
+        },
+        {
+            "Church Team": "RPC",
+            "Participant ID (WP)": 75,
+            "First Name": "Janice",
+            "Last Name": "Vu",
+            "sport_type": "Pickleball",
+            "sport_gender": "Mixed",
+            "sport_format": "Doubles",
+            "partner_name": "",
+        },
+    ]
+    reverse_lookup = exporter._build_reverse_partner_suggestion_lookup(roster_rows)
+
+    issue_rows = exporter._build_validation_issue_rows(
+        "RPC",
+        [{
+            "participant_id": 75,
+            "issue_type": "missing_doubles_partner",
+            "issue_description": "Partner name required for Pickleball (Mixed Double)",
+            "rule_code": "PARTNER_REQUIRED_DOUBLES",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "status": "open",
+            "sport_type": "Pickleball",
+            "sport_format": "Mixed Double",
+        }],
+        {
+            "75": {
+                "ChMeetings ID": "43636",
+                "First Name": "Janice",
+                "Last Name": "Vu",
+                "Approval_Status (WP)": "pending",
+            }
+        },
+        reverse_lookup,
+    )
+
+    assert len(issue_rows) == 1
+    assert "perhaps Dean Nguyen listed you as partner." in issue_rows[0]["Issue Description"]
+
+
+def test_reverse_partner_suggestion_lookup_skips_ambiguous_partial_match(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    roster_rows = [
+        {
+            "Church Team": "RPC",
+            "Participant ID (WP)": 72,
+            "First Name": "Dean",
+            "Last Name": "Nguyen",
+            "sport_type": "Pickleball",
+            "sport_gender": "Mixed",
+            "sport_format": "Doubles",
+            "partner_name": "Janice",
+        },
+        {
+            "Church Team": "RPC",
+            "Participant ID (WP)": 75,
+            "First Name": "Janice",
+            "Last Name": "Vu",
+            "sport_type": "Pickleball",
+            "sport_gender": "Mixed",
+            "sport_format": "Doubles",
+            "partner_name": "",
+        },
+        {
+            "Church Team": "RPC",
+            "Participant ID (WP)": 76,
+            "First Name": "Janice",
+            "Last Name": "Nguyen",
+            "sport_type": "Pickleball",
+            "sport_gender": "Mixed",
+            "sport_format": "Doubles",
+            "partner_name": "",
+        },
+    ]
+
+    reverse_lookup = exporter._build_reverse_partner_suggestion_lookup(roster_rows)
+
+    janice_vu_key = exporter._reverse_partner_suggestion_key(75, "Pickleball", "Mixed", "Doubles")
+    janice_nguyen_key = exporter._reverse_partner_suggestion_key(76, "Pickleball", "Mixed", "Doubles")
+    assert janice_vu_key not in reverse_lookup
+    assert janice_nguyen_key not in reverse_lookup
+
+
+def test_validation_issue_rows_do_not_cross_gendered_doubles_formats(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    roster_rows = [
+        {
+            "Church Team": "TLC",
+            "Participant ID (WP)": 26,
+            "First Name": "Hyewon",
+            "Last Name": "Yun",
+            "sport_type": "Badminton",
+            "sport_gender": "Men",
+            "sport_format": "Doubles",
+            "partner_name": "Shawn Le",
+        },
+        {
+            "Church Team": "TLC",
+            "Participant ID (WP)": 31,
+            "First Name": "Shawn",
+            "Last Name": "Le",
+            "sport_type": "Badminton",
+            "sport_gender": "Mixed",
+            "sport_format": "Doubles",
+            "partner_name": "",
+        },
+    ]
+
+    reverse_lookup = exporter._build_reverse_partner_suggestion_lookup(roster_rows)
+
+    issue_rows = exporter._build_validation_issue_rows(
+        "TLC",
+        [{
+            "participant_id": 31,
+            "issue_type": "missing_doubles_partner",
+            "issue_description": "Partner name required for Badminton (Mixed Double)",
+            "rule_code": "PARTNER_REQUIRED_DOUBLES",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "status": "open",
+            "sport_type": "Badminton",
+            "sport_format": "Mixed Double",
+        }],
+        {
+            "31": {
+                "ChMeetings ID": "35628",
+                "First Name": "Shawn",
+                "Last Name": "Le",
+                "Approval_Status (WP)": "pending",
+            }
+        },
+        reverse_lookup,
+    )
+
+    assert len(issue_rows) == 1
+    assert "perhaps Hyewon Yun listed you as partner." not in issue_rows[0]["Issue Description"]
+
+
+def test_issue_based_reverse_partner_suggestion_handles_incomplete_roster_data(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    issues = [
+        {
+            "participant_id": 149,
+            "issue_type": "missing_doubles_partner",
+            "issue_description": "Partner name required for Table Tennis 35+ (Men Double)",
+            "rule_code": "PARTNER_REQUIRED_DOUBLES",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "status": "open",
+            "sport_type": "Table Tennis 35+",
+            "sport_format": "Men Double",
+        },
+        {
+            "participant_id": 156,
+            "issue_type": "doubles_partner_unmatched",
+            "issue_description": (
+                "Long Chung listed Andrew Nguyen as their partner for Table Tennis 35+ "
+                "(Men Double), but Andrew Nguyen did not reciprocally list Long Chung."
+            ),
+            "rule_code": "PARTNER_RECIPROCAL_DOUBLES",
+            "rule_level": "TEAM",
+            "severity": "WARNING",
+            "status": "open",
+            "sport_type": "Table Tennis 35+",
+            "sport_format": "Men Double",
+        },
+    ]
+    participants_by_wp_id = {
+        "149": {
+            "ChMeetings ID": "43644",
+            "First Name": "Andrew",
+            "Last Name": "Nguyen",
+            "Approval_Status (WP)": "pending",
+        },
+        "156": {
+            "ChMeetings ID": "43644",
+            "First Name": "Long",
+            "Last Name": "Chung",
+            "Approval_Status (WP)": "pending",
+        },
+    }
+
+    reverse_lookup = exporter._build_issue_based_reverse_partner_suggestion_lookup(
+        issues,
+        participants_by_wp_id,
+    )
+
+    issue_rows = exporter._build_validation_issue_rows(
+        "TLC",
+        [issues[0]],
+        participants_by_wp_id,
+        reverse_lookup,
+    )
+
+    assert len(issue_rows) == 1
+    assert "perhaps Long Chung listed you as partner." in issue_rows[0]["Issue Description"]

@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "version": "2026.1.0",
+    "version": "2026.1.2",
     "collection": "SUMMER_2026",
     "event_date": "2026-07-18",
-    "last_updated": "2026-04-22T12:00:00",
+    "last_updated": "2026-05-09T14:00:00",
     "description": "Rules for Sports Fest 2026"
   },
   "rules": [
@@ -213,6 +213,32 @@
       "value": "2",
       "severity": "ERROR",
       "description": "Each participant may sign up for at most 2 competitive events (form-enforced; not checked in middleware)",
+      "collection": "SUMMER_2026"
+    },
+    {
+      "rule_id": 18,
+      "rule_code": "PARTNER_REQUIRED_DOUBLES",
+      "rule_level": "INDIVIDUAL",
+      "rule_type": "partner",
+      "category": "required",
+      "sport_event": "default",
+      "parameter": "Doubles",
+      "value": "true",
+      "severity": "ERROR",
+      "description": "Partner name is required for doubles racquet events",
+      "collection": "SUMMER_2026"
+    },
+    {
+      "rule_id": 19,
+      "rule_code": "PARTNER_RECIPROCAL_DOUBLES",
+      "rule_level": "TEAM",
+      "rule_type": "partner",
+      "category": "reciprocal",
+      "sport_event": "default",
+      "parameter": "Doubles",
+      "value": "true",
+      "severity": "WARNING",
+      "description": "Doubles partner selections should reciprocally match within the same church roster",
       "collection": "SUMMER_2026"
     }
   ]

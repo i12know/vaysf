@@ -182,6 +182,15 @@ To run validation without other sync operations:
 python main.py sync --type validation
 ```
 
+This command recalculates TEAM-level validation issues from the current
+WordPress participant/roster data. It does not pull fresh people from
+ChMeetings, does not change approvals, and does not create rosters. It is
+primarily used to refresh church-level roster warnings such as:
+
+- non-member quota violations
+- reciprocal doubles partner warnings
+- ambiguous doubles partner-name warnings
+
 ### Exporting Church Team Reports
 
 Generate Excel reports showing church teams, participants, and their registration/approval status:
@@ -220,6 +229,27 @@ The Excel reports contain:
 - Approval status
 - Any missing requirements or validation issues
 - Summary statistics for the church
+
+The generated workbook includes these operator-focused tabs:
+
+- `Summary`: church-level counts for participants, approvals, open individual `ERROR`s, open TEAM `ERROR`s, and warnings
+- `Contacts-Status`: participant directory plus open individual `ERROR` counts
+- `Roster`: roster rows with `Open_TEAM_Issue_Count (WP)` and `Open_TEAM_Issue_Desc (WP)`
+- `Validation-Issues`: one row per open WordPress validation issue, including both `INDIVIDUAL` and `TEAM` issues
+
+For doubles partner validation, the export intentionally reports a few
+different cases:
+
+- `missing_doubles_partner` (`INDIVIDUAL`, `ERROR`): the participant left the partner field blank
+- `doubles_partner_unmatched` (`TEAM`, `WARNING`): a named partner was not reciprocally matched for that same church and event
+- short-name ambiguity help: if someone typed a short partner name like `Janice`
+  and there is one likely same-event full-name match, the warning can suggest
+  `use full name, perhaps Janice Vu`
+- reverse partner hint on missing-partner rows: if a participant left the
+  partner field blank but one same-event player uniquely points back to them,
+  the `Validation-Issues` tab can append a hint such as `perhaps Dean Nguyen
+  listed you as partner`; this hint can be inferred from the current roster
+  rows and, when needed, from existing TEAM partner-warning rows
 
 #### Leveraging Church Export for Mass Resending Pastoral Approval Emails 
 ##### Dry run to see what would happen
@@ -584,6 +614,20 @@ Common validation issues include:
 - Gender mismatches (wrong gender for gender-specific sports)
 - Missing consent forms
 - Missing profile photos
+- Missing doubles partner names (`ERROR`)
+- Doubles partner reciprocity or name-matching warnings (`WARNING`)
+
+For doubles issues, use this interpretation:
+
+- `Partner name required ...` means the participant must fill in the partner
+  field on their own registration
+- `... did not reciprocally list ...` means both participants should review the
+  same doubles event and make sure they list each other
+- `... ambiguous; use full name ...` means the short partner name was not
+  precise enough; ask the participant to enter the full partner name
+- `perhaps <Full Name> listed you as partner` is an export-time hint derived
+  from the current church roster, intended to help church reps resolve blank
+  partner fields faster
 
 ### Pastor Approval Process
 

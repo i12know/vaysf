@@ -562,10 +562,11 @@ class SyncManager:
         )
 
     @staticmethod
-    def _team_issue_key(issue: Dict[str, Any]) -> tuple[str, str, str, str]:
+    def _team_issue_key(issue: Dict[str, Any]) -> tuple[str, str, str, str, str]:
         return (
             str(issue.get("issue_type", "")),
             str(issue.get("rule_code", "")),
+            str(issue.get("participant_id") or ""),
             str(issue.get("sport_type") or ""),
             str(issue.get("sport_format") or ""),
         )
@@ -605,6 +606,7 @@ class SyncManager:
     @staticmethod
     def _build_team_issue_update_payload(issue: Dict[str, Any]) -> Dict[str, Any]:
         return {
+            "participant_id": issue.get("participant_id"),
             "issue_type": issue["issue_type"],
             "issue_description": issue["issue_description"],
             "rule_code": issue.get("rule_code"),
@@ -687,6 +689,7 @@ class SyncManager:
 
                 update_payload = self._build_team_issue_update_payload(issue)
                 fields_to_compare = (
+                    "participant_id",
                     "issue_description",
                     "rule_code",
                     "rule_level",

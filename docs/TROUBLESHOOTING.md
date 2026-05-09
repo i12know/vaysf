@@ -225,6 +225,15 @@ almost certainly gone and the Team-group row is just stale membership data.
    ```bash
    python main.py sync --type validation
    ```
+6. If the church Excel export looks contradictory (for example, a missing-partner
+   `ERROR` and a newer reciprocal-partner `WARNING` seem out of sync), rerun the
+   normal reporting sequence so WordPress issues and the workbook are rebuilt
+   from the latest participant data:
+   ```bash
+   python main.py sync --type full
+   python main.py sync --type validation
+   python main.py export-church-teams
+   ```
 
 ## Email Delivery Issues
 

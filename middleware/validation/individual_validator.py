@@ -10,6 +10,7 @@ from loguru import logger
 from .models import Participant, RulesManager
 from config import (Config, SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, 
                    SPORT_UNSELECTED, DEFAULT_SPORT, RACQUET_SPORTS, RULE_LEVEL,
+                   FORMAT_MAPPINGS,
                    VALIDATION_SEVERITY, AGE_RESTRICTIONS, is_racquet_sport)
 
 class IndividualValidator:
@@ -49,6 +50,7 @@ class IndividualValidator:
         issues = []
         issues.extend(self._validate_age(participant))
         issues.extend(self._validate_gender(participant))
+        issues.extend(self._validate_doubles_partner(participant))
         issues.extend(self._validate_photo(participant))
         issues.extend(self._validate_consent(participant))
         
@@ -175,6 +177,49 @@ class IndividualValidator:
                         "sport": sport  # Add this field to include sport information
                     })
         
+        return issues
+
+    def _validate_doubles_partner(self, participant: Participant) -> List[Dict[str, str]]:
+        """Require partner names for racquet doubles selections."""
+        issues = []
+        rules = [
+            r for r in self.rules_manager.get_rules_by_type("partner")
+            if r.get("category") == "required" and str(r.get("value", "")).lower() == "true"
+        ]
+
+        if not rules:
+            return issues
+
+        doubles_selections = [
+            ("primary_sport", "primary_format", "primary_partner"),
+            ("secondary_sport", "secondary_format", "secondary_partner"),
+        ]
+
+        for sport_field, format_field, partner_field in doubles_selections:
+            sport = str(getattr(participant, sport_field, "") or "").strip()
+            if not sport or sport == SPORT_UNSELECTED or not is_racquet_sport(sport):
+                continue
+
+            format_value = str(getattr(participant, format_field, "") or "").strip()
+            sport_format, _ = FORMAT_MAPPINGS.get(format_value, (None, None))
+            if sport_format != SPORT_FORMAT["DOUBLES"]:
+                continue
+
+            partner_name = str(getattr(participant, partner_field, "") or "").strip()
+            if partner_name:
+                continue
+
+            rule = rules[0]
+            issues.append({
+                "type": "missing_doubles_partner",
+                "description": f"Partner name required for {sport} ({format_value})",
+                "rule_code": rule.get("rule_code"),
+                "rule_level": rule.get("rule_level", RULE_LEVEL["INDIVIDUAL"]),
+                "severity": rule.get("severity", VALIDATION_SEVERITY["ERROR"]),
+                "sport": sport,
+                "sport_format": format_value,
+            })
+
         return issues
     
     def _validate_photo(self, participant: Participant) -> List[Dict[str, str]]:

@@ -16,6 +16,14 @@
   - Auto-checks checklist option `199609` only for matches at or above the 51% threshold, while preserving any other existing checklist boxes already selected in ChMeetings
   - Skips participants whose consent checkbox is already checked, collapses duplicate consent rows per participant by highest score and latest submission date, and writes `middleware/data/consent_check_audit.xlsx`
   - Added mock-test coverage for threshold behavior, guardian-signed rows, duplicate collapse, already-checked skips, dry-run mode, unmatched rows, and API failure handling
+- Implemented doubles partner validation for the 2026 ruleset
+  - Added `PARTNER_REQUIRED_DOUBLES` to `middleware/validation/summer_2026.json`
+  - `IndividualValidator` now raises an `ERROR` when a racquet doubles selection is missing its partner name
+  - Added `PARTNER_RECIPROCAL_DOUBLES` as a `TEAM`-level `WARNING` when a doubles partner selection is not reciprocally matched within the same church roster
+  - Reciprocal partner warnings now suggest likely full-name matches for short-name entries when there is a unique same-event candidate
+  - Church-team Excel exports now enrich `missing_doubles_partner` rows with reverse partner suggestions when one same-event participant uniquely points back to the missing-partner player
+  - Reverse partner suggestions in church-team Excel exports now also learn from existing TEAM partner-warning rows, which helps when roster-side partner data is incomplete
+  - Participant issue sync now keys individual validation issues by `issue_type + rule_code + sport_type + sport_format`, so distinct partner issues for multiple doubles events are preserved in WordPress
 
 ### Documentation
 - Added `EXPORT_DIR` to `middleware/.env.template` with the shared Google Drive example used for church-team report exports

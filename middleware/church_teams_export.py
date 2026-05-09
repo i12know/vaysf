@@ -6,6 +6,7 @@ from loguru import logger
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 import re
+import unicodedata
 
 from config import (
     Config,
@@ -159,14 +160,272 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             ChurchTeamsExporter._issue_format_type(issue).casefold(),
         )
 
+    @staticmethod
+    def _normalized_gender(gender: Optional[str]) -> str:
+        return str(gender or "").strip().casefold()
+
+    @staticmethod
+    def _normalized_name(name: Optional[str]) -> str:
+        normalized = unicodedata.normalize("NFKD", str(name or "").strip())
+        without_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        return " ".join(without_marks.casefold().split())
+
+    @staticmethod
+    def _token_matches(query_token: str, candidate_token: str) -> bool:
+        if query_token == candidate_token:
+            return True
+        return len(query_token) >= 2 and candidate_token.startswith(query_token)
+
+    @classmethod
+    def _is_likely_name_match(cls, query_name_key: str, candidate_name_key: str) -> bool:
+        query_tokens = [token for token in str(query_name_key or "").split() if token]
+        candidate_tokens = [token for token in str(candidate_name_key or "").split() if token]
+        if not query_tokens or not candidate_tokens:
+            return False
+
+        return all(
+            any(cls._token_matches(query_token, candidate_token) for candidate_token in candidate_tokens)
+            for query_token in query_tokens
+        )
+
+    @classmethod
+    def _reverse_partner_suggestion_key(
+        cls,
+        participant_id: Any,
+        sport_type: Optional[str],
+        sport_gender: Optional[str],
+        sport_format: Optional[str],
+    ) -> Tuple[str, str, str, str]:
+        return (
+            str(participant_id or ""),
+            cls._normalized_sport_type(sport_type),
+            cls._normalized_gender(sport_gender),
+            str(sport_format or "").strip().casefold(),
+        )
+
+    def _build_reverse_partner_suggestion_lookup(
+        self,
+        roster_rows: List[Dict[str, Any]],
+    ) -> Dict[Tuple[str, str, str, str], List[str]]:
+        """Infer reverse partner-name suggestions from same-event roster rows."""
+        grouped_rows: Dict[Tuple[str, str, str, str], List[Dict[str, Any]]] = {}
+
+        for row in roster_rows:
+            participant_id = row.get("Participant ID (WP)")
+            sport_type = row.get("sport_type")
+            sport_gender = row.get("sport_gender")
+            sport_format = row.get("sport_format")
+            if participant_id in (None, "", 0, "0") or not sport_type or not sport_format:
+                continue
+
+            full_name = " ".join(
+                part
+                for part in (
+                    str(row.get("First Name") or "").strip(),
+                    str(row.get("Last Name") or "").strip(),
+                )
+                if part
+            ).strip()
+            if not full_name:
+                continue
+
+            event_key = (
+                str(row.get("Church Team") or "").strip().upper(),
+                self._normalized_sport_type(sport_type),
+                self._normalized_gender(sport_gender),
+                str(sport_format).strip().casefold(),
+            )
+            grouped_rows.setdefault(event_key, []).append({
+                "participant_id": str(participant_id),
+                "participant_name": full_name,
+                "participant_name_key": self._normalized_name(full_name),
+                "partner_name": str(row.get("partner_name") or "").strip(),
+            })
+
+        suggestions_by_key: Dict[Tuple[str, str, str, str], set[str]] = {}
+        for (_, sport_type_key, sport_gender_key, sport_format_key), event_rows in grouped_rows.items():
+            for claimant in event_rows:
+                partner_name = claimant["partner_name"]
+                if not partner_name:
+                    continue
+
+                partner_name_key = self._normalized_name(partner_name)
+                matching_targets = [
+                    candidate
+                    for candidate in event_rows
+                    if candidate["participant_id"] != claimant["participant_id"]
+                    and self._is_likely_name_match(
+                        partner_name_key,
+                        candidate["participant_name_key"],
+                    )
+                ]
+
+                unique_targets = {
+                    candidate["participant_id"]: candidate
+                    for candidate in matching_targets
+                }
+                if len(unique_targets) != 1:
+                    continue
+
+                target = next(iter(unique_targets.values()))
+                suggestion_key = self._reverse_partner_suggestion_key(
+                    target["participant_id"],
+                    sport_type_key,
+                    sport_gender_key,
+                    sport_format_key,
+                )
+                suggestions_by_key.setdefault(suggestion_key, set()).add(claimant["participant_name"])
+
+        return {
+            key: sorted(names)
+            for key, names in suggestions_by_key.items()
+        }
+
+    @staticmethod
+    def _participant_name_from_lookup(
+        participant_id: Any,
+        participants_by_wp_id: Dict[str, Dict[str, Any]],
+        fallback_first_name: Optional[str] = None,
+        fallback_last_name: Optional[str] = None,
+    ) -> str:
+        participant_key = str(participant_id) if participant_id not in (None, "", 0, "0") else ""
+        participant_info = participants_by_wp_id.get(participant_key, {})
+        first_name = str(
+            participant_info.get("First Name")
+            or fallback_first_name
+            or ""
+        ).strip()
+        last_name = str(
+            participant_info.get("Last Name")
+            or fallback_last_name
+            or ""
+        ).strip()
+        return " ".join(part for part in (first_name, last_name) if part).strip()
+
+    @staticmethod
+    def _parse_partner_issue_names(issue_description: str) -> Tuple[str, str]:
+        match = re.match(
+            r"^(?P<claimant>.+?) listed (?P<partner>.+?) as their partner for ",
+            str(issue_description or "").strip(),
+        )
+        if not match:
+            return "", ""
+        return match.group("claimant").strip(), match.group("partner").strip()
+
+    def _build_issue_based_reverse_partner_suggestion_lookup(
+        self,
+        issues: List[Dict[str, Any]],
+        participants_by_wp_id: Dict[str, Dict[str, Any]],
+    ) -> Dict[Tuple[str, str, str, str], List[str]]:
+        """Infer reverse partner suggestions from TEAM unmatched-partner warnings."""
+        missing_targets_by_event: Dict[Tuple[str, str, str], List[Dict[str, str]]] = {}
+
+        for issue in issues:
+            if issue.get("issue_type") != "missing_doubles_partner":
+                continue
+
+            participant_id = issue.get("participant_id")
+            if participant_id in (None, "", 0, "0"):
+                continue
+
+            participant_name = self._participant_name_from_lookup(
+                participant_id,
+                participants_by_wp_id,
+                issue.get("first_name"),
+                issue.get("last_name"),
+            )
+            if not participant_name:
+                continue
+
+            event_key = (
+                self._normalized_sport_type(issue.get("sport_type")),
+                self._normalized_gender(self._issue_gender(issue)),
+                self._issue_format_type(issue).casefold(),
+            )
+            missing_targets_by_event.setdefault(event_key, []).append({
+                "participant_id": str(participant_id),
+                "participant_name": participant_name,
+                "participant_name_key": self._normalized_name(participant_name),
+            })
+
+        suggestions_by_key: Dict[Tuple[str, str, str, str], set[str]] = {}
+        for issue in issues:
+            if issue.get("issue_type") != "doubles_partner_unmatched":
+                continue
+
+            event_key = (
+                self._normalized_sport_type(issue.get("sport_type")),
+                self._normalized_gender(self._issue_gender(issue)),
+                self._issue_format_type(issue).casefold(),
+            )
+            event_targets = missing_targets_by_event.get(event_key, [])
+            if not event_targets:
+                continue
+
+            parsed_claimant_name, parsed_partner_name = self._parse_partner_issue_names(
+                str(issue.get("issue_description") or "")
+            )
+            if not parsed_partner_name:
+                continue
+
+            claimant_name = self._participant_name_from_lookup(
+                issue.get("participant_id"),
+                participants_by_wp_id,
+            ) or parsed_claimant_name
+            if not claimant_name:
+                continue
+
+            partner_name_key = self._normalized_name(parsed_partner_name)
+            matching_targets = [
+                target
+                for target in event_targets
+                if self._is_likely_name_match(partner_name_key, target["participant_name_key"])
+            ]
+            unique_targets = {
+                target["participant_id"]: target
+                for target in matching_targets
+            }
+            if len(unique_targets) != 1:
+                continue
+
+            target = next(iter(unique_targets.values()))
+            suggestion_key = self._reverse_partner_suggestion_key(
+                target["participant_id"],
+                issue.get("sport_type"),
+                self._issue_gender(issue),
+                self._issue_format_type(issue),
+            )
+            suggestions_by_key.setdefault(suggestion_key, set()).add(claimant_name)
+
+        return {
+            key: sorted(names)
+            for key, names in suggestions_by_key.items()
+        }
+
+    @staticmethod
+    def _merge_reverse_partner_suggestions(
+        *lookups: Dict[Tuple[str, str, str, str], List[str]],
+    ) -> Dict[Tuple[str, str, str, str], List[str]]:
+        merged: Dict[Tuple[str, str, str, str], set[str]] = {}
+        for lookup in lookups:
+            for key, names in lookup.items():
+                merged.setdefault(key, set()).update(names)
+
+        return {
+            key: sorted(names)
+            for key, names in merged.items()
+        }
+
     def _build_validation_issue_rows(
         self,
         church_code: str,
         issues: List[Dict[str, Any]],
         participants_by_wp_id: Dict[str, Dict[str, Any]],
+        reverse_partner_suggestions: Optional[Dict[Tuple[str, str, str, str], List[str]]] = None,
     ) -> List[Dict[str, Any]]:
         """Build export rows for the Validation-Issues tab."""
         rows: List[Dict[str, Any]] = []
+        reverse_partner_suggestions = reverse_partner_suggestions or {}
         for issue in issues:
             participant_id = issue.get("participant_id")
             participant_key = str(participant_id) if participant_id not in (None, "", 0, "0") else ""
@@ -174,6 +433,29 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             first_name = str(issue.get("first_name") or participant_info.get("First Name") or "").strip()
             last_name = str(issue.get("last_name") or participant_info.get("Last Name") or "").strip()
             participant_name = " ".join(part for part in (first_name, last_name) if part).strip()
+            issue_description = issue.get("issue_description", "")
+
+            if (
+                issue.get("issue_type") == "missing_doubles_partner"
+                and participant_key
+            ):
+                suggestion_key = self._reverse_partner_suggestion_key(
+                    participant_key,
+                    issue.get("sport_type"),
+                    self._issue_gender(issue),
+                    self._issue_format_type(issue),
+                )
+                reverse_claimants = reverse_partner_suggestions.get(suggestion_key, [])
+                if len(reverse_claimants) == 1:
+                    issue_description = (
+                        f"{issue_description}; perhaps {reverse_claimants[0]} listed you as partner."
+                    )
+                elif len(reverse_claimants) > 1:
+                    suggestion_list = ", ".join(reverse_claimants)
+                    issue_description = (
+                        f"{issue_description}; ambiguous reverse partner claims: "
+                        f"{suggestion_list}. Use full name."
+                    )
 
             rows.append({
                 "Church Team": church_code,
@@ -188,7 +470,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "Approval_Status (WP)": participant_info.get("Approval_Status (WP)", ""),
                 "sport_type": issue.get("sport_type"),
                 "sport_format": issue.get("sport_format"),
-                "Issue Description": issue.get("issue_description", ""),
+                "Issue Description": issue_description,
             })
 
         return rows
@@ -487,10 +769,19 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 }
                 church_contacts_rows.append(contact_row)
 
+            reverse_partner_suggestions = self._merge_reverse_partner_suggestions(
+                self._build_reverse_partner_suggestion_lookup(church_rosters_rows),
+                self._build_issue_based_reverse_partner_suggestion_lookup(
+                    open_validation_issues,
+                    participants_by_wp_id,
+                ),
+            )
+
             church_validation_rows = self._build_validation_issue_rows(
                 church_code_iter,
                 open_validation_issues,
                 participants_by_wp_id,
+                reverse_partner_suggestions,
             )
 
             individual_open_errors = [

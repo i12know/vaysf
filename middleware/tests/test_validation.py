@@ -30,6 +30,7 @@ def test_rules_manager_loads_rules(rules_manager):
     assert any(r.get("rule_type") == "gender" for r in rules_manager.rules), "Should have gender rules"
     assert any(r.get("rule_type") == "photo" for r in rules_manager.rules), "Should have photo rules"
     assert any(r.get("rule_type") == "consent" for r in rules_manager.rules), "Should have consent rules"
+    assert any(r.get("rule_type") == "partner" for r in rules_manager.rules), "Should have partner rules"
 
 def test_participant_model():
     """Test Participant Pydantic model."""
@@ -458,6 +459,77 @@ def test_missing_consent_stays_error_until_18th_birthday(validator):
     assert consent_issue["severity"] == VALIDATION_SEVERITY["ERROR"]
 
 
+def test_doubles_partner_required_for_primary_selection(validator):
+    """Racquet doubles entries must include a partner name."""
+    participant = {
+        "chmeetings_id": "primary_doubles_no_partner",
+        "first_name": "Primary",
+        "last_name": "Doubles",
+        "gender": "Male",
+        "birthdate": "2000-01-01",
+        "primary_sport": SPORT_TYPE["BADMINTON"],
+        "primary_format": "Men Double",
+        "primary_partner": "   ",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert not is_valid, "Missing partner should block doubles validation"
+    partner_issue = next(issue for issue in issues if issue["type"] == "missing_doubles_partner")
+    assert partner_issue["rule_code"] == "PARTNER_REQUIRED_DOUBLES"
+    assert partner_issue["rule_level"] == "INDIVIDUAL"
+    assert partner_issue["severity"] == VALIDATION_SEVERITY["ERROR"]
+    assert partner_issue["sport"] == SPORT_TYPE["BADMINTON"]
+    assert partner_issue["sport_format"] == "Men Double"
+
+
+def test_doubles_partner_required_for_secondary_selection(validator):
+    """Secondary doubles selections should be validated independently."""
+    participant = {
+        "chmeetings_id": "secondary_doubles_no_partner",
+        "first_name": "Secondary",
+        "last_name": "Doubles",
+        "gender": "Female",
+        "birthdate": "2000-01-01",
+        "primary_sport": SPORT_TYPE["BASKETBALL"],
+        "secondary_sport": SPORT_TYPE["PICKLEBALL"],
+        "secondary_format": "Mixed Double",
+        "secondary_partner": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert not is_valid, "Missing partner should also fail secondary doubles entries"
+    partner_issue = next(issue for issue in issues if issue["type"] == "missing_doubles_partner")
+    assert partner_issue["sport"] == SPORT_TYPE["PICKLEBALL"]
+    assert partner_issue["sport_format"] == "Mixed Double"
+
+
+def test_doubles_partner_present_passes_validation(validator):
+    """Providing the partner name should satisfy the doubles partner rule."""
+    participant = {
+        "chmeetings_id": "doubles_with_partner",
+        "first_name": "Ready",
+        "last_name": "Player",
+        "gender": "Female",
+        "birthdate": "2000-01-01",
+        "primary_sport": SPORT_TYPE["TENNIS"],
+        "primary_format": "Mixed Double",
+        "primary_partner": "Alex Kim",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert is_valid, f"Doubles entries with a partner should pass, got: {issues}"
+    assert not any(issue["type"] == "missing_doubles_partner" for issue in issues)
+
+
 # ---------------------------------------------------------------------------
 # TeamValidator tests
 # ---------------------------------------------------------------------------
@@ -591,21 +663,38 @@ def test_team_validator_doubles_limit_is_per_pair(team_validator):
     participants = [
         {
             **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "participant_id": 1,
             "first_name": "Andy",
             "last_name": "Nguyen",
             "primary_partner": "Brian Tran",
         },
         {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double", is_member=True),
+            "participant_id": 2,
+            "first_name": "Brian",
+            "last_name": "Tran",
+            "primary_partner": "Andy Nguyen",
+        },
+        {
             **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "participant_id": 3,
             "first_name": "Chris",
             "last_name": "Pham",
             "primary_partner": "David Le",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double", is_member=True),
+            "participant_id": 4,
+            "first_name": "David",
+            "last_name": "Le",
+            "primary_partner": "Chris Pham",
         },
     ]
 
     issues = team_validator.validate_church(1, participants)
 
-    assert issues == [], "Separate pairs with one non-member each should not be grouped together"
+    assert not any(issue["issue_type"] == "doubles_non_member_limit" for issue in issues), issues
+    assert not any(issue["issue_type"] == "doubles_partner_unmatched" for issue in issues), issues
 
 
 def test_team_validator_doubles_limit_flags_two_non_members_in_same_pair(team_validator):
@@ -613,12 +702,14 @@ def test_team_validator_doubles_limit_flags_two_non_members_in_same_pair(team_va
     participants = [
         {
             **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "participant_id": 1,
             "first_name": "Andy",
             "last_name": "Nguyen",
             "primary_partner": "Brian Tran",
         },
         {
             **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "participant_id": 2,
             "first_name": "Brian",
             "last_name": "Tran",
             "primary_partner": "Andy Nguyen",
@@ -647,3 +738,144 @@ def test_team_validator_issues_include_rule_metadata(team_validator):
     assert issue["rule_level"] == "TEAM"
     assert issue["severity"] == "ERROR"
     assert issue["sport_type"] == SPORT_TYPE["BASKETBALL"]
+
+
+def test_team_validator_reciprocal_doubles_partner_match_passes(team_validator):
+    """Matching A<->B doubles partner selections should not warn."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "participant_id": 1,
+            "first_name": "Andy",
+            "last_name": "Nguyen",
+            "primary_partner": "Brian Tran",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "participant_id": 2,
+            "first_name": "Brian",
+            "last_name": "Tran",
+            "primary_partner": "Andy Nguyen",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert not any(issue["issue_type"] == "doubles_partner_unmatched" for issue in issues), issues
+
+
+def test_team_validator_reciprocal_doubles_partner_mismatch_warns(team_validator):
+    """A named partner who does not reciprocate should raise a WARNING TEAM issue."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "participant_id": 1,
+            "first_name": "Andy",
+            "last_name": "Nguyen",
+            "primary_partner": "Brian Tran",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "participant_id": 2,
+            "first_name": "Brian",
+            "last_name": "Tran",
+            "primary_partner": "Chris Pham",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    partner_issue = next(issue for issue in issues if issue["issue_type"] == "doubles_partner_unmatched")
+    assert partner_issue["participant_id"] == 1
+    assert partner_issue["rule_code"] == "PARTNER_RECIPROCAL_DOUBLES"
+    assert partner_issue["rule_level"] == "TEAM"
+    assert partner_issue["severity"] == VALIDATION_SEVERITY["WARNING"]
+    assert "did not reciprocally list" in partner_issue["issue_description"]
+
+
+def test_team_validator_reciprocal_match_can_cross_primary_and_secondary_slots(team_validator):
+    """Reciprocal partner matching should work even if the event lives in different slots."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Mixed Double"),
+            "participant_id": 1,
+            "first_name": "Amy",
+            "last_name": "Le",
+            "primary_partner": "Ben Tran",
+        },
+        {
+            **_make_participant(secondary_sport=SPORT_TYPE["BADMINTON"], secondary_format="Mixed Double"),
+            "participant_id": 2,
+            "first_name": "Ben",
+            "last_name": "Tran",
+            "secondary_partner": "Amy Le",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert not any(issue["issue_type"] == "doubles_partner_unmatched" for issue in issues), issues
+
+
+def test_team_validator_partial_partner_name_suggests_full_name(team_validator):
+    """A unique short-name match should stay a WARNING with a suggested full name."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["TENNIS"], primary_format="Mixed Double"),
+            "participant_id": 1,
+            "first_name": "Dean",
+            "last_name": "Nguyen",
+            "primary_partner": "Janice",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["TENNIS"], primary_format="Mixed Double"),
+            "participant_id": 2,
+            "first_name": "Janice",
+            "last_name": "Vu",
+            "primary_partner": "Dean Nguyen",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    partner_issues = [issue for issue in issues if issue["issue_type"] == "doubles_partner_unmatched"]
+    assert len(partner_issues) == 1
+    assert partner_issues[0]["participant_id"] == 1
+    assert partner_issues[0]["severity"] == VALIDATION_SEVERITY["WARNING"]
+    assert "ambiguous; use full name" in partner_issues[0]["issue_description"]
+    assert "perhaps Janice Vu" in partner_issues[0]["issue_description"]
+
+
+def test_team_validator_partial_partner_name_lists_possible_matches(team_validator):
+    """Multiple short-name matches should list the possible full-name candidates."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["PICKLEBALL"], primary_format="Mixed Double"),
+            "participant_id": 1,
+            "first_name": "Dean",
+            "last_name": "Nguyen",
+            "primary_partner": "Janice",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["PICKLEBALL"], primary_format="Mixed Double"),
+            "participant_id": 2,
+            "first_name": "Janice",
+            "last_name": "Vu",
+            "primary_partner": "",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["PICKLEBALL"], primary_format="Mixed Double"),
+            "participant_id": 3,
+            "first_name": "Janice",
+            "last_name": "Nguyen",
+            "primary_partner": "",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    partner_issue = next(issue for issue in issues if issue["issue_type"] == "doubles_partner_unmatched")
+    assert partner_issue["participant_id"] == 1
+    assert "Possible matches:" in partner_issue["issue_description"]
+    assert "Janice Vu" in partner_issue["issue_description"]
+    assert "Janice Nguyen" in partner_issue["issue_description"]

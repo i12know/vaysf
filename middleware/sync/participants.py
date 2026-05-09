@@ -43,6 +43,21 @@ class ParticipantSyncer:
         # Initialize the IndividualValidator with the event collection
         self.validator = IndividualValidator(collection="SUMMER_2026")
 
+    @staticmethod
+    def _validation_issue_key(
+        issue_type: str,
+        rule_code: str = "",
+        sport_type: Optional[str] = None,
+        sport_format: Optional[str] = None,
+    ) -> tuple[str, str, str, str]:
+        """Build a stable identity for one validation issue row."""
+        return (
+            str(issue_type or ""),
+            str(rule_code or ""),
+            str(sport_type or ""),
+            str(sport_format or ""),
+        )
+
 # In sync/participants.py, inside the ParticipantSyncer class
 
     def sync_participants(self, chm_id_to_sync: Optional[str] = None) -> bool:
@@ -809,8 +824,12 @@ class ParticipantSyncer:
         # Create a lookup dictionary of existing issues
         existing_lookup = {}
         for issue in existing_issues:
-            # Create a composite key using issue_type and rule_code (if available)
-            key = f"{issue['issue_type']}:{issue.get('rule_code', '')}"
+            key = self._validation_issue_key(
+                issue.get("issue_type", ""),
+                issue.get("rule_code", ""),
+                issue.get("sport_type"),
+                issue.get("sport_format"),
+            )
             existing_lookup[key] = issue
         
         # Set of issue keys we're processing now
@@ -820,7 +839,12 @@ class ParticipantSyncer:
         for issue in issues:
             issue_type = issue["type"]
             rule_code = issue.get("rule_code", "")
-            key = f"{issue_type}:{rule_code}"
+            key = self._validation_issue_key(
+                issue_type,
+                rule_code,
+                issue.get("sport"),
+                issue.get("sport_format"),
+            )
             current_issue_keys.add(key)
             
             # Extract sport_type from the issue dictionary
