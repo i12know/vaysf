@@ -10,6 +10,12 @@
 - Added `python main.py audit-team-groups [--church-code ABC]` to audit `Team XXX` memberships for orphaned ChMeetings IDs
   - Flags rows where the Team-group membership still exists but `GET /people/{id}` returns `404`
   - Writes `middleware/data/team_group_orphan_audit.xlsx` with ChMeetings membership details, lookup status, and any matching WordPress participants
+- Implemented [#76](https://github.com/i12know/vaysf/issues/76): added `python main.py check-consent --file "...xlsx" [--dry-run] [--church-code ABC]` to auto-check the consent checklist box from a ChMeetings form export
+  - Reads the manual consent-form xlsx export, validates the expected column set, and matches rows against synced participants using weighted birthdate/phone/email/name scoring
+  - Uses the tuned `33/27/24/16` weighting so `birthdate + phone`, `birthdate + email`, and `phone + email` qualify while `birthdate + name` still stays below the 51% auto-check threshold
+  - Auto-checks checklist option `199609` only for matches at or above the 51% threshold, while preserving any other existing checklist boxes already selected in ChMeetings
+  - Skips participants whose consent checkbox is already checked, collapses duplicate consent rows per participant by highest score and latest submission date, and writes `middleware/data/consent_check_audit.xlsx`
+  - Added mock-test coverage for threshold behavior, guardian-signed rows, duplicate collapse, already-checked skips, dry-run mode, unmatched rows, and API failure handling
 
 ### Documentation
 - Added `EXPORT_DIR` to `middleware/.env.template` with the shared Google Drive example used for church-team report exports

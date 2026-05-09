@@ -197,7 +197,8 @@ class ChMeetingsConnector:
             person_id: The person ID
 
         Returns:
-            Person record or None if not found
+            Person record or None. Inspect ``last_get_person_status`` to
+            distinguish ``not_found`` from other failures.
         """
         if not self.use_api:
             logger.error("API usage is disabled")
@@ -207,9 +208,9 @@ class ChMeetingsConnector:
             response = self._api_request("GET", f"api/v1/people/{person_id}")
             if response.status_code == 404:
                 self.last_get_person_status = "not_found"
-                logger.error(
-                    f"Failed to get person {person_id}: "
-                    f"404 Client Error: Not Found for url: {response.url}"
+                logger.debug(
+                    f"Person {person_id} not found in ChMeetings "
+                    f"(GET {response.url} returned 404)."
                 )
                 return None
             response.raise_for_status()

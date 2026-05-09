@@ -148,6 +148,26 @@ def parse_args() -> argparse.Namespace:
     reset_parser.add_argument("--probe", action="store_true",
                               help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id)")
 
+    # Check-consent command
+    check_consent_parser = subparsers.add_parser(
+        "check-consent",
+        help="Match consent-form export rows to participants and auto-check the consent checklist box",
+    )
+    check_consent_parser.add_argument(
+        "--file",
+        required=True,
+        help="Path to the consent-form export xlsx file",
+    )
+    check_consent_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview matches and write the audit xlsx without updating ChMeetings",
+    )
+    check_consent_parser.add_argument(
+        "--church-code",
+        help="Limit the run to a single church code such as RPC",
+    )
+
     return parser.parse_args()
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
@@ -660,6 +680,21 @@ def main() -> None:
                     reset_only=args.reset_only,
                     person_id=args.person_id,
                 )
+    elif args.command == "check-consent":
+        if not os.path.exists(args.file):
+            logger.error(f"Consent export file not found at {args.file}")
+            success = False
+        else:
+            from sync.consent_checker import ConsentChecker
+
+            with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+                checker = ConsentChecker(chm_conn, wp_conn)
+                summary = checker.run(
+                    args.file,
+                    dry_run=args.dry_run,
+                    church_code=args.church_code,
+                )
+                success = summary["api_error"] == 0
     else:
         logger.error(f"Unknown command: {args.command}")
         success = False
