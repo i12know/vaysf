@@ -24,10 +24,17 @@
   - Church-team Excel exports now enrich `missing_doubles_partner` rows with reverse partner suggestions when one same-event participant uniquely points back to the missing-partner player
   - Reverse partner suggestions in church-team Excel exports now also learn from existing TEAM partner-warning rows, which helps when roster-side partner data is incomplete
   - Participant issue sync now keys individual validation issues by `issue_type + rule_code + sport_type + sport_format`, so distinct partner issues for multiple doubles events are preserved in WordPress
+  - TEAM and CHURCH doubles matching now share a deterministic name matcher that safely resolves live formatting variants such as parenthetical aliases, reordered tokens, compact spacing, hyphen/punctuation noise, and unique initial-based abbreviations
+  - Partner auto-resolution remains conservative: phonetic algorithms such as `soundex` are not used for quota counting, so uncertain names remain `TEAM` warnings until a unique deterministic match exists
 - Added 2026 co-ed soccer TEAM validation rules
   - `Soccer - Coed Exhibition` now requires at least 4 participants per church team
   - `Soccer - Coed Exhibition` now allows 0 non-members
+  - Added `MAX_NON_MEMBERS_SINGLES` so non-members cannot participate in racquet singles events
   - Added JSON-driven minimum playable roster rules for Basketball (5), Men's Volleyball (6), Women's Volleyball (6), and Bible Challenge (3)
+  - Implemented `ChurchValidator` to enforce CHURCH-level `entry_limit` rules from `middleware/validation/summer_2026.json` for team-sport caps and racquet-event quotas, including disallowed formats such as Badminton singles, Pickleball singles, Tennis men's/women's doubles, and Table Tennis 35+ singles
+  - `validate_data()` now syncs CHURCH-level validation issues idempotently alongside TEAM issues
+  - Added church-wide roster fetching for validation so CHURCH team-count caps can see explicit `team_order` entries such as Team A / Team B
+  - Church-level doubles quotas now count only resolved reciprocal pairs, so one-sided or ambiguous partner claims remain TEAM issues until the pairing is corrected
   - `TeamValidator` now reads sport-specific TEAM non-member limits from `middleware/validation/summer_2026.json`
   - `TeamValidator` now enforces JSON-driven minimum team sizes for team/exhibition events, including `other_events` selections such as soccer
 

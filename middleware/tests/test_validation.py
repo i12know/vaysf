@@ -6,7 +6,9 @@ import json
 import pytest
 from datetime import datetime
 from validation.models import Participant, RulesManager
+from validation.church_validator import ChurchValidator
 from validation.individual_validator import IndividualValidator
+from validation.name_matcher import likely_name_match, normalized_name
 from validation.team_validator import TeamValidator
 from loguru import logger
 from config import Config, CHM_FIELDS
@@ -540,18 +542,62 @@ def team_validator():
     return TeamValidator(collection="SUMMER_2026")
 
 
+@pytest.fixture
+def church_validator():
+    return ChurchValidator(collection="SUMMER_2026")
+
+
 def _make_participant(church_id=1, is_member=False,
                       primary_sport="", primary_format="",
-                      secondary_sport="", secondary_format="", other_events=""):
+                      secondary_sport="", secondary_format="", other_events="",
+                      primary_partner="", secondary_partner="",
+                      first_name="Test", last_name="Player", participant_id=None):
     return {
         "church_id": church_id,
+        "participant_id": participant_id,
         "is_church_member": is_member,
+        "first_name": first_name,
+        "last_name": last_name,
         "primary_sport": primary_sport,
         "primary_format": primary_format,
+        "primary_partner": primary_partner,
         "secondary_sport": secondary_sport,
         "secondary_format": secondary_format,
+        "secondary_partner": secondary_partner,
         "other_events": other_events,
     }
+
+
+def test_likely_name_match_handles_parenthetical_alias_and_token_order():
+    assert likely_name_match(
+        normalized_name("Gao Shan (Gary)"),
+        normalized_name("Shan Gao"),
+    )
+
+
+def test_likely_name_match_handles_collapsed_spacing_and_punctuation():
+    assert likely_name_match(
+        normalized_name("Vitam Van (Midway City Church member)"),
+        normalized_name("Vi-Tam Van"),
+    )
+    assert likely_name_match(
+        normalized_name("Minh Thu Bui"),
+        normalized_name("Minhthu Bui"),
+    )
+
+
+def test_likely_name_match_handles_unique_initial_abbreviation():
+    assert likely_name_match(
+        normalized_name("Jamie S"),
+        normalized_name("Jamie Sauveur"),
+    )
+
+
+def test_likely_name_match_remains_conservative_for_non_equivalent_names():
+    assert not likely_name_match(
+        normalized_name("Thanh Xuan"),
+        normalized_name("Dang Thanh"),
+    )
 
 
 def test_team_validator_under_team_limit(team_validator):
@@ -705,6 +751,40 @@ def test_team_validator_soccer_disallows_non_members(team_validator):
     assert non_member_issue["severity"] == VALIDATION_SEVERITY["ERROR"]
     assert non_member_issue["sport_type"] == "Soccer - Coed Exhibition"
     assert "exceeding limit of 0" in non_member_issue["issue_description"]
+
+
+def test_team_validator_singles_disallows_non_members(team_validator):
+    """Non-members should not be allowed in racquet singles events."""
+    participants = [
+        _make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Single"),
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue["issue_type"] == "singles_non_member_limit"
+    assert issue["rule_code"] == "MAX_NON_MEMBERS_SINGLES"
+    assert issue["rule_level"] == "TEAM"
+    assert issue["severity"] == VALIDATION_SEVERITY["ERROR"]
+    assert issue["sport_type"] == SPORT_TYPE["BADMINTON"]
+    assert issue["sport_format"] == "Men Single"
+    assert "exceeding limit of 0" in issue["issue_description"]
+
+
+def test_team_validator_singles_members_are_allowed(team_validator):
+    """Church members in singles should not trip the non-member restriction."""
+    participants = [
+        _make_participant(
+            primary_sport=SPORT_TYPE["TABLE_TENNIS_35"],
+            primary_format="Women Single",
+            is_member=True,
+        ),
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert not any(issue["issue_type"] == "singles_non_member_limit" for issue in issues), issues
 
 
 def test_team_validator_under_doubles_limit(team_validator):
@@ -971,3 +1051,443 @@ def test_team_validator_partial_partner_name_lists_possible_matches(team_validat
     assert "Possible matches:" in partner_issue["issue_description"]
     assert "Janice Vu" in partner_issue["issue_description"]
     assert "Janice Nguyen" in partner_issue["issue_description"]
+
+
+def test_team_validator_parenthetical_and_reordered_partner_name_resolves_match(team_validator):
+    """Deterministic cleanup should resolve parenthetical aliases and swapped name order."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "participant_id": 1,
+            "first_name": "James",
+            "last_name": "Nguyen",
+            "primary_partner": "Gao Shan (Gary)",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Men Double"),
+            "participant_id": 2,
+            "first_name": "Shan",
+            "last_name": "Gao",
+            "primary_partner": "James Nguyen",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert not any(issue["issue_type"] == "doubles_partner_unmatched" for issue in issues), issues
+
+
+def test_team_validator_compact_spacing_reduces_to_one_warning(team_validator):
+    """A strong full-name match should suppress the full-name side but keep the short-name side as a warning."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Women Double"),
+            "participant_id": 1,
+            "first_name": "Truc Nhi",
+            "last_name": "Nguyen",
+            "primary_partner": "Minh Thu Bui",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Women Double"),
+            "participant_id": 2,
+            "first_name": "Minhthu",
+            "last_name": "Bui",
+            "primary_partner": "Nhi Nguyen",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    partner_issues = [issue for issue in issues if issue["issue_type"] == "doubles_partner_unmatched"]
+    assert len(partner_issues) == 1
+    assert partner_issues[0]["participant_id"] == 2
+    assert "perhaps Truc Nhi Nguyen" in partner_issues[0]["issue_description"]
+
+
+def test_team_validator_initial_abbreviation_partner_name_resolves_match(team_validator):
+    """A unique initial-based abbreviation should resolve when the counterpart reciprocates."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["PICKLEBALL"], primary_format="Mixed Double"),
+            "participant_id": 1,
+            "first_name": "Vivian",
+            "last_name": "Tran",
+            "primary_partner": "Jamie S",
+        },
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["PICKLEBALL"], primary_format="Mixed Double"),
+            "participant_id": 2,
+            "first_name": "Jamie",
+            "last_name": "Sauveur",
+            "primary_partner": "Vivian Tran",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert not any(issue["issue_type"] == "doubles_partner_unmatched" for issue in issues), issues
+
+
+# ---------------------------------------------------------------------------
+# ChurchValidator tests
+# ---------------------------------------------------------------------------
+
+def test_church_validator_team_limit_can_use_distinct_team_orders(church_validator):
+    """Church-level team caps should detect multiple roster teams when team_order is available."""
+    rosters = [
+        {
+            "sport_type": "Basketball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "team_order": "A",
+        },
+        {
+            "sport_type": "Basketball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "team_order": "B",
+        },
+    ]
+
+    issues = church_validator.validate_church(1, [], rosters=rosters)
+
+    issue = next(issue for issue in issues if issue["rule_code"] == "MAX_CHURCH_TEAMS_BASKETBALL")
+    assert issue["rule_level"] == "CHURCH"
+    assert issue["issue_type"] == "church_entry_limit"
+    assert "exceeding church limit of 1" in issue["issue_description"]
+
+
+def test_church_validator_badminton_singles_disallowed(church_validator):
+    """Badminton singles entries should be blocked at the church level."""
+    participants = [
+        _make_participant(
+            participant_id=1,
+            first_name="Alan",
+            last_name="Le",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Men Single",
+            is_member=True,
+        ),
+    ]
+
+    issues = church_validator.validate_church(1, participants)
+
+    issue = next(issue for issue in issues if issue["rule_code"] == "MAX_CHURCH_BADMINTON_MEN_SINGLE")
+    assert issue["rule_level"] == "CHURCH"
+    assert issue["sport_type"] == SPORT_TYPE["BADMINTON"]
+    assert issue["sport_format"] == "Men Single"
+
+
+def test_church_validator_badminton_men_double_counts_pairs_not_players(church_validator):
+    """Reciprocal doubles partners should count as one church entry per pair, including deterministic name cleanup."""
+    participants = [
+        _make_participant(
+            participant_id=1,
+            first_name="Alan",
+            last_name="Le",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Men Double",
+            primary_partner="Ben Tran",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=2,
+            first_name="Ben",
+            last_name="Tran",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Men Double",
+            primary_partner="Alan Le",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=3,
+            first_name="James",
+            last_name="Nguyen",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Men Double",
+            primary_partner="Gao Shan (Gary)",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=4,
+            first_name="Shan",
+            last_name="Gao",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Men Double",
+            primary_partner="James Nguyen",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=5,
+            first_name="Ethan",
+            last_name="Do",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Men Double",
+            primary_partner="Frank Vo",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=6,
+            first_name="Frank",
+            last_name="Vo",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Men Double",
+            primary_partner="Ethan Do",
+            is_member=True,
+        ),
+    ]
+
+    issues = church_validator.validate_church(1, participants)
+
+    issue = next(issue for issue in issues if issue["rule_code"] == "MAX_CHURCH_BADMINTON_MEN_DOUBLE")
+    assert issue["rule_level"] == "CHURCH"
+    assert "has 3 teams" in issue["issue_description"]
+    assert "exceeding church limit of 2" in issue["issue_description"]
+
+
+def test_church_validator_pickleball_total_doubles_limit(church_validator):
+    """Pickleball doubles should honor both per-format and total church caps."""
+    participants = [
+        _make_participant(
+            participant_id=1,
+            first_name="Alan",
+            last_name="Le",
+            primary_sport=SPORT_TYPE["PICKLEBALL"],
+            primary_format="Men Double",
+            primary_partner="Ben Tran",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=2,
+            first_name="Ben",
+            last_name="Tran",
+            primary_sport=SPORT_TYPE["PICKLEBALL"],
+            primary_format="Men Double",
+            primary_partner="Alan Le",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=3,
+            first_name="Celine",
+            last_name="Nguyen",
+            primary_sport=SPORT_TYPE["PICKLEBALL"],
+            primary_format="Women Double",
+            primary_partner="Diane Pham",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=4,
+            first_name="Diane",
+            last_name="Pham",
+            primary_sport=SPORT_TYPE["PICKLEBALL"],
+            primary_format="Women Double",
+            primary_partner="Celine Nguyen",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=5,
+            first_name="Ethan",
+            last_name="Do",
+            primary_sport=SPORT_TYPE["PICKLEBALL"],
+            primary_format="Mixed Double",
+            primary_partner="Fiona Vo",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=6,
+            first_name="Fiona",
+            last_name="Vo",
+            primary_sport=SPORT_TYPE["PICKLEBALL"],
+            primary_format="Mixed Double",
+            primary_partner="Ethan Do",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=7,
+            first_name="George",
+            last_name="Mai",
+            primary_sport=SPORT_TYPE["PICKLEBALL"],
+            primary_format="Mixed Double",
+            primary_partner="Hannah Le",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=8,
+            first_name="Hannah",
+            last_name="Le",
+            primary_sport=SPORT_TYPE["PICKLEBALL"],
+            primary_format="Mixed Double",
+            primary_partner="George Mai",
+            is_member=True,
+        ),
+    ]
+
+    issues = church_validator.validate_church(1, participants)
+
+    issue = next(issue for issue in issues if issue["rule_code"] == "MAX_CHURCH_PICKLEBALL_DOUBLES_TOTAL")
+    assert issue["rule_level"] == "CHURCH"
+    assert issue["sport_type"] == SPORT_TYPE["PICKLEBALL"]
+    assert issue["sport_format"] == "Doubles"
+    assert "has 4 teams registered" in issue["issue_description"]
+
+
+def test_church_validator_pickleball35_reciprocal_partial_names_count_as_one_team(church_validator):
+    """A reciprocal Pickleball 35+ pair with short or reordered names should count as one team."""
+    participants = [
+        _make_participant(
+            participant_id=1,
+            first_name="Dang",
+            last_name="Thanh Xuan",
+            primary_sport=SPORT_TYPE["PICKLEBALL_35"],
+            primary_format="Men Double",
+            primary_partner="Benji Tieu",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=2,
+            first_name="Tieu",
+            last_name="Benji",
+            primary_sport=SPORT_TYPE["PICKLEBALL_35"],
+            primary_format="Men Double",
+            primary_partner="Thanh Xuan",
+            is_member=True,
+        ),
+    ]
+
+    issues = church_validator.validate_church(1, participants)
+
+    assert not any(
+        issue["rule_code"] == "MAX_CHURCH_PICKLEBALL35_DOUBLES_TOTAL"
+        for issue in issues
+    ), issues
+
+
+def test_church_validator_compact_spacing_pair_waits_for_precise_reciprocal_name(church_validator):
+    """Church quotas should not count a pair until the reciprocal side is stronger than a short-name match."""
+    participants = [
+        _make_participant(
+            participant_id=1,
+            first_name="Truc Nhi",
+            last_name="Nguyen",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Women Double",
+            primary_partner="Minh Thu Bui",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=2,
+            first_name="Minhthu",
+            last_name="Bui",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Women Double",
+            primary_partner="Nhi Nguyen",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=3,
+            first_name="Amy",
+            last_name="Le",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Women Double",
+            primary_partner="Beth Tran",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=4,
+            first_name="Beth",
+            last_name="Tran",
+            primary_sport=SPORT_TYPE["BADMINTON"],
+            primary_format="Women Double",
+            primary_partner="Amy Le",
+            is_member=True,
+        ),
+    ]
+
+    issues = church_validator.validate_church(1, participants)
+
+    assert not any(
+        issue["rule_code"] == "MAX_CHURCH_BADMINTON_WOMEN_DOUBLE"
+        for issue in issues
+    ), issues
+
+
+def test_church_validator_unmatched_doubles_do_not_count_toward_church_quota(church_validator):
+    """Church doubles quotas should wait for team-level partner matching to resolve first."""
+    participants = [
+        _make_participant(
+            participant_id=1,
+            first_name="Eric",
+            last_name="Nguyen",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Men Double",
+            primary_partner="",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=2,
+            first_name="Vy",
+            last_name="Tang",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Men Double",
+            primary_partner="Eric Nguyen",
+            is_member=True,
+        ),
+    ]
+
+    issues = church_validator.validate_church(1, participants)
+
+    assert not any(
+        issue["rule_code"] == "MAX_CHURCH_TENNIS_MEN_DOUBLE"
+        for issue in issues
+    ), issues
+
+
+def test_church_validator_tennis_men_double_disallowed(church_validator):
+    """Tennis men's doubles should be disallowed while mixed doubles remain allowed."""
+    participants = [
+        _make_participant(
+            participant_id=1,
+            first_name="Alan",
+            last_name="Le",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Men Double",
+            primary_partner="Ben Tran",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=2,
+            first_name="Ben",
+            last_name="Tran",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Men Double",
+            primary_partner="Alan Le",
+            is_member=True,
+        ),
+    ]
+
+    issues = church_validator.validate_church(1, participants)
+
+    issue = next(issue for issue in issues if issue["rule_code"] == "MAX_CHURCH_TENNIS_MEN_DOUBLE")
+    assert issue["rule_level"] == "CHURCH"
+    assert issue["sport_format"] == "Men Double"
+    assert "exceeding church limit of 0" in issue["issue_description"]
+
+
+def test_church_validator_table_tennis35_singles_disallowed(church_validator):
+    """Table Tennis 35+ singles should be disallowed at the church level."""
+    participants = [
+        _make_participant(
+            participant_id=1,
+            first_name="Anna",
+            last_name="Le",
+            primary_sport=SPORT_TYPE["TABLE_TENNIS_35"],
+            primary_format="Women Single",
+            is_member=True,
+        ),
+    ]
+
+    issues = church_validator.validate_church(1, participants)
+
+    issue = next(issue for issue in issues if issue["rule_code"] == "MAX_CHURCH_TABLE_TENNIS35_WOMEN_SINGLE")
+    assert issue["rule_level"] == "CHURCH"
+    assert issue["sport_format"] == "Women Single"

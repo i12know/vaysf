@@ -1322,8 +1322,12 @@ public function get_rosters($request) {
         $where_format[] = sanitize_text_field($params['sport_gender']);
     }
 
+    $all_team_orders = !empty($params['all_team_orders']);
+
     // *** Filter by team_order (handles NULL effectively) ***
-    if (array_key_exists('team_order', $params)) {
+    if ($all_team_orders) {
+        // Caller explicitly requested all team_order values for church-level analysis.
+    } elseif (array_key_exists('team_order', $params)) {
         $team_order_value = $params['team_order'];
         // Treat null, 'null', 'None', or empty string from query param as DB IS NULL
         if ($team_order_value === null || 

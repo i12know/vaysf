@@ -1,6 +1,11 @@
-import unicodedata
 from typing import List, Dict, Any
 
+from .name_matcher import (
+    likely_name_match,
+    normalized_name,
+    resolvable_name_match,
+    token_matches,
+)
 from .models import RulesManager
 from config import (SPORT_BY_CATEGORY, SPORT_CATEGORY, RACQUET_SPORTS,
                    FORMAT_MAPPINGS, SPORT_FORMAT, DEFAULT_SPORT)
@@ -12,6 +17,7 @@ class TeamValidator:
     ISSUE_TYPES = frozenset({
         "team_min_size",
         "team_non_member_limit",
+        "singles_non_member_limit",
         "doubles_non_member_limit",
         "doubles_partner_unmatched",
     })
@@ -25,6 +31,9 @@ class TeamValidator:
         )
         self.doubles_rule = next(
             r for r in rules if r.get("category") == "doubles"
+        )
+        self.singles_rule = next(
+            r for r in rules if r.get("category") == "singles"
         )
         self.team_rules_by_sport = {
             str(rule["sport_event"]).strip(): rule
@@ -49,6 +58,7 @@ class TeamValidator:
             and str(rule.get("sport_event") or "").strip()
         }
         self.team_limit = int(self.team_rule["value"])
+        self.singles_limit = int(self.singles_rule["value"])
         self.doubles_limit = int(self.doubles_rule["value"])
         self.team_sports = set(SPORT_BY_CATEGORY[SPORT_CATEGORY["TEAM"]])
         self.team_rule_sports = (
@@ -62,6 +72,7 @@ class TeamValidator:
         issues = []
         issues.extend(self._check_team_min_size(church_id, participants))
         issues.extend(self._check_team_non_members(church_id, participants))
+        issues.extend(self._check_singles_non_members(church_id, participants))
         issues.extend(self._check_doubles_non_members(church_id, participants))
         issues.extend(self._check_doubles_partner_matching(church_id, participants))
         return issues
@@ -78,27 +89,19 @@ class TeamValidator:
 
     @staticmethod
     def _normalized_name(name: str) -> str:
-        normalized = unicodedata.normalize("NFKD", str(name or "").strip())
-        without_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-        return " ".join(without_marks.casefold().split())
+        return normalized_name(name)
 
     @staticmethod
     def _token_matches(query_token: str, candidate_token: str) -> bool:
-        if query_token == candidate_token:
-            return True
-        return len(query_token) >= 2 and candidate_token.startswith(query_token)
+        return token_matches(query_token, candidate_token)
 
     @classmethod
     def _is_likely_name_match(cls, query_name_key: str, candidate_name_key: str) -> bool:
-        query_tokens = [token for token in str(query_name_key or "").split() if token]
-        candidate_tokens = [token for token in str(candidate_name_key or "").split() if token]
-        if not query_tokens or not candidate_tokens:
-            return False
+        return likely_name_match(query_name_key, candidate_name_key)
 
-        return all(
-            any(cls._token_matches(query_token, candidate_token) for candidate_token in candidate_tokens)
-            for query_token in query_tokens
-        )
+    @classmethod
+    def _is_resolvable_name_match(cls, query_name_key: str, candidate_name_key: str) -> bool:
+        return resolvable_name_match(query_name_key, candidate_name_key)
 
     def _pair_key(self, participant: Dict[str, Any], partner_field: str) -> tuple[str, ...]:
         participant_identity = self._participant_name(participant) or str(
@@ -266,6 +269,44 @@ class TeamValidator:
                         ))
         return issues
 
+    def _check_singles_non_members(self, church_id: Any, participants: List[Dict]) -> List[Dict]:
+        singles_non_members: Dict[str, Dict[str, List[Dict]]] = {
+            sport: {} for sport in RACQUET_SPORTS
+        }
+        for participant in participants:
+            if participant.get("is_church_member"):
+                continue
+
+            for sport_field, format_field in (
+                ("primary_sport", "primary_format"),
+                ("secondary_sport", "secondary_format"),
+            ):
+                sport = participant.get(sport_field, "")
+                fmt = participant.get(format_field, "")
+                if sport not in RACQUET_SPORTS:
+                    continue
+
+                fmt_type, _ = FORMAT_MAPPINGS.get(fmt, (None, None))
+                if fmt_type == SPORT_FORMAT["SINGLES"]:
+                    singles_non_members[sport].setdefault(fmt, []).append(participant)
+
+        issues = []
+        for sport, formats in singles_non_members.items():
+            for format_name, non_members in formats.items():
+                if len(non_members) > self.singles_limit:
+                    issues.append(self._build_issue(
+                        church_id=church_id,
+                        issue_type="singles_non_member_limit",
+                        description=(
+                            f"{sport} {format_name} has {len(non_members)} non-members, "
+                            f"exceeding limit of {self.singles_limit}"
+                        ),
+                        rule=self.singles_rule,
+                        sport_type=sport,
+                        sport_format=format_name,
+                    ))
+        return issues
+
     def _doubles_selections(self, participants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         selections: List[Dict[str, Any]] = []
         for participant in participants:
@@ -332,6 +373,29 @@ class TeamValidator:
 
         return candidates
 
+    def _resolvable_same_event_candidates(
+        self,
+        selection: Dict[str, Any],
+        selections: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        candidates: List[Dict[str, Any]] = []
+        seen_keys: set[str] = set()
+
+        for candidate in self._same_event_candidates(selection, selections):
+            if not self._is_resolvable_name_match(
+                selection["partner_name_key"],
+                candidate["participant_name_key"],
+            ):
+                continue
+
+            candidate_key = str(candidate.get("participant_id") or candidate["participant_name_key"])
+            if candidate_key in seen_keys:
+                continue
+            seen_keys.add(candidate_key)
+            candidates.append(candidate)
+
+        return candidates
+
     def _is_unique_partial_reciprocal_match(
         self,
         source_selection: Dict[str, Any],
@@ -371,9 +435,23 @@ class TeamValidator:
             ]
 
             if not partner_candidates:
+                resolvable_candidates = self._resolvable_same_event_candidates(selection, selections)
+                if len(resolvable_candidates) == 1:
+                    resolvable_candidate = resolvable_candidates[0]
+                    if (
+                        resolvable_candidate["partner_name_key"] == selection["participant_name_key"]
+                        or self._is_unique_partial_reciprocal_match(
+                            resolvable_candidate,
+                            selection,
+                            selections,
+                        )
+                    ):
+                        continue
+
                 partial_candidates = self._partial_same_event_candidates(selection, selections)
                 if len(partial_candidates) == 1:
-                    suggestion = partial_candidates[0]["participant_name"]
+                    partial_candidate = partial_candidates[0]
+                    suggestion = partial_candidate["participant_name"]
                     description = (
                         f"{selection['participant_name']} listed {partner_name} as their partner for "
                         f"{selection['sport_type']} ({selection['sport_format']}), but the partner name is "

@@ -182,10 +182,11 @@ To run validation without other sync operations:
 python main.py sync --type validation
 ```
 
-This command recalculates TEAM-level validation issues from the current
-WordPress participant/roster data. It does not pull fresh people from
-ChMeetings, does not change approvals, and does not create rosters. It is
-primarily used to refresh church-level roster warnings such as:
+This command recalculates non-individual validation issues from the current
+WordPress participant/roster data. That includes both `TEAM` and `CHURCH`
+issues. It does not pull fresh people from ChMeetings, does not change
+approvals, and does not create rosters. It is primarily used to refresh
+church-level roster warnings such as:
 
 - non-member quota violations
 - reciprocal doubles partner warnings
@@ -235,7 +236,7 @@ The generated workbook includes these operator-focused tabs:
 - `Summary`: church-level counts for participants, approvals, open individual `ERROR`s, open TEAM `ERROR`s, and warnings
 - `Contacts-Status`: participant directory plus open individual `ERROR` counts
 - `Roster`: roster rows with `Open_TEAM_Issue_Count (WP)` and `Open_TEAM_Issue_Desc (WP)`
-- `Validation-Issues`: one row per open WordPress validation issue, including both `INDIVIDUAL` and `TEAM` issues
+- `Validation-Issues`: one row per open WordPress validation issue, including `INDIVIDUAL`, `TEAM`, and `CHURCH` issues
 
 For doubles partner validation, the export intentionally reports a few
 different cases:

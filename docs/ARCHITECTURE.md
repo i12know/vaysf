@@ -448,9 +448,13 @@ equivalent) and should match the constants in `config.py`.
      `PARTNER_RECIPROCAL_DOUBLES`.
 
 3. **Church Level**
-   - Current system behavior is mostly aggregate/reporting, not a separate rule engine
-   - Church-team Excel exports and the WordPress validation-issues view are the
-     main places where church-level readiness is surfaced
+   - Church-level entry caps and disallowed-format rules are enforced by
+     `ChurchValidator`
+   - Church-level doubles quotas count only resolved reciprocal pairs, so
+     one-sided or ambiguous partner claims remain at the `TEAM` layer until
+     corrected
+   - Church-team Excel exports and the WordPress validation-issues view surface
+     the resulting `CHURCH` issues alongside `INDIVIDUAL` and `TEAM` issues
 
 4. **Tournament Level**
    - Cross-church validation

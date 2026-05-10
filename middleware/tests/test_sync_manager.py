@@ -468,6 +468,7 @@ def test_validate_data_pagination(sync_manager, mocker):
 
     mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
                         side_effect=paged_get_participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
     mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues",
                         return_value=[])
     mocker.patch.object(sync_manager.wordpress_connector, "create_validation_issue",
@@ -537,6 +538,7 @@ def test_validate_data_syncs_team_issues_idempotently(sync_manager, mocker):
     ]
 
     mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
     mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=existing_issues)
     create_issue = mocker.patch.object(sync_manager.wordpress_connector, "create_validation_issue", return_value={"issue_id": 12})
     update_issue = mocker.patch.object(sync_manager.wordpress_connector, "update_validation_issue", return_value=True)
@@ -613,6 +615,7 @@ def test_validate_data_resolves_church_id_from_church_code(sync_manager, mocker)
     ]
 
     mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
     mocker.patch.object(
         sync_manager.wordpress_connector,
         "get_churches",
@@ -667,6 +670,7 @@ def test_validate_data_creates_participant_scoped_team_warning(sync_manager, moc
     ]
 
     mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
     mocker.patch.object(
         sync_manager.wordpress_connector,
         "get_churches",
@@ -691,6 +695,107 @@ def test_validate_data_creates_participant_scoped_team_warning(sync_manager, moc
     assert warning_payload["rule_code"] == "PARTNER_RECIPROCAL_DOUBLES"
     assert warning_payload["rule_level"] == "TEAM"
     assert warning_payload["severity"] == "WARNING"
+
+
+def test_validate_data_creates_church_level_issue(sync_manager, mocker):
+    """Church-level entry limits should sync as CHURCH validation issues."""
+    participants = [
+        {
+            "participant_id": "1",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Alan",
+            "last_name": "Le",
+            "primary_sport": SPORT_TYPE["BADMINTON"],
+            "primary_format": "Men Single",
+            "primary_partner": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+            "secondary_partner": "",
+        },
+    ]
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "church_name": "Redemption Point Church"}],
+    )
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=[])
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 31},
+    )
+
+    result = sync_manager.validate_data()
+
+    assert result
+    issue_payload = create_issue.call_args.args[0]
+    assert issue_payload["rule_level"] == "CHURCH"
+    assert issue_payload["issue_type"] == "church_entry_limit"
+    assert issue_payload["rule_code"] == "MAX_CHURCH_BADMINTON_MEN_SINGLE"
+
+
+def test_validate_data_creates_church_team_cap_issue_from_rosters(sync_manager, mocker):
+    """Church-level team caps should use roster team_order data when available."""
+    participants = [
+        {
+            "participant_id": "1",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Alan",
+            "last_name": "Le",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "primary_partner": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+            "secondary_partner": "",
+        },
+    ]
+    rosters = [
+        {
+            "church_code": "RPC",
+            "participant_id": "1",
+            "sport_type": "Basketball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "team_order": "A",
+        },
+        {
+            "church_code": "RPC",
+            "participant_id": "2",
+            "sport_type": "Basketball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "team_order": "B",
+        },
+    ]
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    get_rosters = mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=rosters)
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "church_name": "Redemption Point Church"}],
+    )
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=[])
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 32},
+    )
+
+    result = sync_manager.validate_data()
+
+    assert result
+    get_rosters.assert_called_once_with(params={"church_code": "RPC", "all_team_orders": 1})
+    issue_payload = create_issue.call_args.args[0]
+    assert issue_payload["rule_level"] == "CHURCH"
+    assert issue_payload["issue_type"] == "church_entry_limit"
+    assert issue_payload["rule_code"] == "MAX_CHURCH_TEAMS_BASKETBALL"
 
 
 def test_sync_validation_issues_per_page(sync_manager, mocker):

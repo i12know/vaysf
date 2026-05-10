@@ -3,3 +3,4 @@
 from .models import Participant, RulesManager
 from .individual_validator import IndividualValidator
 from .team_validator import TeamValidator
+from .church_validator import ChurchValidator
