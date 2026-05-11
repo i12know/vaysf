@@ -16,6 +16,8 @@ from config import (
     FORMAT_MAPPINGS,
     RULE_LEVEL,
     VALIDATION_SEVERITY,
+    ATHLETE_FEE_STANDARD,
+    ATHLETE_FEE_OTHER_EVENTS_ONLY,
 )
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
@@ -491,7 +493,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         chm_data_by_church: Dict[str, List[Dict[str, Any]]] = {}
         # Renamed from latest_chm_update_by_church to avoid conflict with instance variable if used directly
         _latest_chm_update_by_church_dt: Dict[str, Optional[datetime]] = {}
-        orphaned_memberships_by_church: Dict[str, int] = {}
+        orphaned_ids_by_church: Dict[str, List[str]] = {}
 
 
         team_groups = [g for g in all_chm_groups if g.get("name", "").startswith(Config.TEAM_PREFIX + " ")]
@@ -527,14 +529,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 person_details_response = self.chm_connector.get_person(person_id_str)
                 if not person_details_response:
                     if getattr(self.chm_connector, "last_get_person_status", None) == "not_found":
-                        orphaned_memberships_by_church[church_code] = (
-                            orphaned_memberships_by_church.get(church_code, 0) + 1
-                        )
-                        logger.warning(
-                            f"Skipping orphaned Team-group membership in '{group_name}': "
-                            f"person_id={person_id_str} appears in the group, but "
-                            f"ChMeetings GET /people/{person_id_str} returned 404."
-                        )
+                        orphaned_ids_by_church.setdefault(church_code, []).append(person_id_str)
                     else:
                         logger.warning(
                             f"Could not fetch details for ChM Person ID: {person_id_str} "
@@ -580,6 +575,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "Is_Member_ChM": additional_fields.get(MEMBERSHIP_QUESTION, "No") == "Yes",
                     "ChM_Roles": additional_fields.get(CHM_FIELDS["ROLES"], ""),
                     "ChM_Completion_Checklist": additional_fields.get(CHM_FIELDS["COMPLETION_CHECKLIST"], ""),
+                    "ChM_Primary_Sport": additional_fields.get(CHM_FIELDS["PRIMARY_SPORT"], ""),
+                    "ChM_Secondary_Sport": additional_fields.get(CHM_FIELDS["SECONDARY_SPORT"], ""),
+                    "ChM_Other_Events": additional_fields.get(CHM_FIELDS["OTHER_EVENTS"], ""),
                     "Update_on_ChM": updated_on_dt.strftime("%Y-%m-%d %H:%M:%S") 
                 }
                 chm_data_by_church[church_code].append(mapped_person)
@@ -588,14 +586,21 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             code: dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "N/A"
             for code, dt in _latest_chm_update_by_church_dt.items()
         }
-        self.last_orphaned_memberships_by_church = orphaned_memberships_by_church
+        self.last_orphaned_memberships_by_church = {
+            code: len(ids) for code, ids in orphaned_ids_by_church.items()
+        }
 
-        total_orphaned_memberships = sum(orphaned_memberships_by_church.values())
+        total_orphaned_memberships = sum(len(ids) for ids in orphaned_ids_by_church.values())
         if total_orphaned_memberships:
+            for church_code, ids in sorted(orphaned_ids_by_church.items()):
+                logger.warning(
+                    f"Team {church_code}: skipped {len(ids)} orphaned member ID(s) — "
+                    f"[{', '.join(ids)}]"
+                )
             logger.warning(
                 f"Skipped {total_orphaned_memberships} orphaned Team-group membership(s) "
-                f"across {len(orphaned_memberships_by_church)} church(es). "
-                "Run 'python main.py audit-team-groups' to inspect lingering IDs."
+                f"across {len(orphaned_ids_by_church)} church(es). "
+                "Run 'python main.py audit-team-groups' to clean up."
             )
         
         if target_church_code and not chm_data_by_church.get(target_church_code.upper()):
@@ -651,8 +656,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             total_participants_wp = 0
             total_approved_wp = 0
             total_denied_wp = 0
-            total_pending_participants_wp = 0 
+            total_pending_participants_wp = 0
             total_with_open_errors_wp = 0
+            total_athlete_fees = 0
             church_wp = self.wp_connector.get_church_by_code(church_code_iter)
             church_wp_id = church_wp.get("church_id") if church_wp else None
             open_validation_issues = self._fetch_open_validation_issues(church_wp_id)
@@ -747,6 +753,19 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 
                 checklist_statuses = self._get_completion_checklist_statuses(chm_person.get("ChM_Completion_Checklist"))
 
+                if is_participant_chm:
+                    _primary = chm_person.get("ChM_Primary_Sport", "")
+                    _secondary = chm_person.get("ChM_Secondary_Sport", "")
+                    _other = chm_person.get("ChM_Other_Events", "")
+                    athlete_fee = (
+                        ATHLETE_FEE_OTHER_EVENTS_ONLY
+                        if (not _primary and not _secondary and _other)
+                        else ATHLETE_FEE_STANDARD
+                    )
+                    total_athlete_fees += athlete_fee
+                else:
+                    athlete_fee = ""
+
                 contact_row = {
                     "Church Team": church_code_iter,
                     "ChMeetings ID": chm_id,
@@ -757,13 +776,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "Participant ID (WP)": wp_participant_id_val,
                     "Approval_Status (WP)": approval_status_val,
                     "Total_Open_ERRORs (WP)": total_open_errors_val,
-                    "Gender": chm_person["Gender"], 
-                    "Birthdate": chm_person["Birthdate"], 
+                    "Gender": chm_person["Gender"],
+                    "Birthdate": chm_person["Birthdate"],
                     "Age (at Event)": self._calculate_age(chm_person["Birthdate"]),
-                    "Mobile Phone": chm_person["Mobile Phone"], 
-                    "Email": chm_person["Email"], 
+                    "Mobile Phone": chm_person["Mobile Phone"],
+                    "Email": chm_person["Email"],
+                    "Athlete Fee": athlete_fee,
                     "First_Open_ERROR_Desc (WP)": first_open_error_desc_val,
-                    **checklist_statuses, 
+                    **checklist_statuses,
                     "Photo URL (WP)": photo_url_val,
                     "Update_on_ChM": chm_person["Update_on_ChM"]
                 }
@@ -813,13 +833,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "Total Members (ChM Team Group)": total_members_chm,
                 "Total Participants (in WP)": total_participants_wp,
                 "Total Approved (WP)": total_approved_wp,
-                "Total Denied (WP)": total_denied_wp, # ADD THIS LINE
-                "Total Pending Approval (WP)": total_pending_participants_wp, 
+                "Total Denied (WP)": total_denied_wp,
+                "Total Pending Approval (WP)": total_pending_participants_wp,
                 "Total Participants w/ Open ERRORs (WP)": total_with_open_errors_wp,
                 "Total Open Individual ERRORs (WP)": len(individual_open_errors),
                 "Total Open TEAM ERRORs (WP)": len(team_open_errors),
                 "Total Open WARNINGs (WP)": len(open_warnings),
                 "Total Sports w/ Open TEAM Issues (WP)": total_sports_with_team_issues,
+                "Total Athlete Fees": total_athlete_fees,
                 "Latest ChM Record Update for Team": self.latest_chm_update_by_church.get(church_code_iter, "N/A")
             })
             
@@ -885,10 +906,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 if not df_summary.empty:
                     summary_cols = [
                         "Church Code", "Total Members (ChM Team Group)", "Total Participants (in WP)",
-                        "Total Approved (WP)", "Total Pending Approval (WP)", "Total Denied (WP)", # ADD THIS LINE
+                        "Total Approved (WP)", "Total Pending Approval (WP)", "Total Denied (WP)",
                         "Total Participants w/ Open ERRORs (WP)",
                         "Total Open Individual ERRORs (WP)", "Total Open TEAM ERRORs (WP)",
                         "Total Open WARNINGs (WP)", "Total Sports w/ Open TEAM Issues (WP)",
+                        "Total Athlete Fees",
                         "Latest ChM Record Update for Team"
                     ]
                     # Ensure all summary columns exist
@@ -915,10 +937,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                     contacts_cols = [
                         "Church Team", "ChMeetings ID", "First Name", "Last Name", "Is_Participant",
-                        "Is_Member_ChM", "Participant ID (WP)", "Approval_Status (WP)", 
+                        "Is_Member_ChM", "Participant ID (WP)", "Approval_Status (WP)",
                         "Total_Open_ERRORs (WP)", "Gender", "Birthdate", "Age (at Event)",
-                        "Mobile Phone", "Email", "First_Open_ERROR_Desc (WP)",
-                        "Box 1", "Box 2", "Box 3", "Box 4", "Box 5", "Box 6", 
+                        "Mobile Phone", "Email", "Athlete Fee", "First_Open_ERROR_Desc (WP)",
+                        "Box 1", "Box 2", "Box 3", "Box 4", "Box 5", "Box 6",
                         photo_url_col_name, "Update_on_ChM"
                     ]
                     for col in contacts_cols: # Ensure all contact columns exist

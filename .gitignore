@@ -223,4 +223,16 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-middleware/logs/ 
+middleware/logs/
+
+# Pytest temp and run artifacts
+middleware/temp/
+middleware/.pytest_tmp*/
+middleware/data/*_audit.xlsx
+middleware/data/team_group_*.xlsx
+
+# Office temp lock files
+~$*
+
+# Embedded agent skill repos (use submodules instead)
+.agents/

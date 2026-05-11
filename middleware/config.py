@@ -39,6 +39,10 @@ else:
 DEFAULT_APPROVED_GROUP_NAME = "2026 Sports Fest"
 DEFAULT_SPORTS_FEST_DATE = "2026-07-18"
 
+# Athlete registration fees
+ATHLETE_FEE_STANDARD = 35          # athlete with a primary or secondary sport
+ATHLETE_FEE_OTHER_EVENTS_ONLY = 20  # athlete registered only under Other Events
+
 # Ensure directories exist with error handling
 for directory in [LOG_DIR, DATA_DIR, TEMP_DIR, EXPORT_DIR]:
     try:

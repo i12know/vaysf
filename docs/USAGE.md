@@ -12,9 +12,12 @@ This guide provides instructions for using the Sports Fest ChMeetings Integratio
 - [Windows Middleware](#windows-middleware)
   - [Running Synchronization Tasks](#running-synchronization-tasks)
   - [Exporting Church Team Reports](#exporting-church-team-reports)
+  - [Processing Consent Forms](#processing-consent-forms)
   - [Season Reset (Year-End Archive and Field Clear)](#season-reset-year-end-archive-and-field-clear)
   - [Church Team Group Assignment](#church-team-group-assignment)
+  - [Auditing Team Groups for Orphaned Members](#auditing-team-groups-for-orphaned-members)
   - [Clearing Seasonal Team Groups](#clearing-seasonal-team-groups)
+  - [Inspecting a Single Person](#inspecting-a-single-person)
   - [Scheduled Syncs](#scheduled-syncs)
   - [Testing and Configuration](#testing-and-configuration)
 - [WordPress Plugin](#wordpress-plugin)
@@ -228,6 +231,8 @@ The Excel reports contain:
 - List of all participants with their details
 - Sports and formats they're registered for
 - Approval status
+- **Athlete Fee** per participant ($35 standard; $20 for Other Events only; blank for Church Rep / VAY SM Staff)
+- **Total Athlete Fees** per church on the Summary tab
 - Any missing requirements or validation issues
 - Summary statistics for the church
 
@@ -263,6 +268,32 @@ python main.py export-church-teams --force-resend-validate2 (no review yet - no 
 
 ##### Resend to specific church
 python main.py export-church-teams --church-code TLC --force-resend-pending
+
+### Processing Consent Forms
+
+Participants receive a link to the Consent Form in their registration confirmation email. Once the church rep has exported completed consent form responses from ChMeetings, the middleware can match each response to a participant record and automatically check the consent checklist box (Box 6) on their ChMeetings profile.
+
+**Basic usage — process all churches:**
+
+```bash
+python main.py check-consent --file "data/Consent Form Export.xlsx"
+```
+
+**Dry run — preview matches and write audit file without updating ChMeetings:**
+
+```bash
+python main.py check-consent --file "data/Consent Form Export.xlsx" --dry-run
+```
+
+**Limit to one church:**
+
+```bash
+python main.py check-consent --file "data/Consent Form Export.xlsx" --church-code RPC
+```
+
+The command writes an audit workbook (`data/consent_check_audit.xlsx`) on every run, including both matched and unmatched rows so you can investigate any gaps.
+
+> **Manual verification:** If a participant's consent form does not auto-link in ChMeetings (per ChMeetings ticket #11991 — linking only works when name and email match exactly), check the Forms section separately and connect the form manually before re-running `check-consent`.
 
 ### Season Reset (Year-End Archive and Field Clear)
 
@@ -485,6 +516,36 @@ After assigning participants to their Team groups, run the approval sync to add 
 ```bash
 python main.py sync --type approvals
 ```
+
+### Auditing Team Groups for Orphaned Members
+
+Over time, ChMeetings group memberships can contain person IDs that no longer resolve to a live person record (deleted or merged accounts). The `audit-team-groups` command identifies these orphaned IDs so you can clean them up directly in ChMeetings.
+
+**Audit all Team groups:**
+
+```bash
+python main.py audit-team-groups
+```
+
+**Audit a single church team:**
+
+```bash
+python main.py audit-team-groups --church-code GAC
+```
+
+The command writes an audit workbook to `data/team_group_orphan_audit.xlsx` listing every orphaned ID, the group it was found in, and the church code.
+
+> During `export-church-teams`, orphaned IDs are silently skipped and a summary warning is logged per church (e.g., `Team GAC: skipped 10 orphaned member IDs — [...]`). Run `audit-team-groups` after seeing those warnings to get the full list and clean up.
+
+### Inspecting a Single Person
+
+For debugging, you can pull the full ChMeetings profile and any matching WordPress participant record for one person by their ChMeetings ID:
+
+```bash
+python main.py inspect-person --chm-id 3139537
+```
+
+This prints all standard and custom fields from ChMeetings alongside the WordPress approval status, validation issues, and roster entries — useful when a participant's data looks inconsistent between the two systems.
 
 ### Scheduled Syncs
 
