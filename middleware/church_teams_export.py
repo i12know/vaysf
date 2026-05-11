@@ -493,7 +493,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         chm_data_by_church: Dict[str, List[Dict[str, Any]]] = {}
         # Renamed from latest_chm_update_by_church to avoid conflict with instance variable if used directly
         _latest_chm_update_by_church_dt: Dict[str, Optional[datetime]] = {}
-        orphaned_memberships_by_church: Dict[str, int] = {}
+        orphaned_ids_by_church: Dict[str, List[str]] = {}
 
 
         team_groups = [g for g in all_chm_groups if g.get("name", "").startswith(Config.TEAM_PREFIX + " ")]
@@ -529,14 +529,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 person_details_response = self.chm_connector.get_person(person_id_str)
                 if not person_details_response:
                     if getattr(self.chm_connector, "last_get_person_status", None) == "not_found":
-                        orphaned_memberships_by_church[church_code] = (
-                            orphaned_memberships_by_church.get(church_code, 0) + 1
-                        )
-                        logger.warning(
-                            f"Skipping orphaned Team-group membership in '{group_name}': "
-                            f"person_id={person_id_str} appears in the group, but "
-                            f"ChMeetings GET /people/{person_id_str} returned 404."
-                        )
+                        orphaned_ids_by_church.setdefault(church_code, []).append(person_id_str)
                     else:
                         logger.warning(
                             f"Could not fetch details for ChM Person ID: {person_id_str} "
@@ -593,14 +586,21 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             code: dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "N/A"
             for code, dt in _latest_chm_update_by_church_dt.items()
         }
-        self.last_orphaned_memberships_by_church = orphaned_memberships_by_church
+        self.last_orphaned_memberships_by_church = {
+            code: len(ids) for code, ids in orphaned_ids_by_church.items()
+        }
 
-        total_orphaned_memberships = sum(orphaned_memberships_by_church.values())
+        total_orphaned_memberships = sum(len(ids) for ids in orphaned_ids_by_church.values())
         if total_orphaned_memberships:
+            for church_code, ids in sorted(orphaned_ids_by_church.items()):
+                logger.warning(
+                    f"Team {church_code}: skipped {len(ids)} orphaned member ID(s) — "
+                    f"[{', '.join(ids)}]"
+                )
             logger.warning(
                 f"Skipped {total_orphaned_memberships} orphaned Team-group membership(s) "
-                f"across {len(orphaned_memberships_by_church)} church(es). "
-                "Run 'python main.py audit-team-groups' to inspect lingering IDs."
+                f"across {len(orphaned_ids_by_church)} church(es). "
+                "Run 'python main.py audit-team-groups' to clean up."
             )
         
         if target_church_code and not chm_data_by_church.get(target_church_code.upper()):
