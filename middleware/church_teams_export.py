@@ -18,6 +18,8 @@ from config import (
     VALIDATION_SEVERITY,
     ATHLETE_FEE_STANDARD,
     ATHLETE_FEE_OTHER_EVENTS_ONLY,
+    ATHLETE_FEE_LATE,
+    REGISTRATION_DEADLINE,
 )
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
@@ -623,9 +625,18 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         If target_resend_chm_id is provided, resend actions are limited to that participant.
         Dry run mode does not send the email yet but note the actions would be taken.
         """
-        if not self.chm_connector.authenticate(): 
+        if not self.chm_connector.authenticate():
             logger.error("ChMeetings authentication failed. Cannot generate reports.")
             return False
+
+        deadline_date = datetime.strptime(REGISTRATION_DEADLINE, "%Y-%m-%d").date()
+        today = datetime.now().date()
+        if today >= deadline_date:
+            fee_tier = f"LATE (${ATHLETE_FEE_LATE}, past deadline {REGISTRATION_DEADLINE})"
+        else:
+            fee_tier = f"STANDARD (${ATHLETE_FEE_STANDARD} early-bird, deadline {REGISTRATION_DEADLINE})"
+        logger.info(f"Athlete fee tier: {fee_tier}")
+
         logger.info(f"Starting report generation. Target Church: {target_church_code or 'ALL'}. Output Dir: {output_dir}")
 
         chm_data_by_church = self._fetch_chm_church_team_data(target_church_code)
@@ -678,23 +689,25 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
             for chm_person in chm_data_by_church[church_code_iter]:
                 chm_id = chm_person["ChMeetings ID"]
-                
+
                 roles_str = chm_person.get("ChM_Roles", "")
                 is_participant_chm = any(role.strip().lower() in ["athlete", "participant", "athlete/participant"] for role in roles_str.split(","))
 
                 wp_participant_id_val = 0
-                approval_status_val = "N/A" 
+                approval_status_val = "N/A"
                 total_open_errors_val = 0
                 first_open_error_desc_val = ""
                 photo_url_val = "N/A"
+                wp_created_at_str = ""
 
                 if is_participant_chm:
                     wp_participants = self.wp_connector.get_participants({"chmeetings_id": chm_id})
                     if wp_participants:
-                        wp_participant = wp_participants[0] 
+                        wp_participant = wp_participants[0]
                         wp_participant_id_val = wp_participant.get("participant_id", 0)
                         approval_status_val = wp_participant.get("approval_status", "pending")
                         photo_url_val = wp_participant.get("photo_url", "N/A")
+                        wp_created_at_str = wp_participant.get("created_at", "")
                         participant_issue_list = participant_error_lookup.get(str(wp_participant_id_val), [])
                         total_participants_wp += 1
 
@@ -753,15 +766,36 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 
                 checklist_statuses = self._get_completion_checklist_statuses(chm_person.get("ChM_Completion_Checklist"))
 
+                registration_date_str = ""
                 if is_participant_chm:
                     _primary = chm_person.get("ChM_Primary_Sport", "")
                     _secondary = chm_person.get("ChM_Secondary_Sport", "")
                     _other = chm_person.get("ChM_Other_Events", "")
-                    athlete_fee = (
-                        ATHLETE_FEE_OTHER_EVENTS_ONLY
-                        if (not _primary and not _secondary and _other)
-                        else ATHLETE_FEE_STANDARD
-                    )
+
+                    if wp_created_at_str:
+                        try:
+                            created_date = datetime.strptime(wp_created_at_str.split()[0], "%Y-%m-%d").date()
+                            registration_date_str = created_date.strftime("%Y-%m-%d")
+                            deadline_date = datetime.strptime(REGISTRATION_DEADLINE, "%Y-%m-%d").date()
+
+                            if not _primary and not _secondary and _other:
+                                athlete_fee = ATHLETE_FEE_OTHER_EVENTS_ONLY
+                            elif created_date >= deadline_date:
+                                athlete_fee = ATHLETE_FEE_LATE
+                            else:
+                                athlete_fee = ATHLETE_FEE_STANDARD
+                        except (ValueError, AttributeError):
+                            athlete_fee = (
+                                ATHLETE_FEE_OTHER_EVENTS_ONLY
+                                if (not _primary and not _secondary and _other)
+                                else ATHLETE_FEE_STANDARD
+                            )
+                    else:
+                        athlete_fee = (
+                            ATHLETE_FEE_OTHER_EVENTS_ONLY
+                            if (not _primary and not _secondary and _other)
+                            else ATHLETE_FEE_STANDARD
+                        )
                     total_athlete_fees += athlete_fee
                 else:
                     athlete_fee = ""
@@ -781,6 +815,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "Age (at Event)": self._calculate_age(chm_person["Birthdate"]),
                     "Mobile Phone": chm_person["Mobile Phone"],
                     "Email": chm_person["Email"],
+                    "Registration Date (WP)": registration_date_str,
                     "Athlete Fee": athlete_fee,
                     "First_Open_ERROR_Desc (WP)": first_open_error_desc_val,
                     **checklist_statuses,
@@ -939,7 +974,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         "Church Team", "ChMeetings ID", "First Name", "Last Name", "Is_Participant",
                         "Is_Member_ChM", "Participant ID (WP)", "Approval_Status (WP)",
                         "Total_Open_ERRORs (WP)", "Gender", "Birthdate", "Age (at Event)",
-                        "Mobile Phone", "Email", "Athlete Fee", "First_Open_ERROR_Desc (WP)",
+                        "Mobile Phone", "Email", "Registration Date (WP)", "Athlete Fee", "First_Open_ERROR_Desc (WP)",
                         "Box 1", "Box 2", "Box 3", "Box 4", "Box 5", "Box 6",
                         photo_url_col_name, "Update_on_ChM"
                     ]

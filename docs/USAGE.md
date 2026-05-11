@@ -213,7 +213,12 @@ The Excel reports contain:
 - List of all participants with their details
 - Sports and formats they're registered for
 - Approval status
-- **Athlete Fee** per participant ($35 standard; $20 for Other Events only; blank for Church Rep / VAY SM Staff)
+- **Registration Date (WP)** — WordPress sports-fest registration timestamp (2026-MM-DD format)
+- **Athlete Fee** per participant — deadline-based pricing:
+  - $35 for sports athletes (primary or secondary sport) registered before 2026-05-16
+  - $60 for sports athletes registered on/after 2026-05-16 (late registration fee)
+  - $20 for Other Events only athletes (no deadline increase)
+  - blank for Church Rep / VAY SM Staff (non-athletes)
 - **Total Athlete Fees** per church on the Summary tab
 - Any missing requirements or validation issues
 - Summary statistics for the church
