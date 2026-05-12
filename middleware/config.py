@@ -202,6 +202,17 @@ SF_FIELD_IDS = {
     "NOTES_PROGRESS":      1283358,  # multi_line_text
 }
 
+# IS_MEMBER multiple_choice option_id → label (field_id: 1281852)
+# Used by the membership-flip write-back in sync/participants.py.
+# To look these up: run `python main.py test --system chmeetings --test-type api-inspect`
+# on a registered person, then find field_id 1281852 in their additional_fields and note
+# the selected_option_id for each value ("Yes" and "No").
+# Leave as 0 to skip CHM write-back until verified against the live API.
+SF_IS_MEMBER_OPTION_IDS = {
+    "Yes": 0,  # TODO: fill in from live api-inspect
+    "No":  0,  # TODO: fill in from live api-inspect
+}
+
 # Church Team dropdown option_id → church code mapping (field_id: 1281851)
 SF_CHURCH_TEAM_OPTIONS = {
     199353: "Other",

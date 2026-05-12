@@ -331,6 +331,7 @@ class VAYSF_Integration {
 			gender VARCHAR(10) DEFAULT NULL,
 			birthdate DATE DEFAULT NULL,
 			is_church_member TINYINT(1) DEFAULT 0,
+			membership_claim_at_approval TINYINT(1) NULL DEFAULT NULL,
 			primary_sport VARCHAR(50) DEFAULT NULL,
 			primary_format VARCHAR(50) DEFAULT NULL,
 			primary_partner VARCHAR(255) DEFAULT NULL,

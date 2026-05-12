@@ -110,11 +110,19 @@ IMPORTANT DEV. NOTE: Since ChMeetings are in active development, it would be wis
 ### Phase 4: Reset WordPress Data
 
 11. **Clear seasonal WordPress tables** — the following tables contain per-season data and should be truncated or archived for the new season:
-    - `sf_participants` — will be re-populated from ChMeetings sync
+    - `sf_participants` — will be re-populated from ChMeetings sync (`membership_claim_at_approval` resets to NULL automatically when the table is truncated — see note below)
     - `sf_rosters` — will be re-created from participant sport selections
     - `sf_approvals` — new approval tokens will be generated
     - `sf_validation_issues` — will be re-created during validation
     - `sf_email_log` — can be cleared or archived
+
+    > **`membership_claim_at_approval` is per-season and resets with `sf_participants`.**
+    > Added in v1.10 (Issue #78), this column freezes each participant's self-reported membership
+    > claim at the moment the pastor approval email is sent. Truncating `sf_participants` discards
+    > all frozen values along with the rest of the rows; new tokens in the next season re-freeze
+    > them fresh. To unfreeze a single participant mid-season (e.g. an honest data-entry error by
+    > the rep), set that row's `membership_claim_at_approval` to `NULL` directly in the DB; the
+    > next sync treats it as unfrozen and lets the live ChMeetings value through.
 
     > **Note:** `sf_churches` can usually be kept, since churches tend to return. Update the Church Application Form Excel and re-sync if church details change.
 

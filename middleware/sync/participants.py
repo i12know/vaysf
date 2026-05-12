@@ -7,7 +7,8 @@ from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
 from config import (Config, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION, CHM_FIELDS,
                    SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, RULE_LEVEL, FORMAT_MAPPINGS,
-                   SPORT_UNSELECTED, RACQUET_SPORTS, VALIDATION_SEVERITY, is_racquet_sport)                   
+                   SPORT_UNSELECTED, RACQUET_SPORTS, VALIDATION_SEVERITY, is_racquet_sport,
+                   SF_IS_MEMBER_OPTION_IDS, SF_FIELD_IDS)
 import datetime
 import pytz
 
@@ -302,7 +303,28 @@ class ParticipantSyncer:
         
         if chm_id == target_chm_id_for_debug:
             logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] After P1/P2 - current_wp_status: {current_wp_status}, final_status_determined: {final_status_determined}")
-        
+
+        # --- Membership-flip defence (Issue #78) ---
+        # If the approval token has already been issued, membership_claim_at_approval holds
+        # the frozen value from token-generation time.  Overwrite whatever ChMeetings now
+        # reports so the team-non-member validator always sees the correct count.
+        if participant_in_wp:
+            frozen_raw = participant_in_wp.get("membership_claim_at_approval")
+            if frozen_raw is not None:
+                frozen_bool = bool(int(frozen_raw))
+                live_bool = mapped.get("is_church_member", False)
+                if live_bool != frozen_bool:
+                    logger.warning(
+                        f"[VAY SM] Non-member status flip detected for chm_id={chm_id} — "
+                        f"ChMeetings reports is_church_member={live_bool}, "
+                        f"frozen approval claim is {frozen_bool}. Reverting."
+                    )
+                    mapped["is_church_member"] = frozen_bool
+                    self._revert_chm_membership_claim(chm_id, frozen_bool, full_person_data)
+                # Carry the frozen field forward so WP stays consistent.
+                mapped["membership_claim_at_approval"] = int(frozen_raw)
+        # --- End membership-flip defence ---
+
         mapped["approval_status"] = current_wp_status
         validation_issues_list = [] # Renamed to avoid conflict with 'issues' from validate_participant
         
@@ -399,6 +421,52 @@ class ParticipantSyncer:
         
         return True # Successfully processed
 # END --- New helper method for ParticipantSyncer in participants.py ---        
+    def _revert_chm_membership_claim(self, chm_id: str, frozen_bool: bool, full_person_data: dict) -> None:
+        """Push the frozen membership value back to ChMeetings to undo a Church Rep flip.
+
+        The IS_MEMBER field (field_id 1281852) is a multiple_choice type.  ChMeetings
+        requires selected_option_id for such fields; the correct option IDs must be
+        recorded in config.SF_IS_MEMBER_OPTION_IDS after a live api-inspect run.
+        If either option ID is still 0 (unverified) the write-back is skipped and a
+        warning is logged so the operator can intervene manually.
+        """
+        target_text = "Yes" if frozen_bool else "No"
+        option_id = SF_IS_MEMBER_OPTION_IDS.get(target_text, 0)
+        if not option_id:
+            logger.warning(
+                f"[VAY SM] CHM write-back skipped for chm_id={chm_id}: "
+                f"SF_IS_MEMBER_OPTION_IDS['{target_text}'] is 0 (not yet configured). "
+                "Set the correct option IDs in config.py after running api-inspect, "
+                "then re-run sync to push the reverted value to ChMeetings."
+            )
+            return
+        try:
+            first_name = full_person_data.get("first_name", "")
+            last_name = full_person_data.get("last_name", "")
+            update_field = {
+                "field_id": SF_FIELD_IDS["IS_MEMBER"],
+                "field_type": "multiple_choice",
+                "selected_option_id": option_id,
+            }
+            ok = self.chm_connector.update_person(
+                chm_id, first_name, last_name, [update_field],
+                extra_person_data=full_person_data,
+            )
+            if ok:
+                logger.info(
+                    f"[VAY SM] CHM write-back succeeded for chm_id={chm_id}: "
+                    f"is_church_member reverted to '{target_text}'."
+                )
+            else:
+                logger.error(
+                    f"[VAY SM] CHM write-back FAILED for chm_id={chm_id}. "
+                    "Manual correction in ChMeetings may be required."
+                )
+        except Exception as exc:
+            logger.error(
+                f"[VAY SM] CHM write-back raised exception for chm_id={chm_id}: {exc}"
+            )
+
 ## New Code:
     def _map_chmeetings_participants(self, people: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Map ChMeetings person data to participant format."""

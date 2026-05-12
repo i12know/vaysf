@@ -1005,7 +1005,13 @@ public function create_participant($request) {
             return new WP_Error('invalid_datetime', 'Invalid updated_at format', array('status' => 400));
         }
     }
-    
+
+    // membership_claim_at_approval: only include when explicitly provided (0 or 1).
+    // Omitting it lets MySQL use DEFAULT NULL for new participants who have no token yet.
+    if (isset($params['membership_claim_at_approval'])) {
+        $data['membership_claim_at_approval'] = (int)$params['membership_claim_at_approval'];
+    }
+
     // Insert participant
     $result = $wpdb->insert($table_participants, $data);
     
@@ -1152,7 +1158,14 @@ public function update_participant($request) {
         $data['is_church_member'] = (bool)$params['is_church_member'];
         $format[] = '%d';
     }
-    
+
+    if (array_key_exists('membership_claim_at_approval', $params)) {
+        $data['membership_claim_at_approval'] = is_null($params['membership_claim_at_approval'])
+            ? null
+            : (int)$params['membership_claim_at_approval'];
+        $format[] = is_null($data['membership_claim_at_approval']) ? '%s' : '%d';
+    }
+
     if (isset($params['primary_sport'])) {
         $data['primary_sport'] = sanitize_text_field($params['primary_sport']);
         $format[] = '%s';

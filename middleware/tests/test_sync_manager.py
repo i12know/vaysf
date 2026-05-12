@@ -687,4 +687,236 @@ def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
     assert row["church_code"] == "RPC"
 
 
+
+# ---------------------------------------------------------------------------
+# Tests for membership-flip exploit fix — Issue #78
+# All three tests are pure mock tests.
+# ---------------------------------------------------------------------------
+
+def _make_person_data(chm_id: str, is_member: bool) -> dict:
+    """Build a minimal full_person_data dict as returned by get_person()."""
+    return {
+        "id": chm_id,
+        "first_name": "Test",
+        "last_name": "Person",
+        "email": "test@example.com",
+        "mobile": "",
+        "gender": "Male",
+        "birth_date": "2000-01-01",
+        "updated_on": "2026-01-01T00:00:00+00:00",
+        "photo": "",
+        "additional_fields": [
+            {
+                "field_id": 1281852,
+                "field_name": "Would the team's Senior Pastor say that you belong to his church?",
+                "field_type": "multiple_choice",
+                "selected_option_id": 1 if is_member else 2,
+                "value": "Yes" if is_member else "No",
+            },
+            {
+                "field_name": "Church Team",
+                "value": "RPC",
+            },
+            {
+                "field_name": "My role is",
+                "value": "Athlete/Participant",
+            },
+            {
+                "field_name": "Primary Sport",
+                "value": "Bible Challenge - Mixed Team",
+            },
+            {
+                "field_name": "Secondary Sport",
+                "value": "Unselected/NA",
+            },
+            {
+                "field_name": "Other Events",
+                "value": "",
+            },
+            {
+                "field_name": "Completion Check List",
+                "value": "",
+            },
+        ],
+    }
+
+
+def _setup_flip_test_mocks(sync_manager, mocker, chm_id, person_data, wp_existing):
+    """Set up common mocks for membership-flip tests and return (updated_calls, mock_update_person)."""
+    sync_manager.churches_cache["RPC"] = {"church_code": "RPC", "church_id": 1, "pastor_email": "p@rpc.org"}
+
+    mocker.patch.object(sync_manager.chm_connector, "get_person", return_value=person_data)
+    mocker.patch.object(
+        sync_manager.wordpress_connector, "get_participants",
+        side_effect=lambda params=None: [wp_existing] if params and params.get("chmeetings_id") == chm_id else [],
+    )
+    mocker.patch.object(sync_manager.wordpress_connector, "get_approvals", return_value=[])
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=[])
+    mocker.patch.object(sync_manager.wordpress_connector, "create_validation_issue", return_value={"issue_id": 1})
+
+    updated_calls = []
+    def capture_update(pid, data):
+        updated_calls.append((pid, data))
+        return {**wp_existing, **data, "participant_id": pid}
+
+    mocker.patch.object(sync_manager.wordpress_connector, "update_participant", side_effect=capture_update)
+    mocker.patch.object(sync_manager.wordpress_connector, "create_roster", return_value={"roster_id": 1})
+    mock_update_person = mocker.patch.object(sync_manager.chm_connector, "update_person", return_value=True)
+    return updated_calls, mock_update_person
+
+
+def test_membership_flip_detected_and_reverted(sync_manager, mocker):
+    """Participant approved as non-member; subsequent sync where ChMeetings value is
+    flipped to 'Yes' must: (a) keep WP is_church_member=False, (b) carry the frozen
+    field value forward, (c) attempt CHM write-back via update_person."""
+    from sync.participants import ParticipantSyncer
+    import config as cfg_module
+
+    # Override option IDs so write-back is attempted (not skipped)
+    mocker.patch.dict(cfg_module.SF_IS_MEMBER_OPTION_IDS, {"Yes": 0, "No": 999})
+
+    mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2026-07-18")
+
+    chm_id = "7001"
+    # ChMeetings now reports "Yes" (the flip)
+    person_data = _make_person_data(chm_id, is_member=True)
+
+    # WP already has the participant with membership_claim_at_approval=0 (frozen as non-member)
+    wp_existing = {
+        "participant_id": 1,
+        "chmeetings_id": chm_id,
+        "first_name": "Test",
+        "last_name": "Person",
+        "church_code": "RPC",
+        "approval_status": "pending_approval",
+        "is_church_member": False,
+        "membership_claim_at_approval": 0,  # frozen at token time: non-member
+        "updated_at": "2025-12-01 00:00:00",
+    }
+
+    updated_calls, mock_update_person = _setup_flip_test_mocks(
+        sync_manager, mocker, chm_id, person_data, wp_existing
+    )
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    result = participant_syncer._sync_single_participant(chm_id)
+
+    assert result is True, "Sync should succeed despite the flip"
+
+    # The WP update payload must carry the reverted (frozen) is_church_member value
+    assert len(updated_calls) == 1, f"Exactly one WP update expected, got {len(updated_calls)}"
+    wp_payload = updated_calls[0][1]
+    assert wp_payload.get("is_church_member") is False, (
+        f"WP is_church_member must be reverted to False (frozen non-member value), got {wp_payload.get('is_church_member')}"
+    )
+    assert wp_payload.get("membership_claim_at_approval") == 0, (
+        "Frozen field must be forwarded in the update payload"
+    )
+
+    # CHM write-back must have been attempted with the 'No' option ID
+    mock_update_person.assert_called_once()
+    call_args = mock_update_person.call_args
+    assert call_args.args[0] == chm_id
+    sent_fields = call_args.args[3]
+    assert any(f.get("field_id") == 1281852 and f.get("selected_option_id") == 999
+               for f in sent_fields), "Write-back must send the 'No' option ID (999)"
+
+
+def test_membership_member_no_writeback(sync_manager, mocker):
+    """Participant approved as member; no flip → no write-back, WP retains 'Yes'."""
+    from sync.participants import ParticipantSyncer
+
+    mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2026-07-18")
+
+    chm_id = "7002"
+    # ChMeetings still reports "Yes" — consistent with frozen value
+    person_data = _make_person_data(chm_id, is_member=True)
+
+    wp_existing = {
+        "participant_id": 2,
+        "chmeetings_id": chm_id,
+        "first_name": "Test",
+        "last_name": "Person",
+        "church_code": "RPC",
+        "approval_status": "pending_approval",
+        "is_church_member": True,
+        "membership_claim_at_approval": 1,  # frozen as member
+        "updated_at": "2025-12-01 00:00:00",
+    }
+
+    updated_calls, mock_update_person = _setup_flip_test_mocks(
+        sync_manager, mocker, chm_id, person_data, wp_existing
+    )
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    result = participant_syncer._sync_single_participant(chm_id)
+
+    assert result is True
+    assert len(updated_calls) == 1, f"Exactly one WP update expected, got {len(updated_calls)}"
+    wp_payload = updated_calls[0][1]
+    assert wp_payload.get("is_church_member") is True, (
+        f"Member status should be preserved, got {wp_payload.get('is_church_member')}"
+    )
+    # No flip → no CHM write-back
+    mock_update_person.assert_not_called()
+
+
+def test_membership_not_yet_approved_passthrough(sync_manager, mocker):
+    """Participant not yet approved (no token) → membership_claim_at_approval is None,
+    live ChMeetings value passes through unchanged."""
+    from sync.participants import ParticipantSyncer
+
+    mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2026-07-18")
+
+    chm_id = "7003"
+    # ChMeetings reports "No" (not yet flipped — irrelevant, no freeze yet)
+    person_data = _make_person_data(chm_id, is_member=False)
+
+    # WP participant exists but membership_claim_at_approval is None (no token issued yet)
+    wp_existing = {
+        "participant_id": 3,
+        "chmeetings_id": chm_id,
+        "first_name": "Test",
+        "last_name": "Person",
+        "church_code": "RPC",
+        "approval_status": "validated",
+        "is_church_member": False,
+        "membership_claim_at_approval": None,
+        "updated_at": "2025-12-01 00:00:00",
+    }
+
+    updated_calls, mock_update_person = _setup_flip_test_mocks(
+        sync_manager, mocker, chm_id, person_data, wp_existing
+    )
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    result = participant_syncer._sync_single_participant(chm_id)
+
+    assert result is True
+    assert len(updated_calls) == 1, f"Exactly one WP update expected, got {len(updated_calls)}"
+    wp_payload = updated_calls[0][1]
+    # Live ChMeetings value (False) passes through without interference
+    assert wp_payload.get("is_church_member") is False, (
+        f"Live value should pass through when not frozen, got {wp_payload.get('is_church_member')}"
+    )
+    # No write-back: no freeze means no flip possible
+    mock_update_person.assert_not_called()
+
+
 ##### End of tests/test_sync_manager

@@ -202,11 +202,25 @@ class SyncManager:
                 if created_approval:
                     self.stats["approvals"]["created"] += 1
                     logger.info(f"Successfully created approval record for participant WP ID {wp_participant_id_str}. Token: {token}")
-                    
+
+                    # Freeze membership_claim_at_approval at the moment the pastor email is sent
+                    # so subsequent ChMeetings flips can be detected and reverted.
+                    if participant.get("membership_claim_at_approval") is None:
+                        membership_value = participant.get("is_church_member", False)
+                        frozen = 1 if membership_value in [True, 1, "1", "Yes", "yes", "TRUE", "true"] else 0
+                        self.wordpress_connector.update_participant(
+                            wp_participant_id_int,
+                            {"membership_claim_at_approval": frozen}
+                        )
+                        logger.info(
+                            f"[VAY SM] Froze membership_claim_at_approval={frozen} "
+                            f"for participant WP ID {wp_participant_id_str} at token issuance."
+                        )
+
                     participant_name = f"{participant['first_name']} {participant['last_name']}"
                     # 'participant' is the dictionary fetched from WordPress containing all participant details
                     # including first_name, last_name, photo_url (if synced), is_church_member, etc.
-                    self.send_pastor_approval_email(pastor_email, participant_name, token, participant, expiry_date) 
+                    self.send_pastor_approval_email(pastor_email, participant_name, token, participant, expiry_date)
                 else:
                     logger.error(f"Failed to create approval record for participant WP ID {wp_participant_id_str} via WordPress connector.")
                     self.stats["approvals"]["errors"] += 1
