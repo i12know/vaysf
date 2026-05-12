@@ -23,7 +23,7 @@ class VAYSF_Integration {
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.2';  // Incremented due to schema change
+    const DB_VERSION = '1.0.3';  // Incremented due to schema change
     
     /**
      * Database version option name
@@ -507,9 +507,6 @@ class VAYSF_Integration {
 		) $charset_collate;";
 		dbDelta($sql_email_log);
         
-        // Update version
-        update_option(self::DB_VERSION_OPTION, self::DB_VERSION);
-        
         // Check if photo_url column needs to be added to existing table
         $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_participants} LIKE 'photo_url'");
         if (empty($check_column)) {
@@ -517,6 +514,19 @@ class VAYSF_Integration {
             // Log this change
             error_log('Added photo_url column to sf_participants table');
         }
+
+        // Check if membership_claim_at_approval column needs to be added to existing table
+        $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_participants} LIKE 'membership_claim_at_approval'");
+        if (empty($check_column)) {
+            $wpdb->query(
+                "ALTER TABLE {$table_participants} " .
+                "ADD COLUMN membership_claim_at_approval TINYINT(1) NULL DEFAULT NULL AFTER is_church_member"
+            );
+            error_log('Added membership_claim_at_approval column to sf_participants table');
+        }
+
+        // Update version after any fallback migrations run
+        update_option(self::DB_VERSION_OPTION, self::DB_VERSION);
     }
 
     /**

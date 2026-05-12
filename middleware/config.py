@@ -209,8 +209,8 @@ SF_FIELD_IDS = {
 # the selected_option_id for each value ("Yes" and "No").
 # Leave as 0 to skip CHM write-back until verified against the live API.
 SF_IS_MEMBER_OPTION_IDS = {
-    "Yes": 0,  # TODO: fill in from live api-inspect
-    "No":  0,  # TODO: fill in from live api-inspect
+    "Yes": 199355,
+    "No":  199356,
 }
 
 # Church Team dropdown option_id → church code mapping (field_id: 1281851)
