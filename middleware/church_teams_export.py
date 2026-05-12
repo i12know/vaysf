@@ -479,6 +479,53 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         return rows
 
+    def _filter_reportable_validation_issues(
+        self,
+        church_code: str,
+        issues: List[Dict[str, Any]],
+        participants_by_wp_id: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Keep only validation issues that belong in the current church snapshot.
+
+        The export is driven by current ChMeetings Team-group membership. If a person
+        was deleted/re-registered in ChMeetings, WordPress can still hold open
+        individual issues tied to an older participant_id. Those stale issues should
+        not appear in the current church workbook.
+        """
+        current_participant_ids = {
+            str(participant_id)
+            for participant_id in participants_by_wp_id
+            if str(participant_id).strip()
+        }
+        filtered_issues: List[Dict[str, Any]] = []
+        skipped_stale_individual_issues = 0
+
+        for issue in issues:
+            if self._issue_rule_level(issue) != RULE_LEVEL["INDIVIDUAL"]:
+                filtered_issues.append(issue)
+                continue
+
+            participant_id = issue.get("participant_id")
+            participant_key = (
+                str(participant_id).strip()
+                if participant_id not in (None, "", 0, "0")
+                else ""
+            )
+            if not participant_key or participant_key in current_participant_ids:
+                filtered_issues.append(issue)
+                continue
+
+            skipped_stale_individual_issues += 1
+
+        if skipped_stale_individual_issues:
+            logger.warning(
+                f"Team {church_code}: filtered out {skipped_stale_individual_issues} "
+                "stale INDIVIDUAL validation issue(s) that no longer map to a "
+                "current participant in the ChMeetings Team-group snapshot."
+            )
+
+        return filtered_issues
+
     def _fetch_chm_church_team_data(self, target_church_code: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
         """
         Fetches data for all individuals in ChMeetings groups starting with 'Team '.
@@ -832,24 +879,34 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 ),
             )
 
-            church_validation_rows = self._build_validation_issue_rows(
+            reportable_validation_issues = self._filter_reportable_validation_issues(
                 church_code_iter,
                 open_validation_issues,
+                participants_by_wp_id,
+            )
+            reportable_team_validation_issues = [
+                issue for issue in reportable_validation_issues
+                if self._issue_rule_level(issue) == RULE_LEVEL["TEAM"]
+            ]
+
+            church_validation_rows = self._build_validation_issue_rows(
+                church_code_iter,
+                reportable_validation_issues,
                 participants_by_wp_id,
                 reverse_partner_suggestions,
             )
 
             individual_open_errors = [
-                issue for issue in open_validation_issues
+                issue for issue in reportable_validation_issues
                 if self._issue_rule_level(issue) == RULE_LEVEL["INDIVIDUAL"]
                 and self._issue_severity(issue) == VALIDATION_SEVERITY["ERROR"]
             ]
             team_open_errors = [
-                issue for issue in team_validation_issues
+                issue for issue in reportable_team_validation_issues
                 if self._issue_severity(issue) == VALIDATION_SEVERITY["ERROR"]
             ]
             open_warnings = [
-                issue for issue in open_validation_issues
+                issue for issue in reportable_validation_issues
                 if self._issue_severity(issue) == VALIDATION_SEVERITY["WARNING"]
             ]
             participant_ids_with_errors = {

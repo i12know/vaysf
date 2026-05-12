@@ -195,6 +195,13 @@ church-level roster warnings such as:
 - reciprocal doubles partner warnings
 - ambiguous doubles partner-name warnings
 
+It also performs a conservative self-heal for stale participant-scoped issues:
+- if an open `INDIVIDUAL` WordPress validation issue points to a participant whose
+  `chmeetings_id` now returns `404 Not Found` from ChMeetings, the issue is
+  auto-resolved during validation sync
+- this is meant for deleted/re-registered records, so old orphaned validation
+  issues do not keep appearing in later church-team workbooks
+
 ### Exporting Church Team Reports
 
 Generate Excel reports showing church teams, participants, and their registration/approval status:
@@ -247,6 +254,11 @@ The generated workbook includes these operator-focused tabs:
 - `Contacts-Status`: participant directory plus open individual `ERROR` counts
 - `Roster`: roster rows with `Open_TEAM_Issue_Count (WP)` and `Open_TEAM_Issue_Desc (WP)`
 - `Validation-Issues`: one row per open WordPress validation issue, including `INDIVIDUAL`, `TEAM`, and `CHURCH` issues
+
+The `Validation-Issues` tab is based on the current ChMeetings Team-group
+snapshot. Open `INDIVIDUAL` issues tied only to older orphaned WordPress
+participant records are filtered out so the workbook stays aligned with the
+current participant list.
 
 For doubles partner validation, the export intentionally reports a few
 different cases:

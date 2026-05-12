@@ -571,8 +571,9 @@ class SyncManager:
             str(issue.get("sport_format") or ""),
         )
 
-    def _fetch_existing_group_issues(self, church_id: Optional[int] = None) -> list[Dict[str, Any]]:
-        existing_issues = []
+    def _fetch_open_validation_issues(self, church_id: Optional[int] = None) -> list[Dict[str, Any]]:
+        """Fetch all open validation issues, optionally scoped to one church."""
+        open_issues = []
         current_page = 1
         fetch_per_page = 100
 
@@ -589,19 +590,23 @@ class SyncManager:
             if not page_issues:
                 break
 
-            existing_issues.extend(
-                issue for issue in page_issues if self._is_group_validation_issue(issue)
-            )
+            open_issues.extend(page_issues)
 
             if len(page_issues) < fetch_per_page:
                 break
 
             current_page += 1
             if current_page > 50:
-                logger.warning("Reached page limit (50) fetching existing team validation issues. Stopping.")
+                logger.warning("Reached page limit (50) fetching open validation issues. Stopping.")
                 break
 
-        return existing_issues
+        return open_issues
+
+    def _fetch_existing_group_issues(self, church_id: Optional[int] = None) -> list[Dict[str, Any]]:
+        return [
+            issue for issue in self._fetch_open_validation_issues(church_id=church_id)
+            if self._is_group_validation_issue(issue)
+        ]
 
     @staticmethod
     def _build_group_issue_update_payload(issue: Dict[str, Any]) -> Dict[str, Any]:
@@ -674,6 +679,124 @@ class SyncManager:
             return int(raw_church_id)
         except (TypeError, ValueError):
             return None
+
+    def _resolve_orphaned_individual_validation_issues(
+        self,
+        wp_participants: list[Dict[str, Any]],
+        open_validation_issues: list[Dict[str, Any]],
+    ) -> None:
+        """Resolve INDIVIDUAL issues whose linked ChMeetings person now 404s.
+
+        This is a conservative self-heal for re-registration/deletion churn:
+        when the old ChMeetings person ID is gone entirely, lingering open
+        participant-scoped validation issues should not keep surfacing forever.
+        """
+        if not self.chm_connector:
+            logger.warning(
+                "Skipping orphaned INDIVIDUAL validation-issue self-heal because "
+                "the ChMeetings connector is unavailable."
+            )
+            return
+
+        issues_by_participant_id: Dict[str, list[Dict[str, Any]]] = {}
+        for issue in open_validation_issues:
+            if str(issue.get("rule_level") or "").strip() != RULE_LEVEL["INDIVIDUAL"]:
+                continue
+
+            participant_id = issue.get("participant_id")
+            if participant_id in (None, "", 0, "0"):
+                continue
+
+            issues_by_participant_id.setdefault(str(participant_id), []).append(issue)
+
+        if not issues_by_participant_id:
+            return
+
+        participants_by_id = {
+            str(participant.get("participant_id")): participant
+            for participant in wp_participants
+            if participant.get("participant_id") not in (None, "", 0, "0")
+        }
+        chm_lookup_status_by_id: Dict[str, str] = {}
+        resolved_issue_count = 0
+        resolved_participant_count = 0
+
+        for participant_id, participant_issues in issues_by_participant_id.items():
+            participant = participants_by_id.get(participant_id)
+            if not participant:
+                logger.warning(
+                    f"Skipping orphaned INDIVIDUAL validation-issue self-heal for "
+                    f"participant_id={participant_id}: WordPress participant was not "
+                    "present in the current participant listing."
+                )
+                continue
+
+            chm_id = str(participant.get("chmeetings_id") or "").strip()
+            if not chm_id:
+                logger.warning(
+                    f"Skipping orphaned INDIVIDUAL validation-issue self-heal for "
+                    f"participant_id={participant_id}: missing chmeetings_id."
+                )
+                continue
+
+            if chm_id not in chm_lookup_status_by_id:
+                self.chm_connector.get_person(chm_id)
+                chm_lookup_status_by_id[chm_id] = (
+                    getattr(self.chm_connector, "last_get_person_status", None) or "failed"
+                )
+
+            if chm_lookup_status_by_id[chm_id] != "not_found":
+                continue
+
+            participant_name = " ".join(
+                part
+                for part in (
+                    str(participant.get("first_name") or "").strip(),
+                    str(participant.get("last_name") or "").strip(),
+                )
+                if part
+            ).strip() or f"participant_id={participant_id}"
+
+            resolved_for_participant = 0
+            resolved_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            for issue in participant_issues:
+                issue_id = issue.get("issue_id")
+                if not issue_id:
+                    continue
+
+                updated = self.wordpress_connector.update_validation_issue(
+                    issue_id,
+                    {
+                        "status": VALIDATION_STATUS["RESOLVED"],
+                        "resolved_at": resolved_at,
+                        "updated_at": resolved_at,
+                    },
+                )
+                if updated:
+                    self.stats["validation_issues"]["resolved"] += 1
+                    resolved_issue_count += 1
+                    resolved_for_participant += 1
+                else:
+                    self.stats["validation_issues"]["errors"] += 1
+                    logger.warning(
+                        f"Failed to self-resolve orphaned validation issue {issue_id} "
+                        f"for participant_id={participant_id} (chmeetings_id={chm_id})."
+                    )
+
+            if resolved_for_participant:
+                resolved_participant_count += 1
+                logger.info(
+                    f"Self-resolved {resolved_for_participant} orphaned INDIVIDUAL "
+                    f"validation issue(s) for {participant_name} "
+                    f"(WP participant_id={participant_id}, ChMeetings ID {chm_id})."
+                )
+
+        if resolved_issue_count:
+            logger.info(
+                f"Resolved {resolved_issue_count} orphaned INDIVIDUAL validation "
+                f"issue(s) across {resolved_participant_count} participant(s) whose "
+                "ChMeetings records now return 404."
+            )
 
     def _sync_group_validation_issues(
         self,
@@ -796,7 +919,15 @@ class SyncManager:
             if participant_church_code:
                 church_code_by_id.setdefault(church_id, participant_church_code)
 
-        existing_group_issues = self._fetch_existing_group_issues()
+        open_validation_issues = self._fetch_open_validation_issues()
+        self._resolve_orphaned_individual_validation_issues(
+            wp_participants,
+            open_validation_issues,
+        )
+
+        existing_group_issues = [
+            issue for issue in open_validation_issues if self._is_group_validation_issue(issue)
+        ]
         existing_group_issues_by_church = {}
         for issue in existing_group_issues:
             issue_church_id = self._coerce_church_id(issue.get("church_id"))

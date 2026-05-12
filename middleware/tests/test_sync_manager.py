@@ -554,6 +554,67 @@ def test_validate_data_syncs_team_issues_idempotently(sync_manager, mocker):
     assert sync_manager.stats["validation_issues"]["resolved"] == 1
 
 
+def test_validate_data_self_heals_orphaned_individual_issues(sync_manager, mocker):
+    """Open INDIVIDUAL issues should auto-resolve when the linked ChMeetings person now 404s."""
+    participants = [
+        {
+            "participant_id": "417",
+            "church_id": 1,
+            "church_code": "RPC",
+            "chmeetings_id": "4373282",
+            "first_name": "Allan",
+            "last_name": "Velasco",
+            "is_church_member": True,
+            "primary_sport": "",
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+    ]
+    open_issues = [
+        {
+            "issue_id": 99,
+            "church_id": 1,
+            "participant_id": "417",
+            "issue_type": "missing_consent",
+            "issue_description": "Consent form status unknown or not provided",
+            "rule_code": "CONSENT_REQUIRED",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "status": "open",
+        },
+    ]
+
+    def get_person_404(chm_id):
+        sync_manager.chm_connector.last_get_person_status = "not_found"
+        return None
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=open_issues)
+    update_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_validation_issue",
+        return_value=True,
+    )
+    get_person = mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_person",
+        side_effect=get_person_404,
+    )
+
+    result = sync_manager.validate_data()
+
+    assert result, "validate_data() should succeed while self-healing orphaned issues"
+    get_person.assert_called_once_with("4373282")
+    update_issue.assert_called_once()
+    assert update_issue.call_args.args[0] == 99
+    payload = update_issue.call_args.args[1]
+    assert payload["status"] == "resolved"
+    assert "resolved_at" in payload
+    assert sync_manager.stats["validation_issues"]["resolved"] == 1
+
+
 def test_validate_data_resolves_church_id_from_church_code(sync_manager, mocker):
     """TEAM validation should work with live-shaped WP participants that only include church_code."""
     participants = [

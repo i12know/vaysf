@@ -234,6 +234,13 @@ almost certainly gone and the Team-group row is just stale membership data.
    python main.py sync --type validation
    python main.py export-church-teams
    ```
+7. If a participant was deleted or re-registered in ChMeetings and an old name
+   still shows up on the church workbook's `Validation-Issues` tab, rerun the
+   same three-step sequence above. As of the 2026 stale-record fix, the
+   validation step now auto-resolves open `INDIVIDUAL` issues when the linked
+   `chmeetings_id` returns `404 Not Found`, and the export step also filters out
+   stale orphaned participant issues that no longer belong to the current
+   Team-group snapshot.
 
 ## Email Delivery Issues
 

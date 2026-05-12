@@ -248,6 +248,86 @@ def test_generate_reports_surfaces_open_validation_issues(mock_connectors, mocke
     assert team_issue["Participant Name"] == ""
 
 
+def test_generate_reports_filters_stale_individual_validation_issues(mock_connectors, mocker, tmp_path):
+    chm_connector, wp_connector = mock_connectors
+    chm_connector.authenticate.return_value = True
+
+    exporter = ChurchTeamsExporter()
+    exporter.latest_chm_update_by_church = {"RPC": "2026-05-08 10:00:00"}
+    mocker.patch.object(
+        exporter,
+        "_fetch_chm_church_team_data",
+        return_value={
+            "RPC": [
+                {
+                    "Church Team": "RPC",
+                    "ChMeetings ID": "101",
+                    "First Name": "Alice",
+                    "Last Name": "Nguyen",
+                    "Gender": "Female",
+                    "Birthdate": "2000-01-02",
+                    "Mobile Phone": "555-0101",
+                    "Email": "alice@test.com",
+                    "Is_Member_ChM": True,
+                    "ChM_Roles": "Athlete",
+                    "ChM_Completion_Checklist": "",
+                    "Update_on_ChM": "2026-05-08 10:00:00",
+                }
+            ]
+        },
+    )
+
+    wp_connector.get_church_by_code.return_value = {"church_id": 1, "church_code": "RPC"}
+    wp_connector.get_participants.return_value = [
+        {
+            "participant_id": 42,
+            "approval_status": "pending",
+            "photo_url": "https://example.com/photo.jpg",
+        }
+    ]
+    wp_connector.get_validation_issues.return_value = [
+        {
+            "issue_id": 1,
+            "participant_id": 42,
+            "issue_type": "missing_photo",
+            "issue_description": "No photo uploaded",
+            "rule_code": "PHOTO_REQUIRED",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "status": "open",
+            "sport_type": None,
+            "sport_format": None,
+        },
+        {
+            "issue_id": 2,
+            "participant_id": 99,
+            "issue_type": "missing_consent",
+            "issue_description": "Consent form status unknown or not provided",
+            "rule_code": "CONSENT_REQUIRED",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "status": "open",
+            "sport_type": None,
+            "sport_format": None,
+        },
+    ]
+    wp_connector.get_rosters.return_value = []
+
+    write_report = mocker.patch.object(exporter, "_write_excel_report")
+
+    result = exporter.generate_reports("RPC", tmp_path)
+
+    assert result is True
+    _, summary_rows, contacts_rows, _, validation_rows = write_report.call_args.args
+
+    assert summary_rows[0]["Total Participants w/ Open ERRORs (WP)"] == 1
+    assert summary_rows[0]["Total Open Individual ERRORs (WP)"] == 1
+    assert contacts_rows[0]["Total_Open_ERRORs (WP)"] == 1
+    assert len(validation_rows) == 1
+    assert validation_rows[0]["Participant ID (WP)"] == 42
+    assert validation_rows[0]["Issue Type"] == "missing_photo"
+
+
 def test_write_excel_report_adds_validation_issues_tab(mock_connectors, tmp_path):
     exporter = ChurchTeamsExporter()
     filepath = tmp_path / "church-report.xlsx"

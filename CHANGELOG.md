@@ -38,6 +38,12 @@
   - `TeamValidator` now reads sport-specific TEAM non-member limits from `middleware/validation/summer_2026.json`
   - `TeamValidator` now enforces JSON-driven minimum team sizes for team/exhibition events, including `other_events` selections such as soccer
 
+### Bug Fixes
+- Fixed stale orphaned participant issues in church-team exports and validation refreshes
+  - `export-church-teams` now hides stale `INDIVIDUAL` WordPress validation issues that no longer map to any participant in the current ChMeetings Team-group snapshot
+  - `sync --type validation` now self-resolves open `INDIVIDUAL` validation issues when the linked WordPress participant's `chmeetings_id` returns `404 Not Found` from ChMeetings
+  - This prevents deleted/re-registered people from showing contradictory state such as receiving a fresh pastor approval email while still appearing on the church workbook's `Validation-Issues` tab under an older orphaned participant record
+
 ### Documentation
 - Added `EXPORT_DIR` to `middleware/.env.template` with the shared Google Drive example used for church-team report exports
 - Updated `docs/USAGE.md` and `docs/TROUBLESHOOTING.md` with operator guidance for `inspect-person`, `audit-team-groups`, orphaned Team-group memberships, and shared-drive export configuration
