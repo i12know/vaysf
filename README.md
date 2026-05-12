@@ -50,13 +50,15 @@ The system uses a three-tier architecture:
 
 2. **Installation**
 
-```bash
+```bat
 # Clone the repository
 git clone https://github.com/i12know/vaysf.git
 
 # Install dependencies (all middleware code lives under middleware/)
 cd vaysf\middleware
-pip install -r requirements.txt
+py -m venv .venv
+.\.venv\Scripts\activate
+python -m pip install -r requirements.txt
 
 # Copy .env.template to .env and edit with your credentials
 copy .env.template .env
@@ -64,12 +66,12 @@ copy .env.template .env
 
 3. **Running Tests**
 
-```bash
-# From the middleware/ directory — mock mode (no credentials needed)
-pytest tests/ -v
+```bat
+# From the middleware/ directory - mock mode (no credentials needed)
+.\.venv\Scripts\python.exe -m pytest tests\ -v
 
 # Live mode (requires .env with real API keys)
-set LIVE_TEST=true && pytest tests/ -v -s
+set LIVE_TEST=true && .\.venv\Scripts\python.exe -m pytest tests\ -v -s
 ```
 
 See [USAGE.md](docs/USAGE.md#running-tests) for full testing options including live group membership tests.

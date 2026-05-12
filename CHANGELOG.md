@@ -7,10 +7,17 @@
   - Added `membership_claim_at_approval TINYINT(1) NULL DEFAULT NULL` to `wp_sf_participants`
   - `generate_approvals()` now freezes the membership claim at the moment the pastor approval email is sent
   - `_sync_single_participant()` detects any subsequent ChMeetings flip and reverts `is_church_member` in WordPress to the frozen value on every sync
-  - CHM write-back: when `SF_IS_MEMBER_OPTION_IDS` option IDs are configured, the reverted value is also pushed back to ChMeetings automatically; otherwise a warning is logged for manual follow-up
+  - Legacy `approved` / `pending_approval` participants with a NULL frozen field are now backfilled from the existing WordPress membership value on the first protected sync
+  - `sync --type approvals --chm-id <CHM_ID>` now stays scoped to the requested participant instead of syncing the full approved cohort
+  - CHM write-back: the reverted value is also pushed back to ChMeetings automatically using the verified VAY SM option IDs `Yes=199355` and `No=199356`
   - Warning log line `"Non-member status flip detected"` provides an auditable paper trail; repeated flips for the same rep are evidence of deliberate manipulation
-  - `SF_IS_MEMBER_OPTION_IDS` in `config.py` defaults to `{"Yes": 0, "No": 0}`; fill in the real option IDs (run `python main.py test --system chmeetings --test-type api-inspect`) to enable automatic CHM write-back
   - Operator correction path: set `membership_claim_at_approval = NULL` via a direct DB update (or future admin endpoint) to unfreeze a participant whose claim was honestly wrong
+
+### Housekeeping
+- Cleaned current setup docs to match the API-only architecture
+  - Removed obsolete Selenium-era variables from `middleware/.env.template`
+  - Updated `docs/PRD.md` to describe the REST API-only middleware path
+  - Updated the root `README.md` quick start to use the repo-local `.venv` for installs and pytest
 
 ## Version 1.09 (2026-05-02)
 

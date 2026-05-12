@@ -274,7 +274,7 @@ Fees are non-transferable and non-refundable. All athlete fees must be collected
 - The group management system — participants are organized into "Team [CODE]" groups (e.g., "Team RPC") using the `assign-groups` middleware command
 - The payment processing platform for athlete fees
 
-The middleware's `ChMeetingsConnector` accesses ChMeetings via a combination of its REST API and Selenium browser automation (for operations not yet exposed via API). All data flows from ChMeetings → Middleware → WordPress, never the reverse for participant data. Approval decisions flow back from WordPress → ChMeetings via `sync_approvals_to_chmeetings`.
+The middleware's `ChMeetingsConnector` accesses ChMeetings via the REST API only. Selenium/browser automation was removed in v1.05, and Excel export remains a fallback only for approval sync troubleshooting. All data flows from ChMeetings -> Middleware -> WordPress, never the reverse for participant data. Approval decisions flow back from WordPress -> ChMeetings via `sync_approvals_to_chmeetings`.
 
 ---
 
