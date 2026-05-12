@@ -306,10 +306,30 @@ class ParticipantSyncer:
 
         # --- Membership-flip defence (Issue #78) ---
         # If the approval token has already been issued, membership_claim_at_approval holds
-        # the frozen value from token-generation time.  Overwrite whatever ChMeetings now
+        # the frozen value from token-generation time. Overwrite whatever ChMeetings now
         # reports so the team-non-member validator always sees the correct count.
+        #
+        # Legacy approved/pending_approval rows from before this fix may still have NULL in
+        # membership_claim_at_approval. In that case, seed the frozen value from the current
+        # WordPress participant record before applying the normal flip detection. That lets the
+        # first post-patch sync protect older approvals immediately.
         if participant_in_wp:
             frozen_raw = participant_in_wp.get("membership_claim_at_approval")
+            approval_locked_statuses = {
+                APPROVAL_STATUS["PENDING_APPROVAL"],
+                APPROVAL_STATUS["APPROVED"],
+                APPROVAL_STATUS["DENIED"],
+            }
+            if (
+                frozen_raw is None
+                and participant_in_wp.get("approval_status") in approval_locked_statuses
+            ):
+                legacy_value = participant_in_wp.get("is_church_member", False)
+                frozen_raw = 1 if legacy_value in [True, 1, "1", "Yes", "yes", "TRUE", "true"] else 0
+                logger.warning(
+                    f"[VAY SM] Backfilled membership_claim_at_approval={frozen_raw} "
+                    f"from the existing WordPress record for legacy approval-locked chm_id={chm_id}."
+                )
             if frozen_raw is not None:
                 frozen_bool = bool(int(frozen_raw))
                 live_bool = mapped.get("is_church_member", False)

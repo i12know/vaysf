@@ -1005,4 +1005,58 @@ def test_membership_not_yet_approved_passthrough(sync_manager, mocker):
     mock_update_person.assert_not_called()
 
 
+def test_membership_legacy_approved_backfill_and_revert(sync_manager, mocker):
+    """Legacy approved participant with NULL frozen field should backfill from WP and
+    still revert a newly flipped ChMeetings membership answer on the same sync."""
+    from sync.participants import ParticipantSyncer
+    import config as cfg_module
+
+    mocker.patch.dict(cfg_module.SF_IS_MEMBER_OPTION_IDS, {"Yes": 0, "No": 999})
+    mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2026-07-18")
+
+    chm_id = "7004"
+    person_data = _make_person_data(chm_id, is_member=True)
+
+    wp_existing = {
+        "participant_id": 4,
+        "chmeetings_id": chm_id,
+        "first_name": "Test",
+        "last_name": "Person",
+        "church_code": "RPC",
+        "approval_status": "approved",
+        "is_church_member": False,
+        "membership_claim_at_approval": None,
+        "updated_at": "2025-12-01 00:00:00",
+    }
+
+    updated_calls, mock_update_person = _setup_flip_test_mocks(
+        sync_manager, mocker, chm_id, person_data, wp_existing
+    )
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    result = participant_syncer._sync_single_participant(chm_id)
+
+    assert result is True
+    assert len(updated_calls) == 1, f"Exactly one WP update expected, got {len(updated_calls)}"
+    wp_payload = updated_calls[0][1]
+    assert wp_payload.get("is_church_member") is False, (
+        f"Legacy approved row should revert to stored WP value, got {wp_payload.get('is_church_member')}"
+    )
+    assert wp_payload.get("membership_claim_at_approval") == 0, (
+        "Legacy approved row should backfill the frozen field from the WP record"
+    )
+
+    mock_update_person.assert_called_once()
+    sent_fields = mock_update_person.call_args.args[3]
+    assert any(
+        f.get("field_id") == 1281852 and f.get("selected_option_id") == 999
+        for f in sent_fields
+    ), "Write-back must send the 'No' option ID after legacy backfill"
+
+
 ##### End of tests/test_sync_manager
