@@ -650,6 +650,92 @@ def test_sync_approvals_partial_failure(sync_manager, mocker):
     assert mock_update.call_count == 1
     mock_update.assert_called_once_with(10, {"synced_to_chmeetings": True})
 
+
+def test_sync_approvals_targeted_single_participant(sync_manager, mocker):
+    """A targeted approvals sync should stay scoped to one approved participant."""
+    participant = {
+        "participant_id": 75,
+        "chmeetings_id": "4363699",
+        "approval_status": "approved",
+        "first_name": "Janice",
+        "last_name": "Vu",
+    }
+    mock_get_participants = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=[participant],
+    )
+
+    groups = [{"id": 999, "name": "2026 Sports Fest"}]
+    mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=groups)
+    mock_add = mocker.patch.object(sync_manager.chm_connector, "add_person_to_group", return_value=True)
+
+    approvals = [{"approval_id": 10, "participant_id": 75}]
+    mock_get_approvals = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_approvals",
+        return_value=approvals,
+    )
+    mock_update = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_approval",
+        return_value=True,
+    )
+
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2026 Sports Fest")
+
+    result = sync_manager.sync_approvals_to_chmeetings(chm_id_to_target="4363699")
+
+    assert result is True
+    mock_get_participants.assert_called_once_with(params={"chmeetings_id": "4363699"})
+    mock_add.assert_called_once_with("999", "4363699")
+    mock_get_approvals.assert_called_once_with(
+        params={
+            "approval_status": "approved",
+            "synced_to_chmeetings": False,
+            "per_page": 500,
+            "participant_id": 75,
+        }
+    )
+    mock_update.assert_called_once_with(10, {"synced_to_chmeetings": True})
+
+
+def test_sync_approvals_targeted_skips_non_approved(sync_manager, mocker):
+    """A targeted approvals sync should no-op when the participant is not approved."""
+    participant = {
+        "participant_id": 75,
+        "chmeetings_id": "4363699",
+        "approval_status": "validated",
+        "first_name": "Janice",
+        "last_name": "Vu",
+    }
+    mock_get_participants = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=[participant],
+    )
+    mock_get_groups = mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=[])
+    mock_add = mocker.patch.object(sync_manager.chm_connector, "add_person_to_group", return_value=True)
+    mock_get_approvals = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_approvals",
+        return_value=[],
+    )
+    mock_update = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_approval",
+        return_value=True,
+    )
+
+    result = sync_manager.sync_approvals_to_chmeetings(chm_id_to_target="4363699")
+
+    assert result is True
+    mock_get_participants.assert_called_once_with(params={"chmeetings_id": "4363699"})
+    mock_get_groups.assert_not_called()
+    mock_add.assert_not_called()
+    mock_get_approvals.assert_not_called()
+    mock_update.assert_not_called()
+
 def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
     """Soccer - Coed Exhibition arrives via the other_events checkbox; the comma-split
     loop must produce a single roster row with sport_format=Team and sport_gender=Mixed,

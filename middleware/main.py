@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     sync_parser.add_argument("--type", choices=["churches", "participants", "approvals", "validation", "full"],
                              default="full", help="Type of data to sync")
     sync_parser.add_argument("--chm-id", type=str, default=None,
-                             help="Optional ChMeetings ID of a single participant to sync (only applies if --type is 'participants')")
+                             help="Optional ChMeetings ID to target when --type is 'participants' or 'approvals'")
     sync_parser.add_argument("--excel-fallback", action="store_true",
                              help="Use Excel export instead of API for syncing approvals to ChMeetings")
 
@@ -165,9 +165,10 @@ def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str
             return manager.sync_participants(chm_id=chm_id)
         elif sync_type == "approvals":
             success1 = manager.generate_approvals(chm_id_to_target=chm_id)
-            # Generate approvals email above with the option of just a single participant, but
-            # sync_approvals_to_chmeetings will always sync all approvals to ChMeetings.
-            success2 = manager.sync_approvals_to_chmeetings(use_excel_fallback=excel_fallback)
+            success2 = manager.sync_approvals_to_chmeetings(
+                chm_id_to_target=chm_id,
+                use_excel_fallback=excel_fallback,
+            )
             return success1 and success2
         elif sync_type == "validation":
             return manager.validate_data()
