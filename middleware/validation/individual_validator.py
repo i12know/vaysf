@@ -10,6 +10,7 @@ from loguru import logger
 from .models import Participant, RulesManager
 from config import (Config, SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, 
                    SPORT_UNSELECTED, DEFAULT_SPORT, RACQUET_SPORTS, RULE_LEVEL,
+                   FORMAT_MAPPINGS,
                    VALIDATION_SEVERITY, AGE_RESTRICTIONS, is_racquet_sport)
 
 class IndividualValidator:
@@ -49,12 +50,21 @@ class IndividualValidator:
         issues = []
         issues.extend(self._validate_age(participant))
         issues.extend(self._validate_gender(participant))
+        issues.extend(self._validate_doubles_partner(participant))
         issues.extend(self._validate_photo(participant))
         issues.extend(self._validate_consent(participant))
         
         # Participant is valid unless there’s an ERROR severity issue
         is_valid = not any(issue.get("severity") == VALIDATION_SEVERITY["ERROR"] for issue in issues)
         return is_valid, issues
+
+    def _calculate_age(self, birthdate: str) -> int:
+        """Calculate age on the event date using birthday-aware logic."""
+        birth_date = datetime.strptime(birthdate, "%Y-%m-%d").date()
+        age = self.sports_fest_date.year - birth_date.year
+        if (self.sports_fest_date.month, self.sports_fest_date.day) < (birth_date.month, birth_date.day):
+            age -= 1
+        return age
 
     def _validate_age(self, participant: Participant) -> List[Dict[str, str]]:
         """Validate participant age against rules."""
@@ -64,13 +74,7 @@ class IndividualValidator:
             return [{"type": "missing_birthdate", "description": "Birthdate required for age validation", "severity": VALIDATION_SEVERITY["ERROR"]}]
         
         try:
-            # Parse birthdate
-            birth_date = datetime.strptime(participant.birthdate, "%Y-%m-%d").date()
-            
-            # Calculate age on sports fest date
-            age = self.sports_fest_date.year - birth_date.year
-            if (self.sports_fest_date.month, self.sports_fest_date.day) < (birth_date.month, birth_date.day):
-                age -= 1
+            age = self._calculate_age(participant.birthdate)
             
             # Get sports for this participant
             sports = []
@@ -174,6 +178,49 @@ class IndividualValidator:
                     })
         
         return issues
+
+    def _validate_doubles_partner(self, participant: Participant) -> List[Dict[str, str]]:
+        """Require partner names for racquet doubles selections."""
+        issues = []
+        rules = [
+            r for r in self.rules_manager.get_rules_by_type("partner")
+            if r.get("category") == "required" and str(r.get("value", "")).lower() == "true"
+        ]
+
+        if not rules:
+            return issues
+
+        doubles_selections = [
+            ("primary_sport", "primary_format", "primary_partner"),
+            ("secondary_sport", "secondary_format", "secondary_partner"),
+        ]
+
+        for sport_field, format_field, partner_field in doubles_selections:
+            sport = str(getattr(participant, sport_field, "") or "").strip()
+            if not sport or sport == SPORT_UNSELECTED or not is_racquet_sport(sport):
+                continue
+
+            format_value = str(getattr(participant, format_field, "") or "").strip()
+            sport_format, _ = FORMAT_MAPPINGS.get(format_value, (None, None))
+            if sport_format != SPORT_FORMAT["DOUBLES"]:
+                continue
+
+            partner_name = str(getattr(participant, partner_field, "") or "").strip()
+            if partner_name:
+                continue
+
+            rule = rules[0]
+            issues.append({
+                "type": "missing_doubles_partner",
+                "description": f"Partner name required for {sport} ({format_value})",
+                "rule_code": rule.get("rule_code"),
+                "rule_level": rule.get("rule_level", RULE_LEVEL["INDIVIDUAL"]),
+                "severity": rule.get("severity", VALIDATION_SEVERITY["ERROR"]),
+                "sport": sport,
+                "sport_format": format_value,
+            })
+
+        return issues
     
     def _validate_photo(self, participant: Participant) -> List[Dict[str, str]]:
         """Validate photo requirements.
@@ -270,12 +317,13 @@ class IndividualValidator:
         issues = []
         
         # Calculate age
-        birthdate = participant.birthdate
-        sports_fest_date = datetime.strptime(Config.SPORTS_FEST_DATE, "%Y-%m-%d")
         age = None
-        if birthdate:
-            birthdate_dt = datetime.strptime(birthdate, "%Y-%m-%d")
-            age = (sports_fest_date - birthdate_dt).days // 365
+        if participant.birthdate:
+            try:
+                age = self._calculate_age(participant.birthdate)
+            except ValueError:
+                # _validate_age() already reports malformed birthdates.
+                age = None
         
         # Get consent rules
         rules = [r for r in self.rules_manager.get_rules_by_type("consent") 

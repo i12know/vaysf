@@ -174,3 +174,29 @@ def test_send_email(wp_connector, mocker):
         result = wp_connector.send_email(**email_data)
         logger.info(f"Mocked email result: {result}")
         assert result.get("success", False), "Mocked email sending failed"
+
+
+def test_update_validation_issue_empty_success_response(wp_connector, mocker):
+    """A successful empty 2xx response should count as an update, not an error."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Pure mock test — no live variant needed")
+
+    issue_data = {
+        "status": "resolved",
+        "resolved_at": "2026-05-07 22:15:09",
+    }
+
+    mock_response = mocker.Mock()
+    mock_response.status_code = 200
+    mock_response.text = ""
+    mock_response.raise_for_status = mocker.Mock()
+
+    mocker.patch.object(wp_connector.session, "put", return_value=mock_response)
+
+    result = wp_connector.update_validation_issue(234, issue_data)
+
+    assert result is not None, "Successful empty response should not be treated as a failure"
+    assert result["issue_id"] == 234
+    assert result["status"] == "resolved"
+    assert wp_connector.last_update_validation_issue_status == "empty_success"

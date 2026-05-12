@@ -15,7 +15,11 @@ class Participant(BaseModel):
     gender: Optional[str] = None
     birthdate: Optional[str] = None
     primary_sport: Optional[str] = None
+    primary_format: Optional[str] = None
+    primary_partner: Optional[str] = None
     secondary_sport: Optional[str] = None
+    secondary_format: Optional[str] = None
+    secondary_partner: Optional[str] = None
     other_events: Optional[str] = None
     photo_url: Optional[str] = None
     consent_status: Optional[bool] = None

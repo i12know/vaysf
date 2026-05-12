@@ -1,5 +1,53 @@
 # CHANGELOG
 
+## Unreleased
+
+### New Features
+- Added `python main.py inspect-person --chm-id <ID>` for read-only ChMeetings person inspection with WordPress fallback context
+  - Prints the raw ChMeetings record when the person still exists
+  - Reports cleanly when ChMeetings returns `404 Not Found`
+  - Also shows any matching WordPress participant, rosters, approvals, and validation issues for the same `chmeetings_id`
+- Added `python main.py audit-team-groups [--church-code ABC]` to audit `Team XXX` memberships for orphaned ChMeetings IDs
+  - Flags rows where the Team-group membership still exists but `GET /people/{id}` returns `404`
+  - Writes `middleware/data/team_group_orphan_audit.xlsx` with ChMeetings membership details, lookup status, and any matching WordPress participants
+- Implemented [#76](https://github.com/i12know/vaysf/issues/76): added `python main.py check-consent --file "...xlsx" [--dry-run] [--church-code ABC]` to auto-check the consent checklist box from a ChMeetings form export
+  - Reads the manual consent-form xlsx export, validates the expected column set, and matches rows against synced participants using weighted birthdate/phone/email/name scoring
+  - Uses the tuned `33/27/24/16` weighting so `birthdate + phone`, `birthdate + email`, and `phone + email` qualify while `birthdate + name` still stays below the 51% auto-check threshold
+  - Auto-checks checklist option `199609` only for matches at or above the 51% threshold, while preserving any other existing checklist boxes already selected in ChMeetings
+  - Skips participants whose consent checkbox is already checked, collapses duplicate consent rows per participant by highest score and latest submission date, and writes `middleware/data/consent_check_audit.xlsx`
+  - Added mock-test coverage for threshold behavior, guardian-signed rows, duplicate collapse, already-checked skips, dry-run mode, unmatched rows, and API failure handling
+- Implemented doubles partner validation for the 2026 ruleset
+  - Added `PARTNER_REQUIRED_DOUBLES` to `middleware/validation/summer_2026.json`
+  - `IndividualValidator` now raises an `ERROR` when a racquet doubles selection is missing its partner name
+  - Added `PARTNER_RECIPROCAL_DOUBLES` as a `TEAM`-level `WARNING` when a doubles partner selection is not reciprocally matched within the same church roster
+  - Reciprocal partner warnings now suggest likely full-name matches for short-name entries when there is a unique same-event candidate
+  - Church-team Excel exports now enrich `missing_doubles_partner` rows with reverse partner suggestions when one same-event participant uniquely points back to the missing-partner player
+  - Reverse partner suggestions in church-team Excel exports now also learn from existing TEAM partner-warning rows, which helps when roster-side partner data is incomplete
+  - Participant issue sync now keys individual validation issues by `issue_type + rule_code + sport_type + sport_format`, so distinct partner issues for multiple doubles events are preserved in WordPress
+  - TEAM and CHURCH doubles matching now share a deterministic name matcher that safely resolves live formatting variants such as parenthetical aliases, reordered tokens, compact spacing, hyphen/punctuation noise, and unique initial-based abbreviations
+  - Partner auto-resolution remains conservative: phonetic algorithms such as `soundex` are not used for quota counting, so uncertain names remain `TEAM` warnings until a unique deterministic match exists
+- Added 2026 co-ed soccer TEAM validation rules
+  - `Soccer - Coed Exhibition` now requires at least 4 participants per church team
+  - `Soccer - Coed Exhibition` now allows 0 non-members
+  - Added `MAX_NON_MEMBERS_SINGLES` so non-members cannot participate in racquet singles events
+  - Added JSON-driven minimum playable roster rules for Basketball (5), Men's Volleyball (6), Women's Volleyball (6), and Bible Challenge (3)
+  - Implemented `ChurchValidator` to enforce CHURCH-level `entry_limit` rules from `middleware/validation/summer_2026.json` for team-sport caps and racquet-event quotas, including disallowed formats such as Badminton singles, Pickleball singles, Tennis men's/women's doubles, and Table Tennis 35+ singles
+  - `validate_data()` now syncs CHURCH-level validation issues idempotently alongside TEAM issues
+  - Added church-wide roster fetching for validation so CHURCH team-count caps can see explicit `team_order` entries such as Team A / Team B
+  - Church-level doubles quotas now count only resolved reciprocal pairs, so one-sided or ambiguous partner claims remain TEAM issues until the pairing is corrected
+  - `TeamValidator` now reads sport-specific TEAM non-member limits from `middleware/validation/summer_2026.json`
+  - `TeamValidator` now enforces JSON-driven minimum team sizes for team/exhibition events, including `other_events` selections such as soccer
+
+### Bug Fixes
+- Fixed stale orphaned participant issues in church-team exports and validation refreshes
+  - `export-church-teams` now hides stale `INDIVIDUAL` WordPress validation issues that no longer map to any participant in the current ChMeetings Team-group snapshot
+  - `sync --type validation` now self-resolves open `INDIVIDUAL` validation issues when the linked WordPress participant's `chmeetings_id` returns `404 Not Found` from ChMeetings
+  - This prevents deleted/re-registered people from showing contradictory state such as receiving a fresh pastor approval email while still appearing on the church workbook's `Validation-Issues` tab under an older orphaned participant record
+
+### Documentation
+- Added `EXPORT_DIR` to `middleware/.env.template` with the shared Google Drive example used for church-team report exports
+- Updated `docs/USAGE.md` and `docs/TROUBLESHOOTING.md` with operator guidance for `inspect-person`, `audit-team-groups`, orphaned Team-group memberships, and shared-drive export configuration
+
 ## Version 1.10 (2026-05-12)
 
 ### Security Fix

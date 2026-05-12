@@ -402,10 +402,10 @@ The middleware implements a sophisticated validation system using JSON-based rul
 ```json
 {
   "metadata": {
-    "version": "2026.1.0",
+    "version": "2026.1.x",
     "collection": "SUMMER_2026",
     "event_date": "2026-07-18",
-    "last_updated": "2026-04-22",
+    "last_updated": "2026-05-09",
     "description": "Rules for Sports Fest 2026"
   },
   "rules": [
@@ -420,13 +420,14 @@ The middleware implements a sophisticated validation system using JSON-based rul
       "value": "13",
       "severity": "ERROR",
       "description": "Participants must be at least 13 years old",
-      "collection": "SUMMER_2025"
+      "collection": "SUMMER_2026"
     }
   ]
 }
 ```
 
-These rules are stored in SUMMER_2025.json in the validation folder and should match with config.py's constants
+These rules are stored in `validation/summer_2026.json` (or the current season's
+equivalent) and should match the constants in `config.py`.
 
 ### Multi-Level Validation
 
@@ -434,19 +435,31 @@ These rules are stored in SUMMER_2025.json in the validation folder and should m
    - Age requirements
    - Gender restrictions
    - Photo and consent requirements
+   - Required doubles partner name for racquet doubles selections (`PARTNER_REQUIRED_DOUBLES`, `ERROR`)
 
 2. **Team Level**
    - Team composition rules
-   - Partner matching for doubles events
+   - Reciprocal partner matching for doubles events
    - Non-member quotas
+   - Current implementation detail:
+     `TeamValidator` first tries exact normalized full-name matching, then a
+     conservative same-event short-name heuristic. Non-reciprocal or ambiguous
+     doubles partner matches are reported as `TEAM`-level `WARNING`s via
+     `PARTNER_RECIPROCAL_DOUBLES`.
 
 3. **Church Level**
-   - Maximum teams per sport type
-   - Roster distribution requirements
+   - Church-level entry caps and disallowed-format rules are enforced by
+     `ChurchValidator`
+   - Church-level doubles quotas count only resolved reciprocal pairs, so
+     one-sided or ambiguous partner claims remain at the `TEAM` layer until
+     corrected
+   - Church-team Excel exports and the WordPress validation-issues view surface
+     the resulting `CHURCH` issues alongside `INDIVIDUAL` and `TEAM` issues
 
 4. **Tournament Level**
    - Cross-church validation
    - Overall participation limits
+   - These remain planned/aspirational rather than actively enforced middleware rules
 
 ### Validation Severity Levels
 

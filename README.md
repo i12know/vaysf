@@ -13,7 +13,7 @@ The Sports Fest ChMeetings Integration is a comprehensive system for managing th
 - Participant eligibility verification
 - Admin dashboard for tournament management
 - Targeted participant syncing for debugging (by ChMeetings ID)
-- Excel report generation for church team status
+- Excel report generation for church team status, including open validation issues and partner-name hints
 - Group assignment creation for ChMeetings integration
 - API-based approval sync to ChMeetings groups (with Excel fallback)
 - Centralized field mapping configuration (`CHM_FIELDS`) for easy maintenance
@@ -93,6 +93,9 @@ python main.py sync --type approvals --excel-fallback
 
 # Sync a specific participant by ChMeetings ID (for debugging)
 python main.py sync --type participants --chm-id <CHMEETINGS_ID>
+
+# Recalculate TEAM-level validation issues from current WordPress participant data
+python main.py sync --type validation
 
 # Export Excel reports for all church teams
 python main.py export-church-teams

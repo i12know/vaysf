@@ -5,6 +5,7 @@ import sys
 import argparse
 import time
 import datetime
+import json
 from typing import Optional
 from loguru import logger
 import schedule
@@ -80,6 +81,15 @@ def parse_args() -> argparse.Namespace:
         help="Actually remove current members from the target Team XXX groups",
     )
 
+    audit_team_groups_parser = subparsers.add_parser(
+        "audit-team-groups",
+        help="Audit ChMeetings Team XXX groups for orphaned member IDs",
+    )
+    audit_team_groups_parser.add_argument(
+        "--church-code",
+        help="Limit the audit to a single team group such as Team GAC",
+    )
+
     # Export command
     export_parser = subparsers.add_parser("export-church-teams", help="Export church team status reports")
     export_parser.add_argument("--church-code", help="Export for specific church code (if omitted, exports for all churches)")
@@ -92,6 +102,8 @@ def parse_args() -> argparse.Namespace:
                             help="Resend approval emails for 'validated' participants with NO data in Box 1-6 (not reviewed yet)")
     export_parser.add_argument("--dry-run", action="store_true",
                             help="Show what would be resent without actually sending emails")
+    export_parser.add_argument("--chm-id",
+                            help="Limit force-resend operations to one ChMeetings ID")
 
     # Config command
     config_parser = subparsers.add_parser("config", help="Configure system settings")
@@ -112,6 +124,14 @@ def parse_args() -> argparse.Namespace:
     test_parser.add_argument("--test-email", default=os.getenv("TEST_EMAIL", "PastorBumble@gmail.com"),
                              help="Email address for email test")
 
+    # Inspect-person command
+    inspect_parser = subparsers.add_parser(
+        "inspect-person",
+        help="Inspect a single ChMeetings person ID and any matching WordPress records",
+    )
+    inspect_parser.add_argument("--chm-id", type=str, required=True,
+                                help="ChMeetings person ID to inspect")
+
     # Reset-season command
     reset_parser = subparsers.add_parser(
         "reset-season",
@@ -129,6 +149,26 @@ def parse_args() -> argparse.Namespace:
                               help="Process a single ChMeetings person ID instead of the whole group (for testing)")
     reset_parser.add_argument("--probe", action="store_true",
                               help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id)")
+
+    # Check-consent command
+    check_consent_parser = subparsers.add_parser(
+        "check-consent",
+        help="Match consent-form export rows to participants and auto-check the consent checklist box",
+    )
+    check_consent_parser.add_argument(
+        "--file",
+        required=True,
+        help="Path to the consent-form export xlsx file",
+    )
+    check_consent_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview matches and write the audit xlsx without updating ChMeetings",
+    )
+    check_consent_parser.add_argument(
+        "--church-code",
+        help="Limit the run to a single church code such as RPC",
+    )
 
     return parser.parse_args()
 
@@ -460,6 +500,68 @@ def test_connectivity(system: str = "all", test_type: str = "connectivity", test
             success = False
 
     return success
+
+
+def _log_json_block(title: str, payload) -> None:
+    """Log structured JSON payloads in a readable block."""
+    logger.info("=" * 60)
+    logger.info(title)
+    logger.info("=" * 60)
+    logger.info(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+
+
+def inspect_person(chm_id: str) -> bool:
+    """Inspect one ChMeetings person ID and related WordPress records.
+
+    This is intentionally read-only and operator-friendly. If the ChMeetings
+    record is gone, it still looks for any matching WordPress participant so we
+    can identify who the stale ID used to belong to.
+    """
+    logger.info(f"Inspecting ChMeetings person ID: {chm_id}")
+    found_any = False
+
+    with ChMeetingsConnector() as chm_connector:
+        if not chm_connector.authenticate():
+            logger.error("Failed to authenticate with ChMeetings for inspect-person")
+        else:
+            person = chm_connector.get_person(chm_id)
+            if person:
+                found_any = True
+                _log_json_block(f"ChMeetings person {chm_id}", person)
+            elif chm_connector.last_get_person_status == "not_found":
+                logger.warning(f"ChMeetings person {chm_id} returned 404 Not Found.")
+            else:
+                logger.warning(f"Could not retrieve ChMeetings person {chm_id}. Check logs above for details.")
+
+    with WordPressConnector() as wp_connector:
+        participants = wp_connector.get_participants(
+            params={"chmeetings_id": chm_id, "per_page": 100}
+        )
+
+        if not participants:
+            logger.info(f"No WordPress participants found with chmeetings_id={chm_id}.")
+            return found_any
+
+        found_any = True
+        _log_json_block(f"WordPress participants matching chmeetings_id={chm_id}", participants)
+
+        for participant in participants:
+            wp_participant_id = participant.get("participant_id")
+            if not wp_participant_id:
+                continue
+
+            rosters = wp_connector.get_rosters(params={"participant_id": wp_participant_id})
+            approvals = wp_connector.get_approvals(params={"participant_id": wp_participant_id})
+            validation_issues = wp_connector.get_validation_issues(params={"participant_id": wp_participant_id})
+
+            _log_json_block(f"WordPress rosters for participant_id={wp_participant_id}", rosters)
+            _log_json_block(f"WordPress approvals for participant_id={wp_participant_id}", approvals)
+            _log_json_block(
+                f"WordPress validation issues for participant_id={wp_participant_id}",
+                validation_issues,
+            )
+
+    return found_any
     
 def main() -> None:
     """Main entry point for the VAYSF middleware."""
@@ -518,6 +620,11 @@ def main() -> None:
                 logger.info("Dry-run complete. Check data/team_group_clearing_audit.xlsx for the preview.")
             else:
                 logger.info("Team-group clearing complete. Check data/team_group_clearing_audit.xlsx for the audit log.")
+    elif args.command == "audit-team-groups":
+        from group_assignment import audit_team_groups
+        success = audit_team_groups(church_code=args.church_code)
+        if success:
+            logger.info("Team-group audit complete. Check data/team_group_orphan_audit.xlsx for the audit log.")
     elif args.command == "export-church-teams":
         output_path = Path(args.output) 
         try:
@@ -536,7 +643,8 @@ def main() -> None:
                         force_resend_pending=args.force_resend_pending,
                         force_resend_validated1=args.force_resend_validated1,
                         force_resend_validated2=args.force_resend_validated2,
-                        dry_run=args.dry_run
+                        dry_run=args.dry_run,
+                        target_resend_chm_id=args.chm_id,
                     )
                 if success: 
                     logger.info(f"Church team reports generated successfully in {output_path.resolve()}.")
@@ -552,6 +660,8 @@ def main() -> None:
         success = True  # No exit until interrupted
     elif args.command == "test":
         success = test_connectivity(args.system, args.test_type, args.test_email)
+    elif args.command == "inspect-person":
+        success = inspect_person(args.chm_id)
     elif args.command == "reset-season":
         if args.archive_only and args.reset_only:
             logger.error("--archive-only and --reset-only are mutually exclusive.")
@@ -574,6 +684,21 @@ def main() -> None:
                     reset_only=args.reset_only,
                     person_id=args.person_id,
                 )
+    elif args.command == "check-consent":
+        if not os.path.exists(args.file):
+            logger.error(f"Consent export file not found at {args.file}")
+            success = False
+        else:
+            from sync.consent_checker import ConsentChecker
+
+            with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+                checker = ConsentChecker(chm_conn, wp_conn)
+                summary = checker.run(
+                    args.file,
+                    dry_run=args.dry_run,
+                    church_code=args.church_code,
+                )
+                success = summary["api_error"] == 0
     else:
         logger.error(f"Unknown command: {args.command}")
         success = False

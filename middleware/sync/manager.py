@@ -16,7 +16,7 @@ from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
 from sync.churches import ChurchSyncer
 from sync.participants import ParticipantSyncer
-from validation import TeamValidator
+from validation import ChurchValidator, TeamValidator
 import datetime
 from uuid import uuid4
 from tqdm import tqdm
@@ -617,6 +617,331 @@ class SyncManager:
         except Exception as e:
             logger.error(f"Error exporting approved participants to Excel: {e}", exc_info=True)
             return False
+
+    @staticmethod
+    def _is_group_validation_issue(issue: Dict[str, Any]) -> bool:
+        participant_id = issue.get("participant_id")
+        return (
+            issue.get("rule_level") in (RULE_LEVEL["TEAM"], RULE_LEVEL["CHURCH"])
+            or (
+                participant_id in (None, "", 0, "0")
+                and issue.get("issue_type") in (TeamValidator.ISSUE_TYPES | ChurchValidator.ISSUE_TYPES)
+            )
+        )
+
+    @staticmethod
+    def _group_issue_key(issue: Dict[str, Any]) -> tuple[str, str, str, str, str]:
+        return (
+            str(issue.get("issue_type", "")),
+            str(issue.get("rule_code", "")),
+            str(issue.get("participant_id") or ""),
+            str(issue.get("sport_type") or ""),
+            str(issue.get("sport_format") or ""),
+        )
+
+    def _fetch_open_validation_issues(self, church_id: Optional[int] = None) -> list[Dict[str, Any]]:
+        """Fetch all open validation issues, optionally scoped to one church."""
+        open_issues = []
+        current_page = 1
+        fetch_per_page = 100
+
+        while True:
+            params = {
+                "status": VALIDATION_STATUS["OPEN"],
+                "page": current_page,
+                "per_page": fetch_per_page,
+            }
+            if church_id is not None:
+                params["church_id"] = church_id
+
+            page_issues = self.wordpress_connector.get_validation_issues(params=params)
+            if not page_issues:
+                break
+
+            open_issues.extend(page_issues)
+
+            if len(page_issues) < fetch_per_page:
+                break
+
+            current_page += 1
+            if current_page > 50:
+                logger.warning("Reached page limit (50) fetching open validation issues. Stopping.")
+                break
+
+        return open_issues
+
+    def _fetch_existing_group_issues(self, church_id: Optional[int] = None) -> list[Dict[str, Any]]:
+        return [
+            issue for issue in self._fetch_open_validation_issues(church_id=church_id)
+            if self._is_group_validation_issue(issue)
+        ]
+
+    @staticmethod
+    def _build_group_issue_update_payload(issue: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "participant_id": issue.get("participant_id"),
+            "issue_type": issue["issue_type"],
+            "issue_description": issue["issue_description"],
+            "rule_code": issue.get("rule_code"),
+            "rule_level": issue.get("rule_level", RULE_LEVEL["TEAM"]),
+            "severity": issue.get("severity", VALIDATION_SEVERITY["ERROR"]),
+            "sport_type": issue.get("sport_type"),
+            "sport_format": issue.get("sport_format"),
+            "status": VALIDATION_STATUS["OPEN"],
+        }
+
+    def _resolve_validation_issue(self, issue_id: Any) -> bool:
+        updated = self.wordpress_connector.update_validation_issue(
+            issue_id,
+            {"status": VALIDATION_STATUS["RESOLVED"]},
+        )
+        if updated:
+            self.stats["validation_issues"]["resolved"] += 1
+            return True
+
+        self.stats["validation_issues"]["errors"] += 1
+        logger.warning(f"Failed to resolve validation issue {issue_id}.")
+        return False
+
+    def _load_church_lookup_by_code(self) -> Dict[str, int]:
+        """Return a church_code -> church_id lookup, loading churches if needed."""
+        if not self.churches_cache:
+            wp_churches = self.wordpress_connector.get_churches()
+            if wp_churches:
+                self.churches_cache = {
+                    str(church.get("church_code", "")).strip().upper(): church
+                    for church in wp_churches
+                    if church.get("church_code")
+                }
+
+        church_lookup: Dict[str, int] = {}
+        for church_code, church in self.churches_cache.items():
+            try:
+                church_lookup[str(church_code).strip().upper()] = int(church["church_id"])
+            except (KeyError, TypeError, ValueError):
+                logger.warning(
+                    f"Skipping church cache entry with invalid church_id for code '{church_code}': {church}"
+                )
+        return church_lookup
+
+    def _load_church_lookup_by_id(self) -> Dict[int, str]:
+        """Return a church_id -> church_code lookup, loading churches if needed."""
+        self._load_church_lookup_by_code()
+
+        church_lookup: Dict[int, str] = {}
+        for church_code, church in self.churches_cache.items():
+            try:
+                church_lookup[int(church["church_id"])] = str(church_code).strip().upper()
+            except (KeyError, TypeError, ValueError):
+                logger.warning(
+                    f"Skipping church cache entry with invalid church_id for reverse lookup: {church}"
+                )
+        return church_lookup
+
+    @staticmethod
+    def _coerce_church_id(raw_church_id: Any) -> Optional[int]:
+        """Normalize a church_id value to int when possible."""
+        if raw_church_id in (None, "", 0, "0"):
+            return None
+        try:
+            return int(raw_church_id)
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_orphaned_individual_validation_issues(
+        self,
+        wp_participants: list[Dict[str, Any]],
+        open_validation_issues: list[Dict[str, Any]],
+    ) -> None:
+        """Resolve INDIVIDUAL issues whose linked ChMeetings person now 404s.
+
+        This is a conservative self-heal for re-registration/deletion churn:
+        when the old ChMeetings person ID is gone entirely, lingering open
+        participant-scoped validation issues should not keep surfacing forever.
+        """
+        if not self.chm_connector:
+            logger.warning(
+                "Skipping orphaned INDIVIDUAL validation-issue self-heal because "
+                "the ChMeetings connector is unavailable."
+            )
+            return
+
+        issues_by_participant_id: Dict[str, list[Dict[str, Any]]] = {}
+        for issue in open_validation_issues:
+            if str(issue.get("rule_level") or "").strip() != RULE_LEVEL["INDIVIDUAL"]:
+                continue
+
+            participant_id = issue.get("participant_id")
+            if participant_id in (None, "", 0, "0"):
+                continue
+
+            issues_by_participant_id.setdefault(str(participant_id), []).append(issue)
+
+        if not issues_by_participant_id:
+            return
+
+        participants_by_id = {
+            str(participant.get("participant_id")): participant
+            for participant in wp_participants
+            if participant.get("participant_id") not in (None, "", 0, "0")
+        }
+        chm_lookup_status_by_id: Dict[str, str] = {}
+        resolved_issue_count = 0
+        resolved_participant_count = 0
+
+        for participant_id, participant_issues in issues_by_participant_id.items():
+            participant = participants_by_id.get(participant_id)
+            if not participant:
+                logger.warning(
+                    f"Skipping orphaned INDIVIDUAL validation-issue self-heal for "
+                    f"participant_id={participant_id}: WordPress participant was not "
+                    "present in the current participant listing."
+                )
+                continue
+
+            chm_id = str(participant.get("chmeetings_id") or "").strip()
+            if not chm_id:
+                logger.warning(
+                    f"Skipping orphaned INDIVIDUAL validation-issue self-heal for "
+                    f"participant_id={participant_id}: missing chmeetings_id."
+                )
+                continue
+
+            if chm_id not in chm_lookup_status_by_id:
+                self.chm_connector.get_person(chm_id)
+                chm_lookup_status_by_id[chm_id] = (
+                    getattr(self.chm_connector, "last_get_person_status", None) or "failed"
+                )
+
+            if chm_lookup_status_by_id[chm_id] != "not_found":
+                continue
+
+            participant_name = " ".join(
+                part
+                for part in (
+                    str(participant.get("first_name") or "").strip(),
+                    str(participant.get("last_name") or "").strip(),
+                )
+                if part
+            ).strip() or f"participant_id={participant_id}"
+
+            resolved_for_participant = 0
+            resolved_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            for issue in participant_issues:
+                issue_id = issue.get("issue_id")
+                if not issue_id:
+                    continue
+
+                updated = self.wordpress_connector.update_validation_issue(
+                    issue_id,
+                    {
+                        "status": VALIDATION_STATUS["RESOLVED"],
+                        "resolved_at": resolved_at,
+                        "updated_at": resolved_at,
+                    },
+                )
+                if updated:
+                    self.stats["validation_issues"]["resolved"] += 1
+                    resolved_issue_count += 1
+                    resolved_for_participant += 1
+                else:
+                    self.stats["validation_issues"]["errors"] += 1
+                    logger.warning(
+                        f"Failed to self-resolve orphaned validation issue {issue_id} "
+                        f"for participant_id={participant_id} (chmeetings_id={chm_id})."
+                    )
+
+            if resolved_for_participant:
+                resolved_participant_count += 1
+                logger.info(
+                    f"Self-resolved {resolved_for_participant} orphaned INDIVIDUAL "
+                    f"validation issue(s) for {participant_name} "
+                    f"(WP participant_id={participant_id}, ChMeetings ID {chm_id})."
+                )
+
+        if resolved_issue_count:
+            logger.info(
+                f"Resolved {resolved_issue_count} orphaned INDIVIDUAL validation "
+                f"issue(s) across {resolved_participant_count} participant(s) whose "
+                "ChMeetings records now return 404."
+            )
+
+    def _sync_group_validation_issues(
+        self,
+        church_id: int,
+        current_issues: list[Dict[str, Any]],
+        existing_issues: list[Dict[str, Any]],
+    ) -> None:
+        existing_by_key: Dict[tuple[str, str, str, str, str], list[Dict[str, Any]]] = {}
+        for issue in existing_issues:
+            existing_by_key.setdefault(self._group_issue_key(issue), []).append(issue)
+
+        current_keys = set()
+        resolved_issue_ids = set()
+
+        for issue in current_issues:
+            key = self._group_issue_key(issue)
+            current_keys.add(key)
+            matching_existing = existing_by_key.get(key, [])
+
+            if matching_existing:
+                canonical_issue = matching_existing[0]
+                for duplicate_issue in matching_existing[1:]:
+                    duplicate_id = duplicate_issue["issue_id"]
+                    if duplicate_id not in resolved_issue_ids:
+                        if self._resolve_validation_issue(duplicate_id):
+                            resolved_issue_ids.add(duplicate_id)
+
+                update_payload = self._build_group_issue_update_payload(issue)
+                fields_to_compare = (
+                    "participant_id",
+                    "issue_description",
+                    "rule_code",
+                    "rule_level",
+                    "severity",
+                    "sport_type",
+                    "sport_format",
+                    "status",
+                )
+                if any(
+                    (canonical_issue.get(field) or None) != (update_payload.get(field) or None)
+                    for field in fields_to_compare
+                ):
+                    updated = self.wordpress_connector.update_validation_issue(
+                        canonical_issue["issue_id"],
+                        update_payload,
+                    )
+                    if updated:
+                        self.stats["validation_issues"]["updated"] += 1
+                    else:
+                        self.stats["validation_issues"]["errors"] += 1
+                        logger.warning(
+                            f"Failed to update validation issue {canonical_issue['issue_id']} "
+                            f"for church {church_id}."
+                        )
+                else:
+                    self.stats["validation_issues"]["unchanged"] += 1
+            else:
+                created = self.wordpress_connector.create_validation_issue(issue)
+                if created:
+                    self.stats["validation_issues"]["created"] += 1
+                else:
+                    self.stats["validation_issues"]["errors"] += 1
+                    logger.warning(
+                        f"Failed to create validation issue {issue['issue_type']} "
+                        f"for church {church_id}."
+                    )
+
+        for key, matching_existing in existing_by_key.items():
+            if key in current_keys:
+                continue
+
+            for existing_issue in matching_existing:
+                issue_id = existing_issue["issue_id"]
+                if issue_id in resolved_issue_ids:
+                    continue
+                if self._resolve_validation_issue(issue_id):
+                    resolved_issue_ids.add(issue_id)
         
     def validate_data(self) -> bool:
         """Validate participant data against Sports Fest rules."""
@@ -642,22 +967,74 @@ class SyncManager:
             return False
         logger.info(f"Fetched {len(wp_participants)} participants for validation.")
 
+        church_lookup = self._load_church_lookup_by_code()
+        church_code_by_id = self._load_church_lookup_by_id()
         participants_by_church = {}
         for participant in wp_participants:
-            church_id = participant["church_id"]
+            church_id = self._coerce_church_id(participant.get("church_id"))
+            if church_id is None:
+                church_code = str(participant.get("church_code", "")).strip().upper()
+                church_id = church_lookup.get(church_code)
+            if church_id is None:
+                logger.warning(
+                    f"Skipping participant {participant.get('participant_id')} in validation "
+                    f"because no church_id could be resolved. "
+                    f"church_code={participant.get('church_code')!r}"
+                )
+                continue
             participants_by_church.setdefault(church_id, []).append(participant)
+            participant_church_code = str(participant.get("church_code", "")).strip().upper()
+            if participant_church_code:
+                church_code_by_id.setdefault(church_id, participant_church_code)
 
-        validation_issues = []
+        open_validation_issues = self._fetch_open_validation_issues()
+        self._resolve_orphaned_individual_validation_issues(
+            wp_participants,
+            open_validation_issues,
+        )
+
+        existing_group_issues = [
+            issue for issue in open_validation_issues if self._is_group_validation_issue(issue)
+        ]
+        existing_group_issues_by_church = {}
+        for issue in existing_group_issues:
+            issue_church_id = self._coerce_church_id(issue.get("church_id"))
+            if issue_church_id is None:
+                logger.warning(f"Skipping validation issue with invalid church_id during validation sync: {issue}")
+                continue
+            existing_group_issues_by_church.setdefault(issue_church_id, []).append(issue)
+
+        rosters_by_church = {}
+        for church_id in participants_by_church:
+            church_code = church_code_by_id.get(church_id)
+            if not church_code:
+                continue
+            rosters_by_church[church_id] = self.wordpress_connector.get_rosters(
+                params={"church_code": church_code, "all_team_orders": 1}
+            )
+
         team_validator = TeamValidator()
-        for church_id, participants in participants_by_church.items():
-            validation_issues.extend(team_validator.validate_church(church_id, participants))
-
-        for issue in tqdm(validation_issues, desc="Creating validation issues"):
+        church_validator = ChurchValidator()
+        church_ids_to_process = set(participants_by_church) | set(existing_group_issues_by_church)
+        for church_id in tqdm(sorted(church_ids_to_process), desc="Syncing non-individual validation issues"):
             try:
-                if self.wordpress_connector.create_validation_issue(issue):
-                    self.stats["validation_issues"]["created"] += 1
+                current_issues = []
+                current_issues.extend(team_validator.validate_church(
+                    church_id,
+                    participants_by_church.get(church_id, []),
+                ))
+                current_issues.extend(church_validator.validate_church(
+                    church_id,
+                    participants_by_church.get(church_id, []),
+                    rosters=rosters_by_church.get(church_id, []),
+                ))
+                self._sync_group_validation_issues(
+                    church_id,
+                    current_issues,
+                    existing_group_issues_by_church.get(church_id, []),
+                )
             except Exception as e:
-                logger.error(f"Error creating validation issue: {e}")
+                logger.error(f"Error syncing validation issues for church {church_id}: {e}")
                 self.stats["validation_issues"]["errors"] += 1
 
         logger.info(f"Data validation completed: {self.stats['validation_issues']}")

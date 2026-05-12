@@ -12,6 +12,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
 from chmeetings.backend_connector import ChMeetingsConnector
+from wordpress.frontend_connector import WordPressConnector
 
 
 def _team_group_prefix() -> str:
@@ -387,6 +388,136 @@ def clear_team_groups(
             )
 
         return failed == 0
+
+
+def audit_team_groups(church_code: Optional[str] = None) -> bool:
+    """
+    Audit Team XXX groups for orphaned ChMeetings memberships.
+
+    A membership is considered orphaned when it appears in a Team group but
+    GET /people/{id} returns 404 Not Found.
+    """
+    normalized_code = church_code.strip().upper() if church_code else None
+    logger.info(
+        f"Starting team-group orphan audit (church_code={normalized_code or 'ALL'})..."
+    )
+
+    with ChMeetingsConnector() as chm_connector, WordPressConnector() as wp_connector:
+        if not chm_connector.authenticate():
+            logger.error("Authentication with ChMeetings failed")
+            return False
+
+        all_groups = chm_connector.get_groups()
+        team_groups = [g for g in all_groups if _is_team_group(g.get("name", ""))]
+
+        if normalized_code:
+            target_group_name = _team_group_name(normalized_code)
+            team_groups = [g for g in team_groups if g.get("name") == target_group_name]
+            if not team_groups:
+                logger.warning(f"No team group named '{target_group_name}' was found in ChMeetings.")
+
+        logger.info(f"Found {len(team_groups)} target team group(s) to audit.")
+
+        groups_processed = 0
+        memberships_found = 0
+        orphans_found = 0
+        resolved_found = 0
+        failed_lookups = 0
+        audit_rows: List[Dict[str, str]] = []
+
+        for group in team_groups:
+            group_id = str(group["id"])
+            group_name = group.get("name", "")
+            groups_processed += 1
+
+            group_people = chm_connector.get_group_people(group_id)
+            logger.info(f"Auditing group '{group_name}' with {len(group_people)} membership(s).")
+            memberships_found += len(group_people)
+
+            if not group_people:
+                audit_rows.append({
+                    "Group Id": group_id,
+                    "Group Name": group_name,
+                    "Membership Person Id": "",
+                    "Membership First Name": "",
+                    "Membership Last Name": "",
+                    "Membership Email": "",
+                    "Lookup Status": "empty_group",
+                    "Resolved ChM First Name": "",
+                    "Resolved ChM Last Name": "",
+                    "Resolved ChM Email": "",
+                    "WP Match Count": "0",
+                    "WP Participant IDs": "",
+                    "WP Names": "",
+                })
+                continue
+
+            for person in group_people:
+                person_id = str(person.get("person_id") or person.get("id") or "")
+                membership_first_name = person.get("first_name", "")
+                membership_last_name = person.get("last_name", "")
+                membership_email = person.get("email", "")
+
+                resolved_person = chm_connector.get_person(person_id) if person_id else None
+                time.sleep(0.2)
+
+                lookup_status = getattr(chm_connector, "last_get_person_status", "failed")
+                resolved_first_name = ""
+                resolved_last_name = ""
+                resolved_email = ""
+
+                if resolved_person:
+                    resolved_found += 1
+                    lookup_status = "ok"
+                    resolved_first_name = resolved_person.get("first_name", "")
+                    resolved_last_name = resolved_person.get("last_name", "")
+                    resolved_email = resolved_person.get("email", "")
+                elif lookup_status == "not_found":
+                    orphans_found += 1
+                    logger.warning(
+                        f"Orphaned Team-group membership found: {group_name} has person_id={person_id}, "
+                        f"but ChMeetings GET /people/{person_id} returned 404."
+                    )
+                else:
+                    failed_lookups += 1
+                    logger.warning(
+                        f"Could not fully audit person_id={person_id} in {group_name}; "
+                        f"lookup status was '{lookup_status}'."
+                    )
+
+                wp_matches = wp_connector.get_participants(
+                    params={"chmeetings_id": person_id, "per_page": 100}
+                ) if person_id else []
+                wp_ids = ",".join(str(p.get("participant_id", "")) for p in wp_matches)
+                wp_names = "; ".join(
+                    f"{p.get('first_name', '')} {p.get('last_name', '')}".strip()
+                    for p in wp_matches
+                )
+
+                audit_rows.append({
+                    "Group Id": group_id,
+                    "Group Name": group_name,
+                    "Membership Person Id": person_id,
+                    "Membership First Name": membership_first_name,
+                    "Membership Last Name": membership_last_name,
+                    "Membership Email": membership_email,
+                    "Lookup Status": lookup_status,
+                    "Resolved ChM First Name": resolved_first_name,
+                    "Resolved ChM Last Name": resolved_last_name,
+                    "Resolved ChM Email": resolved_email,
+                    "WP Match Count": str(len(wp_matches)),
+                    "WP Participant IDs": wp_ids,
+                    "WP Names": wp_names,
+                })
+
+        _write_audit_file("team_group_orphan_audit.xlsx", audit_rows)
+        logger.info(
+            f"Team-group orphan audit complete: {groups_processed} group(s), "
+            f"{memberships_found} membership(s), {orphans_found} orphan(s), "
+            f"{resolved_found} resolved lookup(s), {failed_lookups} failed lookup(s)."
+        )
+
+        return True
 
 
 # Back-compat alias — main.py imports this name

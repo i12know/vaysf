@@ -199,11 +199,32 @@ Vietnamese churches that cannot field a full team may merge their youth into ano
 ### 6.4 Non-Member (Ringer) Quotas
 These are enforced at the **team level** by the middleware validator:
 - Basketball, Men's Volleyball, Women's Volleyball, Bible Challenge: **max 2 non-members per team**
+- Soccer - Coed Exhibition: **max 0 non-members**
+- Singles racquet events (Badminton, Pickleball, Pickleball 35+, Table Tennis, Table Tennis 35+, Tennis): **max 0 non-members**
 - Doubles events (Badminton, Pickleball, Table Tennis, Tennis): **max 1 non-member per pair**
 
 ### 6.5 Team Event Roster Rules
-- Unlimited athletes may register for team events (Basketball, Volleyball, Bible Challenge)
-- Individual/racquet events have limited slots — Church Rep is responsible for compliance
+- Team events are open above their minimum playable roster:
+- Basketball: minimum 5 participants
+- Men's Volleyball: minimum 6 participants
+- Women's Volleyball: minimum 6 participants
+- Bible Challenge: minimum 3 participants
+- Soccer - Coed Exhibition: minimum 4 participants
+- Church-level event entry caps are enforced by the middleware validator:
+- Basketball: max 1 team per church
+- Men's Volleyball: max 1 team per church
+- Women's Volleyball: max 1 team per church
+- Bible Challenge: max 1 team per church
+- Soccer - Coed Exhibition: max 1 team per church
+- Badminton: max 2 Men's Doubles, max 1 Women's Doubles, max 1 Mixed Doubles; Men's/Women's Singles not allowed
+- Pickleball: max 3 doubles teams total; max 1 Men's Doubles, max 1 Women's Doubles, max 3 Mixed Doubles; Men's/Women's Singles not allowed
+- Pickleball 35+: max 1 doubles team total; Men's/Women's Singles not allowed
+- Tennis: max 3 Men's Singles, max 3 Women's Singles, max 2 Mixed Doubles; Men's/Women's Doubles not allowed
+- Table Tennis: max 3 Men's Singles, max 3 Women's Singles, max 2 doubles teams total
+- Table Tennis 35+: max 1 doubles team total; Men's/Women's Singles not allowed
+- For church-level doubles quotas, only resolved reciprocal pairs count toward the church cap; one-sided or ambiguous partner claims stay at the TEAM validation layer until corrected
+- Doubles partner matching is deterministic rather than phonetic: the validator may resolve same-event pairs using accent-insensitive normalization, punctuation/parenthetical cleanup, token-order normalization, compact-spacing normalization (for example `Minh Thu` vs `Minhthu`), and unique initial-based abbreviations (for example `Jamie S` vs `Jamie Sauveur`)
+- The validator does not use phonetic algorithms such as `soundex` to auto-resolve doubles pairs; if a name remains uncertain after deterministic normalization, it stays a `TEAM` warning instead of silently counting toward church quotas
 - Each athlete may register for max 2 events (Primary + Secondary), excluding Track & Field and Scripture Memorization
 
 ### 6.6 Photo Requirement

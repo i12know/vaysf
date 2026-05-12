@@ -44,6 +44,21 @@ class ParticipantSyncer:
         # Initialize the IndividualValidator with the event collection
         self.validator = IndividualValidator(collection="SUMMER_2026")
 
+    @staticmethod
+    def _validation_issue_key(
+        issue_type: str,
+        rule_code: str = "",
+        sport_type: Optional[str] = None,
+        sport_format: Optional[str] = None,
+    ) -> tuple[str, str, str, str]:
+        """Build a stable identity for one validation issue row."""
+        return (
+            str(issue_type or ""),
+            str(rule_code or ""),
+            str(sport_type or ""),
+            str(sport_format or ""),
+        )
+
 # In sync/participants.py, inside the ParticipantSyncer class
 
     def sync_participants(self, chm_id_to_sync: Optional[str] = None) -> bool:
@@ -602,6 +617,36 @@ class ParticipantSyncer:
 #        # Validate using the IndividualValidator
 #        is_valid, issues = self.validator.validate(participant_obj)
 #        return is_valid, issues
+    @staticmethod
+    def _roster_sort_key(roster: Dict[str, Any]) -> Tuple[int, str]:
+        raw_id = roster.get("roster_id", 0)
+        try:
+            return (int(raw_id), "")
+        except (TypeError, ValueError):
+            return (0, str(raw_id))
+
+    def _get_rosters_with_retry(
+        self,
+        params: Dict[str, Any],
+        log_prefix: str,
+    ) -> Optional[List[Dict[str, Any]]]:
+        for attempt in range(1, 3):
+            rosters = self.wordpress_connector.get_rosters(params)
+            if getattr(self.wordpress_connector, "last_get_rosters_status", "ok") == "ok":
+                return rosters
+            if attempt == 1:
+                logger.warning(
+                    f"{log_prefix} - WP roster lookup failed. Retrying once before "
+                    f"continuing to avoid accidental duplicate writes. Params: {params}"
+                )
+
+        logger.warning(
+            f"{log_prefix} - WP roster lookup failed after retry. Skipping this "
+            f"roster operation to avoid accidental duplicates. Params: {params}"
+        )
+        self.stats["rosters"]["errors"] += 1
+        return None
+
     def _sync_rosters(self, participant_id: str, participant: Dict[str, Any]):
         """Sync participant sport preferences to sf_rosters."""
         sport_fields = [
@@ -701,18 +746,34 @@ class ParticipantSyncer:
     
         # Cleanup outdated rosters
         try:
-            all_rosters = self.wordpress_connector.get_rosters({"participant_id": participant_id})
+            cleanup_log_prefix = f"ROSTER_CLEANUP [P:{participant_id}]"
+            all_rosters = self._get_rosters_with_retry(
+                {"participant_id": participant_id},
+                cleanup_log_prefix,
+            )
+            if all_rosters is None:
+                return
+
             logger.debug(f"Found {len(all_rosters)} existing rosters for participant_id={participant_id}") ## Debug
- 
-            for roster in all_rosters:
+
+            kept_current_sports = set()
+            for roster in sorted(all_rosters, key=self._roster_sort_key):
                 roster_key = (roster["sport_type"], roster["sport_format"], roster["sport_gender"], roster["team_order"])
                 logger.debug(f"Checking roster_id={roster['roster_id']}: key={roster_key}")
                 if roster_key not in current_sports:
                     logger.info(f"Deleting roster_id={roster['roster_id']}: {roster_key} NOT in current_sports") ## debug
                     self.wordpress_connector.delete_roster(roster["roster_id"])
                     self.stats["rosters"]["deleted"] += 1
+                elif roster_key in kept_current_sports:
+                    logger.info(
+                        f"Deleting duplicate roster_id={roster['roster_id']}: {roster_key} "
+                        f"duplicates another current roster for participant_id={participant_id}"
+                    )
+                    self.wordpress_connector.delete_roster(roster["roster_id"])
+                    self.stats["rosters"]["deleted"] += 1
                 else:
                     logger.debug(f"Keeping roster_id={roster['roster_id']}: {roster_key} found in current_sports")
+                    kept_current_sports.add(roster_key)
         except Exception as e:
             logger.error(f"Error cleaning up rosters: {e}")
             self.stats["rosters"]["errors"] += 1
@@ -745,7 +806,10 @@ class ParticipantSyncer:
                 query_params["team_order"] = roster_data["team_order"]
             
             logger.debug(f"{log_prefix} - Querying WP with params: {query_params}")
-            existing_rosters_list = self.wordpress_connector.get_rosters(query_params) # Expect a list
+            existing_rosters_list = self._get_rosters_with_retry(query_params, log_prefix)
+            if existing_rosters_list is None:
+                return
+
             logger.debug(f"{log_prefix} - WP get_rosters returned (list): {existing_rosters_list}")
 
             matched_existing_roster_details = None
@@ -754,7 +818,15 @@ class ParticipantSyncer:
                 # This could be problematic if (participant_id, sport, format) without team_order
                 # returns multiple rosters (e.g., Volleyball Team A, Volleyball Team B)
                 # and team_order was not specific enough in the query or roster_data.
-                matched_existing_roster_details = existing_rosters_list[0]
+                if len(existing_rosters_list) > 1:
+                    logger.warning(
+                        f"{log_prefix} - Found {len(existing_rosters_list)} matching rosters. "
+                        "Using the oldest roster and letting cleanup remove duplicates."
+                    )
+                matched_existing_roster_details = sorted(
+                    existing_rosters_list,
+                    key=self._roster_sort_key,
+                )[0]
                 logger.debug(f"{log_prefix} - Selected matched_existing_roster_details (from list[0]): {matched_existing_roster_details}")
             else:
                 logger.debug(f"{log_prefix} - No existing rosters found by query.")
@@ -829,10 +901,6 @@ class ParticipantSyncer:
             issues: List of validation issues from the validator
             last_updated: Timestamp when the participant was last updated
         """
-        if not issues:
-            # No issues to sync, we can return early
-            return
-        
         # Get existing issues for this participant (per_page=200 avoids silent truncation
         # at the PHP default; a single participant won't realistically exceed 200 issues)
         existing_issues = self.wordpress_connector.get_validation_issues({
@@ -844,8 +912,12 @@ class ParticipantSyncer:
         # Create a lookup dictionary of existing issues
         existing_lookup = {}
         for issue in existing_issues:
-            # Create a composite key using issue_type and rule_code (if available)
-            key = f"{issue['issue_type']}:{issue.get('rule_code', '')}"
+            key = self._validation_issue_key(
+                issue.get("issue_type", ""),
+                issue.get("rule_code", ""),
+                issue.get("sport_type"),
+                issue.get("sport_format"),
+            )
             existing_lookup[key] = issue
         
         # Set of issue keys we're processing now
@@ -855,7 +927,12 @@ class ParticipantSyncer:
         for issue in issues:
             issue_type = issue["type"]
             rule_code = issue.get("rule_code", "")
-            key = f"{issue_type}:{rule_code}"
+            key = self._validation_issue_key(
+                issue_type,
+                rule_code,
+                issue.get("sport"),
+                issue.get("sport_format"),
+            )
             current_issue_keys.add(key)
             
             # Extract sport_type from the issue dictionary

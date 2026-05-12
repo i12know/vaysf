@@ -295,6 +295,7 @@ def test_sync_participants(sync_manager, mocker, mock_chmeetings_data):
             return None
 
         def get_rosters_side_effect(params):
+            sync_manager.wordpress_connector.last_get_rosters_status = "ok"
             participant_id = params.get("participant_id")
             sport_type = params.get("sport_type")
             sport_format = params.get("sport_format")
@@ -467,8 +468,13 @@ def test_validate_data_pagination(sync_manager, mocker):
 
     mocker.patch.object(sync_manager.wordpress_connector, "get_participants",
                         side_effect=paged_get_participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues",
+                        return_value=[])
     mocker.patch.object(sync_manager.wordpress_connector, "create_validation_issue",
                         return_value={"issue_id": 1})
+    mocker.patch.object(sync_manager.wordpress_connector, "update_validation_issue",
+                        return_value=True)
 
     result = sync_manager.validate_data()
 
@@ -476,6 +482,381 @@ def test_validate_data_pagination(sync_manager, mocker):
     assert call_count["n"] == 2, (
         f"Expected exactly 2 page requests (page 1 full, page 2 partial), got {call_count['n']}"
     )
+
+
+def test_validate_data_syncs_team_issues_idempotently(sync_manager, mocker):
+    """Repeated validation should reuse matching TEAM issues and resolve stale ones."""
+    participants = [
+        {"participant_id": 1, "church_id": 1, "is_church_member": False,
+         "first_name": "Player1", "last_name": "Test",
+         "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""},
+        {"participant_id": 2, "church_id": 1, "is_church_member": False,
+         "first_name": "Player2", "last_name": "Test",
+         "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""},
+        {"participant_id": 3, "church_id": 1, "is_church_member": False,
+         "first_name": "Player3", "last_name": "Test",
+         "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""},
+        {"participant_id": 4, "church_id": 1, "is_church_member": True,
+         "first_name": "Player4", "last_name": "Test",
+         "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""},
+        {"participant_id": 5, "church_id": 1, "is_church_member": True,
+         "first_name": "Player5", "last_name": "Test",
+         "primary_sport": SPORT_TYPE["BASKETBALL"], "primary_format": "",
+         "secondary_sport": "", "secondary_format": ""},
+    ]
+    existing_issues = [
+        {
+            "issue_id": 10,
+            "church_id": 1,
+            "participant_id": None,
+            "issue_type": "team_non_member_limit",
+            "issue_description": "Basketball - Men Team has 3 non-members, exceeding limit of 2",
+            "rule_code": "MAX_NON_MEMBERS_TEAM",
+            "rule_level": "TEAM",
+            "severity": "ERROR",
+            "sport_type": SPORT_TYPE["BASKETBALL"],
+            "sport_format": None,
+            "status": "open",
+        },
+        {
+            "issue_id": 11,
+            "church_id": 1,
+            "participant_id": None,
+            "issue_type": "doubles_non_member_limit",
+            "issue_description": "stale",
+            "rule_code": "MAX_NON_MEMBERS_DOUBLES",
+            "rule_level": "TEAM",
+            "severity": "ERROR",
+            "sport_type": SPORT_TYPE["BADMINTON"],
+            "sport_format": "Men Double",
+            "status": "open",
+        },
+    ]
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=existing_issues)
+    create_issue = mocker.patch.object(sync_manager.wordpress_connector, "create_validation_issue", return_value={"issue_id": 12})
+    update_issue = mocker.patch.object(sync_manager.wordpress_connector, "update_validation_issue", return_value=True)
+
+    result = sync_manager.validate_data()
+
+    assert result, "validate_data() should succeed"
+    create_issue.assert_not_called()
+    update_issue.assert_called_once()
+    assert update_issue.call_args.args[0] == 11
+    assert update_issue.call_args.args[1]["status"] == "resolved"
+    assert sync_manager.stats["validation_issues"]["unchanged"] == 1
+    assert sync_manager.stats["validation_issues"]["resolved"] == 1
+
+
+def test_validate_data_self_heals_orphaned_individual_issues(sync_manager, mocker):
+    """Open INDIVIDUAL issues should auto-resolve when the linked ChMeetings person now 404s."""
+    participants = [
+        {
+            "participant_id": "417",
+            "church_id": 1,
+            "church_code": "RPC",
+            "chmeetings_id": "4373282",
+            "first_name": "Allan",
+            "last_name": "Velasco",
+            "is_church_member": True,
+            "primary_sport": "",
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+    ]
+    open_issues = [
+        {
+            "issue_id": 99,
+            "church_id": 1,
+            "participant_id": "417",
+            "issue_type": "missing_consent",
+            "issue_description": "Consent form status unknown or not provided",
+            "rule_code": "CONSENT_REQUIRED",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "status": "open",
+        },
+    ]
+
+    def get_person_404(chm_id):
+        sync_manager.chm_connector.last_get_person_status = "not_found"
+        return None
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=open_issues)
+    update_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_validation_issue",
+        return_value=True,
+    )
+    get_person = mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_person",
+        side_effect=get_person_404,
+    )
+
+    result = sync_manager.validate_data()
+
+    assert result, "validate_data() should succeed while self-healing orphaned issues"
+    get_person.assert_called_once_with("4373282")
+    update_issue.assert_called_once()
+    assert update_issue.call_args.args[0] == 99
+    payload = update_issue.call_args.args[1]
+    assert payload["status"] == "resolved"
+    assert "resolved_at" in payload
+    assert sync_manager.stats["validation_issues"]["resolved"] == 1
+
+
+def test_validate_data_resolves_church_id_from_church_code(sync_manager, mocker):
+    """TEAM validation should work with live-shaped WP participants that only include church_code."""
+    participants = [
+        {
+            "participant_id": "1",
+            "church_code": "RPC",
+            "is_church_member": False,
+            "first_name": "Player1",
+            "last_name": "Test",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "2",
+            "church_code": "RPC",
+            "is_church_member": False,
+            "first_name": "Player2",
+            "last_name": "Test",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "3",
+            "church_code": "RPC",
+            "is_church_member": False,
+            "first_name": "Player3",
+            "last_name": "Test",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "4",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Player4",
+            "last_name": "Test",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "5",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Player5",
+            "last_name": "Test",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+    ]
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "church_name": "Redemption Point Church"}],
+    )
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=[])
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 21},
+    )
+
+    result = sync_manager.validate_data()
+
+    assert result, "validate_data() should succeed when church_id is resolved from church_code"
+    create_issue.assert_called_once()
+    issue_payload = create_issue.call_args.args[0]
+    assert issue_payload["church_id"] == 1
+    assert issue_payload["issue_type"] == "team_non_member_limit"
+    assert issue_payload["rule_level"] == "TEAM"
+
+
+def test_validate_data_creates_participant_scoped_team_warning(sync_manager, mocker):
+    """Reciprocal doubles-partner mismatches should sync as TEAM warnings with participant_id."""
+    participants = [
+        {
+            "participant_id": "1",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Andy",
+            "last_name": "Nguyen",
+            "primary_sport": SPORT_TYPE["BADMINTON"],
+            "primary_format": "Men Double",
+            "primary_partner": "Brian Tran",
+            "secondary_sport": "",
+            "secondary_format": "",
+            "secondary_partner": "",
+        },
+        {
+            "participant_id": "2",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Brian",
+            "last_name": "Tran",
+            "primary_sport": SPORT_TYPE["BADMINTON"],
+            "primary_format": "Men Double",
+            "primary_partner": "Chris Pham",
+            "secondary_sport": "",
+            "secondary_format": "",
+            "secondary_partner": "",
+        },
+    ]
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "church_name": "Redemption Point Church"}],
+    )
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=[])
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 22},
+    )
+
+    result = sync_manager.validate_data()
+
+    assert result
+    warning_payload = next(
+        call.args[0]
+        for call in create_issue.call_args_list
+        if call.args[0]["issue_type"] == "doubles_partner_unmatched"
+    )
+    assert warning_payload["participant_id"] == "1"
+    assert warning_payload["rule_code"] == "PARTNER_RECIPROCAL_DOUBLES"
+    assert warning_payload["rule_level"] == "TEAM"
+    assert warning_payload["severity"] == "WARNING"
+
+
+def test_validate_data_creates_church_level_issue(sync_manager, mocker):
+    """Church-level entry limits should sync as CHURCH validation issues."""
+    participants = [
+        {
+            "participant_id": "1",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Alan",
+            "last_name": "Le",
+            "primary_sport": SPORT_TYPE["BADMINTON"],
+            "primary_format": "Men Single",
+            "primary_partner": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+            "secondary_partner": "",
+        },
+    ]
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "church_name": "Redemption Point Church"}],
+    )
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=[])
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 31},
+    )
+
+    result = sync_manager.validate_data()
+
+    assert result
+    issue_payload = create_issue.call_args.args[0]
+    assert issue_payload["rule_level"] == "CHURCH"
+    assert issue_payload["issue_type"] == "church_entry_limit"
+    assert issue_payload["rule_code"] == "MAX_CHURCH_BADMINTON_MEN_SINGLE"
+
+
+def test_validate_data_creates_church_team_cap_issue_from_rosters(sync_manager, mocker):
+    """Church-level team caps should use roster team_order data when available."""
+    participants = [
+        {
+            "participant_id": "1",
+            "church_code": "RPC",
+            "is_church_member": True,
+            "first_name": "Alan",
+            "last_name": "Le",
+            "primary_sport": SPORT_TYPE["BASKETBALL"],
+            "primary_format": "",
+            "primary_partner": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+            "secondary_partner": "",
+        },
+    ]
+    rosters = [
+        {
+            "church_code": "RPC",
+            "participant_id": "1",
+            "sport_type": "Basketball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "team_order": "A",
+        },
+        {
+            "church_code": "RPC",
+            "participant_id": "2",
+            "sport_type": "Basketball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "team_order": "B",
+        },
+    ]
+
+    mocker.patch.object(sync_manager.wordpress_connector, "get_participants", return_value=participants)
+    get_rosters = mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=rosters)
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "church_name": "Redemption Point Church"}],
+    )
+    mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=[])
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 32},
+    )
+
+    result = sync_manager.validate_data()
+
+    assert result
+    get_rosters.assert_called_once_with(params={"church_code": "RPC", "all_team_orders": 1})
+    issue_payload = create_issue.call_args.args[0]
+    assert issue_payload["rule_level"] == "CHURCH"
+    assert issue_payload["issue_type"] == "church_entry_limit"
+    assert issue_payload["rule_code"] == "MAX_CHURCH_TEAMS_BASKETBALL"
 
 
 def test_sync_validation_issues_per_page(sync_manager, mocker):
@@ -518,6 +899,105 @@ def test_sync_validation_issues_per_page(sync_manager, mocker):
     )
     assert captured["params"].get("participant_id") == "42"
     assert captured["params"].get("status") == "open"
+
+
+def test_sync_validation_issues_resolves_stale_issues_when_current_list_is_empty(sync_manager, mocker):
+    """A now-clean participant should still resolve previously open validation issues."""
+
+    from sync.participants import ParticipantSyncer
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    existing_issue = {
+        "issue_id": "99",
+        "participant_id": "42",
+        "issue_type": "missing_consent",
+        "rule_code": "CONSENT_REQUIRED",
+        "status": "open",
+    }
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=[existing_issue],
+    )
+    update_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_validation_issue",
+        return_value=True,
+    )
+
+    participant_syncer._sync_validation_issues("42", "RPC", [], "2025-01-01")
+
+    update_issue.assert_called_once()
+    assert update_issue.call_args.args[0] == "99"
+    payload = update_issue.call_args.args[1]
+    assert payload["status"] == "resolved"
+    assert "resolved_at" in payload
+    assert sync_manager.stats["validation_issues"]["resolved"] == 1
+
+
+def test_sync_validation_issues_distinguishes_same_rule_by_sport_and_format(sync_manager, mocker):
+    """Two doubles-partner issues should both sync when they target different events."""
+
+    from sync.participants import ParticipantSyncer
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    sync_manager.churches_cache["RPC"] = {"church_id": 1}
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=[],
+    )
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 1},
+    )
+
+    issues = [
+        {
+            "type": "missing_doubles_partner",
+            "description": "Partner name required for Badminton (Men Double)",
+            "rule_code": "PARTNER_REQUIRED_DOUBLES",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "sport": SPORT_TYPE["BADMINTON"],
+            "sport_format": "Men Double",
+        },
+        {
+            "type": "missing_doubles_partner",
+            "description": "Partner name required for Pickleball (Mixed Double)",
+            "rule_code": "PARTNER_REQUIRED_DOUBLES",
+            "rule_level": "INDIVIDUAL",
+            "severity": "ERROR",
+            "sport": SPORT_TYPE["PICKLEBALL"],
+            "sport_format": "Mixed Double",
+        },
+    ]
+
+    participant_syncer._sync_validation_issues("42", "RPC", issues, "2026-05-09 00:00:00")
+
+    assert create_issue.call_count == 2
+    created_payloads = [call.args[0] for call in create_issue.call_args_list]
+    assert {
+        (payload["sport_type"], payload["sport_format"])
+        for payload in created_payloads
+    } == {
+        (SPORT_TYPE["BADMINTON"], "Men Double"),
+        (SPORT_TYPE["PICKLEBALL"], "Mixed Double"),
+    }
 
 
 def test_sync_participants_skips_orphaned_group_membership(sync_manager, mocker):
@@ -772,6 +1252,112 @@ def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
     assert row["participant_id"] == 42
     assert row["church_code"] == "RPC"
 
+
+def test_sync_rosters_skips_create_when_lookup_fails_after_retry(sync_manager, mocker):
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    participant = {
+        "church_code": "RPC",
+        "primary_sport": SPORT_UNSELECTED,
+        "secondary_sport": SPORT_UNSELECTED,
+        "other_events": "Soccer - Coed Exhibition",
+    }
+
+    call_counter = {"count": 0}
+
+    def get_rosters_side_effect(params):
+        call_counter["count"] += 1
+        if call_counter["count"] <= 2:
+            sync_manager.wordpress_connector.last_get_rosters_status = "failed"
+            return []
+        sync_manager.wordpress_connector.last_get_rosters_status = "ok"
+        return []
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        side_effect=get_rosters_side_effect,
+    )
+    mock_create = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_roster",
+        return_value={"roster_id": "501"},
+    )
+    mock_delete = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "delete_roster",
+        return_value=True,
+    )
+
+    participant_syncer._sync_rosters("131", participant)
+
+    mock_create.assert_not_called()
+    mock_delete.assert_not_called()
+    assert sync_manager.stats["rosters"]["errors"] == 1
+
+
+def test_sync_rosters_deletes_duplicate_current_rosters(sync_manager, mocker):
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    participant = {
+        "church_code": "RPC",
+        "primary_sport": SPORT_UNSELECTED,
+        "secondary_sport": SPORT_UNSELECTED,
+        "other_events": "Soccer - Coed Exhibition",
+    }
+
+    duplicate_rosters = [
+        {
+            "roster_id": "10",
+            "participant_id": 131,
+            "sport_type": "Soccer - Coed Exhibition",
+            "sport_format": SPORT_FORMAT["TEAM"],
+            "sport_gender": GENDER["MIXED"],
+            "team_order": None,
+            "partner_name": None,
+        },
+        {
+            "roster_id": "11",
+            "participant_id": 131,
+            "sport_type": "Soccer - Coed Exhibition",
+            "sport_format": SPORT_FORMAT["TEAM"],
+            "sport_gender": GENDER["MIXED"],
+            "team_order": None,
+            "partner_name": None,
+        },
+    ]
+
+    def get_rosters_side_effect(_params):
+        sync_manager.wordpress_connector.last_get_rosters_status = "ok"
+        return [dict(r) for r in duplicate_rosters]
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        side_effect=get_rosters_side_effect,
+    )
+    mock_create = mocker.patch.object(sync_manager.wordpress_connector, "create_roster")
+    mock_delete = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "delete_roster",
+        return_value=True,
+    )
+
+    participant_syncer._sync_rosters("131", participant)
+
+    mock_create.assert_not_called()
+    mock_delete.assert_called_once_with("11")
+    assert sync_manager.stats["rosters"]["deleted"] == 1
 
 
 # ---------------------------------------------------------------------------

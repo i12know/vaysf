@@ -12,9 +12,12 @@ This guide provides instructions for using the Sports Fest ChMeetings Integratio
 - [Windows Middleware](#windows-middleware)
   - [Running Synchronization Tasks](#running-synchronization-tasks)
   - [Exporting Church Team Reports](#exporting-church-team-reports)
+  - [Processing Consent Forms](#processing-consent-forms)
   - [Season Reset (Year-End Archive and Field Clear)](#season-reset-year-end-archive-and-field-clear)
   - [Church Team Group Assignment](#church-team-group-assignment)
+  - [Auditing Team Groups for Orphaned Members](#auditing-team-groups-for-orphaned-members)
   - [Clearing Seasonal Team Groups](#clearing-seasonal-team-groups)
+  - [Inspecting a Single Person](#inspecting-a-single-person)
   - [Scheduled Syncs](#scheduled-syncs)
   - [Testing and Configuration](#testing-and-configuration)
 - [WordPress Plugin](#wordpress-plugin)
@@ -182,6 +185,23 @@ To run validation without other sync operations:
 python main.py sync --type validation
 ```
 
+This command recalculates non-individual validation issues from the current
+WordPress participant/roster data. That includes both `TEAM` and `CHURCH`
+issues. It does not pull fresh people from ChMeetings, does not change
+approvals, and does not create rosters. It is primarily used to refresh
+church-level roster warnings such as:
+
+- non-member quota violations
+- reciprocal doubles partner warnings
+- ambiguous doubles partner-name warnings
+
+It also performs a conservative self-heal for stale participant-scoped issues:
+- if an open `INDIVIDUAL` WordPress validation issue points to a participant whose
+  `chmeetings_id` now returns `404 Not Found` from ChMeetings, the issue is
+  auto-resolved during validation sync
+- this is meant for deleted/re-registered records, so old orphaned validation
+  issues do not keep appearing in later church-team workbooks
+
 ### Exporting Church Team Reports
 
 Generate Excel reports showing church teams, participants, and their registration/approval status:
@@ -206,12 +226,53 @@ By default, reports are saved to the export directory (`EXPORT_DIR`) configured 
 python main.py export-church-teams --output "path/to/custom/directory"
 ```
 
+For normal church-rep sharing, set `EXPORT_DIR` in `middleware/.env` to your
+shared Google Drive folder so `run-me.bat` and `export-church-teams` write the
+reports there automatically. Example:
+
+```env
+EXPORT_DIR=G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data
+```
+
 The Excel reports contain:
 - List of all participants with their details
 - Sports and formats they're registered for
 - Approval status
+- **Registration Date (WP)** — WordPress sports-fest registration timestamp (2026-MM-DD format)
+- **Athlete Fee** per participant — deadline-based pricing:
+  - $35 for sports athletes (primary or secondary sport) registered before 2026-05-16
+  - $60 for sports athletes registered on/after 2026-05-16 (late registration fee)
+  - $20 for Other Events only athletes (no deadline increase)
+  - blank for Church Rep / VAY SM Staff (non-athletes)
+- **Total Athlete Fees** per church on the Summary tab
 - Any missing requirements or validation issues
 - Summary statistics for the church
+
+The generated workbook includes these operator-focused tabs:
+
+- `Summary`: church-level counts for participants, approvals, open individual `ERROR`s, open TEAM `ERROR`s, and warnings
+- `Contacts-Status`: participant directory plus open individual `ERROR` counts
+- `Roster`: roster rows with `Open_TEAM_Issue_Count (WP)` and `Open_TEAM_Issue_Desc (WP)`
+- `Validation-Issues`: one row per open WordPress validation issue, including `INDIVIDUAL`, `TEAM`, and `CHURCH` issues
+
+The `Validation-Issues` tab is based on the current ChMeetings Team-group
+snapshot. Open `INDIVIDUAL` issues tied only to older orphaned WordPress
+participant records are filtered out so the workbook stays aligned with the
+current participant list.
+
+For doubles partner validation, the export intentionally reports a few
+different cases:
+
+- `missing_doubles_partner` (`INDIVIDUAL`, `ERROR`): the participant left the partner field blank
+- `doubles_partner_unmatched` (`TEAM`, `WARNING`): a named partner was not reciprocally matched for that same church and event
+- short-name ambiguity help: if someone typed a short partner name like `Janice`
+  and there is one likely same-event full-name match, the warning can suggest
+  `use full name, perhaps Janice Vu`
+- reverse partner hint on missing-partner rows: if a participant left the
+  partner field blank but one same-event player uniquely points back to them,
+  the `Validation-Issues` tab can append a hint such as `perhaps Dean Nguyen
+  listed you as partner`; this hint can be inferred from the current roster
+  rows and, when needed, from existing TEAM partner-warning rows
 
 #### Leveraging Church Export for Mass Resending Pastoral Approval Emails 
 ##### Dry run to see what would happen
@@ -224,6 +285,32 @@ python main.py export-church-teams --force-resend-validate2 (no review yet - no 
 
 ##### Resend to specific church
 python main.py export-church-teams --church-code TLC --force-resend-pending
+
+### Processing Consent Forms
+
+Participants receive a link to the Consent Form in their registration confirmation email. Once the church rep has exported completed consent form responses from ChMeetings, the middleware can match each response to a participant record and automatically check the consent checklist box (Box 6) on their ChMeetings profile.
+
+**Basic usage — process all churches:**
+
+```bash
+python main.py check-consent --file "data/Consent Form Export.xlsx"
+```
+
+**Dry run — preview matches and write audit file without updating ChMeetings:**
+
+```bash
+python main.py check-consent --file "data/Consent Form Export.xlsx" --dry-run
+```
+
+**Limit to one church:**
+
+```bash
+python main.py check-consent --file "data/Consent Form Export.xlsx" --church-code RPC
+```
+
+The command writes an audit workbook (`data/consent_check_audit.xlsx`) on every run, including both matched and unmatched rows so you can investigate any gaps.
+
+> **Manual verification:** If a participant's consent form does not auto-link in ChMeetings (per ChMeetings ticket #11991 — linking only works when name and email match exactly), check the Forms section separately and connect the form manually before re-running `check-consent`.
 
 ### Season Reset (Year-End Archive and Field Clear)
 
@@ -316,6 +403,49 @@ Notes:
 - The audit workbook is written to `data/team_group_clearing_audit.xlsx`.
 - Group Leaders remain assigned to the group after members are cleared; that is expected.
 
+### Inspecting One ChMeetings Person ID
+
+Use this command when you need to debug one ChMeetings ID without running a
+full participant sync:
+
+```bash
+python main.py inspect-person --chm-id 3628898
+```
+
+This command:
+- fetches the raw ChMeetings person record if it still exists
+- reports a clean `404 Not Found` if the ChMeetings record is gone
+- looks for any matching WordPress participant with the same `chmeetings_id`
+- prints any matching WordPress participant, roster, approval, and validation-issue data
+
+This is useful when a Team-group membership looks stale and you need to confirm
+whether the person still exists in ChMeetings, WordPress, both, or neither.
+
+### Auditing Team Groups for Orphaned IDs
+
+Use this command when `export-church-teams` or `sync --type participants`
+reports Team-group members whose ChMeetings person records return `404`:
+
+```bash
+python main.py audit-team-groups --church-code GAC
+```
+
+To audit all Team groups:
+
+```bash
+python main.py audit-team-groups
+```
+
+This command:
+- reads the current memberships in each `Team XXX` group
+- checks each membership ID with `GET /people/{id}`
+- flags rows as orphaned when the Team-group membership exists but the person record is gone
+- looks for any matching WordPress participant with the same `chmeetings_id`
+- writes the audit workbook to `data/team_group_orphan_audit.xlsx`
+
+This is the safest way to confirm stale Team-group memberships before manually
+cleaning them up in ChMeetings.
+
 **Recommended run order**
 
 Before running on the full VAY-SM group, test with a single person and a small
@@ -403,6 +533,36 @@ After assigning participants to their Team groups, run the approval sync to add 
 ```bash
 python main.py sync --type approvals
 ```
+
+### Auditing Team Groups for Orphaned Members
+
+Over time, ChMeetings group memberships can contain person IDs that no longer resolve to a live person record (deleted or merged accounts). The `audit-team-groups` command identifies these orphaned IDs so you can clean them up directly in ChMeetings.
+
+**Audit all Team groups:**
+
+```bash
+python main.py audit-team-groups
+```
+
+**Audit a single church team:**
+
+```bash
+python main.py audit-team-groups --church-code GAC
+```
+
+The command writes an audit workbook to `data/team_group_orphan_audit.xlsx` listing every orphaned ID, the group it was found in, and the church code.
+
+> During `export-church-teams`, orphaned IDs are silently skipped and a summary warning is logged per church (e.g., `Team GAC: skipped 10 orphaned member IDs — [...]`). Run `audit-team-groups` after seeing those warnings to get the full list and clean up.
+
+### Inspecting a Single Person
+
+For debugging, you can pull the full ChMeetings profile and any matching WordPress participant record for one person by their ChMeetings ID:
+
+```bash
+python main.py inspect-person --chm-id 3139537
+```
+
+This prints all standard and custom fields from ChMeetings alongside the WordPress approval status, validation issues, and roster entries — useful when a participant's data looks inconsistent between the two systems.
 
 ### Scheduled Syncs
 
@@ -533,6 +693,20 @@ Common validation issues include:
 - Gender mismatches (wrong gender for gender-specific sports)
 - Missing consent forms
 - Missing profile photos
+- Missing doubles partner names (`ERROR`)
+- Doubles partner reciprocity or name-matching warnings (`WARNING`)
+
+For doubles issues, use this interpretation:
+
+- `Partner name required ...` means the participant must fill in the partner
+  field on their own registration
+- `... did not reciprocally list ...` means both participants should review the
+  same doubles event and make sure they list each other
+- `... ambiguous; use full name ...` means the short partner name was not
+  precise enough; ask the participant to enter the full partner name
+- `perhaps <Full Name> listed you as partner` is an export-time hint derived
+  from the current church roster, intended to help church reps resolve blank
+  partner fields faster
 
 ### Pastor Approval Process
 

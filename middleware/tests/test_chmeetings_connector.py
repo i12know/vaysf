@@ -180,6 +180,32 @@ def test_get_person(chm_connector, mocker, mock_chm_people_data):
             mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
             person = chm_connector.get_person(person_id)
             assert str(person["id"]) == person_id, "Person ID mismatch"
+
+
+def test_get_person_404_sets_not_found_without_error_log(chm_connector, mocker):
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("404 handling assertion is a mock-only test")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mock_response = mocker.Mock()
+        mock_response.status_code = 404
+        mock_response.url = "https://test.chmeetings.com/api/v1/people/999999"
+        mock_response.raise_for_status = mocker.Mock()
+        mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
+
+        mock_error = mocker.patch("chmeetings.backend_connector.logger.error")
+        mock_debug = mocker.patch("chmeetings.backend_connector.logger.debug")
+
+        person = chm_connector.get_person("999999")
+
+        assert person is None
+        assert chm_connector.last_get_person_status == "not_found"
+        mock_error.assert_not_called()
+        mock_debug.assert_called_once_with(
+            "Person 999999 not found in ChMeetings "
+            "(GET https://test.chmeetings.com/api/v1/people/999999 returned 404)."
+        )
             
 def test_get_group_people(chm_connector, mocker, mock_chm_people_data):
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
