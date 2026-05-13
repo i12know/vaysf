@@ -262,6 +262,11 @@ Current 2026 lesson to preserve:
 - **Why it matters** - this lets the full participant sync finish cleanly without risky whole-group clearing, while still processing all real current-season participants and preserving roster consistency
 - **How to verify** - on 2026-05-02, the first full participant sync created 66 participants and reported 19 errors from orphaned group-member IDs; after the middleware update, the rerun completed with `Participants {'created': 0, 'updated': 69, 'errors': 0, 'skipped_missing_people': 19}` and `Rosters {'created': 0, 'deleted': 0, 'errors': 0}`
 
+- **When it applies** - before the new season registration opens, after any ChMeetings Roles & Permissions changes were made during season cleanup
+- **What to do** - in ChMeetings, go to **Account -> Users/Roles**, open the **Church Rep** role, and confirm that the **Add/Edit** checkbox is enabled for these 10 fields: `My role is`, `Church Team`, `Would the team's Senior Pastor say that you belong to his church?`, `Primary Sport`, `Primary Racquet Sport Format`, `Primary Racquet Sport Partner (if applied)`, `Secondary Sport`, `Secondary Racquet Sport Format`, `Secondary Racquet Sport Partner (if applied)`, and `Other Events`. Re-enable any that were unchecked.
+- **Why it matters** - without Add/Edit permission on these fields, Church Reps can view participant sport selections but cannot make corrections on behalf of participants; the `Age verification` field intentionally stays view-only for Church Reps.
+- **How to verify** - log in as a test Church Rep account and confirm you can edit a participant's `Primary Sport` and `Church Team` fields on their profile record.
+
 ## Known Gaps / Future Improvements
 
 - **WordPress table reset** is manual (SQL or phpMyAdmin). A future command could automate the truncation with confirmation prompts.
