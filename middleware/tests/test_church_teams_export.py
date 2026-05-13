@@ -801,19 +801,21 @@ def test_count_estimating_teams_uses_min_team_size(mock_connectors):
     """A church only counts when its roster meets the min team size (Issue #83)."""
     exporter = ChurchTeamsExporter()
 
-    # RPC has 5 basketball players (meets min=5), TLC has 4 (does not)
+    # RPC has 5 basketball players (meets min=5), TLC has 4 (potential only)
     roster_rows = [
         {"Church Team": "RPC", "sport_type": "Basketball", "sport_gender": "Men"} for _ in range(5)
     ] + [
         {"Church Team": "TLC", "sport_type": "Basketball", "sport_gender": "Men"} for _ in range(4)
     ]
 
-    n = exporter._count_estimating_teams(roster_rows, "Basketball - Men Team", min_team_size=5)
-    assert n == 1  # only RPC qualifies
+    result = exporter._count_estimating_teams(roster_rows, "Basketball - Men Team", min_team_size=5)
+    assert result["n_estimating"] == 1       # only RPC qualifies
+    assert result["n_potential"] == 1        # TLC is still forming
+    assert result["team_codes"] == "RPC"     # sorted, comma-separated
 
 
 def test_count_estimating_teams_separates_volleyball_men_and_women(mock_connectors):
-    """Volleyball Men and Women are distinct events (Issue #83)."""
+    """Volleyball Men and Women are distinct events; team_codes is sorted (Issue #83)."""
     exporter = ChurchTeamsExporter()
 
     roster_rows = (
@@ -822,8 +824,13 @@ def test_count_estimating_teams_separates_volleyball_men_and_women(mock_connecto
         + [{"Church Team": "TLC", "sport_type": "Volleyball", "sport_gender": "Women"} for _ in range(6)]
     )
 
-    assert exporter._count_estimating_teams(roster_rows, "Volleyball - Men Team", 6) == 1
-    assert exporter._count_estimating_teams(roster_rows, "Volleyball - Women Team", 6) == 2
+    men = exporter._count_estimating_teams(roster_rows, "Volleyball - Men Team", 6)
+    assert men["n_estimating"] == 1
+    assert men["team_codes"] == "RPC"
+
+    women = exporter._count_estimating_teams(roster_rows, "Volleyball - Women Team", 6)
+    assert women["n_estimating"] == 2
+    assert women["team_codes"] == "RPC, TLC"  # alphabetically sorted
 
 
 def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_path):
@@ -869,18 +876,27 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
 
     venue_df = pd.read_excel(all_path, sheet_name="Venue-Capacity", header=1)
     assert list(venue_df.columns)[0] == "Event"
+    assert "Potential Teams" in venue_df.columns
+    assert "Estimating Teams" in venue_df.columns
+    assert "Teams" in venue_df.columns
     assert "Estimated Court Hours" in venue_df.columns
     assert len(venue_df) == 3  # Basketball, Volleyball Men, Volleyball Women
 
+    # Column order: Potential Teams before Estimating Teams before Teams
+    cols = list(venue_df.columns)
+    assert cols.index("Potential Teams") < cols.index("Estimating Teams") < cols.index("Teams")
+
     bball = venue_df[venue_df["Event"] == "Basketball - Men Team"].iloc[0]
-    assert int(bball["Estimating Teams"]) == 1  # RPC's 6 basketball players
-    assert int(bball["Pool Slots"]) == 1  # ceil(1*2/2) = 1
-    # 1 team → no playoff per default rules
-    assert int(bball["Playoff Teams"]) == 0
+    assert int(bball["Estimating Teams"]) == 1   # RPC's 6 basketball players qualify
+    assert int(bball["Potential Teams"]) == 0    # nobody short of the min
+    assert str(bball["Teams"]) == "RPC"
+    assert int(bball["Pool Slots"]) == 1         # ceil(1*2/2) = 1
+    assert int(bball["Playoff Teams"]) == 0      # 1 team → no playoff
     assert int(bball["Total Court Slots"]) == 1
 
     vb_men = venue_df[venue_df["Event"] == "Volleyball - Men Team"].iloc[0]
     assert int(vb_men["Estimating Teams"]) == 0  # no volleyball rosters
+    assert str(vb_men["Teams"]) in ("", "nan")
 
     # Snapshot disclaimer is in row 1 (above the header row)
     raw = pd.read_excel(all_path, sheet_name="Venue-Capacity", header=None)

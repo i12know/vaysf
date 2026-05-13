@@ -1034,11 +1034,18 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         return int(COURT_ESTIMATE_MIN_TEAM_SIZE.get(event_name, 0))
 
     def _count_estimating_teams(self, roster_rows: List[Dict[str, Any]],
-                                 event_name: str, min_team_size: int) -> int:
-        """Count churches with at least min_team_size roster entries for this event.
-        Approval-agnostic — every roster entry counts."""
+                                 event_name: str, min_team_size: int) -> Dict[str, Any]:
+        """Return estimating/potential team counts and the qualifying church codes.
+
+        Approval-agnostic — every roster entry counts.
+
+        Returns a dict with:
+          n_estimating  – churches with >= min_team_size entries (ready to compete)
+          n_potential   – churches with >= 1 but < min_team_size entries (still forming)
+          team_codes    – sorted, comma-separated list of estimating church codes
+        """
         if min_team_size <= 0:
-            return 0
+            return {"n_estimating": 0, "n_potential": 0, "team_codes": ""}
         target_type, target_gender, _ = self._decompose_event_name(event_name)
         counts_by_church: Dict[str, int] = {}
         for r in roster_rows:
@@ -1052,7 +1059,13 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             if not church:
                 continue
             counts_by_church[church] = counts_by_church.get(church, 0) + 1
-        return sum(1 for n in counts_by_church.values() if n >= min_team_size)
+        estimating = sorted(c for c, n in counts_by_church.items() if n >= min_team_size)
+        potential = [c for c, n in counts_by_church.items() if 0 < n < min_team_size]
+        return {
+            "n_estimating": len(estimating),
+            "n_potential": len(potential),
+            "team_codes": ", ".join(estimating),
+        }
 
     @staticmethod
     def _get_playoff_teams(n_teams: int) -> int:
@@ -1087,11 +1100,13 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         rows = []
         for event_name in COURT_ESTIMATE_EVENTS:
             min_team_size = self._get_min_team_size(event_name)
-            n_teams = self._count_estimating_teams(roster_rows, event_name, min_team_size)
-            s = self._compute_court_slots(n_teams)
+            counts = self._count_estimating_teams(roster_rows, event_name, min_team_size)
+            s = self._compute_court_slots(counts["n_estimating"])
             rows.append({
                 "Event": event_name,
-                "Estimating Teams": n_teams,
+                "Potential Teams": counts["n_potential"],
+                "Estimating Teams": counts["n_estimating"],
+                "Teams": counts["team_codes"],
                 "Pool Games Per Team": s["pool_games_per_team"],
                 "Minutes Per Game": s["minutes_per_game"],
                 "Pool Slots": s["pool_slots"],
@@ -1244,10 +1259,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 if include_venue_capacity:
                     venue_rows = self._build_venue_capacity_rows(roster_rows)
                     venue_cols = [
-                        "Event", "Estimating Teams", "Pool Games Per Team",
-                        "Minutes Per Game", "Pool Slots", "Playoff Teams",
-                        "Playoff Slots", "Third Place?", "Third Place Slots",
-                        "Total Court Slots", "Estimated Court Hours",
+                        "Event", "Potential Teams", "Estimating Teams", "Teams",
+                        "Pool Games Per Team", "Minutes Per Game", "Pool Slots",
+                        "Playoff Teams", "Playoff Slots", "Third Place?",
+                        "Third Place Slots", "Total Court Slots", "Estimated Court Hours",
                     ]
                     df_venue = pd.DataFrame(venue_rows, columns=venue_cols)
                     snapshot_note = (
