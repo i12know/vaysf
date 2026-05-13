@@ -536,9 +536,9 @@ python main.py sync --type approvals
 
 ### Auditing Team Groups for Orphaned Members
 
-Over time, ChMeetings group memberships can contain person IDs that no longer resolve to a live person record (deleted or merged accounts). The `audit-team-groups` command identifies these orphaned IDs so you can clean them up directly in ChMeetings.
+Over time, ChMeetings group memberships can contain person IDs that no longer resolve to a live person record (deleted or merged accounts). The `audit-team-groups` command identifies these orphaned IDs so you can clean them up.
 
-**Audit all Team groups:**
+**Audit all Team groups (review only — no changes):**
 
 ```bash
 python main.py audit-team-groups
@@ -550,9 +550,23 @@ python main.py audit-team-groups
 python main.py audit-team-groups --church-code GAC
 ```
 
-The command writes an audit workbook to `data/team_group_orphan_audit.xlsx` listing every orphaned ID, the group it was found in, and the church code.
+The command writes an audit workbook to `data/team_group_orphan_audit.xlsx` listing every orphaned ID, the group it was found in, and lookup status.
 
-> During `export-church-teams`, orphaned IDs are silently skipped and a summary warning is logged per church (e.g., `Team GAC: skipped 10 orphaned member IDs — [...]`). Run `audit-team-groups` after seeing those warnings to get the full list and clean up.
+**Remove orphaned memberships from ChMeetings:**
+
+```bash
+python main.py audit-team-groups --remove-orphans
+```
+
+Run the plain audit first to review the workbook, then re-run with `--remove-orphans` to delete the stale memberships. The flag combines with `--church-code` for targeted cleanup:
+
+```bash
+python main.py audit-team-groups --church-code GAC --remove-orphans
+```
+
+The summary log will confirm how many were removed (e.g., `Removed: 21/21 orphaned membership(s).`). After cleanup, future `export-church-teams` runs will no longer log 404 warnings for those IDs.
+
+> During `export-church-teams`, orphaned IDs are silently skipped and a summary warning is logged per church (e.g., `Team GAC: skipped 10 orphaned member IDs — [...]`). Run `audit-team-groups` after seeing those warnings to get the full list, then use `--remove-orphans` to clean up.
 
 ### Inspecting a Single Person
 
