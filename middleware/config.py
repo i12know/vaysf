@@ -401,6 +401,36 @@ def is_racquet_sport(sport: str) -> bool:
     """
     return sport in RACQUET_SPORTS
 
+# Venue capacity estimation defaults (Issue #83)
+# Used by church_teams_export.py to produce a quick court-time estimate
+# for the major team-sport events. Constants only — no UI tuning yet.
+COURT_ESTIMATE_EVENTS = [
+    SPORT_TYPE["BASKETBALL"],
+    SPORT_TYPE["VOLLEYBALL_MEN"],
+    SPORT_TYPE["VOLLEYBALL_WOMEN"],
+]
+
+# Pool games per team. Kept low (2) to surface the *minimum* venue need.
+# Tune upward once a venue is confirmed.
+COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM = 2
+COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME = 60
+COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME = False
+
+# Fallback only — the JSON-driven MIN_TEAM_SIZE_* rules in
+# validation/summer_2026.json are the source of truth. Used if a rule
+# is missing for an event in COURT_ESTIMATE_EVENTS.
+COURT_ESTIMATE_MIN_TEAM_SIZE = {
+    SPORT_TYPE["BASKETBALL"]: 5,
+    SPORT_TYPE["VOLLEYBALL_MEN"]: 6,
+    SPORT_TYPE["VOLLEYBALL_WOMEN"]: 6,
+}
+
+COURT_ESTIMATE_PLAYOFF_RULES = [
+    {"min_teams": 1, "max_teams": 3, "playoff_teams": 0},
+    {"min_teams": 4, "max_teams": 7, "playoff_teams": 4},
+    {"min_teams": 8, "max_teams": 999, "playoff_teams": 8},
+]
+
 # Configuration class
 class Config:
     """Configuration settings for VAYSF middleware."""

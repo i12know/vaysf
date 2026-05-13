@@ -759,3 +759,129 @@ def test_contacts_status_tab_includes_sports_registered_column(mock_connectors, 
 
     carol_row = contacts_df[contacts_df["First Name"] == "Carol"].iloc[0]
     assert carol_row["Sports Registered"] == "" or pd.isna(carol_row["Sports Registered"])
+
+
+def test_venue_capacity_court_slot_math(mock_connectors):
+    """Pool/playoff/total slot math (Issue #83)."""
+    exporter = ChurchTeamsExporter()
+
+    # 0 teams → all zeros
+    s0 = exporter._compute_court_slots(0)
+    assert s0["pool_slots"] == 0
+    assert s0["playoff_teams"] == 0
+    assert s0["playoff_slots"] == 0
+    assert s0["total_slots"] == 0
+    assert s0["court_hours"] == 0.0
+
+    # 6 teams, 2 pool games each → ceil(6*2/2) = 6 pool, 4-team playoff = 3 playoff games
+    s6 = exporter._compute_court_slots(6)
+    assert s6["pool_slots"] == 6
+    assert s6["playoff_teams"] == 4
+    assert s6["playoff_slots"] == 3
+    assert s6["third_place_slots"] == 0  # default off
+    assert s6["total_slots"] == 9
+    assert s6["court_hours"] == 9.0  # 60 min/game
+
+    # 8 teams → ceil(8*2/2)=8 pool, 8-team playoff = 7 playoff games
+    s8 = exporter._compute_court_slots(8)
+    assert s8["pool_slots"] == 8
+    assert s8["playoff_teams"] == 8
+    assert s8["playoff_slots"] == 7
+    assert s8["total_slots"] == 15
+
+    # 3 teams → only pool play, no playoff
+    s3 = exporter._compute_court_slots(3)
+    assert s3["pool_slots"] == 3
+    assert s3["playoff_teams"] == 0
+    assert s3["playoff_slots"] == 0
+    assert s3["total_slots"] == 3
+
+
+def test_count_estimating_teams_uses_min_team_size(mock_connectors):
+    """A church only counts when its roster meets the min team size (Issue #83)."""
+    exporter = ChurchTeamsExporter()
+
+    # RPC has 5 basketball players (meets min=5), TLC has 4 (does not)
+    roster_rows = [
+        {"Church Team": "RPC", "sport_type": "Basketball", "sport_gender": "Men"} for _ in range(5)
+    ] + [
+        {"Church Team": "TLC", "sport_type": "Basketball", "sport_gender": "Men"} for _ in range(4)
+    ]
+
+    n = exporter._count_estimating_teams(roster_rows, "Basketball - Men Team", min_team_size=5)
+    assert n == 1  # only RPC qualifies
+
+
+def test_count_estimating_teams_separates_volleyball_men_and_women(mock_connectors):
+    """Volleyball Men and Women are distinct events (Issue #83)."""
+    exporter = ChurchTeamsExporter()
+
+    roster_rows = (
+        [{"Church Team": "RPC", "sport_type": "Volleyball", "sport_gender": "Men"} for _ in range(6)]
+        + [{"Church Team": "RPC", "sport_type": "Volleyball", "sport_gender": "Women"} for _ in range(6)]
+        + [{"Church Team": "TLC", "sport_type": "Volleyball", "sport_gender": "Women"} for _ in range(6)]
+    )
+
+    assert exporter._count_estimating_teams(roster_rows, "Volleyball - Men Team", 6) == 1
+    assert exporter._count_estimating_teams(roster_rows, "Volleyball - Women Team", 6) == 2
+
+
+def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_path):
+    """Venue-Capacity tab appears only when include_venue_capacity=True (Issue #83)."""
+    exporter = ChurchTeamsExporter()
+
+    summary_rows = [{
+        "Church Code": "RPC",
+        "Total Members (ChM Team Group)": 6, "Total Participants (in WP)": 6,
+        "Total Approved (WP)": 0, "Total Pending Approval (WP)": 6, "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 0,
+        "Total Open Individual ERRORs (WP)": 0, "Total Open TEAM ERRORs (WP)": 0,
+        "Total Open WARNINGs (WP)": 0, "Total Sports w/ Open TEAM Issues (WP)": 0,
+        "Latest ChM Record Update for Team": "2026-05-13",
+    }]
+    contacts_rows = [{
+        "Church Team": "RPC", "ChMeetings ID": str(100 + i), "First Name": f"P{i}",
+        "Last Name": "X", "Is_Participant": "Yes", "Is_Member_ChM": "Yes",
+        "Participant ID (WP)": i, "Approval_Status (WP)": "pending",
+        "Total_Open_ERRORs (WP)": 0, "Gender": "Male", "Birthdate": "2000-01-01",
+        "Age (at Event)": 26, "Mobile Phone": "", "Email": "",
+        "Registration Date (WP)": "2026-03-01", "Athlete Fee": 30,
+        "First_Open_ERROR_Desc (WP)": "",
+        "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+        "Photo URL (WP)": "N/A", "Update_on_ChM": "",
+    } for i in range(6)]
+    roster_rows = [{
+        "Church Team": "RPC", "ChMeetings ID": str(100 + i), "Participant ID (WP)": i,
+        "sport_type": "Basketball", "sport_gender": "Men", "sport_format": "Team",
+    } for i in range(6)]
+
+    # Single-church export: no Venue-Capacity tab
+    single_path = tmp_path / "single.xlsx"
+    exporter._write_excel_report(single_path, summary_rows, contacts_rows, roster_rows, [])
+    assert "Venue-Capacity" not in pd.ExcelFile(single_path).sheet_names
+
+    # Consolidated ALL export: tab present, three rows, snapshot note in row 1
+    all_path = tmp_path / "all.xlsx"
+    exporter._write_excel_report(all_path, summary_rows, contacts_rows, roster_rows, [],
+                                 include_venue_capacity=True)
+    sheets = pd.ExcelFile(all_path).sheet_names
+    assert "Venue-Capacity" in sheets
+
+    venue_df = pd.read_excel(all_path, sheet_name="Venue-Capacity", header=1)
+    assert list(venue_df.columns)[0] == "Event"
+    assert "Estimated Court Hours" in venue_df.columns
+    assert len(venue_df) == 3  # Basketball, Volleyball Men, Volleyball Women
+
+    bball = venue_df[venue_df["Event"] == "Basketball - Men Team"].iloc[0]
+    assert int(bball["Estimating Teams"]) == 1  # RPC's 6 basketball players
+    assert int(bball["Pool Slots"]) == 1  # ceil(1*2/2) = 1
+    # 1 team → no playoff per default rules
+    assert int(bball["Playoff Teams"]) == 0
+    assert int(bball["Total Court Slots"]) == 1
+
+    vb_men = venue_df[venue_df["Event"] == "Volleyball - Men Team"].iloc[0]
+    assert int(vb_men["Estimating Teams"]) == 0  # no volleyball rosters
+
+    # Snapshot disclaimer is in row 1 (above the header row)
+    raw = pd.read_excel(all_path, sheet_name="Venue-Capacity", header=None)
+    assert "Roster snapshot as of" in str(raw.iloc[0, 0])

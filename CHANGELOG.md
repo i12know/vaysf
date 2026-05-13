@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### New Features
+- Added `Venue-Capacity` tab to the consolidated ALL church-team Excel export — closes [#83](https://github.com/i12know/vaysf/issues/83)
+  - Estimates court-time needed for Basketball, Volleyball Men, and Volleyball Women using current roster data
+  - Counts each church as one "Estimating Team" when its roster meets the minimum team size; approval-agnostic
+  - Minimum team sizes are sourced from the `summer_2026.json` validation rules (with `COURT_ESTIMATE_MIN_TEAM_SIZE` as fallback)
+  - Per-event slot math: `pool_slots = ceil(teams * pool_games_per_team / 2)`, `playoff_slots = max(playoff_teams - 1, 0)`, plus optional third-place game
+  - Tunable via `COURT_ESTIMATE_*` constants in `middleware/config.py` (default 2 pool games per team, 60 min/game, third-place off)
+  - Tab appears only in the consolidated ALL export; per-church exports omit it (Sports Fest staff use this for diocese-wide planning)
+  - Snapshot disclaimer in row 1 makes it clear that team counts move with each export run
+- Fixed case-sensitive bug in `sync/participants.py` that caused team-sport `sport_gender` to always be written as `Mixed` (e.g. `Basketball Mixed Team` instead of `Basketball Men Team`)
+  - Comparisons like `GENDER["MEN"] in param.upper()` were checking `"Men" in "MEN TEAM"` and silently failing because `in` is case-sensitive
+  - Roster sync now compares case-insensitively in both the full-label branch and a new bare-name lookup branch
+  - Added a bare-name fallback that recovers gender/format by looking up the canonical `SPORT_TYPE` entry, so older registrations stored as `"Basketball"` (without the `- Men Team` suffix) heal on the next sync without manual DB edits
+  - Format heuristic flipped from "contains Team" to "not contains Singles" so `"Coed Exhibition"` and other non-standard suffixes still map to Team
 - Added `Sports Registered` column to the `Contacts-Status` tab in church-team Excel exports — closes [#82](https://github.com/i12know/vaysf/issues/82)
   - Appears immediately before `Athlete Fee`
   - Lists all sports/events for each participant as a comma-separated, sorted string (e.g. `Badminton Women Doubles, Basketball`)
