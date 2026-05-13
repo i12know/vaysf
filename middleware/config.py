@@ -87,7 +87,8 @@ SPORT_TYPE = {
     "VOLLEYBALL_MEN": "Volleyball - Men Team",
     "VOLLEYBALL_WOMEN": "Volleyball - Women Team",
     "BIBLE_CHALLENGE": "Bible Challenge - Mixed Team",
-    
+    "SOCCER": "Soccer - Coed Exhibition",
+
     # Racquet sports
     "BADMINTON": "Badminton",
     "PICKLEBALL": "Pickleball",
@@ -95,7 +96,7 @@ SPORT_TYPE = {
     "TABLE_TENNIS": "Table Tennis",
     "TABLE_TENNIS_35": "Table Tennis 35+",
     "TENNIS": "Tennis",
-    
+
     # Other events
     "TRACK_FIELD": "Track & Field",
     "TUG_OF_WAR": "Tug-of-war",
@@ -119,7 +120,8 @@ SPORT_BY_CATEGORY = {
         SPORT_TYPE["BASKETBALL"],
         SPORT_TYPE["VOLLEYBALL_MEN"],
         SPORT_TYPE["VOLLEYBALL_WOMEN"],
-        SPORT_TYPE["BIBLE_CHALLENGE"]
+        SPORT_TYPE["BIBLE_CHALLENGE"],
+        SPORT_TYPE["SOCCER"],
     ],
     SPORT_CATEGORY["RACQUET"]: [
         SPORT_TYPE["BADMINTON"],
@@ -402,12 +404,27 @@ def is_racquet_sport(sport: str) -> bool:
     return sport in RACQUET_SPORTS
 
 # Venue capacity estimation defaults (Issue #83)
-# Used by church_teams_export.py to produce a quick court-time estimate
-# for the major team-sport events. Constants only — no UI tuning yet.
+# Used by church_teams_export.py to produce a quick court-time estimate.
+# Team sports: one row per event, counting churches with a complete roster.
+# Racquet sports: one row per sport, counting complete pairs/individuals.
+
+# Team sports included in the estimator (roster-based, min-size threshold).
 COURT_ESTIMATE_EVENTS = [
     SPORT_TYPE["BASKETBALL"],
     SPORT_TYPE["VOLLEYBALL_MEN"],
     SPORT_TYPE["VOLLEYBALL_WOMEN"],
+    SPORT_TYPE["SOCCER"],
+    SPORT_TYPE["BIBLE_CHALLENGE"],
+]
+
+# Racquet sports included in the estimator (entry-based, doubles counted as pairs).
+COURT_ESTIMATE_RACQUET_EVENTS = [
+    SPORT_TYPE["BADMINTON"],
+    SPORT_TYPE["PICKLEBALL"],
+    SPORT_TYPE["PICKLEBALL_35"],
+    SPORT_TYPE["TABLE_TENNIS"],
+    SPORT_TYPE["TABLE_TENNIS_35"],
+    SPORT_TYPE["TENNIS"],
 ]
 
 # Pool games per team. Kept low (2) to surface the *minimum* venue need.
@@ -416,13 +433,42 @@ COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM = 2
 COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME = 60
 COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME = False
 
+# Per-sport minutes per game — tune these once venues are confirmed.
+COURT_ESTIMATE_MINUTES_BASKETBALL = 60
+COURT_ESTIMATE_MINUTES_VOLLEYBALL = 60
+COURT_ESTIMATE_MINUTES_SOCCER = 60
+COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE = 45
+COURT_ESTIMATE_MINUTES_BADMINTON = 25
+COURT_ESTIMATE_MINUTES_PICKLEBALL = 20
+COURT_ESTIMATE_MINUTES_PICKLEBALL_35 = 20
+COURT_ESTIMATE_MINUTES_TABLE_TENNIS = 20
+COURT_ESTIMATE_MINUTES_TABLE_TENNIS_35 = 20
+COURT_ESTIMATE_MINUTES_TENNIS = 30
+
+# Lookup by sport_type label — used by _compute_court_slots.
+COURT_ESTIMATE_MINUTES_PER_GAME = {
+    SPORT_TYPE["BASKETBALL"]:       COURT_ESTIMATE_MINUTES_BASKETBALL,
+    SPORT_TYPE["VOLLEYBALL_MEN"]:   COURT_ESTIMATE_MINUTES_VOLLEYBALL,
+    SPORT_TYPE["VOLLEYBALL_WOMEN"]: COURT_ESTIMATE_MINUTES_VOLLEYBALL,
+    SPORT_TYPE["SOCCER"]:           COURT_ESTIMATE_MINUTES_SOCCER,
+    SPORT_TYPE["BIBLE_CHALLENGE"]:  COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+    SPORT_TYPE["BADMINTON"]:        COURT_ESTIMATE_MINUTES_BADMINTON,
+    SPORT_TYPE["PICKLEBALL"]:       COURT_ESTIMATE_MINUTES_PICKLEBALL,
+    SPORT_TYPE["PICKLEBALL_35"]:    COURT_ESTIMATE_MINUTES_PICKLEBALL_35,
+    SPORT_TYPE["TABLE_TENNIS"]:     COURT_ESTIMATE_MINUTES_TABLE_TENNIS,
+    SPORT_TYPE["TABLE_TENNIS_35"]:  COURT_ESTIMATE_MINUTES_TABLE_TENNIS_35,
+    SPORT_TYPE["TENNIS"]:           COURT_ESTIMATE_MINUTES_TENNIS,
+}
+
 # Fallback only — the JSON-driven MIN_TEAM_SIZE_* rules in
 # validation/summer_2026.json are the source of truth. Used if a rule
 # is missing for an event in COURT_ESTIMATE_EVENTS.
 COURT_ESTIMATE_MIN_TEAM_SIZE = {
-    SPORT_TYPE["BASKETBALL"]: 5,
-    SPORT_TYPE["VOLLEYBALL_MEN"]: 6,
+    SPORT_TYPE["BASKETBALL"]:       5,
+    SPORT_TYPE["VOLLEYBALL_MEN"]:   6,
     SPORT_TYPE["VOLLEYBALL_WOMEN"]: 6,
+    SPORT_TYPE["SOCCER"]:           4,
+    SPORT_TYPE["BIBLE_CHALLENGE"]:  3,
 }
 
 COURT_ESTIMATE_PLAYOFF_RULES = [

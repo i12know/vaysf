@@ -810,7 +810,7 @@ def test_count_estimating_teams_uses_min_team_size(mock_connectors):
 
     result = exporter._count_estimating_teams(roster_rows, "Basketball - Men Team", min_team_size=5)
     assert result["n_estimating"] == 1       # only RPC qualifies
-    assert result["n_potential"] == 1        # TLC is still forming
+    assert result["n_potential"] == 2        # RPC (estimating) + TLC (partial) = all with >= 1
     assert result["team_codes"] == "RPC"     # sorted, comma-separated
 
 
@@ -831,6 +831,28 @@ def test_count_estimating_teams_separates_volleyball_men_and_women(mock_connecto
     women = exporter._count_estimating_teams(roster_rows, "Volleyball - Women Team", 6)
     assert women["n_estimating"] == 2
     assert women["team_codes"] == "RPC, TLC"  # alphabetically sorted
+
+
+def test_count_racquet_entries(mock_connectors):
+    """Racquet entries: complete pairs counted as 1, singles as 1; potential = all regs."""
+    exporter = ChurchTeamsExporter()
+
+    roster_rows = [
+        # 5 Badminton doubles registrations → 2 complete pairs + 1 waiting
+        {"sport_type": "Badminton", "sport_format": "Mixed Doubles"} for _ in range(5)
+    ] + [
+        # 2 Badminton singles
+        {"sport_type": "Badminton", "sport_format": "Men Singles"},
+        {"sport_type": "Badminton", "sport_format": "Women Singles"},
+    ] + [
+        # Pickleball should not bleed into Badminton count
+        {"sport_type": "Pickleball", "sport_format": "Mixed Doubles"},
+    ]
+
+    result = exporter._count_racquet_entries(roster_rows, "Badminton")
+    assert result["n_estimating"] == 2 + 2   # floor(5/2)=2 pairs + 2 singles
+    assert result["n_potential"] == 5 + 2    # 5 doubles + 2 singles = 7 registrations
+    assert result["team_codes"] == ""
 
 
 def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_path):
@@ -876,26 +898,27 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
 
     venue_df = pd.read_excel(all_path, sheet_name="Venue-Capacity", header=1)
     assert list(venue_df.columns)[0] == "Event"
-    assert "Potential Teams" in venue_df.columns
-    assert "Estimating Teams" in venue_df.columns
+    assert "Potential Teams/Entries" in venue_df.columns
+    assert "Estimating Teams/Entries" in venue_df.columns
     assert "Teams" in venue_df.columns
     assert "Estimated Court Hours" in venue_df.columns
-    assert len(venue_df) == 3  # Basketball, Volleyball Men, Volleyball Women
+    # 5 team sports + 6 racquet sports
+    assert len(venue_df) == 11
 
-    # Column order: Potential Teams before Estimating Teams before Teams
+    # Column order: Potential before Estimating before Teams
     cols = list(venue_df.columns)
-    assert cols.index("Potential Teams") < cols.index("Estimating Teams") < cols.index("Teams")
+    assert cols.index("Potential Teams/Entries") < cols.index("Estimating Teams/Entries") < cols.index("Teams")
 
     bball = venue_df[venue_df["Event"] == "Basketball - Men Team"].iloc[0]
-    assert int(bball["Estimating Teams"]) == 1   # RPC's 6 basketball players qualify
-    assert int(bball["Potential Teams"]) == 0    # nobody short of the min
+    assert int(bball["Estimating Teams/Entries"]) == 1   # RPC's 6 basketball players qualify
+    assert int(bball["Potential Teams/Entries"]) == 1    # RPC (estimating) counts in potential too
     assert str(bball["Teams"]) == "RPC"
     assert int(bball["Pool Slots"]) == 1         # ceil(1*2/2) = 1
     assert int(bball["Playoff Teams"]) == 0      # 1 team → no playoff
     assert int(bball["Total Court Slots"]) == 1
 
     vb_men = venue_df[venue_df["Event"] == "Volleyball - Men Team"].iloc[0]
-    assert int(vb_men["Estimating Teams"]) == 0  # no volleyball rosters
+    assert int(vb_men["Estimating Teams/Entries"]) == 0  # no volleyball rosters
     assert str(vb_men["Teams"]) in ("", "nan")
 
     # Snapshot disclaimer is in row 1 (above the header row)

@@ -8,14 +8,17 @@
   - Audit summary line now includes a `Removed: N/M` count when removal is active
   - Run without the flag first to review `data/team_group_orphan_audit.xlsx`, then re-run with `--remove-orphans` to clean up
   - Combines cleanly with `--church-code` to target a single church: `python main.py audit-team-groups --church-code GAC --remove-orphans`
-- Added `Venue-Capacity` tab to the consolidated ALL church-team Excel export — closes [#83](https://github.com/i12know/vaysf/issues/83)
-  - Estimates court-time needed for Basketball, Volleyball Men, and Volleyball Women using current roster data
-  - Counts each church as one "Estimating Team" when its roster meets the minimum team size; approval-agnostic
-  - Minimum team sizes are sourced from the `summer_2026.json` validation rules (with `COURT_ESTIMATE_MIN_TEAM_SIZE` as fallback)
-  - Per-event slot math: `pool_slots = ceil(teams * pool_games_per_team / 2)`, `playoff_slots = max(playoff_teams - 1, 0)`, plus optional third-place game
-  - Tunable via `COURT_ESTIMATE_*` constants in `middleware/config.py` (default 2 pool games per team, 60 min/game, third-place off)
-  - Tab appears only in the consolidated ALL export; per-church exports omit it (Sports Fest staff use this for diocese-wide planning)
-  - Snapshot disclaimer in row 1 makes it clear that team counts move with each export run
+- Expanded `Venue-Capacity` tab to cover all Sports Fest events — closes [#83](https://github.com/i12know/vaysf/issues/83)
+  - **Team sports** (Basketball, Volleyball Men/Women, Soccer, Bible Challenge): one row per event; a church counts as an "Estimating" team when its roster meets the minimum team size; "Potential" = estimating + partial (all churches with ≥ 1 entry)
+  - **Racquet sports** (Badminton, Pickleball, Pickleball 35+, Table Tennis, Table Tennis 35+, Tennis): one row per sport; "Estimating" = complete pairs `floor(doubles / 2)` + singles; "Potential" = all individual registrations including unpaired
+  - Added `SPORT_TYPE["SOCCER"] = "Soccer - Coed Exhibition"` and added Soccer to `SPORT_BY_CATEGORY["TEAM"]`
+  - Added `COURT_ESTIMATE_RACQUET_EVENTS` list in `config.py`
+  - Per-sport minutes constants in `config.py` (`COURT_ESTIMATE_MINUTES_BASKETBALL = 60`, `_VOLLEYBALL = 60`, `_SOCCER = 60`, `_BIBLE_CHALLENGE = 45`, `_BADMINTON = 25`, `_PICKLEBALL = 20`, `_PICKLEBALL_35 = 20`, `_TABLE_TENNIS = 20`, `_TABLE_TENNIS_35 = 20`, `_TENNIS = 30`) — tune these in `config.py` before each season
+  - `COURT_ESTIMATE_MINUTES_PER_GAME` lookup dict maps every sport label to its constant
+  - `_compute_court_slots` now accepts a `minutes_per_game` parameter; per-sport minutes used automatically
+  - Column headers renamed to `Potential Teams/Entries` and `Estimating Teams/Entries` to cover both team and racquet semantics
+  - Minimum team sizes are sourced from the `summer_2026.json` validation rules (with `COURT_ESTIMATE_MIN_TEAM_SIZE` as fallback); Soccer=4, Bible Challenge=3 added as fallbacks
+  - Tab appears only in the consolidated ALL export; per-church exports omit it
 - Fixed case-sensitive bug in `sync/participants.py` that caused team-sport `sport_gender` to always be written as `Mixed` (e.g. `Basketball Mixed Team` instead of `Basketball Men Team`)
   - Comparisons like `GENDER["MEN"] in param.upper()` were checking `"Men" in "MEN TEAM"` and silently failing because `in` is case-sensitive
   - Roster sync now compares case-insensitively in both the full-label branch and a new bare-name lookup branch

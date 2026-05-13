@@ -21,11 +21,14 @@ from config import (
     ATHLETE_FEE_LATE,
     REGISTRATION_DEADLINE,
     SPORT_TYPE,
+    is_racquet_sport,
     COURT_ESTIMATE_EVENTS,
+    COURT_ESTIMATE_RACQUET_EVENTS,
     COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM,
     COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
     COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME,
     COURT_ESTIMATE_MIN_TEAM_SIZE,
+    COURT_ESTIMATE_MINUTES_PER_GAME,
     COURT_ESTIMATE_PLAYOFF_RULES,
 )
 from chmeetings.backend_connector import ChMeetingsConnector
@@ -1060,10 +1063,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 continue
             counts_by_church[church] = counts_by_church.get(church, 0) + 1
         estimating = sorted(c for c, n in counts_by_church.items() if n >= min_team_size)
-        potential = [c for c, n in counts_by_church.items() if 0 < n < min_team_size]
+        partial = [c for c, n in counts_by_church.items() if 0 < n < min_team_size]
         return {
             "n_estimating": len(estimating),
-            "n_potential": len(potential),
+            "n_potential": len(estimating) + len(partial),  # all churches with >= 1 entry
             "team_codes": ", ".join(estimating),
         }
 
@@ -1074,9 +1077,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 return int(rule["playoff_teams"])
         return 0
 
-    def _compute_court_slots(self, n_teams: int) -> Dict[str, Any]:
+    def _compute_court_slots(self, n_teams: int,
+                              minutes_per_game: int = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME) -> Dict[str, Any]:
         pool_games_per_team = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
-        minutes_per_game = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
         include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
 
         pool_slots = ceil((n_teams * pool_games_per_team) / 2) if n_teams > 0 else 0
@@ -1096,16 +1099,45 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             "court_hours": round(total_slots * minutes_per_game / 60, 2),
         }
 
+    def _count_racquet_entries(self, roster_rows: List[Dict[str, Any]],
+                               sport_name: str) -> Dict[str, Any]:
+        """Count racquet sport entries for the venue estimator.
+
+        Estimating Entries = complete pairs floor(n_doubles / 2) + n_singles.
+        Potential Entries  = total individual registrations (one person may be
+                             waiting for a partner to sign up).
+        """
+        n_singles = 0
+        n_doubles = 0
+        for r in roster_rows:
+            if str(r.get("sport_type") or "").strip().casefold() != sport_name.casefold():
+                continue
+            fmt = str(r.get("sport_format") or "").strip().casefold()
+            if "singles" in fmt:
+                n_singles += 1
+            else:
+                n_doubles += 1
+        n_estimating = n_singles + (n_doubles // 2)
+        n_potential = n_singles + n_doubles
+        return {
+            "n_estimating": n_estimating,
+            "n_potential": n_potential,
+            "team_codes": "",
+        }
+
     def _build_venue_capacity_rows(self, roster_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         rows = []
+
+        # Team sports — count churches with a complete roster
         for event_name in COURT_ESTIMATE_EVENTS:
             min_team_size = self._get_min_team_size(event_name)
             counts = self._count_estimating_teams(roster_rows, event_name, min_team_size)
-            s = self._compute_court_slots(counts["n_estimating"])
+            mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(event_name, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME)
+            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg)
             rows.append({
                 "Event": event_name,
-                "Potential Teams": counts["n_potential"],
-                "Estimating Teams": counts["n_estimating"],
+                "Potential Teams/Entries": counts["n_potential"],
+                "Estimating Teams/Entries": counts["n_estimating"],
                 "Teams": counts["team_codes"],
                 "Pool Games Per Team": s["pool_games_per_team"],
                 "Minutes Per Game": s["minutes_per_game"],
@@ -1117,6 +1149,28 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "Total Court Slots": s["total_slots"],
                 "Estimated Court Hours": s["court_hours"],
             })
+
+        # Racquet sports — count complete pairs + singles
+        for sport_name in COURT_ESTIMATE_RACQUET_EVENTS:
+            counts = self._count_racquet_entries(roster_rows, sport_name)
+            mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(sport_name, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME)
+            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg)
+            rows.append({
+                "Event": sport_name,
+                "Potential Teams/Entries": counts["n_potential"],
+                "Estimating Teams/Entries": counts["n_estimating"],
+                "Teams": counts["team_codes"],
+                "Pool Games Per Team": s["pool_games_per_team"],
+                "Minutes Per Game": s["minutes_per_game"],
+                "Pool Slots": s["pool_slots"],
+                "Playoff Teams": s["playoff_teams"],
+                "Playoff Slots": s["playoff_slots"],
+                "Third Place?": "Yes" if s["include_third_place"] else "No",
+                "Third Place Slots": s["third_place_slots"],
+                "Total Court Slots": s["total_slots"],
+                "Estimated Court Hours": s["court_hours"],
+            })
+
         return rows
 
     def _write_excel_report(self, filepath: Path,
@@ -1259,7 +1313,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 if include_venue_capacity:
                     venue_rows = self._build_venue_capacity_rows(roster_rows)
                     venue_cols = [
-                        "Event", "Potential Teams", "Estimating Teams", "Teams",
+                        "Event", "Potential Teams/Entries", "Estimating Teams/Entries", "Teams",
                         "Pool Games Per Team", "Minutes Per Game", "Pool Slots",
                         "Playoff Teams", "Playoff Slots", "Third Place?",
                         "Third Place Slots", "Total Court Slots", "Estimated Court Hours",
@@ -1267,8 +1321,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     df_venue = pd.DataFrame(venue_rows, columns=venue_cols)
                     snapshot_note = (
                         f"Roster snapshot as of {datetime.now().strftime('%Y-%m-%d')} — "
-                        "Estimating Teams counts every roster entry regardless of approval status; "
-                        "updates with each export run."
+                        "Estimating = complete entries; Potential = all registrations including partial. "
+                        "Approval-agnostic. Updates with each export run."
                     )
                     # Reserve row 1 for the snapshot disclaimer; data starts on row 2.
                     df_venue.to_excel(writer, sheet_name="Venue-Capacity", index=False, startrow=1)
