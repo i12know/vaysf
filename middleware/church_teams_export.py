@@ -1313,7 +1313,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 df_validation.to_excel(writer, sheet_name="Validation-Issues", index=False)
                 logger.debug(f"Validation-Issues tab: {len(df_validation)} rows.")
 
-                # Venue-Capacity Tab (only on the consolidated ALL export — see Issue #83)
+                # Venue-Estimator Tab (only on the consolidated ALL export — see Issue #83)
                 if include_venue_capacity:
                     venue_rows = self._build_venue_capacity_rows(roster_rows)
                     venue_cols = [
@@ -1328,11 +1328,12 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         "Estimating = complete entries; Potential = all registrations including partial. "
                         "Approval-agnostic. Updates with each export run."
                     )
-                    # Reserve row 1 for the snapshot disclaimer; data starts on row 2.
-                    df_venue.to_excel(writer, sheet_name="Venue-Capacity", index=False, startrow=1)
-                    venue_ws = writer.sheets["Venue-Capacity"]
-                    venue_ws.cell(row=1, column=1, value=snapshot_note)
-                    logger.debug(f"Venue-Capacity tab: {len(df_venue)} rows.")
+                    # Data first, then a blank row, then the snapshot disclaimer at the bottom.
+                    df_venue.to_excel(writer, sheet_name="Venue-Estimator", index=False, startrow=0)
+                    venue_ws = writer.sheets["Venue-Estimator"]
+                    note_row = len(df_venue) + 3  # header + data rows + blank row
+                    venue_ws.cell(row=note_row, column=1, value=snapshot_note)
+                    logger.debug(f"Venue-Estimator tab: {len(df_venue)} rows.")
 
                 # Add yellow note to Photo column in Roster sheet
                 if not df_roster.empty:

@@ -878,7 +878,7 @@ def test_count_racquet_entries(mock_connectors):
 
 
 def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_path):
-    """Venue-Capacity tab appears only when include_venue_capacity=True (Issue #83)."""
+    """Venue-Estimator tab appears only when include_venue_capacity=True (Issue #83)."""
     exporter = ChurchTeamsExporter()
 
     summary_rows = [{
@@ -906,26 +906,26 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
         "sport_type": "Basketball", "sport_gender": "Men", "sport_format": "Team",
     } for i in range(6)]
 
-    # Single-church export: no Venue-Capacity tab
+    # Single-church export: no Venue-Estimator tab
     single_path = tmp_path / "single.xlsx"
     exporter._write_excel_report(single_path, summary_rows, contacts_rows, roster_rows, [])
-    assert "Venue-Capacity" not in pd.ExcelFile(single_path).sheet_names
+    assert "Venue-Estimator" not in pd.ExcelFile(single_path).sheet_names
 
-    # Consolidated ALL export: tab present, three rows, snapshot note in row 1
+    # Consolidated ALL export: tab present, snapshot note appended after data
     all_path = tmp_path / "all.xlsx"
     exporter._write_excel_report(all_path, summary_rows, contacts_rows, roster_rows, [],
                                  include_venue_capacity=True)
     sheets = pd.ExcelFile(all_path).sheet_names
-    assert "Venue-Capacity" in sheets
+    assert "Venue-Estimator" in sheets
 
-    venue_df = pd.read_excel(all_path, sheet_name="Venue-Capacity", header=1)
+    venue_df = pd.read_excel(all_path, sheet_name="Venue-Estimator", header=0)
     assert list(venue_df.columns)[0] == "Event"
     assert "Potential Teams/Entries" in venue_df.columns
     assert "Estimating Teams/Entries" in venue_df.columns
     assert "Teams" in venue_df.columns
     assert "Estimated Court Hours" in venue_df.columns
     # 5 team sports + 6 racquet sports
-    assert len(venue_df) == 11
+    assert len(venue_df[venue_df["Minutes Per Game"].notna()]) == 11  # 5 team + 6 racquet sports
 
     # Column order: Potential before Estimating before Teams
     cols = list(venue_df.columns)
@@ -943,6 +943,7 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
     assert int(vb_men["Estimating Teams/Entries"]) == 0  # no volleyball rosters
     assert str(vb_men["Teams"]) in ("", "nan")
 
-    # Snapshot disclaimer is in row 1 (above the header row)
-    raw = pd.read_excel(all_path, sheet_name="Venue-Capacity", header=None)
-    assert "Roster snapshot as of" in str(raw.iloc[0, 0])
+    # Snapshot disclaimer appears after the data (header + 11 rows + blank = row 13)
+    raw = pd.read_excel(all_path, sheet_name="Venue-Estimator", header=None)
+    note_row_idx = 13  # 0-based: row 14 in Excel (1 header + 11 data + 1 blank + note)
+    assert "Roster snapshot as of" in str(raw.iloc[note_row_idx, 0])
