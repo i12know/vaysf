@@ -5,7 +5,7 @@
 ### New Features
 - Added `--remove-orphans` flag to `python main.py audit-team-groups`
   - After identifying each orphaned Team-group membership (person_id returns 404 from ChMeetings), the membership is deleted from the group via `DELETE /api/v1/groups/{group_id}/memberships/{person_id}`
-  - Audit summary line now includes a `Removed: N/M` count when removal is active
+  - Audit summary line now includes a `Removed: N/M (stuck/API-undeleteable: K)` count when removal is active; "stuck" records are ones where DELETE also returns 404 due to a ChMeetings platform bug (filed as ChMeetings support ticket **#20188** — follow up if stuck count remains non-zero after resolution)
   - Run without the flag first to review `data/team_group_orphan_audit.xlsx`, then re-run with `--remove-orphans` to clean up
   - Combines cleanly with `--church-code` to target a single church: `python main.py audit-team-groups --church-code GAC --remove-orphans`
 - Expanded `Venue-Capacity` tab to cover all Sports Fest events — closes [#83](https://github.com/i12know/vaysf/issues/83)

@@ -510,8 +510,8 @@ def audit_team_groups(church_code: Optional[str] = None,
                             logger.warning(
                                 f"Cannot remove orphaned membership: person_id={person_id} from "
                                 f"{group_name} — ChMeetings DELETE also returned 404. "
-                                f"This record is permanently stuck and must be resolved by "
-                                f"ChMeetings support."
+                                f"This record is permanently stuck (ChMeetings bug ticket #20188) "
+                                f"and must be resolved by ChMeetings support."
                             )
                         else:
                             lookup_status = "orphan_remove_failed"
