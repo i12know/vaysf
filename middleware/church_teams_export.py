@@ -1054,7 +1054,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         for r in roster_rows:
             r_type = str(r.get("sport_type") or "").strip()
             r_gender = str(r.get("sport_gender") or "").strip()
-            if r_type.casefold() != target_type.casefold():
+            # Match either the base name ("Soccer") or the full Other-Events label
+            # ("Soccer - Coed Exhibition"), since other_events are stored verbatim.
+            if (r_type.casefold() != target_type.casefold() and
+                    r_type.casefold() != event_name.casefold()):
                 continue
             if target_gender and r_gender.casefold() != target_gender.casefold():
                 continue
