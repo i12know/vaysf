@@ -8,6 +8,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from church_teams_export import ChurchTeamsExporter, CHM_FIELDS, MEMBERSHIP_QUESTION
+from config import SPORT_TYPE
 
 
 @pytest.fixture()
@@ -837,17 +838,17 @@ def test_count_estimating_teams_soccer_full_label(mock_connectors):
     """Soccer sport_type is stored as the full Other-Events label, not just 'Soccer'."""
     exporter = ChurchTeamsExporter()
 
-    # Other-events registrations store the full option string verbatim
+    # Other-events registrations store the full SPORT_TYPE constant value verbatim
     roster_rows = [
-        {"Church Team": "RPC", "sport_type": "Soccer - Coed Exhibition", "sport_gender": "Mixed"}
+        {"Church Team": "RPC", "sport_type": SPORT_TYPE["SOCCER"], "sport_gender": "Mixed"}
         for _ in range(5)
     ] + [
-        {"Church Team": "TLC", "sport_type": "Soccer - Coed Exhibition", "sport_gender": "Mixed"}
+        {"Church Team": "TLC", "sport_type": SPORT_TYPE["SOCCER"], "sport_gender": "Mixed"}
         for _ in range(3)
     ]
 
     result = exporter._count_estimating_teams(
-        roster_rows, "Soccer - Coed Exhibition", min_team_size=4
+        roster_rows, SPORT_TYPE["SOCCER"], min_team_size=4
     )
     assert result["n_estimating"] == 1      # only RPC has >= 4
     assert result["n_potential"] == 2       # RPC + TLC both have >= 1

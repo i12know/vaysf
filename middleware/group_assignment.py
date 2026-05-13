@@ -433,6 +433,7 @@ def audit_team_groups(church_code: Optional[str] = None,
         memberships_found = 0
         orphans_found = 0
         orphans_removed = 0
+        orphans_stuck = 0
         resolved_found = 0
         failed_lookups = 0
         audit_rows: List[Dict[str, str]] = []
@@ -494,16 +495,29 @@ def audit_team_groups(church_code: Optional[str] = None,
                         removed = chm_connector.remove_person_from_group(
                             group_id, person_id, not_found_ok=True
                         )
-                        if removed:
+                        delete_status = getattr(
+                            chm_connector, "last_group_membership_delete_status", "failed"
+                        )
+                        if removed and delete_status == "removed":
                             orphans_removed += 1
+                            lookup_status = "orphan_removed"
                             logger.info(
                                 f"Removed orphaned membership: person_id={person_id} from {group_name}."
                             )
+                        elif removed and delete_status == "already_absent":
+                            orphans_stuck += 1
+                            lookup_status = "orphan_stuck"
+                            logger.warning(
+                                f"Cannot remove orphaned membership: person_id={person_id} from "
+                                f"{group_name} — ChMeetings DELETE also returned 404. "
+                                f"This record is permanently stuck and must be resolved by "
+                                f"ChMeetings support."
+                            )
                         else:
+                            lookup_status = "orphan_remove_failed"
                             logger.error(
                                 f"Failed to remove orphaned membership: person_id={person_id} from {group_name}."
                             )
-                        lookup_status = "orphan_removed" if removed else "orphan_remove_failed"
                 else:
                     failed_lookups += 1
                     logger.warning(
@@ -543,7 +557,10 @@ def audit_team_groups(church_code: Optional[str] = None,
             f"{resolved_found} resolved lookup(s), {failed_lookups} failed lookup(s)."
         )
         if remove_orphans:
-            summary += f" Removed: {orphans_removed}/{orphans_found} orphaned membership(s)."
+            summary += (
+                f" Removed: {orphans_removed}/{orphans_found} orphaned membership(s)"
+                f" (stuck/API-undeleteable: {orphans_stuck})."
+            )
         logger.info(summary)
 
         return True
