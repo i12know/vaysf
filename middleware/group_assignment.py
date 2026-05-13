@@ -390,17 +390,28 @@ def clear_team_groups(
         return failed == 0
 
 
-def audit_team_groups(church_code: Optional[str] = None) -> bool:
+def audit_team_groups(church_code: Optional[str] = None,
+                      remove_orphans: bool = False) -> bool:
     """
     Audit Team XXX groups for orphaned ChMeetings memberships.
 
     A membership is considered orphaned when it appears in a Team group but
     GET /people/{id} returns 404 Not Found.
+
+    If remove_orphans=True, each orphaned membership is deleted from ChMeetings
+    immediately after identification. This is irreversible — run without the flag
+    first to review the audit file before committing to removal.
     """
     normalized_code = church_code.strip().upper() if church_code else None
     logger.info(
-        f"Starting team-group orphan audit (church_code={normalized_code or 'ALL'})..."
+        f"Starting team-group orphan audit (church_code={normalized_code or 'ALL'}, "
+        f"remove_orphans={remove_orphans})..."
     )
+    if remove_orphans:
+        logger.warning(
+            "REMOVE MODE: orphaned memberships will be deleted from ChMeetings. "
+            "This action is irreversible."
+        )
 
     with ChMeetingsConnector() as chm_connector, WordPressConnector() as wp_connector:
         if not chm_connector.authenticate():
@@ -421,6 +432,8 @@ def audit_team_groups(church_code: Optional[str] = None) -> bool:
         groups_processed = 0
         memberships_found = 0
         orphans_found = 0
+        orphans_removed = 0
+        orphans_stuck = 0
         resolved_found = 0
         failed_lookups = 0
         audit_rows: List[Dict[str, str]] = []
@@ -478,6 +491,33 @@ def audit_team_groups(church_code: Optional[str] = None) -> bool:
                         f"Orphaned Team-group membership found: {group_name} has person_id={person_id}, "
                         f"but ChMeetings GET /people/{person_id} returned 404."
                     )
+                    if remove_orphans:
+                        removed = chm_connector.remove_person_from_group(
+                            group_id, person_id, not_found_ok=True
+                        )
+                        delete_status = getattr(
+                            chm_connector, "last_group_membership_delete_status", "failed"
+                        )
+                        if removed and delete_status == "removed":
+                            orphans_removed += 1
+                            lookup_status = "orphan_removed"
+                            logger.info(
+                                f"Removed orphaned membership: person_id={person_id} from {group_name}."
+                            )
+                        elif removed and delete_status == "already_absent":
+                            orphans_stuck += 1
+                            lookup_status = "orphan_stuck"
+                            logger.warning(
+                                f"Cannot remove orphaned membership: person_id={person_id} from "
+                                f"{group_name} — ChMeetings DELETE also returned 404. "
+                                f"This record is permanently stuck (ChMeetings bug ticket #20188) "
+                                f"and must be resolved by ChMeetings support."
+                            )
+                        else:
+                            lookup_status = "orphan_remove_failed"
+                            logger.error(
+                                f"Failed to remove orphaned membership: person_id={person_id} from {group_name}."
+                            )
                 else:
                     failed_lookups += 1
                     logger.warning(
@@ -511,11 +551,17 @@ def audit_team_groups(church_code: Optional[str] = None) -> bool:
                 })
 
         _write_audit_file("team_group_orphan_audit.xlsx", audit_rows)
-        logger.info(
+        summary = (
             f"Team-group orphan audit complete: {groups_processed} group(s), "
             f"{memberships_found} membership(s), {orphans_found} orphan(s), "
             f"{resolved_found} resolved lookup(s), {failed_lookups} failed lookup(s)."
         )
+        if remove_orphans:
+            summary += (
+                f" Removed: {orphans_removed}/{orphans_found} orphaned membership(s)"
+                f" (stuck/API-undeleteable: {orphans_stuck})."
+            )
+        logger.info(summary)
 
         return True
 

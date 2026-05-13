@@ -20,9 +20,21 @@ from config import (
     ATHLETE_FEE_OTHER_EVENTS_ONLY,
     ATHLETE_FEE_LATE,
     REGISTRATION_DEADLINE,
+    SPORT_TYPE,
+    is_racquet_sport,
+    COURT_ESTIMATE_EVENTS,
+    COURT_ESTIMATE_RACQUET_EVENTS,
+    COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM,
+    COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
+    COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME,
+    COURT_ESTIMATE_MIN_TEAM_SIZE,
+    COURT_ESTIMATE_MINUTES_PER_GAME,
+    COURT_ESTIMATE_PLAYOFF_RULES,
 )
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
+from validation.models import RulesManager
+from math import ceil
 
 class ChurchTeamsExporter: # MODIFIED CLASS NAME
     """
@@ -968,10 +980,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             
             all_filename = f"Church_Team_Status_ALL_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
             self._write_excel_report(output_dir / all_filename,
-                                     summary_data_list, 
-                                     all_contacts_data, 
+                                     summary_data_list,
+                                     all_contacts_data,
                                      all_rosters_data,
-                                     all_validation_data)   
+                                     all_validation_data,
+                                     include_venue_capacity=True)
 
         # Handle force resend options
         if force_resend_pending or force_resend_validated1 or force_resend_validated2:
@@ -984,11 +997,192 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         logger.info("Report generation process finished.")
         return True
 
+    @staticmethod
+    def _decompose_event_name(event_name: str) -> Tuple[str, str, str]:
+        """Split a canonical event name like 'Basketball - Men Team' into
+        (sport_type, sport_gender, sport_format) using the same casing the
+        roster rows store after sync."""
+        parts = event_name.split(" - ", 1)
+        sport_type = parts[0].strip()
+        if len(parts) < 2:
+            return sport_type, "", "Team"
+        suffix = parts[1].upper()
+        if "WOMEN" in suffix:
+            gender = "Women"
+        elif "MEN" in suffix:
+            gender = "Men"
+        elif "MIXED" in suffix or "COED" in suffix:
+            gender = "Mixed"
+        else:
+            gender = ""
+        sport_format = "Singles" if "SINGLES" in suffix else "Team"
+        return sport_type, gender, sport_format
+
+    def _get_min_team_size(self, event_name: str) -> int:
+        """Look up minimum team size from the validation ruleset; fall back
+        to COURT_ESTIMATE_MIN_TEAM_SIZE if the JSON rule is absent."""
+        if not hasattr(self, "_rules_manager_cache"):
+            try:
+                self._rules_manager_cache = RulesManager(collection="SUMMER_2026")
+            except Exception as e:
+                logger.warning(f"Could not load validation rules for venue estimate: {e}")
+                self._rules_manager_cache = None
+        if self._rules_manager_cache is not None:
+            for rule in self._rules_manager_cache.get_rules_for_sport(event_name):
+                if rule.get("rule_type") == "team_size" and rule.get("category") == "min":
+                    try:
+                        return int(rule.get("value"))
+                    except (TypeError, ValueError):
+                        pass
+        return int(COURT_ESTIMATE_MIN_TEAM_SIZE.get(event_name, 0))
+
+    def _count_estimating_teams(self, roster_rows: List[Dict[str, Any]],
+                                 event_name: str, min_team_size: int) -> Dict[str, Any]:
+        """Return estimating/potential team counts and the qualifying church codes.
+
+        Approval-agnostic — every roster entry counts.
+
+        Returns a dict with:
+          n_estimating  – churches with >= min_team_size entries (ready to compete)
+          n_potential   – churches with >= 1 but < min_team_size entries (still forming)
+          team_codes    – sorted, comma-separated list of estimating church codes
+        """
+        if min_team_size <= 0:
+            return {"n_estimating": 0, "n_potential": 0, "team_codes": ""}
+        target_type, target_gender, _ = self._decompose_event_name(event_name)
+        counts_by_church: Dict[str, int] = {}
+        for r in roster_rows:
+            r_type = str(r.get("sport_type") or "").strip()
+            r_gender = str(r.get("sport_gender") or "").strip()
+            # Primary/secondary sports are stored as the base name (e.g. "Basketball");
+            # Other-Events sports are stored as the full SPORT_TYPE value verbatim.
+            # Accept either so both paths match.
+            if (r_type.casefold() != target_type.casefold() and
+                    r_type.casefold() != event_name.casefold()):
+                continue
+            if target_gender and r_gender.casefold() != target_gender.casefold():
+                continue
+            church = str(r.get("Church Team") or "").strip()
+            if not church:
+                continue
+            counts_by_church[church] = counts_by_church.get(church, 0) + 1
+        estimating = sorted(c for c, n in counts_by_church.items() if n >= min_team_size)
+        partial = [c for c, n in counts_by_church.items() if 0 < n < min_team_size]
+        return {
+            "n_estimating": len(estimating),
+            "n_potential": len(estimating) + len(partial),  # all churches with >= 1 entry
+            "team_codes": ", ".join(estimating),
+        }
+
+    @staticmethod
+    def _get_playoff_teams(n_teams: int) -> int:
+        for rule in COURT_ESTIMATE_PLAYOFF_RULES:
+            if rule["min_teams"] <= n_teams <= rule["max_teams"]:
+                return int(rule["playoff_teams"])
+        return 0
+
+    def _compute_court_slots(self, n_teams: int,
+                              minutes_per_game: int = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME) -> Dict[str, Any]:
+        pool_games_per_team = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
+        include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
+
+        pool_slots = ceil((n_teams * pool_games_per_team) / 2) if n_teams > 0 else 0
+        playoff_teams = self._get_playoff_teams(n_teams)
+        playoff_slots = max(playoff_teams - 1, 0)
+        third_place_slots = 1 if include_third and playoff_teams >= 4 else 0
+        total_slots = pool_slots + playoff_slots + third_place_slots
+        return {
+            "pool_games_per_team": pool_games_per_team,
+            "minutes_per_game": minutes_per_game,
+            "pool_slots": pool_slots,
+            "playoff_teams": playoff_teams,
+            "playoff_slots": playoff_slots,
+            "include_third_place": include_third,
+            "third_place_slots": third_place_slots,
+            "total_slots": total_slots,
+            "court_hours": round(total_slots * minutes_per_game / 60, 2),
+        }
+
+    def _count_racquet_entries(self, roster_rows: List[Dict[str, Any]],
+                               sport_name: str) -> Dict[str, Any]:
+        """Count racquet sport entries for the venue estimator.
+
+        Estimating Entries = complete pairs floor(n_doubles / 2) + n_singles.
+        Potential Entries  = total individual registrations (one person may be
+                             waiting for a partner to sign up).
+        """
+        n_singles = 0
+        n_doubles = 0
+        for r in roster_rows:
+            if str(r.get("sport_type") or "").strip().casefold() != sport_name.casefold():
+                continue
+            fmt = str(r.get("sport_format") or "").strip().casefold()
+            if "singles" in fmt:
+                n_singles += 1
+            else:
+                n_doubles += 1
+        n_estimating = n_singles + (n_doubles // 2)
+        n_potential = n_singles + n_doubles
+        return {
+            "n_estimating": n_estimating,
+            "n_potential": n_potential,
+            "team_codes": "",
+        }
+
+    def _build_venue_capacity_rows(self, roster_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        rows = []
+
+        # Team sports — count churches with a complete roster
+        for event_name in COURT_ESTIMATE_EVENTS:
+            min_team_size = self._get_min_team_size(event_name)
+            counts = self._count_estimating_teams(roster_rows, event_name, min_team_size)
+            mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(event_name, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME)
+            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg)
+            rows.append({
+                "Event": event_name,
+                "Potential Teams/Entries": counts["n_potential"],
+                "Estimating Teams/Entries": counts["n_estimating"],
+                "Teams": counts["team_codes"],
+                "Pool Games Per Team": s["pool_games_per_team"],
+                "Minutes Per Game": s["minutes_per_game"],
+                "Pool Slots": s["pool_slots"],
+                "Playoff Teams": s["playoff_teams"],
+                "Playoff Slots": s["playoff_slots"],
+                "Third Place?": "Yes" if s["include_third_place"] else "No",
+                "Third Place Slots": s["third_place_slots"],
+                "Total Court Slots": s["total_slots"],
+                "Estimated Court Hours": s["court_hours"],
+            })
+
+        # Racquet sports — count complete pairs + singles
+        for sport_name in COURT_ESTIMATE_RACQUET_EVENTS:
+            counts = self._count_racquet_entries(roster_rows, sport_name)
+            mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(sport_name, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME)
+            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg)
+            rows.append({
+                "Event": sport_name,
+                "Potential Teams/Entries": counts["n_potential"],
+                "Estimating Teams/Entries": counts["n_estimating"],
+                "Teams": counts["team_codes"],
+                "Pool Games Per Team": s["pool_games_per_team"],
+                "Minutes Per Game": s["minutes_per_game"],
+                "Pool Slots": s["pool_slots"],
+                "Playoff Teams": s["playoff_teams"],
+                "Playoff Slots": s["playoff_slots"],
+                "Third Place?": "Yes" if s["include_third_place"] else "No",
+                "Third Place Slots": s["third_place_slots"],
+                "Total Court Slots": s["total_slots"],
+                "Estimated Court Hours": s["court_hours"],
+            })
+
+        return rows
+
     def _write_excel_report(self, filepath: Path,
                             summary_rows: List[Dict[str, Any]],
                             contacts_rows: List[Dict[str, Any]],
                             roster_rows: List[Dict[str, Any]],
-                            validation_rows: List[Dict[str, Any]]):
+                            validation_rows: List[Dict[str, Any]],
+                            include_venue_capacity: bool = False):
         """Writes the collected data to an Excel file with specified tabs and formatting."""
         logger.info(f"Writing Excel report to: {filepath}")
         try:
@@ -1015,6 +1209,39 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 logger.debug(f"Summary tab: {len(df_summary)} rows.")
 
                 # Contacts-Status Tab
+                # Build sports-registered lookup keyed by Participant ID (WP) and ChMeetings ID
+                sports_by_wp_id: Dict[str, list] = {}
+                sports_by_chm_id: Dict[str, list] = {}
+                for rrow in roster_rows:
+                    label_parts = [
+                        str(rrow.get("sport_type") or "").strip(),
+                        str(rrow.get("sport_gender") or "").strip(),
+                        str(rrow.get("sport_format") or "").strip(),
+                    ]
+                    label = " ".join(p for p in label_parts if p)
+                    if not label:
+                        continue
+                    wp_pid = str(rrow.get("Participant ID (WP)") or "").strip()
+                    chm_pid = str(rrow.get("ChMeetings ID") or "").strip()
+                    if wp_pid and wp_pid not in ("0", ""):
+                        sports_by_wp_id.setdefault(wp_pid, [])
+                        if label not in sports_by_wp_id[wp_pid]:
+                            sports_by_wp_id[wp_pid].append(label)
+                    if chm_pid and chm_pid not in ("0", ""):
+                        sports_by_chm_id.setdefault(chm_pid, [])
+                        if label not in sports_by_chm_id[chm_pid]:
+                            sports_by_chm_id[chm_pid].append(label)
+
+                for crow in contacts_rows:
+                    wp_pid = str(crow.get("Participant ID (WP)") or "").strip()
+                    chm_pid = str(crow.get("ChMeetings ID") or "").strip()
+                    sports = (
+                        sports_by_wp_id.get(wp_pid)
+                        or sports_by_chm_id.get(chm_pid)
+                        or []
+                    )
+                    crow["Sports Registered"] = ", ".join(sorted(sports)) if sports else ""
+
                 df_contacts = pd.DataFrame(contacts_rows)
                 if not df_contacts.empty:
 
@@ -1022,8 +1249,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     if photo_url_col_name in df_contacts.columns:
                         # Create the hyperlink formula if the URL is not "N/A" and looks like a URL
                         df_contacts[photo_url_col_name] = df_contacts[photo_url_col_name].apply(
-                            lambda url: f'=HYPERLINK("{url}", "{url}")' 
-                            if isinstance(url, str) and url != "N/A" and (url.startswith("http://") or url.startswith("https://")) 
+                            lambda url: f'=HYPERLINK("{url}", "{url}")'
+                            if isinstance(url, str) and url != "N/A" and (url.startswith("http://") or url.startswith("https://"))
                             else url # Keep "N/A" or other non-URL values as is
                         )
 
@@ -1031,7 +1258,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         "Church Team", "ChMeetings ID", "First Name", "Last Name", "Is_Participant",
                         "Is_Member_ChM", "Participant ID (WP)", "Approval_Status (WP)",
                         "Total_Open_ERRORs (WP)", "Gender", "Birthdate", "Age (at Event)",
-                        "Mobile Phone", "Email", "Registration Date (WP)", "Athlete Fee", "First_Open_ERROR_Desc (WP)",
+                        "Mobile Phone", "Email", "Registration Date (WP)", "Sports Registered", "Athlete Fee",
+                        "First_Open_ERROR_Desc (WP)",
                         "Box 1", "Box 2", "Box 3", "Box 4", "Box 5", "Box 6",
                         photo_url_col_name, "Update_on_ChM"
                     ]
@@ -1084,6 +1312,28 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     )
                 df_validation.to_excel(writer, sheet_name="Validation-Issues", index=False)
                 logger.debug(f"Validation-Issues tab: {len(df_validation)} rows.")
+
+                # Venue-Estimator Tab (only on the consolidated ALL export — see Issue #83)
+                if include_venue_capacity:
+                    venue_rows = self._build_venue_capacity_rows(roster_rows)
+                    venue_cols = [
+                        "Event", "Potential Teams/Entries", "Estimating Teams/Entries", "Teams",
+                        "Pool Games Per Team", "Minutes Per Game", "Pool Slots",
+                        "Playoff Teams", "Playoff Slots", "Third Place?",
+                        "Third Place Slots", "Total Court Slots", "Estimated Court Hours",
+                    ]
+                    df_venue = pd.DataFrame(venue_rows, columns=venue_cols)
+                    snapshot_note = (
+                        f"Roster snapshot as of {datetime.now().strftime('%Y-%m-%d')} — "
+                        "Estimating = complete entries; Potential = all registrations including partial. "
+                        "Approval-agnostic. Updates with each export run."
+                    )
+                    # Data first, then a blank row, then the snapshot disclaimer at the bottom.
+                    df_venue.to_excel(writer, sheet_name="Venue-Estimator", index=False, startrow=0)
+                    venue_ws = writer.sheets["Venue-Estimator"]
+                    note_row = len(df_venue) + 3  # header + data rows + blank row
+                    venue_ws.cell(row=note_row, column=1, value=snapshot_note)
+                    logger.debug(f"Venue-Estimator tab: {len(df_venue)} rows.")
 
                 # Add yellow note to Photo column in Roster sheet
                 if not df_roster.empty:

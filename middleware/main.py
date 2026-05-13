@@ -89,6 +89,11 @@ def parse_args() -> argparse.Namespace:
         "--church-code",
         help="Limit the audit to a single team group such as Team GAC",
     )
+    audit_team_groups_parser.add_argument(
+        "--remove-orphans",
+        action="store_true",
+        help="Remove orphaned memberships from ChMeetings after identifying them (irreversible)",
+    )
 
     # Export command
     export_parser = subparsers.add_parser("export-church-teams", help="Export church team status reports")
@@ -622,7 +627,8 @@ def main() -> None:
                 logger.info("Team-group clearing complete. Check data/team_group_clearing_audit.xlsx for the audit log.")
     elif args.command == "audit-team-groups":
         from group_assignment import audit_team_groups
-        success = audit_team_groups(church_code=args.church_code)
+        success = audit_team_groups(church_code=args.church_code,
+                                    remove_orphans=args.remove_orphans)
         if success:
             logger.info("Team-group audit complete. Check data/team_group_orphan_audit.xlsx for the audit log.")
     elif args.command == "export-church-teams":

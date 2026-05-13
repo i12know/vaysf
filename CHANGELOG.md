@@ -3,6 +3,32 @@
 ## Unreleased
 
 ### New Features
+- Added `--remove-orphans` flag to `python main.py audit-team-groups`
+  - After identifying each orphaned Team-group membership (person_id returns 404 from ChMeetings), the membership is deleted from the group via `DELETE /api/v1/groups/{group_id}/memberships/{person_id}`
+  - Audit summary line now includes a `Removed: N/M (stuck/API-undeleteable: K)` count when removal is active; "stuck" records are ones where DELETE also returns 404 due to a ChMeetings platform bug (filed as ChMeetings support ticket **#20188** — follow up if stuck count remains non-zero after resolution)
+  - Run without the flag first to review `data/team_group_orphan_audit.xlsx`, then re-run with `--remove-orphans` to clean up
+  - Combines cleanly with `--church-code` to target a single church: `python main.py audit-team-groups --church-code GAC --remove-orphans`
+- Expanded `Venue-Capacity` tab to cover all Sports Fest events — closes [#83](https://github.com/i12know/vaysf/issues/83)
+  - **Team sports** (Basketball, Volleyball Men/Women, Soccer, Bible Challenge): one row per event; a church counts as an "Estimating" team when its roster meets the minimum team size; "Potential" = estimating + partial (all churches with ≥ 1 entry)
+  - **Racquet sports** (Badminton, Pickleball, Pickleball 35+, Table Tennis, Table Tennis 35+, Tennis): one row per sport; "Estimating" = complete pairs `floor(doubles / 2)` + singles; "Potential" = all individual registrations including unpaired
+  - Added `SPORT_TYPE["SOCCER"] = "Soccer - Coed Exhibition"` and added Soccer to `SPORT_BY_CATEGORY["TEAM"]`
+  - Added `COURT_ESTIMATE_RACQUET_EVENTS` list in `config.py`
+  - Per-sport minutes constants in `config.py` (`COURT_ESTIMATE_MINUTES_BASKETBALL = 60`, `_VOLLEYBALL = 60`, `_SOCCER = 60`, `_BIBLE_CHALLENGE = 45`, `_BADMINTON = 25`, `_PICKLEBALL = 20`, `_PICKLEBALL_35 = 20`, `_TABLE_TENNIS = 20`, `_TABLE_TENNIS_35 = 20`, `_TENNIS = 30`) — tune these in `config.py` before each season
+  - `COURT_ESTIMATE_MINUTES_PER_GAME` lookup dict maps every sport label to its constant
+  - `_compute_court_slots` now accepts a `minutes_per_game` parameter; per-sport minutes used automatically
+  - Column headers renamed to `Potential Teams/Entries` and `Estimating Teams/Entries` to cover both team and racquet semantics
+  - Minimum team sizes are sourced from the `summer_2026.json` validation rules (with `COURT_ESTIMATE_MIN_TEAM_SIZE` as fallback); Soccer=4, Bible Challenge=3 added as fallbacks
+  - Tab appears only in the consolidated ALL export; per-church exports omit it
+- Fixed case-sensitive bug in `sync/participants.py` that caused team-sport `sport_gender` to always be written as `Mixed` (e.g. `Basketball Mixed Team` instead of `Basketball Men Team`)
+  - Comparisons like `GENDER["MEN"] in param.upper()` were checking `"Men" in "MEN TEAM"` and silently failing because `in` is case-sensitive
+  - Roster sync now compares case-insensitively in both the full-label branch and a new bare-name lookup branch
+  - Added a bare-name fallback that recovers gender/format by looking up the canonical `SPORT_TYPE` entry, so older registrations stored as `"Basketball"` (without the `- Men Team` suffix) heal on the next sync without manual DB edits
+  - Format heuristic flipped from "contains Team" to "not contains Singles" so `"Coed Exhibition"` and other non-standard suffixes still map to Team
+- Added `Sports Registered` column to the `Contacts-Status` tab in church-team Excel exports — closes [#82](https://github.com/i12know/vaysf/issues/82)
+  - Appears immediately before `Athlete Fee`
+  - Lists all sports/events for each participant as a comma-separated, sorted string (e.g. `Badminton Women Doubles, Basketball`)
+  - Matched by `Participant ID (WP)` with `ChMeetings ID` as fallback; blank when the person has no roster entries
+  - Duplicates within the same participant are suppressed
 - Added `python main.py inspect-person --chm-id <ID>` for read-only ChMeetings person inspection with WordPress fallback context
   - Prints the raw ChMeetings record when the person still exists
   - Reports cleanly when ChMeetings returns `404 Not Found`

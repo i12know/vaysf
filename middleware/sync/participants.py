@@ -709,17 +709,41 @@ class ParticipantSyncer:
                         sport_format = SPORT_FORMAT["TEAM"]
                     elif len(sport_parts) > 1:
                         param = sport_parts[1]
-                        if GENDER["MEN"] in param.upper():
+                        param_upper = param.upper()
+                        if GENDER["MEN"].upper() in param_upper:
                             sport_gender = GENDER["MEN"]
-                        elif GENDER["WOMEN"] in param.upper():
+                        elif GENDER["WOMEN"].upper() in param_upper:
                             sport_gender = GENDER["WOMEN"]
-                        elif GENDER["MIXED"] in param.upper():
+                        elif GENDER["MIXED"].upper() in param_upper or "COED" in param_upper:
                             sport_gender = GENDER["MIXED"]
                         else:
                             sport_gender = GENDER["MIXED"]
-                        sport_format = SPORT_FORMAT["TEAM"] if SPORT_FORMAT["TEAM"] in param else SPORT_FORMAT["SINGLES"]
+                        sport_format = SPORT_FORMAT["SINGLES"] if SPORT_FORMAT["SINGLES"].upper() in param_upper else SPORT_FORMAT["TEAM"]
                     else:
-                        sport_format, sport_gender = parse_format(format_value)
+                        # Bare name with no " - " separator (e.g., "Basketball" stored without
+                        # the "- Men Team" suffix by older registrations). Look up the canonical
+                        # SPORT_TYPE entry to recover the correct gender/format before falling
+                        # back to parse_format().
+                        canonical = next(
+                            (v for v in SPORT_TYPE.values()
+                             if v.split(" - ")[0].strip() == sport_type),
+                            None,
+                        )
+                        canonical_parts = canonical.split(" - ", 1) if canonical else []
+                        if len(canonical_parts) > 1:
+                            param = canonical_parts[1]
+                            param_upper = param.upper()
+                            if GENDER["MEN"].upper() in param_upper:
+                                sport_gender = GENDER["MEN"]
+                            elif GENDER["WOMEN"].upper() in param_upper:
+                                sport_gender = GENDER["WOMEN"]
+                            elif GENDER["MIXED"].upper() in param_upper or "COED" in param_upper:
+                                sport_gender = GENDER["MIXED"]
+                            else:
+                                sport_gender = GENDER["MIXED"]
+                            sport_format = SPORT_FORMAT["SINGLES"] if SPORT_FORMAT["SINGLES"].upper() in param_upper else SPORT_FORMAT["TEAM"]
+                        else:
+                            sport_format, sport_gender = parse_format(format_value)
 
                 roster_data = {
                     "church_code": participant["church_code"],

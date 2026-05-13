@@ -8,6 +8,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from church_teams_export import ChurchTeamsExporter, CHM_FIELDS, MEMBERSHIP_QUESTION
+from config import SPORT_TYPE
 
 
 @pytest.fixture()
@@ -631,3 +632,318 @@ def test_issue_based_reverse_partner_suggestion_handles_incomplete_roster_data(m
 
     assert len(issue_rows) == 1
     assert "perhaps Long Chung listed you as partner." in issue_rows[0]["Issue Description"]
+
+
+def test_contacts_status_tab_includes_sports_registered_column(mock_connectors, tmp_path):
+    exporter = ChurchTeamsExporter()
+    filepath = tmp_path / "church-report.xlsx"
+
+    contacts_rows = [
+        {
+            "Church Team": "RPC",
+            "ChMeetings ID": "101",
+            "First Name": "Alice",
+            "Last Name": "Nguyen",
+            "Is_Participant": "Yes",
+            "Is_Member_ChM": "Yes",
+            "Participant ID (WP)": 42,
+            "Approval_Status (WP)": "pending",
+            "Total_Open_ERRORs (WP)": 0,
+            "Gender": "Female",
+            "Birthdate": "2000-01-02",
+            "Age (at Event)": 26,
+            "Mobile Phone": "555-0101",
+            "Email": "alice@test.com",
+            "Registration Date (WP)": "2026-03-01",
+            "Athlete Fee": 30,
+            "First_Open_ERROR_Desc (WP)": "",
+            "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+            "Photo URL (WP)": "N/A",
+            "Update_on_ChM": "2026-05-08",
+        },
+        {
+            "Church Team": "RPC",
+            "ChMeetings ID": "102",
+            "First Name": "Bob",
+            "Last Name": "Tran",
+            "Is_Participant": "Yes",
+            "Is_Member_ChM": "Yes",
+            "Participant ID (WP)": 99,
+            "Approval_Status (WP)": "approved",
+            "Total_Open_ERRORs (WP)": 0,
+            "Gender": "Male",
+            "Birthdate": "1998-05-10",
+            "Age (at Event)": 28,
+            "Mobile Phone": "555-0202",
+            "Email": "bob@test.com",
+            "Registration Date (WP)": "2026-03-02",
+            "Athlete Fee": 30,
+            "First_Open_ERROR_Desc (WP)": "",
+            "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+            "Photo URL (WP)": "N/A",
+            "Update_on_ChM": "2026-05-08",
+        },
+        # No matching roster entry
+        {
+            "Church Team": "RPC",
+            "ChMeetings ID": "103",
+            "First Name": "Carol",
+            "Last Name": "Pham",
+            "Is_Participant": "No",
+            "Is_Member_ChM": "Yes",
+            "Participant ID (WP)": None,
+            "Approval_Status (WP)": "",
+            "Total_Open_ERRORs (WP)": 0,
+            "Gender": "Female",
+            "Birthdate": "2003-09-15",
+            "Age (at Event)": 22,
+            "Mobile Phone": "555-0303",
+            "Email": "carol@test.com",
+            "Registration Date (WP)": "",
+            "Athlete Fee": "",
+            "First_Open_ERROR_Desc (WP)": "",
+            "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+            "Photo URL (WP)": "N/A",
+            "Update_on_ChM": "2026-05-08",
+        },
+    ]
+    roster_rows = [
+        # Alice plays two sports
+        {
+            "Church Team": "RPC", "ChMeetings ID": "101", "Participant ID (WP)": 42,
+            "sport_type": "Badminton", "sport_gender": "Women", "sport_format": "Doubles",
+        },
+        {
+            "Church Team": "RPC", "ChMeetings ID": "101", "Participant ID (WP)": 42,
+            "sport_type": "Basketball", "sport_gender": "", "sport_format": "",
+        },
+        # Bob plays one sport; duplicate roster row should not duplicate the label
+        {
+            "Church Team": "RPC", "ChMeetings ID": "102", "Participant ID (WP)": 99,
+            "sport_type": "Volleyball", "sport_gender": "Men", "sport_format": "",
+        },
+        {
+            "Church Team": "RPC", "ChMeetings ID": "102", "Participant ID (WP)": 99,
+            "sport_type": "Volleyball", "sport_gender": "Men", "sport_format": "",
+        },
+    ]
+    summary_rows = [{
+        "Church Code": "RPC",
+        "Total Members (ChM Team Group)": 3,
+        "Total Participants (in WP)": 2,
+        "Total Approved (WP)": 1,
+        "Total Pending Approval (WP)": 1,
+        "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 0,
+        "Total Open Individual ERRORs (WP)": 0,
+        "Total Open TEAM ERRORs (WP)": 0,
+        "Total Open WARNINGs (WP)": 0,
+        "Total Sports w/ Open TEAM Issues (WP)": 0,
+        "Latest ChM Record Update for Team": "2026-05-08",
+    }]
+
+    exporter._write_excel_report(filepath, summary_rows, contacts_rows, roster_rows, [])
+
+    contacts_df = pd.read_excel(filepath, sheet_name="Contacts-Status")
+    assert "Sports Registered" in contacts_df.columns
+
+    # Column must appear immediately before "Athlete Fee"
+    cols = list(contacts_df.columns)
+    assert cols.index("Sports Registered") == cols.index("Athlete Fee") - 1
+
+    alice_row = contacts_df[contacts_df["First Name"] == "Alice"].iloc[0]
+    sports = [s.strip() for s in alice_row["Sports Registered"].split(",")]
+    assert sorted(sports) == sorted(["Badminton Women Doubles", "Basketball"])
+
+    bob_row = contacts_df[contacts_df["First Name"] == "Bob"].iloc[0]
+    assert bob_row["Sports Registered"] == "Volleyball Men"
+
+    carol_row = contacts_df[contacts_df["First Name"] == "Carol"].iloc[0]
+    assert carol_row["Sports Registered"] == "" or pd.isna(carol_row["Sports Registered"])
+
+
+def test_venue_capacity_court_slot_math(mock_connectors):
+    """Pool/playoff/total slot math (Issue #83)."""
+    exporter = ChurchTeamsExporter()
+
+    # 0 teams → all zeros
+    s0 = exporter._compute_court_slots(0)
+    assert s0["pool_slots"] == 0
+    assert s0["playoff_teams"] == 0
+    assert s0["playoff_slots"] == 0
+    assert s0["total_slots"] == 0
+    assert s0["court_hours"] == 0.0
+
+    # 6 teams, 2 pool games each → ceil(6*2/2) = 6 pool, 4-team playoff = 3 playoff games
+    s6 = exporter._compute_court_slots(6)
+    assert s6["pool_slots"] == 6
+    assert s6["playoff_teams"] == 4
+    assert s6["playoff_slots"] == 3
+    assert s6["third_place_slots"] == 0  # default off
+    assert s6["total_slots"] == 9
+    assert s6["court_hours"] == 9.0  # 60 min/game
+
+    # 8 teams → ceil(8*2/2)=8 pool, 8-team playoff = 7 playoff games
+    s8 = exporter._compute_court_slots(8)
+    assert s8["pool_slots"] == 8
+    assert s8["playoff_teams"] == 8
+    assert s8["playoff_slots"] == 7
+    assert s8["total_slots"] == 15
+
+    # 3 teams → only pool play, no playoff
+    s3 = exporter._compute_court_slots(3)
+    assert s3["pool_slots"] == 3
+    assert s3["playoff_teams"] == 0
+    assert s3["playoff_slots"] == 0
+    assert s3["total_slots"] == 3
+
+
+def test_count_estimating_teams_uses_min_team_size(mock_connectors):
+    """A church only counts when its roster meets the min team size (Issue #83)."""
+    exporter = ChurchTeamsExporter()
+
+    # RPC has 5 basketball players (meets min=5), TLC has 4 (potential only)
+    roster_rows = [
+        {"Church Team": "RPC", "sport_type": "Basketball", "sport_gender": "Men"} for _ in range(5)
+    ] + [
+        {"Church Team": "TLC", "sport_type": "Basketball", "sport_gender": "Men"} for _ in range(4)
+    ]
+
+    result = exporter._count_estimating_teams(roster_rows, "Basketball - Men Team", min_team_size=5)
+    assert result["n_estimating"] == 1       # only RPC qualifies
+    assert result["n_potential"] == 2        # RPC (estimating) + TLC (partial) = all with >= 1
+    assert result["team_codes"] == "RPC"     # sorted, comma-separated
+
+
+def test_count_estimating_teams_separates_volleyball_men_and_women(mock_connectors):
+    """Volleyball Men and Women are distinct events; team_codes is sorted (Issue #83)."""
+    exporter = ChurchTeamsExporter()
+
+    roster_rows = (
+        [{"Church Team": "RPC", "sport_type": "Volleyball", "sport_gender": "Men"} for _ in range(6)]
+        + [{"Church Team": "RPC", "sport_type": "Volleyball", "sport_gender": "Women"} for _ in range(6)]
+        + [{"Church Team": "TLC", "sport_type": "Volleyball", "sport_gender": "Women"} for _ in range(6)]
+    )
+
+    men = exporter._count_estimating_teams(roster_rows, "Volleyball - Men Team", 6)
+    assert men["n_estimating"] == 1
+    assert men["team_codes"] == "RPC"
+
+    women = exporter._count_estimating_teams(roster_rows, "Volleyball - Women Team", 6)
+    assert women["n_estimating"] == 2
+    assert women["team_codes"] == "RPC, TLC"  # alphabetically sorted
+
+
+def test_count_estimating_teams_soccer_full_label(mock_connectors):
+    """Soccer sport_type is stored as the full Other-Events label, not just 'Soccer'."""
+    exporter = ChurchTeamsExporter()
+
+    # Other-events registrations store the full SPORT_TYPE constant value verbatim
+    roster_rows = [
+        {"Church Team": "RPC", "sport_type": SPORT_TYPE["SOCCER"], "sport_gender": "Mixed"}
+        for _ in range(5)
+    ] + [
+        {"Church Team": "TLC", "sport_type": SPORT_TYPE["SOCCER"], "sport_gender": "Mixed"}
+        for _ in range(3)
+    ]
+
+    result = exporter._count_estimating_teams(
+        roster_rows, SPORT_TYPE["SOCCER"], min_team_size=4
+    )
+    assert result["n_estimating"] == 1      # only RPC has >= 4
+    assert result["n_potential"] == 2       # RPC + TLC both have >= 1
+    assert result["team_codes"] == "RPC"
+
+
+def test_count_racquet_entries(mock_connectors):
+    """Racquet entries: complete pairs counted as 1, singles as 1; potential = all regs."""
+    exporter = ChurchTeamsExporter()
+
+    roster_rows = [
+        # 5 Badminton doubles registrations → 2 complete pairs + 1 waiting
+        {"sport_type": "Badminton", "sport_format": "Mixed Doubles"} for _ in range(5)
+    ] + [
+        # 2 Badminton singles
+        {"sport_type": "Badminton", "sport_format": "Men Singles"},
+        {"sport_type": "Badminton", "sport_format": "Women Singles"},
+    ] + [
+        # Pickleball should not bleed into Badminton count
+        {"sport_type": "Pickleball", "sport_format": "Mixed Doubles"},
+    ]
+
+    result = exporter._count_racquet_entries(roster_rows, "Badminton")
+    assert result["n_estimating"] == 2 + 2   # floor(5/2)=2 pairs + 2 singles
+    assert result["n_potential"] == 5 + 2    # 5 doubles + 2 singles = 7 registrations
+    assert result["team_codes"] == ""
+
+
+def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_path):
+    """Venue-Estimator tab appears only when include_venue_capacity=True (Issue #83)."""
+    exporter = ChurchTeamsExporter()
+
+    summary_rows = [{
+        "Church Code": "RPC",
+        "Total Members (ChM Team Group)": 6, "Total Participants (in WP)": 6,
+        "Total Approved (WP)": 0, "Total Pending Approval (WP)": 6, "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 0,
+        "Total Open Individual ERRORs (WP)": 0, "Total Open TEAM ERRORs (WP)": 0,
+        "Total Open WARNINGs (WP)": 0, "Total Sports w/ Open TEAM Issues (WP)": 0,
+        "Latest ChM Record Update for Team": "2026-05-13",
+    }]
+    contacts_rows = [{
+        "Church Team": "RPC", "ChMeetings ID": str(100 + i), "First Name": f"P{i}",
+        "Last Name": "X", "Is_Participant": "Yes", "Is_Member_ChM": "Yes",
+        "Participant ID (WP)": i, "Approval_Status (WP)": "pending",
+        "Total_Open_ERRORs (WP)": 0, "Gender": "Male", "Birthdate": "2000-01-01",
+        "Age (at Event)": 26, "Mobile Phone": "", "Email": "",
+        "Registration Date (WP)": "2026-03-01", "Athlete Fee": 30,
+        "First_Open_ERROR_Desc (WP)": "",
+        "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+        "Photo URL (WP)": "N/A", "Update_on_ChM": "",
+    } for i in range(6)]
+    roster_rows = [{
+        "Church Team": "RPC", "ChMeetings ID": str(100 + i), "Participant ID (WP)": i,
+        "sport_type": "Basketball", "sport_gender": "Men", "sport_format": "Team",
+    } for i in range(6)]
+
+    # Single-church export: no Venue-Estimator tab
+    single_path = tmp_path / "single.xlsx"
+    exporter._write_excel_report(single_path, summary_rows, contacts_rows, roster_rows, [])
+    assert "Venue-Estimator" not in pd.ExcelFile(single_path).sheet_names
+
+    # Consolidated ALL export: tab present, snapshot note appended after data
+    all_path = tmp_path / "all.xlsx"
+    exporter._write_excel_report(all_path, summary_rows, contacts_rows, roster_rows, [],
+                                 include_venue_capacity=True)
+    sheets = pd.ExcelFile(all_path).sheet_names
+    assert "Venue-Estimator" in sheets
+
+    venue_df = pd.read_excel(all_path, sheet_name="Venue-Estimator", header=0)
+    assert list(venue_df.columns)[0] == "Event"
+    assert "Potential Teams/Entries" in venue_df.columns
+    assert "Estimating Teams/Entries" in venue_df.columns
+    assert "Teams" in venue_df.columns
+    assert "Estimated Court Hours" in venue_df.columns
+    # 5 team sports + 6 racquet sports
+    assert len(venue_df[venue_df["Minutes Per Game"].notna()]) == 11  # 5 team + 6 racquet sports
+
+    # Column order: Potential before Estimating before Teams
+    cols = list(venue_df.columns)
+    assert cols.index("Potential Teams/Entries") < cols.index("Estimating Teams/Entries") < cols.index("Teams")
+
+    bball = venue_df[venue_df["Event"] == "Basketball - Men Team"].iloc[0]
+    assert int(bball["Estimating Teams/Entries"]) == 1   # RPC's 6 basketball players qualify
+    assert int(bball["Potential Teams/Entries"]) == 1    # RPC (estimating) counts in potential too
+    assert str(bball["Teams"]) == "RPC"
+    assert int(bball["Pool Slots"]) == 1         # ceil(1*2/2) = 1
+    assert int(bball["Playoff Teams"]) == 0      # 1 team → no playoff
+    assert int(bball["Total Court Slots"]) == 1
+
+    vb_men = venue_df[venue_df["Event"] == "Volleyball - Men Team"].iloc[0]
+    assert int(vb_men["Estimating Teams/Entries"]) == 0  # no volleyball rosters
+    assert str(vb_men["Teams"]) in ("", "nan")
+
+    # Snapshot disclaimer appears after the data (header + 11 rows + blank = row 13)
+    raw = pd.read_excel(all_path, sheet_name="Venue-Estimator", header=None)
+    note_row_idx = 13  # 0-based: row 14 in Excel (1 header + 11 data + 1 blank + note)
+    assert "Roster snapshot as of" in str(raw.iloc[note_row_idx, 0])
