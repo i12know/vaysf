@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### New Features
+- Added `Sports Registered` column to the `Contacts-Status` tab in church-team Excel exports — closes [#82](https://github.com/i12know/vaysf/issues/82)
+  - Appears immediately before `Athlete Fee`
+  - Lists all sports/events for each participant as a comma-separated, sorted string (e.g. `Badminton Women Doubles, Basketball`)
+  - Matched by `Participant ID (WP)` with `ChMeetings ID` as fallback; blank when the person has no roster entries
+  - Duplicates within the same participant are suppressed
 - Added `python main.py inspect-person --chm-id <ID>` for read-only ChMeetings person inspection with WordPress fallback context
   - Prints the raw ChMeetings record when the person still exists
   - Reports cleanly when ChMeetings returns `404 Not Found`

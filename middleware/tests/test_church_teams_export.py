@@ -631,3 +631,131 @@ def test_issue_based_reverse_partner_suggestion_handles_incomplete_roster_data(m
 
     assert len(issue_rows) == 1
     assert "perhaps Long Chung listed you as partner." in issue_rows[0]["Issue Description"]
+
+
+def test_contacts_status_tab_includes_sports_registered_column(mock_connectors, tmp_path):
+    exporter = ChurchTeamsExporter()
+    filepath = tmp_path / "church-report.xlsx"
+
+    contacts_rows = [
+        {
+            "Church Team": "RPC",
+            "ChMeetings ID": "101",
+            "First Name": "Alice",
+            "Last Name": "Nguyen",
+            "Is_Participant": "Yes",
+            "Is_Member_ChM": "Yes",
+            "Participant ID (WP)": 42,
+            "Approval_Status (WP)": "pending",
+            "Total_Open_ERRORs (WP)": 0,
+            "Gender": "Female",
+            "Birthdate": "2000-01-02",
+            "Age (at Event)": 26,
+            "Mobile Phone": "555-0101",
+            "Email": "alice@test.com",
+            "Registration Date (WP)": "2026-03-01",
+            "Athlete Fee": 30,
+            "First_Open_ERROR_Desc (WP)": "",
+            "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+            "Photo URL (WP)": "N/A",
+            "Update_on_ChM": "2026-05-08",
+        },
+        {
+            "Church Team": "RPC",
+            "ChMeetings ID": "102",
+            "First Name": "Bob",
+            "Last Name": "Tran",
+            "Is_Participant": "Yes",
+            "Is_Member_ChM": "Yes",
+            "Participant ID (WP)": 99,
+            "Approval_Status (WP)": "approved",
+            "Total_Open_ERRORs (WP)": 0,
+            "Gender": "Male",
+            "Birthdate": "1998-05-10",
+            "Age (at Event)": 28,
+            "Mobile Phone": "555-0202",
+            "Email": "bob@test.com",
+            "Registration Date (WP)": "2026-03-02",
+            "Athlete Fee": 30,
+            "First_Open_ERROR_Desc (WP)": "",
+            "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+            "Photo URL (WP)": "N/A",
+            "Update_on_ChM": "2026-05-08",
+        },
+        # No matching roster entry
+        {
+            "Church Team": "RPC",
+            "ChMeetings ID": "103",
+            "First Name": "Carol",
+            "Last Name": "Pham",
+            "Is_Participant": "No",
+            "Is_Member_ChM": "Yes",
+            "Participant ID (WP)": None,
+            "Approval_Status (WP)": "",
+            "Total_Open_ERRORs (WP)": 0,
+            "Gender": "Female",
+            "Birthdate": "2003-09-15",
+            "Age (at Event)": 22,
+            "Mobile Phone": "555-0303",
+            "Email": "carol@test.com",
+            "Registration Date (WP)": "",
+            "Athlete Fee": "",
+            "First_Open_ERROR_Desc (WP)": "",
+            "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+            "Photo URL (WP)": "N/A",
+            "Update_on_ChM": "2026-05-08",
+        },
+    ]
+    roster_rows = [
+        # Alice plays two sports
+        {
+            "Church Team": "RPC", "ChMeetings ID": "101", "Participant ID (WP)": 42,
+            "sport_type": "Badminton", "sport_gender": "Women", "sport_format": "Doubles",
+        },
+        {
+            "Church Team": "RPC", "ChMeetings ID": "101", "Participant ID (WP)": 42,
+            "sport_type": "Basketball", "sport_gender": "", "sport_format": "",
+        },
+        # Bob plays one sport; duplicate roster row should not duplicate the label
+        {
+            "Church Team": "RPC", "ChMeetings ID": "102", "Participant ID (WP)": 99,
+            "sport_type": "Volleyball", "sport_gender": "Men", "sport_format": "",
+        },
+        {
+            "Church Team": "RPC", "ChMeetings ID": "102", "Participant ID (WP)": 99,
+            "sport_type": "Volleyball", "sport_gender": "Men", "sport_format": "",
+        },
+    ]
+    summary_rows = [{
+        "Church Code": "RPC",
+        "Total Members (ChM Team Group)": 3,
+        "Total Participants (in WP)": 2,
+        "Total Approved (WP)": 1,
+        "Total Pending Approval (WP)": 1,
+        "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 0,
+        "Total Open Individual ERRORs (WP)": 0,
+        "Total Open TEAM ERRORs (WP)": 0,
+        "Total Open WARNINGs (WP)": 0,
+        "Total Sports w/ Open TEAM Issues (WP)": 0,
+        "Latest ChM Record Update for Team": "2026-05-08",
+    }]
+
+    exporter._write_excel_report(filepath, summary_rows, contacts_rows, roster_rows, [])
+
+    contacts_df = pd.read_excel(filepath, sheet_name="Contacts-Status")
+    assert "Sports Registered" in contacts_df.columns
+
+    # Column must appear immediately before "Athlete Fee"
+    cols = list(contacts_df.columns)
+    assert cols.index("Sports Registered") == cols.index("Athlete Fee") - 1
+
+    alice_row = contacts_df[contacts_df["First Name"] == "Alice"].iloc[0]
+    sports = [s.strip() for s in alice_row["Sports Registered"].split(",")]
+    assert sorted(sports) == sorted(["Badminton Women Doubles", "Basketball"])
+
+    bob_row = contacts_df[contacts_df["First Name"] == "Bob"].iloc[0]
+    assert bob_row["Sports Registered"] == "Volleyball Men"
+
+    carol_row = contacts_df[contacts_df["First Name"] == "Carol"].iloc[0]
+    assert carol_row["Sports Registered"] == "" or pd.isna(carol_row["Sports Registered"])

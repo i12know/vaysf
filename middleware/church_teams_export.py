@@ -1015,6 +1015,39 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 logger.debug(f"Summary tab: {len(df_summary)} rows.")
 
                 # Contacts-Status Tab
+                # Build sports-registered lookup keyed by Participant ID (WP) and ChMeetings ID
+                sports_by_wp_id: Dict[str, list] = {}
+                sports_by_chm_id: Dict[str, list] = {}
+                for rrow in roster_rows:
+                    label_parts = [
+                        str(rrow.get("sport_type") or "").strip(),
+                        str(rrow.get("sport_gender") or "").strip(),
+                        str(rrow.get("sport_format") or "").strip(),
+                    ]
+                    label = " ".join(p for p in label_parts if p)
+                    if not label:
+                        continue
+                    wp_pid = str(rrow.get("Participant ID (WP)") or "").strip()
+                    chm_pid = str(rrow.get("ChMeetings ID") or "").strip()
+                    if wp_pid and wp_pid not in ("0", ""):
+                        sports_by_wp_id.setdefault(wp_pid, [])
+                        if label not in sports_by_wp_id[wp_pid]:
+                            sports_by_wp_id[wp_pid].append(label)
+                    if chm_pid and chm_pid not in ("0", ""):
+                        sports_by_chm_id.setdefault(chm_pid, [])
+                        if label not in sports_by_chm_id[chm_pid]:
+                            sports_by_chm_id[chm_pid].append(label)
+
+                for crow in contacts_rows:
+                    wp_pid = str(crow.get("Participant ID (WP)") or "").strip()
+                    chm_pid = str(crow.get("ChMeetings ID") or "").strip()
+                    sports = (
+                        sports_by_wp_id.get(wp_pid)
+                        or sports_by_chm_id.get(chm_pid)
+                        or []
+                    )
+                    crow["Sports Registered"] = ", ".join(sorted(sports)) if sports else ""
+
                 df_contacts = pd.DataFrame(contacts_rows)
                 if not df_contacts.empty:
 
@@ -1022,8 +1055,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     if photo_url_col_name in df_contacts.columns:
                         # Create the hyperlink formula if the URL is not "N/A" and looks like a URL
                         df_contacts[photo_url_col_name] = df_contacts[photo_url_col_name].apply(
-                            lambda url: f'=HYPERLINK("{url}", "{url}")' 
-                            if isinstance(url, str) and url != "N/A" and (url.startswith("http://") or url.startswith("https://")) 
+                            lambda url: f'=HYPERLINK("{url}", "{url}")'
+                            if isinstance(url, str) and url != "N/A" and (url.startswith("http://") or url.startswith("https://"))
                             else url # Keep "N/A" or other non-URL values as is
                         )
 
@@ -1031,7 +1064,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         "Church Team", "ChMeetings ID", "First Name", "Last Name", "Is_Participant",
                         "Is_Member_ChM", "Participant ID (WP)", "Approval_Status (WP)",
                         "Total_Open_ERRORs (WP)", "Gender", "Birthdate", "Age (at Event)",
-                        "Mobile Phone", "Email", "Registration Date (WP)", "Athlete Fee", "First_Open_ERROR_Desc (WP)",
+                        "Mobile Phone", "Email", "Registration Date (WP)", "Sports Registered", "Athlete Fee",
+                        "First_Open_ERROR_Desc (WP)",
                         "Box 1", "Box 2", "Box 3", "Box 4", "Box 5", "Box 6",
                         photo_url_col_name, "Update_on_ChM"
                     ]
