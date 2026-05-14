@@ -491,6 +491,17 @@ COURT_ESTIMATE_PLAYOFF_RULES = [
     {"min_teams": 8, "max_teams": 999, "playoff_teams": 8},
 ]
 
+# Pod division ID abbreviations used by Pod-Divisions and Pod-Entries-Review tabs.
+# Format: "{ABBREV}-{Gender}-{Format}", e.g. "BAD-Men-Singles", "TT-Mixed-Doubles".
+POD_SPORT_ABBREV = {
+    SPORT_TYPE["BADMINTON"]:       "BAD",
+    SPORT_TYPE["PICKLEBALL"]:      "PCK",
+    SPORT_TYPE["PICKLEBALL_35"]:   "PCK35",
+    SPORT_TYPE["TABLE_TENNIS"]:    "TT",
+    SPORT_TYPE["TABLE_TENNIS_35"]: "TT35",
+    SPORT_TYPE["TENNIS"]:          "TEN",
+}
+
 # Pod-Resource-Estimate constants (Issue #86)
 # Excel-only planning tool for satellite racquet-sport pods — no WordPress writes.
 VENUE_INPUT_FILENAME    = "venue_input.xlsx"

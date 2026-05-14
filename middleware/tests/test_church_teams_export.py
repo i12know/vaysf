@@ -949,6 +949,311 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
     assert "Roster snapshot as of" in str(raw.iloc[note_row_idx, 0])
 
 
+# ── Pod-Divisions / Pod-Entries-Review tests (Issue #88) ────────────────────
+
+def test_pod_format_class(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    assert exporter._pod_format_class("Men Single") == "singles"
+    assert exporter._pod_format_class("Singles") == "singles"
+    assert exporter._pod_format_class("Women Singles") == "singles"
+    assert exporter._pod_format_class("Men Double") == "doubles"
+    assert exporter._pod_format_class("Doubles") == "doubles"
+    assert exporter._pod_format_class("Mixed Double") == "doubles"
+    assert exporter._pod_format_class("Team") == "anomaly"
+    assert exporter._pod_format_class("") == "anomaly"
+    assert exporter._pod_format_class(None) == "anomaly"
+
+
+def test_make_division_id(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    assert exporter._make_division_id("Badminton", "Men", "singles") == "BAD-Men-Singles"
+    assert exporter._make_division_id("Table Tennis", "Women", "doubles") == "TT-Women-Doubles"
+    assert exporter._make_division_id("Pickleball 35+", "Mixed", "doubles") == "PCK35-Mixed-Doubles"
+    assert exporter._make_division_id("Tennis", "Men", "anomaly") == "TEN-Men-Anomaly"
+    assert exporter._make_division_id("Table Tennis 35+", "Men", "singles") == "TT35-Men-Singles"
+
+
+def test_build_pod_error_lookup(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    validation_rows = [
+        {
+            "Participant ID (WP)": "42",
+            "sport_type": "Badminton",
+            "Severity": "ERROR",
+            "Status": "open",
+        },
+        {
+            "Participant ID (WP)": "42",
+            "sport_type": "Pickleball",
+            "Severity": "WARNING",  # warnings excluded
+            "Status": "open",
+        },
+        {
+            "Participant ID (WP)": "99",
+            "sport_type": "Table Tennis",
+            "Severity": "ERROR",
+            "Status": "resolved",  # resolved excluded
+        },
+        {
+            "Participant ID (WP)": "55",
+            "sport_type": "Tennis",
+            "Severity": "ERROR",
+            "Status": "open",
+        },
+    ]
+    lookup = exporter._build_pod_error_lookup(validation_rows)
+    assert lookup == {"42": {"Badminton"}, "55": {"Tennis"}}
+
+
+def test_build_pod_divisions_rows_singles(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    roster_rows = [
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Single",
+         "Participant ID (WP)": "1", "Church Team": "RPC"},
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Single",
+         "Participant ID (WP)": "2", "Church Team": "RPC"},
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Single",
+         "Participant ID (WP)": "3", "Church Team": "TLC"},
+    ]
+    # Participant 2 has an error
+    validation_rows = [
+        {"Participant ID (WP)": "2", "sport_type": "Badminton", "Severity": "ERROR", "Status": "open"},
+    ]
+    rows = exporter._build_pod_divisions_rows(roster_rows, validation_rows)
+
+    assert len(rows) == 1
+    div = rows[0]
+    assert div["division_id"] == "BAD-Men-Singles"
+    assert div["sport_type"] == "Badminton"
+    assert div["planning_entries"] == 3
+    assert div["confirmed_entries"] == 2  # participant 2 has error
+    assert div["provisional_entries"] == 1
+    assert div["anomaly_count"] == 0
+    assert div["division_status"] == "Partial"
+
+
+def test_build_pod_divisions_rows_doubles(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    roster_rows = [
+        {"sport_type": "Table Tennis", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "10", "Church Team": "RPC"},
+        {"sport_type": "Table Tennis", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "11", "Church Team": "RPC"},
+        {"sport_type": "Table Tennis", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "12", "Church Team": "TLC"},
+        {"sport_type": "Table Tennis", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "13", "Church Team": "TLC"},
+    ]
+    rows = exporter._build_pod_divisions_rows(roster_rows, [])
+
+    assert len(rows) == 1
+    div = rows[0]
+    assert div["division_id"] == "TT-Men-Doubles"
+    assert div["planning_entries"] == 2   # floor(4/2)
+    assert div["confirmed_entries"] == 2  # no errors
+    assert div["provisional_entries"] == 0
+    assert div["division_status"] == "Ready"
+
+
+def test_build_pod_divisions_rows_anomaly(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    roster_rows = [
+        {"sport_type": "Pickleball", "sport_gender": "Men", "sport_format": "Team",
+         "Participant ID (WP)": "20", "Church Team": "RPC"},
+    ]
+    rows = exporter._build_pod_divisions_rows(roster_rows, [])
+
+    assert len(rows) == 1
+    div = rows[0]
+    assert div["division_id"] == "PCK-Men-Anomaly"
+    assert div["planning_entries"] == 0
+    assert div["confirmed_entries"] == 0
+    assert div["anomaly_count"] == 1
+    assert div["division_status"] == "AnomalyOnly"
+
+
+def test_build_pod_entries_review_singles(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    roster_rows = [
+        {"sport_type": "Tennis", "sport_gender": "Women", "sport_format": "Women Single",
+         "Participant ID (WP)": "30", "First Name": "Lan", "Last Name": "Tran", "Church Team": "RPC"},
+        {"sport_type": "Tennis", "sport_gender": "Women", "sport_format": "Women Single",
+         "Participant ID (WP)": "31", "First Name": "Hoa", "Last Name": "Le", "Church Team": "RPC"},
+    ]
+    validation_rows = [
+        {"Participant ID (WP)": "31", "sport_type": "Tennis", "Severity": "ERROR", "Status": "open"},
+    ]
+    rows = exporter._build_pod_entries_review_rows(roster_rows, validation_rows)
+
+    assert len(rows) == 2
+    singles = [r for r in rows if r["entry_type"] == "Singles"]
+    assert len(singles) == 2
+
+    lan = next(r for r in singles if r["participant_1_name"] == "Lan Tran")
+    assert lan["review_status"] == "OK"
+    assert lan["partner_status"] == "N/A"
+    assert lan["division_id"] == "TEN-Women-Singles"
+
+    hoa = next(r for r in singles if r["participant_1_name"] == "Hoa Le")
+    assert hoa["review_status"] == "NeedsReview"
+
+
+def test_build_pod_entries_review_doubles_reciprocal(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    roster_rows = [
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "40", "First Name": "Anh", "Last Name": "Nguyen",
+         "partner_name": "Binh Tran", "Church Team": "RPC"},
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "41", "First Name": "Binh", "Last Name": "Tran",
+         "partner_name": "Anh Nguyen", "Church Team": "TLC"},
+    ]
+    rows = exporter._build_pod_entries_review_rows(roster_rows, [])
+
+    assert len(rows) == 1
+    pair = rows[0]
+    assert pair["entry_type"] == "DoublesPair"
+    assert pair["partner_status"] == "Confirmed"
+    assert pair["review_status"] == "OK"
+    assert "Anh Nguyen" in pair["participant_1_name"] or "Binh Tran" in pair["participant_1_name"]
+    assert "Anh Nguyen" in pair["participant_2_name"] or "Binh Tran" in pair["participant_2_name"]
+    # cross-church pair shows both church codes
+    assert "RPC" in pair["church_team"] and "TLC" in pair["church_team"]
+
+
+def test_build_pod_entries_review_doubles_missing_partner(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    roster_rows = [
+        {"sport_type": "Pickleball", "sport_gender": "Women", "sport_format": "Women Double",
+         "Participant ID (WP)": "50", "First Name": "Cam", "Last Name": "Ho",
+         "partner_name": "", "Church Team": "RPC"},
+    ]
+    rows = exporter._build_pod_entries_review_rows(roster_rows, [])
+
+    assert len(rows) == 1
+    entry = rows[0]
+    assert entry["entry_type"] == "UnresolvedDoubles"
+    assert entry["partner_status"] == "MissingPartner"
+    assert entry["review_status"] == "NeedsReview"
+
+
+def test_build_pod_entries_review_doubles_non_reciprocal(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    # A claims B, B claims someone else (non-reciprocal)
+    roster_rows = [
+        {"sport_type": "Badminton", "sport_gender": "Mixed", "sport_format": "Mixed Double",
+         "Participant ID (WP)": "60", "First Name": "Dan", "Last Name": "Vo",
+         "partner_name": "Linh Pham", "Church Team": "RPC"},
+        {"sport_type": "Badminton", "sport_gender": "Mixed", "sport_format": "Mixed Double",
+         "Participant ID (WP)": "61", "First Name": "Linh", "Last Name": "Pham",
+         "partner_name": "Khoa Bui", "Church Team": "RPC"},  # claims Khoa, not Dan
+    ]
+    rows = exporter._build_pod_entries_review_rows(roster_rows, [])
+
+    unresolved = [r for r in rows if r["entry_type"] == "UnresolvedDoubles"]
+    assert len(unresolved) >= 1
+    reasons = {r["partner_status"] for r in unresolved}
+    assert "NonReciprocal" in reasons
+
+
+def test_build_pod_entries_review_anomaly(mock_connectors):
+    exporter = ChurchTeamsExporter()
+    roster_rows = [
+        {"sport_type": "Table Tennis 35+", "sport_gender": "Men", "sport_format": "Team",
+         "Participant ID (WP)": "70", "First Name": "Tri", "Last Name": "Nguyen",
+         "Church Team": "RPC"},
+    ]
+    rows = exporter._build_pod_entries_review_rows(roster_rows, [])
+
+    assert len(rows) == 1
+    assert rows[0]["entry_type"] == "Anomaly"
+    assert rows[0]["review_status"] == "NeedsReview"
+    assert "Team" in rows[0]["notes"]
+
+
+def test_pod_tabs_present_in_consolidated_export(mock_connectors, tmp_path):
+    """Pod-Divisions and Pod-Entries-Review tabs appear only in the ALL export."""
+    exporter = ChurchTeamsExporter()
+
+    summary_rows = [{
+        "Church Code": "RPC",
+        "Total Members (ChM Team Group)": 2, "Total Participants (in WP)": 2,
+        "Total Approved (WP)": 0, "Total Pending Approval (WP)": 2, "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 0,
+        "Total Open Individual ERRORs (WP)": 0, "Total Open TEAM ERRORs (WP)": 0,
+        "Total Open WARNINGs (WP)": 0, "Total Sports w/ Open TEAM Issues (WP)": 0,
+        "Latest ChM Record Update for Team": "2026-05-14",
+    }]
+    contacts_rows = [{
+        "Church Team": "RPC", "ChMeetings ID": "101", "First Name": "Alice", "Last Name": "Nguyen",
+        "Is_Participant": "Yes", "Is_Member_ChM": "Yes", "Participant ID (WP)": 1,
+        "Approval_Status (WP)": "pending", "Total_Open_ERRORs (WP)": 0,
+        "Gender": "Female", "Birthdate": "2000-01-02", "Age (at Event)": 26,
+        "Mobile Phone": "", "Email": "", "Registration Date (WP)": "2026-03-01",
+        "Athlete Fee": 30, "First_Open_ERROR_Desc (WP)": "",
+        "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+        "Photo URL (WP)": "N/A", "Update_on_ChM": "",
+    }]
+    # Two badminton singles participants — one confirmed, one with error
+    roster_rows = [
+        {"Church Team": "RPC", "ChMeetings ID": "101", "Participant ID (WP)": 1,
+         "First Name": "Alice", "Last Name": "Nguyen", "Gender": "Female", "Age (at Event)": 26,
+         "Mobile Phone": "", "Email": "", "Is_Member_ChM": True, "Photo": "",
+         "Approval_Status (WP)": "pending",
+         "sport_type": "Badminton", "sport_gender": "Women", "sport_format": "Women Single",
+         "team_order": None, "partner_name": None,
+         "Open_TEAM_Issue_Count (WP)": 0, "Open_TEAM_Issue_Desc (WP)": ""},
+        {"Church Team": "RPC", "ChMeetings ID": "102", "Participant ID (WP)": 2,
+         "First Name": "Binh", "Last Name": "Le", "Gender": "Female", "Age (at Event)": 28,
+         "Mobile Phone": "", "Email": "", "Is_Member_ChM": True, "Photo": "",
+         "Approval_Status (WP)": "pending",
+         "sport_type": "Badminton", "sport_gender": "Women", "sport_format": "Women Single",
+         "team_order": None, "partner_name": None,
+         "Open_TEAM_Issue_Count (WP)": 0, "Open_TEAM_Issue_Desc (WP)": ""},
+    ]
+    validation_rows = [
+        {"Church Team": "RPC", "Rule Level": "INDIVIDUAL", "Severity": "ERROR",
+         "Status": "open", "Issue Type": "missing_photo", "Rule Code": "PHOTO_REQUIRED",
+         "Participant ID (WP)": 2, "ChMeetings ID": "102", "Participant Name": "Binh Le",
+         "Approval_Status (WP)": "pending", "sport_type": "Badminton", "sport_format": None,
+         "Issue Description": "No photo uploaded"},
+    ]
+
+    # Single-church: no pod tabs
+    single_path = tmp_path / "single.xlsx"
+    exporter._write_excel_report(single_path, summary_rows, contacts_rows, roster_rows, validation_rows)
+    single_sheets = pd.ExcelFile(single_path).sheet_names
+    assert "Pod-Divisions" not in single_sheets
+    assert "Pod-Entries-Review" not in single_sheets
+
+    # ALL export: pod tabs present
+    all_path = tmp_path / "all.xlsx"
+    exporter._write_excel_report(all_path, summary_rows, contacts_rows, roster_rows, validation_rows,
+                                 include_venue_capacity=True)
+    all_sheets = pd.ExcelFile(all_path).sheet_names
+    assert "Pod-Divisions" in all_sheets
+    assert "Pod-Entries-Review" in all_sheets
+
+    pod_div_df = pd.read_excel(all_path, sheet_name="Pod-Divisions")
+    assert list(pod_div_df.columns)[:3] == ["division_id", "sport_type", "sport_gender"]
+    assert len(pod_div_df) == 1
+    row = pod_div_df.iloc[0]
+    assert row["division_id"] == "BAD-Women-Singles"
+    assert int(row["planning_entries"]) == 2
+    assert int(row["confirmed_entries"]) == 1   # participant 2 has ERROR
+    assert int(row["provisional_entries"]) == 1
+    assert int(row["anomaly_count"]) == 0
+
+    pod_entry_df = pd.read_excel(all_path, sheet_name="Pod-Entries-Review")
+    assert "entry_type" in pod_entry_df.columns
+    assert len(pod_entry_df) == 2
+    assert set(pod_entry_df["entry_type"]) == {"Singles"}
+    ok_rows = pod_entry_df[pod_entry_df["review_status"] == "OK"]
+    needs_review_rows = pod_entry_df[pod_entry_df["review_status"] == "NeedsReview"]
+    assert len(ok_rows) == 1
+    assert len(needs_review_rows) == 1
+
+
 def test_court_schedule_sketch_tab_present(mock_connectors, tmp_path):
     """Court-Schedule-Sketch tab appears only in consolidated ALL export."""
     exporter = ChurchTeamsExporter()
