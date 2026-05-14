@@ -477,6 +477,18 @@ COURT_ESTIMATE_PLAYOFF_RULES = [
     {"min_teams": 8, "max_teams": 999, "playoff_teams": 8},
 ]
 
+# Court-Schedule-Sketch tab constants (Excel planning tool — no WordPress writes)
+SCHEDULE_SKETCH_SATURDAY_START    = 8   # first game hour (24h), 08:00 AM
+SCHEDULE_SKETCH_SATURDAY_LAST_GAME = 20  # last game start hour, 08:00 PM
+SCHEDULE_SKETCH_SUNDAY_START      = 13  # 1:00 PM
+SCHEDULE_SKETCH_SUNDAY_LAST_GAME  = 20  # 8:00 PM
+SCHEDULE_SKETCH_N_COURTS          = [3, 4, 5]  # scenario court counts
+SCHEDULE_SKETCH_COLOR_BASKETBALL  = "C4A882"   # brown
+SCHEDULE_SKETCH_COLOR_VB_MEN      = "9DC3E6"   # blue
+SCHEDULE_SKETCH_COLOR_VB_WOMEN    = "F4B8C1"   # pink
+SCHEDULE_SKETCH_COLOR_SECTION     = "D9D9D9"   # grey section divider
+SCHEDULE_SKETCH_COLOR_HEADER      = "595959"   # dark grey scenario header
+
 # Configuration class
 class Config:
     """Configuration settings for VAYSF middleware."""
