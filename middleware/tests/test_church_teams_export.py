@@ -1045,14 +1045,23 @@ def test_build_scenario_schedule_pool_before_playoffs(mock_connectors):
     """Pool games fill Weekend 1 first; playoff games start no earlier than 2nd Saturday."""
     exporter = ChurchTeamsExporter()
 
-    pool_queue  = [f"BBM{i:02d}" for i in range(1, 9)]   # 8 pool games
-    playoff_queue = ["BBM09", "BBM10", "BBM11"]           # 3 playoff games
+    # Three sports, each with their own pool and playoff queues
+    pool_queues = [
+        [f"BBM{i:02d}" for i in range(1, 5)],   # 4 BBM pool games
+        [f"VBM{i:02d}" for i in range(1, 5)],   # 4 VBM pool games
+        [f"VBW{i:02d}" for i in range(1, 5)],   # 4 VBW pool games
+    ]
+    playoff_queues = [
+        ["BBM05", "BBM06", "BBM07"],
+        ["VBM05", "VBM06", "VBM07"],
+        ["VBW05", "VBW06", "VBW07"],
+    ]
 
     n_sat, n_sun = 13, 8  # 8AM-8PM / 1PM-8PM with 60-min slots
 
     for n_courts in [3, 4, 5]:
         grids = ChurchTeamsExporter._build_scenario_schedule(
-            n_courts, pool_queue, playoff_queue, n_sat, n_sun
+            n_courts, pool_queues, playoff_queues, n_sat, n_sun
         )
         # grids: [sat1, sun1, sat2, sun2]
         sat1_cells = [cell for row in grids[0] for cell in row if cell]
@@ -1060,8 +1069,8 @@ def test_build_scenario_schedule_pool_before_playoffs(mock_connectors):
         sat2_cells = [cell for row in grids[2] for cell in row if cell]
         sun2_cells = [cell for row in grids[3] for cell in row if cell]
 
-        all_pool    = set(pool_queue)
-        all_playoff = set(playoff_queue)
+        all_pool    = {g for q in pool_queues for g in q}
+        all_playoff = {g for q in playoff_queues for g in q}
 
         # All pool games appear somewhere in sat1 + sun1 + sat2
         assigned_pool = set(sat1_cells + sun1_cells + sat2_cells) & all_pool
@@ -1074,6 +1083,25 @@ def test_build_scenario_schedule_pool_before_playoffs(mock_connectors):
         # Playoff games assigned somewhere
         playoff_found = set(sat2_cells + sun2_cells) & all_playoff
         assert playoff_found == all_playoff, f"n_courts={n_courts}: missing playoff games"
+
+        # Each sport stays on its own dedicated court block (no cross-sport sharing)
+        n_sports = len(pool_queues)
+        base = n_courts // n_sports
+        extras = n_courts % n_sports
+        cur = 0
+        for sport_idx, (pool_q, playoff_q) in enumerate(zip(pool_queues, playoff_queues)):
+            k = base + (1 if sport_idx < extras else 0)
+            sport_courts = set(range(cur, cur + k))
+            cur += k
+            sport_ids = set(pool_q) | set(playoff_q)
+            for sess_idx, sess_cells_2d in enumerate(grids):
+                for t, row in enumerate(sess_cells_2d):
+                    for c_idx, game_id in enumerate(row):
+                        if game_id in sport_ids:
+                            assert c_idx in sport_courts, (
+                                f"n_courts={n_courts} sport={sport_idx}: "
+                                f"{game_id} on court {c_idx}, expected {sport_courts}"
+                            )
 
 
 def test_court_schedule_sketch_game_id_prefixes(mock_connectors, tmp_path):

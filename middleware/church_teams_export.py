@@ -1190,58 +1190,69 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
     @staticmethod
     def _build_scenario_schedule(
         n_courts: int,
-        pool_queue: List[str],
-        playoff_queue: List[str],
+        pool_queues: List[List[str]],
+        playoff_queues: List[List[str]],
         n_sat: int,
         n_sun: int,
     ) -> List[List[List[str]]]:
         """
-        Build a 4-session grid for a given court count.
+        Build a 4-session grid with dedicated court blocks per sport.
+
+        Courts are divided into contiguous blocks — one block per sport —
+        to eliminate intra-court equipment changeovers.  Extras go to the
+        first sport(s).  Pool games fill sat1 → sun1 → sat2 start per sport;
+        playoffs follow immediately after pool play on each sport's courts.
 
         Sessions: [sat1, sun1, sat2, sun2].
-        Each session is a list[time_slot][court] = game_id or "".
-        Pool games fill sat1 → sun1 → sat2 start.
-        Playoffs fill sat2 (after pool) → sun2.
+        Each session is list[time_slot][court_index] = game_id or "".
         """
+        n_sports = len(pool_queues)
         n_slots = [n_sat, n_sun, n_sat, n_sun]
         grids: List[List[List[str]]] = [
             [[""] * n_courts for _ in range(n)] for n in n_slots
         ]
 
-        # Fill pool games: sessions 0 (sat1), 1 (sun1), 2 (sat2)
-        pool_it = iter(pool_queue)
-        for sess_idx in range(3):
-            for t in range(n_slots[sess_idx]):
-                for c in range(n_courts):
-                    game = next(pool_it, None)
-                    if game is None:
-                        break
-                    grids[sess_idx][t][c] = game
-                else:
-                    continue
-                break
-            else:
-                continue
-            break
+        # Allocate courts in contiguous blocks: extras given to earlier sports
+        base = n_courts // n_sports
+        extras = n_courts % n_sports
+        court_blocks: List[List[int]] = []
+        cur = 0
+        for i in range(n_sports):
+            k = base + (1 if i < extras else 0)
+            court_blocks.append(list(range(cur, cur + k)))
+            cur += k
 
-        # Count how many pool cells were used in sat2 so playoffs can continue from there
-        sat2_pool_cells = sum(
-            1 for t in range(n_sat) for c in range(n_courts) if grids[2][t][c]
-        )
+        for pool_q, playoff_q, courts in zip(pool_queues, playoff_queues, court_blocks):
+            nc = len(courts)
 
-        # Fill playoff games: remainder of sat2 → all of sun2
-        playoff_it = iter(playoff_queue)
-        done = False
-        for sess_idx, start_cell in [(2, sat2_pool_cells), (3, 0)]:
-            for cell_idx in range(start_cell, n_slots[sess_idx] * n_courts):
-                t, c = divmod(cell_idx, n_courts)
-                game = next(playoff_it, None)
-                if game is None:
-                    done = True
-                    break
-                grids[sess_idx][t][c] = game
-            if done:
-                break
+            # Pool cells: sat1 → sun1 → sat2
+            pool_cells: List[Tuple[int, int, int]] = []
+            for sess_idx in range(3):
+                for t in range(n_slots[sess_idx]):
+                    for c in courts:
+                        pool_cells.append((sess_idx, t, c))
+
+            for i, game_id in enumerate(pool_q):
+                if i < len(pool_cells):
+                    s, t, c = pool_cells[i]
+                    grids[s][t][c] = game_id
+
+            # Playoffs: start immediately after pool games in sat2, then sun2
+            n_pool = len(pool_q)
+            sat2_start_cell = max(0, n_pool - (n_sat + n_sun) * nc)
+
+            playoff_cells: List[Tuple[int, int, int]] = []
+            for cell_idx in range(sat2_start_cell, n_sat * nc):
+                t, ci = divmod(cell_idx, nc)
+                playoff_cells.append((2, t, courts[ci]))
+            for t in range(n_sun):
+                for c in courts:
+                    playoff_cells.append((3, t, c))
+
+            for i, game_id in enumerate(playoff_q):
+                if i < len(playoff_cells):
+                    s, t, c = playoff_cells[i]
+                    grids[s][t][c] = game_id
 
         return grids
 
@@ -1288,20 +1299,12 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "third_ids":   [f"{prefix}{i:02d}" for i in range(po_end + 1, s["total_slots"] + 1)],
             }
 
-        # --- Build interleaved pool queue (BBM01, VBM01, VBW01, BBM02, …) ---
-        pool_lists = [sport_meta[ev]["pool_ids"] for ev, _, _ in sport_defs]
-        max_pool = max(len(q) for q in pool_lists) if pool_lists else 0
-        pool_queue: List[str] = []
-        for i in range(max_pool):
-            for q in pool_lists:
-                if i < len(q):
-                    pool_queue.append(q[i])
-
-        # Playoff queue: BBM → VBM → VBW (semifinals then finals)
-        playoff_queue: List[str] = []
-        for ev, _, _ in sport_defs:
-            playoff_queue.extend(sport_meta[ev]["playoff_ids"])
-            playoff_queue.extend(sport_meta[ev]["third_ids"])
+        # --- Per-sport game queues (dedicated court blocks — no interleaving) ---
+        pool_queues_by_sport = [sport_meta[ev]["pool_ids"] for ev, _, _ in sport_defs]
+        playoff_queues_by_sport = [
+            sport_meta[ev]["playoff_ids"] + sport_meta[ev]["third_ids"]
+            for ev, _, _ in sport_defs
+        ]
 
         # --- Time slot helpers ---
         n_sat = SCHEDULE_SKETCH_SATURDAY_LAST_GAME - SCHEDULE_SKETCH_SATURDAY_START + 1
@@ -1369,7 +1372,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         scenario_grids: Dict[int, List[List[List[str]]]] = {}
         for n_courts in n_courts_list:
             scenario_grids[n_courts] = self._build_scenario_schedule(
-                n_courts, pool_queue, playoff_queue, n_sat, n_sun
+                n_courts, pool_queues_by_sport, playoff_queues_by_sport, n_sat, n_sun
             )
 
         # --- Render scenario headers and column headers ---
@@ -1429,9 +1432,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             for c in range(n_courts):
                 ws.column_dimensions[get_column_letter(start_col + 1 + c)].width = 8  # Courts
 
+        total_pool = sum(len(q) for q in pool_queues_by_sport)
+        total_playoff = sum(len(q) for q in playoff_queues_by_sport)
         logger.debug(
-            f"Court-Schedule-Sketch tab: {len(pool_queue)} pool + {len(playoff_queue)} playoff "
-            f"game IDs across {len(n_courts_list)} scenarios."
+            f"Court-Schedule-Sketch tab: {total_pool} pool + {total_playoff} playoff "
+            f"game IDs across {len(n_courts_list)} scenarios (dedicated court blocks per sport)."
         )
 
     def _write_excel_report(self, filepath: Path,
