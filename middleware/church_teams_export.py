@@ -30,6 +30,16 @@ from config import (
     COURT_ESTIMATE_MIN_TEAM_SIZE,
     COURT_ESTIMATE_MINUTES_PER_GAME,
     COURT_ESTIMATE_PLAYOFF_RULES,
+    SCHEDULE_SKETCH_SATURDAY_START,
+    SCHEDULE_SKETCH_SATURDAY_LAST_GAME,
+    SCHEDULE_SKETCH_SUNDAY_START,
+    SCHEDULE_SKETCH_SUNDAY_LAST_GAME,
+    SCHEDULE_SKETCH_N_COURTS,
+    SCHEDULE_SKETCH_COLOR_BASKETBALL,
+    SCHEDULE_SKETCH_COLOR_VB_MEN,
+    SCHEDULE_SKETCH_COLOR_VB_WOMEN,
+    SCHEDULE_SKETCH_COLOR_SECTION,
+    SCHEDULE_SKETCH_COLOR_HEADER,
 )
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
@@ -1177,6 +1187,253 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         return rows
 
+    @staticmethod
+    def _build_scenario_schedule(
+        n_courts: int,
+        pool_queue: List[str],
+        playoff_queue: List[str],
+        n_sat: int,
+        n_sun: int,
+    ) -> List[List[List[str]]]:
+        """
+        Build a 4-session grid for a given court count.
+
+        Sessions: [sat1, sun1, sat2, sun2].
+        Each session is a list[time_slot][court] = game_id or "".
+        Pool games fill sat1 → sun1 → sat2 start.
+        Playoffs fill sat2 (after pool) → sun2.
+        """
+        n_slots = [n_sat, n_sun, n_sat, n_sun]
+        grids: List[List[List[str]]] = [
+            [[""] * n_courts for _ in range(n)] for n in n_slots
+        ]
+
+        # Fill pool games: sessions 0 (sat1), 1 (sun1), 2 (sat2)
+        pool_it = iter(pool_queue)
+        for sess_idx in range(3):
+            for t in range(n_slots[sess_idx]):
+                for c in range(n_courts):
+                    game = next(pool_it, None)
+                    if game is None:
+                        break
+                    grids[sess_idx][t][c] = game
+                else:
+                    continue
+                break
+            else:
+                continue
+            break
+
+        # Count how many pool cells were used in sat2 so playoffs can continue from there
+        sat2_pool_cells = sum(
+            1 for t in range(n_sat) for c in range(n_courts) if grids[2][t][c]
+        )
+
+        # Fill playoff games: remainder of sat2 → all of sun2
+        playoff_it = iter(playoff_queue)
+        done = False
+        for sess_idx, start_cell in [(2, sat2_pool_cells), (3, 0)]:
+            for cell_idx in range(start_cell, n_slots[sess_idx] * n_courts):
+                t, c = divmod(cell_idx, n_courts)
+                game = next(playoff_it, None)
+                if game is None:
+                    done = True
+                    break
+                grids[sess_idx][t][c] = game
+            if done:
+                break
+
+        return grids
+
+    def _write_court_schedule_sketch(
+        self, ws, roster_rows: List[Dict[str, Any]]
+    ) -> None:
+        """
+        Write the Court-Schedule-Sketch tab.
+
+        Three scenarios (3, 4, 5 courts) are rendered side-by-side on one
+        worksheet, separated by an empty column.  Game IDs are sequential
+        placeholders (BBM01…, VBM01…, VBW01…); no actual team assignments
+        or conflict enforcement is performed here.  This is an Excel-only
+        planning artifact — no data is written to WordPress sf_schedules.
+        """
+        from openpyxl.styles import PatternFill, Font, Alignment
+
+        pool_gpg = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
+        mpg = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
+        include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
+
+        # Sports covered by this sketch (shared court type: basketball / volleyball)
+        sport_defs = [
+            (SPORT_TYPE["BASKETBALL"],       "BBM", SCHEDULE_SKETCH_COLOR_BASKETBALL),
+            (SPORT_TYPE["VOLLEYBALL_MEN"],   "VBM", SCHEDULE_SKETCH_COLOR_VB_MEN),
+            (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW", SCHEDULE_SKETCH_COLOR_VB_WOMEN),
+        ]
+
+        # --- Compute game IDs per sport ---
+        sport_meta: Dict[str, Dict] = {}
+        for event_name, prefix, color in sport_defs:
+            min_sz = self._get_min_team_size(event_name)
+            counts = self._count_estimating_teams(roster_rows, event_name, min_sz)
+            n_teams = counts["n_estimating"] if counts["n_estimating"] >= 2 else 8
+            s = self._compute_court_slots(n_teams, mpg)
+            p_end = s["pool_slots"]
+            po_end = p_end + s["playoff_slots"]
+            sport_meta[event_name] = {
+                "prefix": prefix,
+                "color": color,
+                "n_teams": n_teams,
+                "pool_ids":    [f"{prefix}{i:02d}" for i in range(1, p_end + 1)],
+                "playoff_ids": [f"{prefix}{i:02d}" for i in range(p_end + 1, po_end + 1)],
+                "third_ids":   [f"{prefix}{i:02d}" for i in range(po_end + 1, s["total_slots"] + 1)],
+            }
+
+        # --- Build interleaved pool queue (BBM01, VBM01, VBW01, BBM02, …) ---
+        pool_lists = [sport_meta[ev]["pool_ids"] for ev, _, _ in sport_defs]
+        max_pool = max(len(q) for q in pool_lists) if pool_lists else 0
+        pool_queue: List[str] = []
+        for i in range(max_pool):
+            for q in pool_lists:
+                if i < len(q):
+                    pool_queue.append(q[i])
+
+        # Playoff queue: BBM → VBM → VBW (semifinals then finals)
+        playoff_queue: List[str] = []
+        for ev, _, _ in sport_defs:
+            playoff_queue.extend(sport_meta[ev]["playoff_ids"])
+            playoff_queue.extend(sport_meta[ev]["third_ids"])
+
+        # --- Time slot helpers ---
+        n_sat = SCHEDULE_SKETCH_SATURDAY_LAST_GAME - SCHEDULE_SKETCH_SATURDAY_START + 1
+        n_sun = SCHEDULE_SKETCH_SUNDAY_LAST_GAME - SCHEDULE_SKETCH_SUNDAY_START + 1
+        sat_times = [
+            f"{h:02d}:00"
+            for h in range(SCHEDULE_SKETCH_SATURDAY_START, SCHEDULE_SKETCH_SATURDAY_LAST_GAME + 1)
+        ]
+        sun_times = [
+            f"{h:02d}:00"
+            for h in range(SCHEDULE_SKETCH_SUNDAY_START, SCHEDULE_SKETCH_SUNDAY_LAST_GAME + 1)
+        ]
+        sessions = [
+            ("1st Saturday", sat_times),
+            ("1st Sunday",   sun_times),
+            ("2nd Saturday", sat_times),
+            ("2nd Sunday",   sun_times),
+        ]
+
+        # --- Styles ---
+        section_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_SECTION, fill_type="solid")
+        hdr_fill     = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_HEADER,  fill_type="solid")
+        hdr_font     = Font(bold=True, color="FFFFFF")
+        bold_font    = Font(bold=True)
+        center       = Alignment(horizontal="center", vertical="center")
+        prefix_fill  = {
+            "BBM": PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_BASKETBALL, fill_type="solid"),
+            "VBM": PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_VB_MEN,     fill_type="solid"),
+            "VBW": PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_VB_WOMEN,   fill_type="solid"),
+        }
+
+        # --- Column layout ---
+        # Scenario A (3 cts): col 1=Time, 2-4=Courts → 4 cols; gap col 5
+        # Scenario B (4 cts): col 6=Time, 7-10=Courts → 5 cols; gap col 11
+        # Scenario C (5 cts): col 12=Time, 13-17=Courts → 6 cols
+        n_courts_list = SCHEDULE_SKETCH_N_COURTS
+        scenario_starts: List[int] = []
+        cur_col = 1
+        for n in n_courts_list:
+            scenario_starts.append(cur_col)
+            cur_col += (1 + n) + 1  # time col + court cols + gap
+
+        INPUTS_ROW      = 1
+        SCENARIO_HDR_ROW = 3
+        COL_HDR_ROW     = 4
+        DATA_START_ROW  = 5
+
+        # --- Row 1: inputs summary ---
+        ws.cell(row=INPUTS_ROW, column=1, value="Inputs:").font = bold_font
+        ws.cell(row=INPUTS_ROW, column=2, value=f"Pool games/team: {pool_gpg}")
+        ws.cell(row=INPUTS_ROW, column=5, value=f"Minutes/game: {mpg}")
+        ws.cell(row=INPUTS_ROW, column=9, value=f"3rd place: {'Yes' if include_third else 'No'}")
+
+        # --- Row 2: per-sport game counts ---
+        ws.cell(row=2, column=1, value="Game totals:").font = bold_font
+        col_offset = 2
+        for ev, prefix, _ in sport_defs:
+            meta = sport_meta[ev]
+            total = len(meta["pool_ids"]) + len(meta["playoff_ids"]) + len(meta["third_ids"])
+            label = f"{prefix}: {meta['n_teams']} teams, {total} games ({len(meta['pool_ids'])} pool)"
+            ws.cell(row=2, column=col_offset, value=label)
+            col_offset += 5
+
+        # --- Pre-compute per-scenario schedules ---
+        scenario_grids: Dict[int, List[List[List[str]]]] = {}
+        for n_courts in n_courts_list:
+            scenario_grids[n_courts] = self._build_scenario_schedule(
+                n_courts, pool_queue, playoff_queue, n_sat, n_sun
+            )
+
+        # --- Render scenario headers and column headers ---
+        for n_courts, start_col in zip(n_courts_list, scenario_starts):
+            end_col = start_col + n_courts  # time col + n court cols (inclusive)
+            # Scenario header
+            sc_cell = ws.cell(row=SCENARIO_HDR_ROW, column=start_col, value=f"Scenario: {n_courts} Courts")
+            sc_cell.font = hdr_font
+            sc_cell.fill = hdr_fill
+            sc_cell.alignment = center
+            ws.merge_cells(
+                start_row=SCENARIO_HDR_ROW, start_column=start_col,
+                end_row=SCENARIO_HDR_ROW,   end_column=end_col,
+            )
+            # Column sub-headers
+            t_cell = ws.cell(row=COL_HDR_ROW, column=start_col, value="Time")
+            t_cell.font = bold_font
+            for c in range(n_courts):
+                ct_cell = ws.cell(row=COL_HDR_ROW, column=start_col + 1 + c, value=f"Court {c + 1}")
+                ct_cell.font = bold_font
+                ct_cell.alignment = center
+
+        # --- Render session sections and time-slot rows ---
+        current_row = DATA_START_ROW
+        for sess_idx, (sess_label, times) in enumerate(sessions):
+            # Section header
+            for n_courts, start_col in zip(n_courts_list, scenario_starts):
+                end_col = start_col + n_courts
+                sh_cell = ws.cell(row=current_row, column=start_col, value=sess_label)
+                sh_cell.fill = section_fill
+                sh_cell.font = bold_font
+                sh_cell.alignment = center
+                ws.merge_cells(
+                    start_row=current_row, start_column=start_col,
+                    end_row=current_row,   end_column=end_col,
+                )
+            current_row += 1
+
+            # Time slot rows
+            for t, time_str in enumerate(times):
+                for n_courts, start_col in zip(n_courts_list, scenario_starts):
+                    ws.cell(row=current_row, column=start_col, value=time_str)
+                    grid = scenario_grids[n_courts]
+                    for c in range(n_courts):
+                        game_id = grid[sess_idx][t][c]
+                        cell = ws.cell(row=current_row, column=start_col + 1 + c, value=game_id)
+                        if game_id and len(game_id) >= 3:
+                            fill = prefix_fill.get(game_id[:3])
+                            if fill:
+                                cell.fill = fill
+                current_row += 1
+
+        # --- Column widths ---
+        from openpyxl.utils import get_column_letter
+        for n_courts, start_col in zip(n_courts_list, scenario_starts):
+            ws.column_dimensions[get_column_letter(start_col)].width = 10     # Time
+            for c in range(n_courts):
+                ws.column_dimensions[get_column_letter(start_col + 1 + c)].width = 8  # Courts
+
+        logger.debug(
+            f"Court-Schedule-Sketch tab: {len(pool_queue)} pool + {len(playoff_queue)} playoff "
+            f"game IDs across {len(n_courts_list)} scenarios."
+        )
+
     def _write_excel_report(self, filepath: Path,
                             summary_rows: List[Dict[str, Any]],
                             contacts_rows: List[Dict[str, Any]],
@@ -1334,6 +1591,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     note_row = len(df_venue) + 3  # header + data rows + blank row
                     venue_ws.cell(row=note_row, column=1, value=snapshot_note)
                     logger.debug(f"Venue-Estimator tab: {len(df_venue)} rows.")
+
+                    # Court-Schedule-Sketch Tab (Excel-only planning — no WordPress writes)
+                    sketch_ws = writer.book.create_sheet(title="Court-Schedule-Sketch")
+                    self._write_court_schedule_sketch(sketch_ws, roster_rows)
 
                 # Add yellow note to Photo column in Roster sheet
                 if not df_roster.empty:

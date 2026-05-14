@@ -947,3 +947,189 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
     raw = pd.read_excel(all_path, sheet_name="Venue-Estimator", header=None)
     note_row_idx = 13  # 0-based: row 14 in Excel (1 header + 11 data + 1 blank + note)
     assert "Roster snapshot as of" in str(raw.iloc[note_row_idx, 0])
+
+
+def test_court_schedule_sketch_tab_present(mock_connectors, tmp_path):
+    """Court-Schedule-Sketch tab appears only in consolidated ALL export."""
+    exporter = ChurchTeamsExporter()
+    summary_rows = [{
+        "Church Code": "RPC",
+        "Total Members (ChM Team Group)": 6, "Total Participants (in WP)": 6,
+        "Total Approved (WP)": 0, "Total Pending Approval (WP)": 6, "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 0,
+        "Total Open Individual ERRORs (WP)": 0, "Total Open TEAM ERRORs (WP)": 0,
+        "Total Open WARNINGs (WP)": 0, "Total Sports w/ Open TEAM Issues (WP)": 0,
+        "Latest ChM Record Update for Team": "2026-05-13",
+    }]
+    roster_rows = [
+        {"Church Team": "RPC", "ChMeetings ID": str(100 + i), "Participant ID (WP)": i,
+         "sport_type": "Basketball", "sport_gender": "Men", "sport_format": "Team"}
+        for i in range(6)
+    ]
+
+    single_path = tmp_path / "single.xlsx"
+    exporter._write_excel_report(single_path, summary_rows, [], roster_rows, [])
+    assert "Court-Schedule-Sketch" not in pd.ExcelFile(single_path).sheet_names
+
+    all_path = tmp_path / "all.xlsx"
+    exporter._write_excel_report(all_path, summary_rows, [], roster_rows, [],
+                                 include_venue_capacity=True)
+    sheets = pd.ExcelFile(all_path).sheet_names
+    assert "Court-Schedule-Sketch" in sheets
+
+
+def test_court_schedule_sketch_structure(mock_connectors, tmp_path):
+    """Court-Schedule-Sketch tab has three scenario blocks with correct structure."""
+    from config import SCHEDULE_SKETCH_N_COURTS
+    exporter = ChurchTeamsExporter()
+    summary_rows = [{
+        "Church Code": "RPC",
+        "Total Members (ChM Team Group)": 6, "Total Participants (in WP)": 6,
+        "Total Approved (WP)": 0, "Total Pending Approval (WP)": 6, "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 0,
+        "Total Open Individual ERRORs (WP)": 0, "Total Open TEAM ERRORs (WP)": 0,
+        "Total Open WARNINGs (WP)": 0, "Total Sports w/ Open TEAM Issues (WP)": 0,
+        "Latest ChM Record Update for Team": "2026-05-13",
+    }]
+    # Six BBM, six VBM, six VBW players → one team each, falls back to 8 teams for planning
+    sports = [
+        ("Basketball", "Men"),
+        ("Volleyball", "Men"),
+        ("Volleyball", "Women"),
+    ]
+    roster_rows = []
+    for sport_type, sport_gender in sports:
+        for i in range(6):
+            roster_rows.append({
+                "Church Team": "RPC", "ChMeetings ID": str(200 + len(roster_rows)),
+                "Participant ID (WP)": len(roster_rows),
+                "sport_type": sport_type, "sport_gender": sport_gender, "sport_format": "Team",
+            })
+
+    all_path = tmp_path / "all.xlsx"
+    exporter._write_excel_report(all_path, summary_rows, [], roster_rows, [],
+                                 include_venue_capacity=True)
+
+    from openpyxl import load_workbook
+    wb = load_workbook(all_path)
+    ws = wb["Court-Schedule-Sketch"]
+
+    # Row 3 should contain scenario headers for each court count
+    row3_values = [ws.cell(row=3, column=c).value for c in range(1, 20)]
+    scenario_headers = [v for v in row3_values if v and "Scenario" in str(v)]
+    assert len(scenario_headers) == len(SCHEDULE_SKETCH_N_COURTS)
+    for n_courts, hdr in zip(SCHEDULE_SKETCH_N_COURTS, scenario_headers):
+        assert str(n_courts) in str(hdr)
+
+    # Row 4 should have "Time" and "Court N" sub-headers in each block
+    row4_values = [ws.cell(row=4, column=c).value for c in range(1, 20)]
+    time_headers = [v for v in row4_values if v == "Time"]
+    court_headers = [v for v in row4_values if v and str(v).startswith("Court")]
+    assert len(time_headers) == len(SCHEDULE_SKETCH_N_COURTS)
+    # Total court columns = 3 + 4 + 5 = 12
+    assert len(court_headers) == sum(SCHEDULE_SKETCH_N_COURTS)
+
+    # Section labels ("1st Saturday" etc.) must appear somewhere in the sheet
+    all_values = []
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value:
+                all_values.append(str(cell.value))
+    assert any("1st Saturday" in v for v in all_values)
+    assert any("1st Sunday" in v for v in all_values)
+    assert any("2nd Saturday" in v for v in all_values)
+    assert any("2nd Sunday" in v for v in all_values)
+
+
+def test_build_scenario_schedule_pool_before_playoffs(mock_connectors):
+    """Pool games fill Weekend 1 first; playoff games start no earlier than 2nd Saturday."""
+    exporter = ChurchTeamsExporter()
+
+    pool_queue  = [f"BBM{i:02d}" for i in range(1, 9)]   # 8 pool games
+    playoff_queue = ["BBM09", "BBM10", "BBM11"]           # 3 playoff games
+
+    n_sat, n_sun = 13, 8  # 8AM-8PM / 1PM-8PM with 60-min slots
+
+    for n_courts in [3, 4, 5]:
+        grids = ChurchTeamsExporter._build_scenario_schedule(
+            n_courts, pool_queue, playoff_queue, n_sat, n_sun
+        )
+        # grids: [sat1, sun1, sat2, sun2]
+        sat1_cells = [cell for row in grids[0] for cell in row if cell]
+        sun1_cells = [cell for row in grids[1] for cell in row if cell]
+        sat2_cells = [cell for row in grids[2] for cell in row if cell]
+        sun2_cells = [cell for row in grids[3] for cell in row if cell]
+
+        all_pool    = set(pool_queue)
+        all_playoff = set(playoff_queue)
+
+        # All pool games appear somewhere in sat1 + sun1 + sat2
+        assigned_pool = set(sat1_cells + sun1_cells + sat2_cells) & all_pool
+        assert assigned_pool == all_pool, f"n_courts={n_courts}: missing pool games"
+
+        # Playoff games only appear in sat2 or sun2 (not in sat1 or sun1)
+        assert not (set(sat1_cells) & all_playoff), f"n_courts={n_courts}: playoff in sat1"
+        assert not (set(sun1_cells) & all_playoff), f"n_courts={n_courts}: playoff in sun1"
+
+        # Playoff games assigned somewhere
+        playoff_found = set(sat2_cells + sun2_cells) & all_playoff
+        assert playoff_found == all_playoff, f"n_courts={n_courts}: missing playoff games"
+
+
+def test_court_schedule_sketch_game_id_prefixes(mock_connectors, tmp_path):
+    """Game IDs use BBM, VBM, VBW prefixes with two-digit sequential numbering."""
+    exporter = ChurchTeamsExporter()
+
+    # Provide enough players for 2 teams per sport (min 6 for VB)
+    roster_rows = []
+    sports = [
+        ("Basketball", "Men"),
+        ("Volleyball", "Men"),
+        ("Volleyball", "Women"),
+    ]
+    for sport_type, sport_gender in sports:
+        for i in range(12):
+            roster_rows.append({
+                "Church Team": f"CH{i}",
+                "ChMeetings ID": str(300 + len(roster_rows)),
+                "Participant ID (WP)": len(roster_rows),
+                "sport_type": sport_type,
+                "sport_gender": sport_gender,
+                "sport_format": "Team",
+            })
+
+    all_path = tmp_path / "all.xlsx"
+    summary_rows = [{
+        "Church Code": "CH0",
+        "Total Members (ChM Team Group)": 6, "Total Participants (in WP)": 6,
+        "Total Approved (WP)": 0, "Total Pending Approval (WP)": 6, "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 0,
+        "Total Open Individual ERRORs (WP)": 0, "Total Open TEAM ERRORs (WP)": 0,
+        "Total Open WARNINGs (WP)": 0, "Total Sports w/ Open TEAM Issues (WP)": 0,
+        "Latest ChM Record Update for Team": "2026-05-13",
+    }]
+    exporter._write_excel_report(all_path, summary_rows, [], roster_rows, [],
+                                 include_venue_capacity=True)
+
+    from openpyxl import load_workbook
+    wb = load_workbook(all_path)
+    ws = wb["Court-Schedule-Sketch"]
+
+    cell_values = set()
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value and isinstance(cell.value, str) and len(cell.value) == 5:
+                cell_values.add(cell.value)
+
+    bbm_ids = {v for v in cell_values if v.startswith("BBM")}
+    vbm_ids = {v for v in cell_values if v.startswith("VBM")}
+    vbw_ids = {v for v in cell_values if v.startswith("VBW")}
+
+    assert bbm_ids, "Expected BBM game IDs in Court-Schedule-Sketch"
+    assert vbm_ids, "Expected VBM game IDs in Court-Schedule-Sketch"
+    assert vbw_ids, "Expected VBW game IDs in Court-Schedule-Sketch"
+
+    # IDs are sequential (01, 02, …) with two-digit suffix
+    for gid in bbm_ids | vbm_ids | vbw_ids:
+        assert gid[3:].isdigit(), f"Non-numeric suffix in game ID: {gid}"
+        assert len(gid[3:]) == 2, f"Expected two-digit suffix in game ID: {gid}"
