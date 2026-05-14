@@ -26,6 +26,7 @@ from config import (
     COURT_ESTIMATE_EVENTS,
     COURT_ESTIMATE_RACQUET_EVENTS,
     COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM,
+    COURT_ESTIMATE_POOL_GAMES_PER_TEAM,
     COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
     COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME,
     COURT_ESTIMATE_MIN_TEAM_SIZE,
@@ -1093,8 +1094,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         return 0
 
     def _compute_court_slots(self, n_teams: int,
-                              minutes_per_game: int = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME) -> Dict[str, Any]:
-        pool_games_per_team = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
+                              minutes_per_game: int = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
+                              pool_games_per_team: int = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM) -> Dict[str, Any]:
         include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
 
         pool_slots = ceil((n_teams * pool_games_per_team) / 2) if n_teams > 0 else 0
@@ -1148,7 +1149,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             min_team_size = self._get_min_team_size(event_name)
             counts = self._count_estimating_teams(roster_rows, event_name, min_team_size)
             mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(event_name, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME)
-            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg)
+            gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM)
+            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg, pool_games_per_team=gpg)
             rows.append({
                 "Event": event_name,
                 "Potential Teams/Entries": counts["n_potential"],
@@ -1376,7 +1378,6 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         """
         from openpyxl.styles import PatternFill, Font, Alignment
 
-        pool_gpg = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
         mpg = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
         include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
 
@@ -1387,13 +1388,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW", SCHEDULE_SKETCH_COLOR_VB_WOMEN),
         ]
 
-        # --- Compute game IDs per sport ---
+        # --- Compute game IDs per sport (per-sport pool games per team) ---
         sport_meta: Dict[str, Dict] = {}
         for event_name, prefix, color in sport_defs:
             min_sz = self._get_min_team_size(event_name)
             counts = self._count_estimating_teams(roster_rows, event_name, min_sz)
             n_teams = counts["n_estimating"] if counts["n_estimating"] >= 2 else 8
-            s = self._compute_court_slots(n_teams, mpg)
+            gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM)
+            s = self._compute_court_slots(n_teams, mpg, pool_games_per_team=gpg)
             early_ids, final_ids = self._make_playoff_ids(
                 prefix, s["playoff_teams"], include_third
             )
@@ -1401,6 +1403,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "prefix": prefix,
                 "color": color,
                 "n_teams": n_teams,
+                "pool_gpg": gpg,
                 "pool_ids":   [f"{prefix}-{i:02d}" for i in range(1, s["pool_slots"] + 1)],
                 "early_ids":  early_ids,   # QF + Semi → 2nd Saturday
                 "final_ids":  final_ids,   # Final + 3rd → 2nd Sunday
@@ -1457,11 +1460,15 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         COL_HDR_ROW     = 4
         DATA_START_ROW  = 5
 
-        # --- Row 1: inputs summary ---
+        # --- Row 1: inputs summary (per-sport pool games per team) ---
         ws.cell(row=INPUTS_ROW, column=1, value="Inputs:").font = bold_font
-        ws.cell(row=INPUTS_ROW, column=2, value=f"Pool games/team: {pool_gpg}")
-        ws.cell(row=INPUTS_ROW, column=5, value=f"Minutes/game: {mpg}")
-        ws.cell(row=INPUTS_ROW, column=9, value=f"3rd place: {'Yes' if include_third else 'No'}")
+        col = 2
+        for ev, prefix, _ in sport_defs:
+            ws.cell(row=INPUTS_ROW, column=col,
+                    value=f"{prefix} pool games/team: {sport_meta[ev]['pool_gpg']}")
+            col += 3
+        ws.cell(row=INPUTS_ROW, column=col,     value=f"Minutes/game: {mpg}")
+        ws.cell(row=INPUTS_ROW, column=col + 3, value=f"3rd place: {'Yes' if include_third else 'No'}")
 
         # --- Row 2: per-sport game counts ---
         ws.cell(row=2, column=1, value="Game totals:").font = bold_font
