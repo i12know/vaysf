@@ -507,6 +507,7 @@ POD_SPORT_ABBREV = {
 VENUE_INPUT_FILENAME    = "venue_input.xlsx"
 VENUE_TEMPLATE_FILENAME = "SportsFest_2026_Venue_Input_Template.xlsx"
 
+GYM_RESOURCE_TYPE              = "Gym Court"
 POD_RESOURCE_TYPE_TENNIS       = "Tennis Court"
 POD_RESOURCE_TYPE_PICKLEBALL   = "Pickleball Court"
 POD_RESOURCE_TYPE_TABLE_TENNIS = "Table Tennis Table"

@@ -1625,3 +1625,254 @@ def test_load_venue_input_fallback_formula(mock_connectors, tmp_path):
 
     result = ChurchTeamsExporter._load_venue_input(path)
     assert result[POD_RESOURCE_TYPE_TENNIS] == 24
+
+
+# ── Schedule-Input helpers tests (Issue #87) ────────────────────────────────
+
+
+def _make_gym_roster(n_churches: int = 8) -> list:
+    """Return minimal Basketball-Men roster rows for n_churches churches."""
+    codes = ["RPC", "ANH", "FVC", "GAC", "NSD", "TLC", "GLA", "ORN"][:n_churches]
+    rows = []
+    for code in codes:
+        for _ in range(5):  # 5 members per church → meets min team size
+            rows.append({
+                "Church Team": code,
+                "sport_type": SPORT_TYPE["BASKETBALL"],
+                "sport_gender": "Men",
+                "sport_format": "Team",
+                "Participant ID (WP)": 1,
+            })
+    return rows
+
+
+def test_build_gym_game_objects_structure(mock_connectors):
+    """Each game object has all required OR-Tools schema fields."""
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_gym_game_objects(_make_gym_roster())
+    assert games, "Expected at least one game"
+    required_fields = {
+        "game_id", "event", "stage", "pool_id", "round",
+        "team_a_id", "team_b_id", "duration_minutes",
+        "resource_type", "earliest_slot", "latest_slot",
+    }
+    for g in games:
+        assert required_fields <= g.keys(), f"Missing fields in {g}"
+    from config import GYM_RESOURCE_TYPE
+    assert all(g["resource_type"] == GYM_RESOURCE_TYPE for g in games)
+    assert all(g["team_a_id"] is None and g["team_b_id"] is None for g in games)
+
+
+def test_build_gym_game_objects_stages(mock_connectors):
+    """With 8 BBM teams, Pool + Semi + Final stages are all present."""
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_gym_game_objects(_make_gym_roster(8))
+    bbm_stages = {g["stage"] for g in games if g["event"] == SPORT_TYPE["BASKETBALL"]}
+    assert "Pool" in bbm_stages
+    assert "Semi" in bbm_stages or "QF" in bbm_stages
+    assert "Final" in bbm_stages
+
+
+def test_build_gym_game_objects_prefix_format(mock_connectors):
+    """Pool game IDs follow the BBM-01 format."""
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_gym_game_objects(_make_gym_roster())
+    pool_ids = [g["game_id"] for g in games if g["stage"] == "Pool" and g["event"] == SPORT_TYPE["BASKETBALL"]]
+    assert pool_ids, "Expected Basketball pool games"
+    import re
+    assert all(re.match(r"BBM-\d{2}$", gid) for gid in pool_ids)
+
+
+def test_build_pod_game_objects_single_elimination(mock_connectors):
+    """With 3 entries in a division, 2 game placeholders are generated."""
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Women",
+         "sport_format": "Women Single"}
+        for i in range(1, 4)  # 3 entries
+    ]
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_pod_game_objects(roster_rows, [])
+    assert len(games) == 2, f"Expected 2 games (3-1=2), got {len(games)}"
+    assert all(g["game_id"].startswith("BAD-Women-Singles-") for g in games)
+    assert all(g["stage"] == "R1" for g in games)
+    assert games[0]["game_id"] == "BAD-Women-Singles-01"
+
+
+def test_build_pod_game_objects_skips_empty_divisions(mock_connectors):
+    """Divisions with fewer than 2 entries produce no game objects."""
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": 1,
+         "sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Men",
+         "sport_format": "Men Single"},
+    ]
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_pod_game_objects(roster_rows, [])
+    assert games == [], "Single-entry division should produce no games"
+
+
+def test_build_gym_resource_objects_count(mock_connectors):
+    """4 sessions × n_courts resources are returned."""
+    resources = ChurchTeamsExporter._build_gym_resource_objects(n_courts=4)
+    assert len(resources) == 16, f"Expected 4 sessions × 4 courts = 16, got {len(resources)}"
+    from config import GYM_RESOURCE_TYPE
+    assert all(r["resource_type"] == GYM_RESOURCE_TYPE for r in resources)
+    days = {r["day"] for r in resources}
+    assert days == {"Sat-1", "Sun-1", "Sat-2", "Sun-2"}
+
+
+def test_build_gym_resource_objects_labels(mock_connectors):
+    """Court labels and resource_ids are formatted correctly."""
+    resources = ChurchTeamsExporter._build_gym_resource_objects(n_courts=3)
+    labels = {r["label"] for r in resources}
+    assert labels == {"Court-1", "Court-2", "Court-3"}
+    ids = {r["resource_id"] for r in resources}
+    assert "GYM-Sat-1-1" in ids
+    assert "GYM-Sun-2-3" in ids
+
+
+def test_load_venue_input_rows_missing_file(mock_connectors, tmp_path):
+    """Returns empty list when venue_input.xlsx does not exist."""
+    result = ChurchTeamsExporter._load_venue_input_rows(tmp_path / "missing.xlsx")
+    assert result == []
+
+
+def test_load_venue_input_rows_expands_quantity(mock_connectors, tmp_path):
+    """Quantity=2 for a Tennis Court row yields 2 resource objects."""
+    from openpyxl import Workbook
+    from config import POD_RESOURCE_TYPE_TENNIS
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    ws.cell(row=2, column=3, value=POD_RESOURCE_TYPE_TENNIS)
+    ws.cell(row=2, column=4, value=2)    # Quantity = 2
+    ws.cell(row=2, column=6, value=9)    # Start Time
+    ws.cell(row=2, column=7, value=17)   # Last Start Time
+    ws.cell(row=2, column=8, value=30)   # Slot Minutes
+
+    path = tmp_path / "venue_input.xlsx"
+    wb.save(path)
+
+    result = ChurchTeamsExporter._load_venue_input_rows(path)
+    assert len(result) == 2
+    assert result[0]["resource_type"] == POD_RESOURCE_TYPE_TENNIS
+    assert result[0]["label"] == "Court-1"
+    assert result[1]["label"] == "Court-2"
+    assert result[0]["open_time"] == "09:00"
+
+
+def test_load_venue_input_rows_table_label(mock_connectors, tmp_path):
+    """Table Tennis Table rows get Table-N labels instead of Court-N."""
+    from openpyxl import Workbook
+    from config import POD_RESOURCE_TYPE_TABLE_TENNIS
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    ws.cell(row=2, column=3, value=POD_RESOURCE_TYPE_TABLE_TENNIS)
+    ws.cell(row=2, column=4, value=3)
+    ws.cell(row=2, column=6, value=9)
+    ws.cell(row=2, column=7, value=17)
+    ws.cell(row=2, column=8, value=20)
+
+    path = tmp_path / "venue_input.xlsx"
+    wb.save(path)
+
+    result = ChurchTeamsExporter._load_venue_input_rows(path)
+    assert len(result) == 3
+    assert all(r["label"].startswith("Table-") for r in result)
+
+
+def test_build_precedence_objects_pool_before_final(mock_connectors):
+    """Pool → Semi and Semi → Final rules are generated when stages are present."""
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_gym_game_objects(_make_gym_roster(8))
+    rules = ChurchTeamsExporter._build_precedence_objects(games)
+    assert rules, "Expected precedence rules for sports with playoffs"
+    bbm_rules = [r for r in rules if r["event"] == SPORT_TYPE["BASKETBALL"]]
+    stage_pairs = {(r["earlier_stage"], r["later_stage"]) for r in bbm_rules}
+    assert ("Semi", "Final") in stage_pairs
+
+
+def test_build_schedule_input_keys(mock_connectors, tmp_path):
+    """_build_schedule_input returns dict with all required top-level keys."""
+    exporter = ChurchTeamsExporter()
+    si = exporter._build_schedule_input(_make_gym_roster(), [], tmp_path / "missing.xlsx")
+    assert set(si.keys()) == {
+        "generated_at", "game_count", "resource_count", "games", "resources", "precedence"
+    }
+    assert si["game_count"] == len(si["games"])
+    assert si["resource_count"] == len(si["resources"])
+    assert si["game_count"] > 0
+    assert si["resource_count"] > 0  # at least gym resources
+
+
+def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path):
+    """Schedule-Input tab and schedule_input.json are written in the ALL export."""
+    exporter = ChurchTeamsExporter()
+
+    summary_rows = [{
+        "Church Code": "RPC",
+        "Total Members (ChM Team Group)": 5, "Total Participants (in WP)": 5,
+        "Total Approved (WP)": 0, "Total Pending Approval (WP)": 5, "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 0,
+        "Total Open Individual ERRORs (WP)": 0, "Total Open TEAM ERRORs (WP)": 0,
+        "Total Open WARNINGs (WP)": 0, "Total Sports w/ Open TEAM Issues (WP)": 0,
+        "Latest ChM Record Update for Team": "2026-05-14",
+        "Total Athlete Fees": 150,
+    }]
+    contacts_rows = [{
+        "Church Team": "RPC", "ChMeetings ID": "101", "First Name": "Alice", "Last Name": "Ng",
+        "Is_Participant": "Yes", "Is_Member_ChM": "Yes", "Participant ID (WP)": 1,
+        "Approval_Status (WP)": "pending", "Total_Open_ERRORs (WP)": 0,
+        "Gender": "Female", "Birthdate": "2000-01-02", "Age (at Event)": 26,
+        "Mobile Phone": "", "Email": "", "Registration Date (WP)": "2026-03-01",
+        "Athlete Fee": 30, "First_Open_ERROR_Desc (WP)": "",
+        "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+        "Photo URL (WP)": "N/A", "Update_on_ChM": "",
+    }]
+
+    all_path = tmp_path / "all.xlsx"
+    exporter._write_excel_report(
+        all_path, summary_rows, contacts_rows,
+        _make_gym_roster(4), [],
+        include_venue_capacity=True,
+    )
+
+    sheets = pd.ExcelFile(all_path).sheet_names
+    assert "Schedule-Input" in sheets, f"Schedule-Input tab missing; sheets: {sheets}"
+
+    json_path = tmp_path / "schedule_input.json"
+    assert json_path.exists(), "schedule_input.json was not written"
+
+    import json as _json
+    data = _json.loads(json_path.read_text(encoding="utf-8"))
+    assert "games" in data and "resources" in data and "precedence" in data
+    assert data["game_count"] > 0
+    # ALL export has no venue input, so only gym resources
+    from config import GYM_RESOURCE_TYPE
+    assert all(r["resource_type"] == GYM_RESOURCE_TYPE for r in data["resources"])
+
+
+def test_schedule_input_tab_absent_in_single_church_export(mock_connectors, tmp_path):
+    """Schedule-Input tab does NOT appear in single-church exports."""
+    exporter = ChurchTeamsExporter()
+    path = tmp_path / "single.xlsx"
+    exporter._write_excel_report(path, [], [], _make_gym_roster(2), [])
+    sheets = pd.ExcelFile(path).sheet_names
+    assert "Schedule-Input" not in sheets
