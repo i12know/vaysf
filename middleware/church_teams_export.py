@@ -5,6 +5,7 @@ from pathlib import Path
 from loguru import logger
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
+from collections import deque
 import re
 import unicodedata
 
@@ -1191,20 +1192,21 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
     def _build_scenario_schedule(
         n_courts: int,
         pool_queues: List[List[str]],
-        playoff_queues: List[List[str]],
+        early_playoff_queues: List[List[str]],
+        final_queues: List[List[str]],
         n_sat: int,
         n_sun: int,
     ) -> List[List[List[str]]]:
         """
-        Build a 4-session grid with dedicated court blocks per sport.
+        Build a 4-session grid (sat1, sun1, sat2, sun2) with three rules:
 
-        Courts are divided into contiguous blocks — one block per sport —
-        to eliminate intra-court equipment changeovers.  Extras go to the
-        first sport(s).  Pool games fill sat1 → sun1 → sat2 start per sport;
-        playoffs follow immediately after pool play on each sport's courts.
-
-        Sessions: [sat1, sun1, sat2, sun2].
-        Each session is list[time_slot][court_index] = game_id or "".
+        1. Dedicated primary court blocks per sport — no intra-court changeovers.
+        2. Pool overflow: once a sport finishes its pool games its courts become
+           available to whichever sport has the most remaining pool games, so a
+           sport with fewer courts (e.g. VBW on 1 court) can compress its
+           schedule by claiming freed BBM/VBM courts.
+        3. Early playoffs (QF + Semi) → sat2 only; Finals → sun2 only,
+           guaranteeing the championship games always fall on the last day.
         """
         n_sports = len(pool_queues)
         n_slots = [n_sat, n_sun, n_sat, n_sun]
@@ -1212,7 +1214,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             [[""] * n_courts for _ in range(n)] for n in n_slots
         ]
 
-        # Allocate courts in contiguous blocks: extras given to earlier sports
+        # Allocate contiguous primary court blocks; extras go to earlier sports
         base = n_courts // n_sports
         extras = n_courts % n_sports
         court_blocks: List[List[int]] = []
@@ -1222,58 +1224,74 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             court_blocks.append(list(range(cur, cur + k)))
             cur += k
 
-        for pool_q, playoff_q, courts in zip(pool_queues, playoff_queues, court_blocks):
-            nc = len(courts)
+        court_to_primary = {c: i for i, courts in enumerate(court_blocks) for c in courts}
 
-            # Pool cells: sat1 → sun1 → sat2
-            pool_cells: List[Tuple[int, int, int]] = []
-            for sess_idx in range(3):
-                for t in range(n_slots[sess_idx]):
-                    for c in courts:
-                        pool_cells.append((sess_idx, t, c))
+        # --- Pool fill: sat1 → sun1 → sat2 ---
+        # Each court serves its primary sport first.  Once a sport's pool is
+        # exhausted, idle courts are redirected to the most-needy remaining sport.
+        pool_remaining = [deque(q) for q in pool_queues]
+        for sess_idx in range(3):
+            for t in range(n_slots[sess_idx]):
+                for c in range(n_courts):
+                    primary = court_to_primary[c]
+                    if pool_remaining[primary]:
+                        grids[sess_idx][t][c] = pool_remaining[primary].popleft()
+                    else:
+                        most_needy = max(range(n_sports), key=lambda i: len(pool_remaining[i]))
+                        if pool_remaining[most_needy]:
+                            grids[sess_idx][t][c] = pool_remaining[most_needy].popleft()
 
-            for i, game_id in enumerate(pool_q):
-                if i < len(pool_cells):
-                    s, t, c = pool_cells[i]
+        # --- Early playoffs (QF + Semi): first empty cells on primary courts in sat2 ---
+        for early_q, courts in zip(early_playoff_queues, court_blocks):
+            cells = [
+                (2, t, c)
+                for t in range(n_sat)
+                for c in courts
+                if not grids[2][t][c]
+            ]
+            for i, game_id in enumerate(early_q):
+                if i < len(cells):
+                    s, t, c = cells[i]
                     grids[s][t][c] = game_id
 
-            # Playoffs: start immediately after pool games in sat2, then sun2
-            n_pool = len(pool_q)
-            sat2_start_cell = max(0, n_pool - (n_sat + n_sun) * nc)
-
-            playoff_cells: List[Tuple[int, int, int]] = []
-            for cell_idx in range(sat2_start_cell, n_sat * nc):
-                t, ci = divmod(cell_idx, nc)
-                playoff_cells.append((2, t, courts[ci]))
-            for t in range(n_sun):
-                for c in courts:
-                    playoff_cells.append((3, t, c))
-
-            for i, game_id in enumerate(playoff_q):
-                if i < len(playoff_cells):
-                    s, t, c = playoff_cells[i]
+        # --- Finals (Final + 3rd): first empty cells on primary courts in sun2 ---
+        for final_q, courts in zip(final_queues, court_blocks):
+            cells = [
+                (3, t, c)
+                for t in range(n_sun)
+                for c in courts
+                if not grids[3][t][c]
+            ]
+            for i, game_id in enumerate(final_q):
+                if i < len(cells):
+                    s, t, c = cells[i]
                     grids[s][t][c] = game_id
 
         return grids
 
     @staticmethod
-    def _make_playoff_ids(prefix: str, playoff_teams: int, include_third: bool) -> Tuple[List[str], List[str]]:
-        """Return (playoff_game_ids, third_place_ids) using named bracket labels.
+    def _make_playoff_ids(
+        prefix: str, playoff_teams: int, include_third: bool
+    ) -> Tuple[List[str], List[str]]:
+        """Return (early_ids, final_ids) split by which weekend they belong to.
 
-        Order reflects bracket chronology: QF → Semi → Final, with 3rd
-        alongside the Final on the last day.
+        early_ids  (QF + Semi)  → 2nd Saturday
+        final_ids  (Final + 3rd) → 2nd Sunday
         """
-        playoff_ids: List[str] = []
+        early_ids: List[str] = []
         if playoff_teams >= 8:
             for i in range(1, 5):
-                playoff_ids.append(f"{prefix}-QF-{i}")
-            playoff_ids.extend([f"{prefix}-Semi-1", f"{prefix}-Semi-2"])
-            playoff_ids.append(f"{prefix}-Final")
+                early_ids.append(f"{prefix}-QF-{i}")
+            early_ids.extend([f"{prefix}-Semi-1", f"{prefix}-Semi-2"])
         elif playoff_teams >= 4:
-            playoff_ids.extend([f"{prefix}-Semi-1", f"{prefix}-Semi-2"])
-            playoff_ids.append(f"{prefix}-Final")
-        third_ids = [f"{prefix}-3rd"] if (include_third and playoff_teams >= 4) else []
-        return playoff_ids, third_ids
+            early_ids.extend([f"{prefix}-Semi-1", f"{prefix}-Semi-2"])
+
+        final_ids: List[str] = []
+        if playoff_teams >= 4:
+            final_ids.append(f"{prefix}-Final")
+            if include_third:
+                final_ids.append(f"{prefix}-3rd")
+        return early_ids, final_ids
 
     def _write_court_schedule_sketch(
         self, ws, roster_rows: List[Dict[str, Any]]
@@ -1307,24 +1325,22 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             counts = self._count_estimating_teams(roster_rows, event_name, min_sz)
             n_teams = counts["n_estimating"] if counts["n_estimating"] >= 2 else 8
             s = self._compute_court_slots(n_teams, mpg)
-            playoff_ids, third_ids = self._make_playoff_ids(
+            early_ids, final_ids = self._make_playoff_ids(
                 prefix, s["playoff_teams"], include_third
             )
             sport_meta[event_name] = {
                 "prefix": prefix,
                 "color": color,
                 "n_teams": n_teams,
-                "pool_ids":    [f"{prefix}-{i:02d}" for i in range(1, s["pool_slots"] + 1)],
-                "playoff_ids": playoff_ids,
-                "third_ids":   third_ids,
+                "pool_ids":   [f"{prefix}-{i:02d}" for i in range(1, s["pool_slots"] + 1)],
+                "early_ids":  early_ids,   # QF + Semi → 2nd Saturday
+                "final_ids":  final_ids,   # Final + 3rd → 2nd Sunday
             }
 
-        # --- Per-sport game queues (dedicated court blocks — no interleaving) ---
-        pool_queues_by_sport = [sport_meta[ev]["pool_ids"] for ev, _, _ in sport_defs]
-        playoff_queues_by_sport = [
-            sport_meta[ev]["playoff_ids"] + sport_meta[ev]["third_ids"]
-            for ev, _, _ in sport_defs
-        ]
+        # --- Per-sport game queues (pool overflow + dedicated playoff courts) ---
+        pool_queues_by_sport          = [sport_meta[ev]["pool_ids"]  for ev, _, _ in sport_defs]
+        early_playoff_queues_by_sport = [sport_meta[ev]["early_ids"] for ev, _, _ in sport_defs]
+        final_queues_by_sport         = [sport_meta[ev]["final_ids"] for ev, _, _ in sport_defs]
 
         # --- Time slot helpers ---
         n_sat = SCHEDULE_SKETCH_SATURDAY_LAST_GAME - SCHEDULE_SKETCH_SATURDAY_START + 1
@@ -1383,7 +1399,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         col_offset = 2
         for ev, prefix, _ in sport_defs:
             meta = sport_meta[ev]
-            total = len(meta["pool_ids"]) + len(meta["playoff_ids"]) + len(meta["third_ids"])
+            total = len(meta["pool_ids"]) + len(meta["early_ids"]) + len(meta["final_ids"])
             label = f"{prefix}: {meta['n_teams']} teams, {total} games ({len(meta['pool_ids'])} pool)"
             ws.cell(row=2, column=col_offset, value=label)
             col_offset += 5
@@ -1392,7 +1408,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         scenario_grids: Dict[int, List[List[List[str]]]] = {}
         for n_courts in n_courts_list:
             scenario_grids[n_courts] = self._build_scenario_schedule(
-                n_courts, pool_queues_by_sport, playoff_queues_by_sport, n_sat, n_sun
+                n_courts,
+                pool_queues_by_sport,
+                early_playoff_queues_by_sport,
+                final_queues_by_sport,
+                n_sat, n_sun,
             )
 
         # --- Render scenario headers and column headers ---
@@ -1452,11 +1472,12 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             for c in range(n_courts):
                 ws.column_dimensions[get_column_letter(start_col + 1 + c)].width = 12  # Courts
 
-        total_pool = sum(len(q) for q in pool_queues_by_sport)
-        total_playoff = sum(len(q) for q in playoff_queues_by_sport)
+        total_pool  = sum(len(q) for q in pool_queues_by_sport)
+        total_early = sum(len(q) for q in early_playoff_queues_by_sport)
+        total_final = sum(len(q) for q in final_queues_by_sport)
         logger.debug(
-            f"Court-Schedule-Sketch tab: {total_pool} pool + {total_playoff} playoff "
-            f"game IDs across {len(n_courts_list)} scenarios (dedicated court blocks per sport)."
+            f"Court-Schedule-Sketch tab: {total_pool} pool + {total_early} early-playoff "
+            f"+ {total_final} finals across {len(n_courts_list)} scenarios."
         )
 
     def _write_excel_report(self, filepath: Path,
