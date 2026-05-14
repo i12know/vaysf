@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     )
     group_assignment_parser.add_argument(
         "--dry-run", action="store_true",
-        help="Preview only — show who would be assigned without making API calls",
+        help="Preview only - show who would be assigned without making API calls",
     )
 
     # Team-group clearing command
@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     clear_mode.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview only — show who would be removed without making API calls",
+        help="Preview only - show who would be removed without making API calls",
     )
     clear_mode.add_argument(
         "--execute",

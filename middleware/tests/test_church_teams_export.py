@@ -766,7 +766,7 @@ def test_venue_capacity_court_slot_math(mock_connectors):
     """Pool/playoff/total slot math (Issue #83)."""
     exporter = ChurchTeamsExporter()
 
-    # 0 teams → all zeros
+    # 0 teams -> all zeros
     s0 = exporter._compute_court_slots(0)
     assert s0["pool_slots"] == 0
     assert s0["playoff_teams"] == 0
@@ -774,7 +774,7 @@ def test_venue_capacity_court_slot_math(mock_connectors):
     assert s0["total_slots"] == 0
     assert s0["court_hours"] == 0.0
 
-    # 6 teams, 2 pool games each → ceil(6*2/2) = 6 pool, 4-team playoff = 3 playoff games
+    # 6 teams, 2 pool games each -> ceil(6*2/2) = 6 pool, 4-team playoff = 3 playoff games
     s6 = exporter._compute_court_slots(6)
     assert s6["pool_slots"] == 6
     assert s6["playoff_teams"] == 4
@@ -783,14 +783,14 @@ def test_venue_capacity_court_slot_math(mock_connectors):
     assert s6["total_slots"] == 9
     assert s6["court_hours"] == 9.0  # 60 min/game
 
-    # 8 teams → ceil(8*2/2)=8 pool, 8-team playoff = 7 playoff games
+    # 8 teams -> ceil(8*2/2)=8 pool, 8-team playoff = 7 playoff games
     s8 = exporter._compute_court_slots(8)
     assert s8["pool_slots"] == 8
     assert s8["playoff_teams"] == 8
     assert s8["playoff_slots"] == 7
     assert s8["total_slots"] == 15
 
-    # 3 teams → only pool play, no playoff
+    # 3 teams -> only pool play, no playoff
     s3 = exporter._compute_court_slots(3)
     assert s3["pool_slots"] == 3
     assert s3["playoff_teams"] == 0

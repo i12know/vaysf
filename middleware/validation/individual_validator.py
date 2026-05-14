@@ -54,7 +54,7 @@ class IndividualValidator:
         issues.extend(self._validate_photo(participant))
         issues.extend(self._validate_consent(participant))
         
-        # Participant is valid unless there’s an ERROR severity issue
+        # Participant is valid unless there's an ERROR severity issue
         is_valid = not any(issue.get("severity") == VALIDATION_SEVERITY["ERROR"] for issue in issues)
         return is_valid, issues
 
