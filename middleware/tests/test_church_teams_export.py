@@ -1045,14 +1045,23 @@ def test_build_scenario_schedule_pool_before_playoffs(mock_connectors):
     """Pool games fill Weekend 1 first; playoff games start no earlier than 2nd Saturday."""
     exporter = ChurchTeamsExporter()
 
-    pool_queue  = [f"BBM{i:02d}" for i in range(1, 9)]   # 8 pool games
-    playoff_queue = ["BBM09", "BBM10", "BBM11"]           # 3 playoff games
+    # Three sports, each with their own pool and playoff queues
+    pool_queues = [
+        [f"BBM-{i:02d}" for i in range(1, 5)],   # 4 BBM pool games
+        [f"VBM-{i:02d}" for i in range(1, 5)],   # 4 VBM pool games
+        [f"VBW-{i:02d}" for i in range(1, 5)],   # 4 VBW pool games
+    ]
+    playoff_queues = [
+        ["BBM-Semi-1", "BBM-Semi-2", "BBM-Final"],
+        ["VBM-Semi-1", "VBM-Semi-2", "VBM-Final"],
+        ["VBW-Semi-1", "VBW-Semi-2", "VBW-Final"],
+    ]
 
     n_sat, n_sun = 13, 8  # 8AM-8PM / 1PM-8PM with 60-min slots
 
     for n_courts in [3, 4, 5]:
         grids = ChurchTeamsExporter._build_scenario_schedule(
-            n_courts, pool_queue, playoff_queue, n_sat, n_sun
+            n_courts, pool_queues, playoff_queues, n_sat, n_sun
         )
         # grids: [sat1, sun1, sat2, sun2]
         sat1_cells = [cell for row in grids[0] for cell in row if cell]
@@ -1060,8 +1069,8 @@ def test_build_scenario_schedule_pool_before_playoffs(mock_connectors):
         sat2_cells = [cell for row in grids[2] for cell in row if cell]
         sun2_cells = [cell for row in grids[3] for cell in row if cell]
 
-        all_pool    = set(pool_queue)
-        all_playoff = set(playoff_queue)
+        all_pool    = {g for q in pool_queues for g in q}
+        all_playoff = {g for q in playoff_queues for g in q}
 
         # All pool games appear somewhere in sat1 + sun1 + sat2
         assigned_pool = set(sat1_cells + sun1_cells + sat2_cells) & all_pool
@@ -1074,6 +1083,25 @@ def test_build_scenario_schedule_pool_before_playoffs(mock_connectors):
         # Playoff games assigned somewhere
         playoff_found = set(sat2_cells + sun2_cells) & all_playoff
         assert playoff_found == all_playoff, f"n_courts={n_courts}: missing playoff games"
+
+        # Each sport stays on its own dedicated court block (no cross-sport sharing)
+        n_sports = len(pool_queues)
+        base = n_courts // n_sports
+        extras = n_courts % n_sports
+        cur = 0
+        for sport_idx, (pool_q, playoff_q) in enumerate(zip(pool_queues, playoff_queues)):
+            k = base + (1 if sport_idx < extras else 0)
+            sport_courts = set(range(cur, cur + k))
+            cur += k
+            sport_ids = set(pool_q) | set(playoff_q)
+            for sess_idx, sess_cells_2d in enumerate(grids):
+                for t, row in enumerate(sess_cells_2d):
+                    for c_idx, game_id in enumerate(row):
+                        if game_id in sport_ids:
+                            assert c_idx in sport_courts, (
+                                f"n_courts={n_courts} sport={sport_idx}: "
+                                f"{game_id} on court {c_idx}, expected {sport_courts}"
+                            )
 
 
 def test_court_schedule_sketch_game_id_prefixes(mock_connectors, tmp_path):
@@ -1118,18 +1146,26 @@ def test_court_schedule_sketch_game_id_prefixes(mock_connectors, tmp_path):
     cell_values = set()
     for row in ws.iter_rows():
         for cell in row:
-            if cell.value and isinstance(cell.value, str) and len(cell.value) == 5:
-                cell_values.add(cell.value)
+            v = cell.value
+            if isinstance(v, str) and "-" in v and v.split("-")[0] in ("BBM", "VBM", "VBW"):
+                cell_values.add(v)
 
-    bbm_ids = {v for v in cell_values if v.startswith("BBM")}
-    vbm_ids = {v for v in cell_values if v.startswith("VBM")}
-    vbw_ids = {v for v in cell_values if v.startswith("VBW")}
+    bbm_ids = {v for v in cell_values if v.startswith("BBM-")}
+    vbm_ids = {v for v in cell_values if v.startswith("VBM-")}
+    vbw_ids = {v for v in cell_values if v.startswith("VBW-")}
 
     assert bbm_ids, "Expected BBM game IDs in Court-Schedule-Sketch"
     assert vbm_ids, "Expected VBM game IDs in Court-Schedule-Sketch"
     assert vbw_ids, "Expected VBW game IDs in Court-Schedule-Sketch"
 
-    # IDs are sequential (01, 02, …) with two-digit suffix
-    for gid in bbm_ids | vbm_ids | vbw_ids:
-        assert gid[3:].isdigit(), f"Non-numeric suffix in game ID: {gid}"
-        assert len(gid[3:]) == 2, f"Expected two-digit suffix in game ID: {gid}"
+    # Pool IDs: BBM-01, BBM-02, … — two-digit numeric suffix after the dash
+    pool_ids = {v for v in cell_values if v[4:].isdigit() and len(v[4:]) == 2}
+    assert pool_ids, "Expected pool game IDs with two-digit suffix (e.g. BBM-01)"
+
+    # Playoff IDs: named labels (Final, Semi-N, QF-N, 3rd)
+    playoff_labels = {"Final", "Semi-1", "Semi-2", "QF-1", "QF-2", "QF-3", "QF-4", "3rd"}
+    found_playoff_labels = {v.split("-", 1)[1] for v in cell_values if not v[4:].isdigit()}
+    assert found_playoff_labels & playoff_labels, (
+        f"Expected named playoff labels in Court-Schedule-Sketch, got: {found_playoff_labels}"
+    )
+    assert "Final" in found_playoff_labels, "Expected BBM/VBM/VBW-Final in sketch"
