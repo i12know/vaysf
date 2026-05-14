@@ -126,7 +126,7 @@ The system is actively maintained and ready for production use for Sports Fest 2
 - Pastor approval workflow
 - WordPress admin interface
 - Enhanced reporting capabilities for church representatives
-- API-based approval sync (v1.05) — eliminates manual Excel import to ChMeetings
+- API-based approval sync (v1.05) - eliminates manual Excel import to ChMeetings
 - Direct ChMeetings group membership management via API (v1.05/v1.06)
 - Centralized field mapping and API field inspector (v1.05)
 
