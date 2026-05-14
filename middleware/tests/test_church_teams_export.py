@@ -1042,62 +1042,78 @@ def test_court_schedule_sketch_structure(mock_connectors, tmp_path):
 
 
 def test_build_scenario_schedule_pool_before_playoffs(mock_connectors):
-    """Pool games fill Weekend 1 first; playoff games start no earlier than 2nd Saturday."""
-    exporter = ChurchTeamsExporter()
-
-    # Three sports, each with their own pool and playoff queues
+    """Pool before early playoffs, early playoffs on sat2, finals pinned to sun2."""
     pool_queues = [
-        [f"BBM-{i:02d}" for i in range(1, 5)],   # 4 BBM pool games
-        [f"VBM-{i:02d}" for i in range(1, 5)],   # 4 VBM pool games
-        [f"VBW-{i:02d}" for i in range(1, 5)],   # 4 VBW pool games
+        [f"BBM-{i:02d}" for i in range(1, 5)],
+        [f"VBM-{i:02d}" for i in range(1, 5)],
+        [f"VBW-{i:02d}" for i in range(1, 5)],
     ]
-    playoff_queues = [
-        ["BBM-Semi-1", "BBM-Semi-2", "BBM-Final"],
-        ["VBM-Semi-1", "VBM-Semi-2", "VBM-Final"],
-        ["VBW-Semi-1", "VBW-Semi-2", "VBW-Final"],
+    early_playoff_queues = [
+        ["BBM-Semi-1", "BBM-Semi-2"],
+        ["VBM-Semi-1", "VBM-Semi-2"],
+        ["VBW-Semi-1", "VBW-Semi-2"],
+    ]
+    final_queues = [
+        ["BBM-Final"],
+        ["VBM-Final"],
+        ["VBW-Final"],
     ]
 
-    n_sat, n_sun = 13, 8  # 8AM-8PM / 1PM-8PM with 60-min slots
+    n_sat, n_sun = 13, 8
 
     for n_courts in [3, 4, 5]:
         grids = ChurchTeamsExporter._build_scenario_schedule(
-            n_courts, pool_queues, playoff_queues, n_sat, n_sun
+            n_courts, pool_queues, early_playoff_queues, final_queues, n_sat, n_sun
         )
-        # grids: [sat1, sun1, sat2, sun2]
         sat1_cells = [cell for row in grids[0] for cell in row if cell]
         sun1_cells = [cell for row in grids[1] for cell in row if cell]
         sat2_cells = [cell for row in grids[2] for cell in row if cell]
         sun2_cells = [cell for row in grids[3] for cell in row if cell]
 
-        all_pool    = {g for q in pool_queues for g in q}
-        all_playoff = {g for q in playoff_queues for g in q}
+        all_pool  = {g for q in pool_queues for g in q}
+        all_early = {g for q in early_playoff_queues for g in q}
+        all_final = {g for q in final_queues for g in q}
 
-        # All pool games appear somewhere in sat1 + sun1 + sat2
-        assigned_pool = set(sat1_cells + sun1_cells + sat2_cells) & all_pool
-        assert assigned_pool == all_pool, f"n_courts={n_courts}: missing pool games"
+        # All pool games appear in sat1/sun1/sat2
+        assert set(sat1_cells + sun1_cells + sat2_cells) & all_pool == all_pool, \
+            f"n_courts={n_courts}: missing pool games"
 
-        # Playoff games only appear in sat2 or sun2 (not in sat1 or sun1)
-        assert not (set(sat1_cells) & all_playoff), f"n_courts={n_courts}: playoff in sat1"
-        assert not (set(sun1_cells) & all_playoff), f"n_courts={n_courts}: playoff in sun1"
+        # No playoff/final games in sat1 or sun1
+        assert not (set(sat1_cells) & (all_early | all_final)), \
+            f"n_courts={n_courts}: playoff/final in sat1"
+        assert not (set(sun1_cells) & (all_early | all_final)), \
+            f"n_courts={n_courts}: playoff/final in sun1"
 
-        # Playoff games assigned somewhere
-        playoff_found = set(sat2_cells + sun2_cells) & all_playoff
-        assert playoff_found == all_playoff, f"n_courts={n_courts}: missing playoff games"
+        # Early playoffs land on sat2, not sun2
+        assert set(sat2_cells) & all_early == all_early, \
+            f"n_courts={n_courts}: early playoffs missing from sat2"
+        assert not (set(sun2_cells) & all_early), \
+            f"n_courts={n_courts}: early playoffs leaked into sun2"
 
-        # Each sport stays on its own dedicated court block (no cross-sport sharing)
+        # Finals land on sun2, not sat2
+        assert set(sun2_cells) & all_final == all_final, \
+            f"n_courts={n_courts}: finals missing from sun2"
+        assert not (set(sat2_cells) & all_final), \
+            f"n_courts={n_courts}: finals leaked into sat2"
+
+        # Pool games never appear in sun2
+        assert not (set(sun2_cells) & all_pool), \
+            f"n_courts={n_courts}: pool games leaked into sun2"
+
+        # Playoffs/finals stay on their primary court blocks
         n_sports = len(pool_queues)
         base = n_courts // n_sports
         extras = n_courts % n_sports
         cur = 0
-        for sport_idx, (pool_q, playoff_q) in enumerate(zip(pool_queues, playoff_queues)):
+        for sport_idx, (early_q, final_q) in enumerate(zip(early_playoff_queues, final_queues)):
             k = base + (1 if sport_idx < extras else 0)
             sport_courts = set(range(cur, cur + k))
             cur += k
-            sport_ids = set(pool_q) | set(playoff_q)
-            for sess_idx, sess_cells_2d in enumerate(grids):
-                for t, row in enumerate(sess_cells_2d):
+            playoff_ids = set(early_q) | set(final_q)
+            for sess_idx in [2, 3]:  # sat2, sun2 only
+                for t, row in enumerate(grids[sess_idx]):
                     for c_idx, game_id in enumerate(row):
-                        if game_id in sport_ids:
+                        if game_id in playoff_ids:
                             assert c_idx in sport_courts, (
                                 f"n_courts={n_courts} sport={sport_idx}: "
                                 f"{game_id} on court {c_idx}, expected {sport_courts}"
