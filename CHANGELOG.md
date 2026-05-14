@@ -8,6 +8,18 @@
   - Audit summary line now includes a `Removed: N/M (stuck/API-undeleteable: K)` count when removal is active; "stuck" records are ones where DELETE also returns 404 due to a ChMeetings platform bug (filed as ChMeetings support ticket **#20188** — follow up if stuck count remains non-zero after resolution)
   - Run without the flag first to review `data/team_group_orphan_audit.xlsx`, then re-run with `--remove-orphans` to clean up
   - Combines cleanly with `--church-code` to target a single church: `python main.py audit-team-groups --church-code GAC --remove-orphans`
+- Added `Pod-Resource-Estimate` tab to the consolidated ALL Excel export — closes [#86](https://github.com/i12know/vaysf/issues/86)
+  - Compares current racquet-sport registration demand against staff-entered venue resources for Tennis, Pickleball, Pickleball 35+, Table Tennis, Table Tennis 35+, and Badminton
+  - Required slots use single-elimination formula: `entries − 1` (doubles counted as complete pairs, matching the Venue-Estimator definition)
+  - Available slots are read from `middleware/data/venue_input.xlsx` (staff fills this in); multiple pod rows for the same resource type are summed automatically
+  - Fit Status color-coded: **Green** (surplus ≥ 0), **Yellow** (short 1–3), **Red** (short 4+)
+  - If `venue_input.xlsx` is missing, the tab renders with a `"No venue data"` status and a notice pointing to the template
+  - Resource type groupings: Tennis Court (Tennis), Pickleball Court (Pickleball + Pickleball 35+), Table Tennis Table (Table Tennis + Table Tennis 35+), Badminton Court (Badminton)
+  - Added `python main.py generate-venue-template` command to create (or regenerate) `SportsFest_2026_Venue_Input_Template.xlsx` with pre-filled example rows and formula column `=D*(((G-F)*60/H)+1)` for Available Slots
+  - Starter template committed at `middleware/data/SportsFest_2026_Venue_Input_Template.xlsx`; staff copy it to `venue_input.xlsx`, fill in pod details, and re-run the export
+  - `POD_RESOURCE_TYPE_*` and `POD_RESOURCE_EVENT_TYPE` constants added to `config.py`; fit-status colour constants `POD_FIT_COLOR_*` and `POD_FIT_YELLOW_MAX = 3` also configurable there
+  - **Excel-only planning artifact** — no data is written to WordPress `sf_schedules`; no OR-Tools scheduling
+  - Tab is absent from per-church exports; only appears in the consolidated ALL export
 - Added `Court-Schedule-Sketch` tab to the consolidated ALL Excel export — closes [#85](https://github.com/i12know/vaysf/issues/85)
   - Renders three side-by-side court-count scenarios (3, 4, 5 courts) separated by an empty column on a single worksheet
   - Each scenario shows four sessions: 1st Saturday (08:00–20:00), 1st Sunday (13:00–20:00), 2nd Saturday (08:00–20:00), 2nd Sunday (13:00–20:00), matching Sports Fest two-weekend format

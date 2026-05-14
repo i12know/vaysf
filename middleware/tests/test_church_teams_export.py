@@ -1185,3 +1185,138 @@ def test_court_schedule_sketch_game_id_prefixes(mock_connectors, tmp_path):
         f"Expected named playoff labels in Court-Schedule-Sketch, got: {found_playoff_labels}"
     )
     assert "Final" in found_playoff_labels, "Expected BBM/VBM/VBW-Final in sketch"
+
+
+# ── Pod-Resource-Estimate tests (Issue #86) ─────────────────────────────────
+
+
+def test_pod_resource_estimate_tab_present(mock_connectors, tmp_path):
+    """Pod-Resource-Estimate tab appears only in the consolidated ALL export."""
+    exporter = ChurchTeamsExporter()
+    summary_rows = [{
+        "Church Code": "RPC",
+        "Total Members (ChM Team Group)": 6, "Total Participants (in WP)": 6,
+        "Total Approved (WP)": 0, "Total Pending Approval (WP)": 6, "Total Denied (WP)": 0,
+        "Total Participants w/ Open ERRORs (WP)": 0,
+        "Total Open Individual ERRORs (WP)": 0, "Total Open TEAM ERRORs (WP)": 0,
+        "Total Open WARNINGs (WP)": 0, "Total Sports w/ Open TEAM Issues (WP)": 0,
+        "Latest ChM Record Update for Team": "2026-05-13",
+    }]
+
+    single_path = tmp_path / "single.xlsx"
+    exporter._write_excel_report(single_path, summary_rows, [], [], [])
+    assert "Pod-Resource-Estimate" not in pd.ExcelFile(single_path).sheet_names
+
+    all_path = tmp_path / "all.xlsx"
+    exporter._write_excel_report(all_path, summary_rows, [], [], [], include_venue_capacity=True)
+    assert "Pod-Resource-Estimate" in pd.ExcelFile(all_path).sheet_names
+
+
+def test_pod_resource_estimate_no_venue_input(mock_connectors, tmp_path):
+    """When no venue_input.xlsx exists, tab still renders with notice row."""
+    exporter = ChurchTeamsExporter()
+    # Provide zero registrations — all entries will be 0.
+    available = {}  # empty — no venue file
+    pod_rows = exporter._build_pod_resource_rows([], available)
+
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    exporter._write_pod_resource_estimate(ws, pod_rows, available)
+
+    # All Fit Status cells say "No venue data"
+    fit_values = {ws.cell(row=r, column=7).value for r in range(2, 2 + len(pod_rows))}
+    assert fit_values == {"No venue data"}, f"Unexpected fit values: {fit_values}"
+
+
+def test_pod_resource_estimate_fit_status_rules(mock_connectors):
+    """Green/Yellow/Red thresholds from POD_FIT_YELLOW_MAX (= 3)."""
+    exporter = ChurchTeamsExporter()
+    from config import POD_RESOURCE_TYPE_BADMINTON, POD_FIT_YELLOW_MAX
+
+    # Build roster rows: 10 Badminton singles → Required = 9
+    roster_rows = [
+        {"sport_type": "Badminton", "sport_format": "Men Singles"} for _ in range(10)
+    ]
+
+    # Green: available >= required (9)
+    green = exporter._build_pod_resource_rows(
+        roster_rows, {POD_RESOURCE_TYPE_BADMINTON: 9}
+    )
+    badminton_green = next(r for r in green if "Badminton" in r["Event"])
+    assert badminton_green["Fit Status"] == "Green"
+    assert badminton_green["Surplus / Shortage"] == 0
+
+    # Yellow: short by 1 to POD_FIT_YELLOW_MAX (3)
+    yellow = exporter._build_pod_resource_rows(
+        roster_rows, {POD_RESOURCE_TYPE_BADMINTON: 9 - POD_FIT_YELLOW_MAX}
+    )
+    badminton_yellow = next(r for r in yellow if "Badminton" in r["Event"])
+    assert badminton_yellow["Fit Status"] == "Yellow"
+
+    # Red: short by more than POD_FIT_YELLOW_MAX
+    red = exporter._build_pod_resource_rows(
+        roster_rows, {POD_RESOURCE_TYPE_BADMINTON: 9 - POD_FIT_YELLOW_MAX - 1}
+    )
+    badminton_red = next(r for r in red if "Badminton" in r["Event"])
+    assert badminton_red["Fit Status"] == "Red"
+
+
+def test_load_venue_input_aggregates_by_resource_type(mock_connectors, tmp_path):
+    """Available Slots are summed across multiple rows of the same resource type."""
+    from openpyxl import Workbook
+    from config import POD_RESOURCE_TYPE_PICKLEBALL
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+
+    # Two Pickleball Court rows: 24 + 18 = 42 total
+    ws.cell(row=2, column=3, value=POD_RESOURCE_TYPE_PICKLEBALL)
+    ws.cell(row=2, column=9, value=24)
+    ws.cell(row=3, column=3, value=POD_RESOURCE_TYPE_PICKLEBALL)
+    ws.cell(row=3, column=9, value=18)
+
+    path = tmp_path / "venue_input.xlsx"
+    wb.save(path)
+
+    result = ChurchTeamsExporter._load_venue_input(path)
+    assert result[POD_RESOURCE_TYPE_PICKLEBALL] == 42
+
+
+def test_load_venue_input_fallback_formula(mock_connectors, tmp_path):
+    """When Available Slots is zero/missing, compute from Quantity/times/Slot Minutes."""
+    from openpyxl import Workbook
+    from config import POD_RESOURCE_TYPE_TENNIS
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+
+    # 4 courts, 13:00–18:00, 60-min slots → (18-13)*60/60 + 1 = 6 starts → 4*6 = 24
+    ws.cell(row=2, column=3, value=POD_RESOURCE_TYPE_TENNIS)
+    ws.cell(row=2, column=4, value=4)    # Quantity
+    ws.cell(row=2, column=6, value=13)   # Start Time (decimal hour)
+    ws.cell(row=2, column=7, value=18)   # Last Start Time
+    ws.cell(row=2, column=8, value=60)   # Slot Minutes
+    ws.cell(row=2, column=9, value=0)    # Available Slots = 0 → triggers fallback
+
+    path = tmp_path / "venue_input.xlsx"
+    wb.save(path)
+
+    result = ChurchTeamsExporter._load_venue_input(path)
+    assert result[POD_RESOURCE_TYPE_TENNIS] == 24

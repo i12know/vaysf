@@ -491,6 +491,32 @@ COURT_ESTIMATE_PLAYOFF_RULES = [
     {"min_teams": 8, "max_teams": 999, "playoff_teams": 8},
 ]
 
+# Pod-Resource-Estimate constants (Issue #86)
+# Excel-only planning tool for satellite racquet-sport pods — no WordPress writes.
+VENUE_INPUT_FILENAME    = "venue_input.xlsx"
+VENUE_TEMPLATE_FILENAME = "SportsFest_2026_Venue_Input_Template.xlsx"
+
+POD_RESOURCE_TYPE_TENNIS       = "Tennis Court"
+POD_RESOURCE_TYPE_PICKLEBALL   = "Pickleball Court"
+POD_RESOURCE_TYPE_TABLE_TENNIS = "Table Tennis Table"
+POD_RESOURCE_TYPE_BADMINTON    = "Badminton Court"
+
+# Maps each racquet sport to its resource type for capacity comparison.
+POD_RESOURCE_EVENT_TYPE = {
+    SPORT_TYPE["TENNIS"]:          POD_RESOURCE_TYPE_TENNIS,
+    SPORT_TYPE["PICKLEBALL"]:      POD_RESOURCE_TYPE_PICKLEBALL,
+    SPORT_TYPE["PICKLEBALL_35"]:   POD_RESOURCE_TYPE_PICKLEBALL,
+    SPORT_TYPE["TABLE_TENNIS"]:    POD_RESOURCE_TYPE_TABLE_TENNIS,
+    SPORT_TYPE["TABLE_TENNIS_35"]: POD_RESOURCE_TYPE_TABLE_TENNIS,
+    SPORT_TYPE["BADMINTON"]:       POD_RESOURCE_TYPE_BADMINTON,
+}
+
+# Fit-status color fills (Excel conditional formatting equivalent).
+POD_FIT_COLOR_GREEN  = "C6EFCE"  # surplus ≥ 0
+POD_FIT_COLOR_YELLOW = "FFEB9C"  # short by 1–3
+POD_FIT_COLOR_RED    = "FFC7CE"  # short by 4+
+POD_FIT_YELLOW_MAX   = 3         # max shortage still rated Yellow
+
 # Court-Schedule-Sketch tab constants (Excel planning tool — no WordPress writes)
 SCHEDULE_SKETCH_SATURDAY_START    = 8   # first game hour (24h), 08:00 AM
 SCHEDULE_SKETCH_SATURDAY_LAST_GAME = 20  # last game start hour, 08:00 PM

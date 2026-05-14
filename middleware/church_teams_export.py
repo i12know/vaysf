@@ -11,6 +11,7 @@ import unicodedata
 
 from config import (
     Config,
+    DATA_DIR,
     CHECK_BOXES,
     CHM_FIELDS,
     MEMBERSHIP_QUESTION,
@@ -42,6 +43,13 @@ from config import (
     SCHEDULE_SKETCH_COLOR_VB_WOMEN,
     SCHEDULE_SKETCH_COLOR_SECTION,
     SCHEDULE_SKETCH_COLOR_HEADER,
+    VENUE_INPUT_FILENAME,
+    COURT_ESTIMATE_RACQUET_EVENTS,
+    POD_RESOURCE_EVENT_TYPE,
+    POD_FIT_COLOR_GREEN,
+    POD_FIT_COLOR_YELLOW,
+    POD_FIT_COLOR_RED,
+    POD_FIT_YELLOW_MAX,
 )
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
@@ -1556,6 +1564,164 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             f"+ {total_final} finals across {len(n_courts_list)} scenarios."
         )
 
+    # ── Pod-Resource-Estimate helpers (Issue #86) ──────────────────────────────
+
+    @staticmethod
+    def _parse_hour(val) -> float:
+        """Convert a cell value to a decimal hour (e.g. datetime.time(13,0) → 13.0)."""
+        import datetime as _dt
+        if isinstance(val, _dt.time):
+            return val.hour + val.minute / 60.0
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _load_venue_input(venue_input_path: Path) -> Dict[str, int]:
+        """Read venue_input.xlsx and return {resource_type: total_available_slots}.
+
+        Each row may have Available Slots pre-computed (formula or number).
+        If Available Slots is missing/zero, falls back to computing from
+        Quantity, Start Time, Last Start Time, and Slot Minutes.
+        Returns an empty dict if the file does not exist.
+        """
+        if not venue_input_path.exists():
+            return {}
+        try:
+            df = pd.read_excel(venue_input_path, sheet_name="Venue-Input", engine="openpyxl")
+        except Exception as e:
+            logger.warning(f"Could not read venue input file {venue_input_path}: {e}")
+            return {}
+
+        totals: Dict[str, int] = {}
+        for _, row in df.iterrows():
+            resource_type = str(row.get("Resource Type") or "").strip()
+            if not resource_type:
+                continue
+            avail = row.get("Available Slots")
+            if pd.isna(avail) or not avail:
+                # Formula wasn't cached — compute from component columns.
+                qty       = float(row.get("Quantity") or 0)
+                start     = ChurchTeamsExporter._parse_hour(row.get("Start Time"))
+                last_start = ChurchTeamsExporter._parse_hour(row.get("Last Start Time"))
+                slot_min  = float(row.get("Slot Minutes") or 1)
+                if slot_min > 0 and qty > 0 and last_start >= start:
+                    avail = qty * ((last_start - start) * 60 / slot_min + 1)
+                else:
+                    avail = 0
+            totals[resource_type] = totals.get(resource_type, 0) + int(avail)
+        logger.debug(f"Loaded venue input: {totals}")
+        return totals
+
+    def _build_pod_resource_rows(
+        self,
+        roster_rows: List[Dict[str, Any]],
+        available_by_resource: Dict[str, int],
+    ) -> List[Dict[str, Any]]:
+        """Build Pod-Resource-Estimate output rows.
+
+        Required slots use single-elimination: entries - 1
+        (doubles counted as complete pairs, same as _count_racquet_entries).
+        """
+        rows = []
+        for sport_name in COURT_ESTIMATE_RACQUET_EVENTS:
+            counts = self._count_racquet_entries(roster_rows, sport_name)
+            n = counts["n_estimating"]
+            resource_type = POD_RESOURCE_EVENT_TYPE.get(sport_name, "")
+            required = max(0, n - 1)
+            available = available_by_resource.get(resource_type, 0)
+            surplus = available - required
+            if not available_by_resource:
+                fit_status = "No venue data"
+            elif surplus >= 0:
+                fit_status = "Green"
+            elif surplus >= -POD_FIT_YELLOW_MAX:
+                fit_status = "Yellow"
+            else:
+                fit_status = "Red"
+            rows.append({
+                "Event":              sport_name,
+                "Resource Type":      resource_type,
+                "Entries / Teams":    n,
+                "Required Slots":     required,
+                "Available Slots":    available,
+                "Surplus / Shortage": surplus,
+                "Fit Status":         fit_status,
+            })
+        return rows
+
+    def _write_pod_resource_estimate(
+        self,
+        ws,
+        pod_rows: List[Dict[str, Any]],
+        available_by_resource: Dict[str, int],
+    ) -> None:
+        """Write Pod-Resource-Estimate tab content with colour-coded Fit Status."""
+        from openpyxl.styles import PatternFill, Font, Alignment
+
+        cols = ["Event", "Resource Type", "Entries / Teams",
+                "Required Slots", "Available Slots", "Surplus / Shortage", "Fit Status"]
+
+        header_fill = PatternFill("solid", fgColor=SCHEDULE_SKETCH_COLOR_HEADER)
+        header_font = Font(color="FFFFFF", bold=True)
+
+        # Header row
+        for c_idx, col in enumerate(cols, start=1):
+            cell = ws.cell(row=1, column=c_idx, value=col)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+
+        fit_colors = {
+            "Green":  POD_FIT_COLOR_GREEN,
+            "Yellow": POD_FIT_COLOR_YELLOW,
+            "Red":    POD_FIT_COLOR_RED,
+        }
+
+        if not available_by_resource:
+            notice = (
+                "No venue input loaded — "
+                f"create {VENUE_INPUT_FILENAME} from the template and re-run the export"
+            )
+            ws.cell(row=2, column=1, value=notice)
+            for c_idx, col in enumerate(cols, start=1):
+                row_cell = ws.cell(row=2, column=c_idx)
+                if c_idx == 1:
+                    row_cell.value = notice
+                else:
+                    row_cell.value = None
+
+        for r_idx, row in enumerate(pod_rows, start=2):
+            for c_idx, col in enumerate(cols, start=1):
+                cell = ws.cell(row=r_idx, column=c_idx, value=row[col])
+                if col in ("Entries / Teams", "Required Slots", "Available Slots",
+                           "Surplus / Shortage"):
+                    cell.alignment = Alignment(horizontal="right")
+                if col == "Fit Status":
+                    color = fit_colors.get(row["Fit Status"])
+                    if color:
+                        cell.fill = PatternFill("solid", fgColor=color)
+                    cell.alignment = Alignment(horizontal="center")
+
+        # Column widths
+        ws.column_dimensions["A"].width = 26
+        ws.column_dimensions["B"].width = 22
+        for letter in ["C", "D", "E", "F", "G"]:
+            ws.column_dimensions[letter].width = 16
+
+        # Snapshot note
+        note_row = len(pod_rows) + 3
+        ws.cell(
+            row=note_row, column=1,
+            value=(
+                f"Venue data loaded from {VENUE_INPUT_FILENAME}. "
+                "Required = entries − 1 (single elimination). "
+                f"Green ≥ 0 | Yellow short 1–{POD_FIT_YELLOW_MAX} | Red short {POD_FIT_YELLOW_MAX + 1}+."
+            ),
+        )
+        logger.debug(f"Pod-Resource-Estimate tab: {len(pod_rows)} rows.")
+
     def _write_excel_report(self, filepath: Path,
                             summary_rows: List[Dict[str, Any]],
                             contacts_rows: List[Dict[str, Any]],
@@ -1717,6 +1883,13 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     # Court-Schedule-Sketch Tab (Excel-only planning — no WordPress writes)
                     sketch_ws = writer.book.create_sheet(title="Court-Schedule-Sketch")
                     self._write_court_schedule_sketch(sketch_ws, roster_rows)
+
+                    # Pod-Resource-Estimate Tab (Excel-only planning — no WordPress writes)
+                    venue_input_path = DATA_DIR / VENUE_INPUT_FILENAME
+                    available_by_resource = self._load_venue_input(venue_input_path)
+                    pod_rows = self._build_pod_resource_rows(roster_rows, available_by_resource)
+                    pod_ws = writer.book.create_sheet(title="Pod-Resource-Estimate")
+                    self._write_pod_resource_estimate(pod_ws, pod_rows, available_by_resource)
 
                 # Add yellow note to Photo column in Roster sheet
                 if not df_roster.empty:
