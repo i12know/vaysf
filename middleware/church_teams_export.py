@@ -26,6 +26,7 @@ from config import (
     COURT_ESTIMATE_EVENTS,
     COURT_ESTIMATE_RACQUET_EVENTS,
     COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM,
+    COURT_ESTIMATE_POOL_GAMES_PER_TEAM,
     COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
     COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME,
     COURT_ESTIMATE_MIN_TEAM_SIZE,
@@ -1093,8 +1094,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         return 0
 
     def _compute_court_slots(self, n_teams: int,
-                              minutes_per_game: int = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME) -> Dict[str, Any]:
-        pool_games_per_team = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
+                              minutes_per_game: int = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
+                              pool_games_per_team: int = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM) -> Dict[str, Any]:
         include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
 
         pool_slots = ceil((n_teams * pool_games_per_team) / 2) if n_teams > 0 else 0
@@ -1148,7 +1149,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             min_team_size = self._get_min_team_size(event_name)
             counts = self._count_estimating_teams(roster_rows, event_name, min_team_size)
             mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(event_name, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME)
-            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg)
+            gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM)
+            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg, pool_games_per_team=gpg)
             rows.append({
                 "Event": event_name,
                 "Potential Teams/Entries": counts["n_potential"],
@@ -1198,15 +1200,77 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         n_sun: int,
     ) -> List[List[List[str]]]:
         """
-        Build a 4-session grid (sat1, sun1, sat2, sun2) with three rules:
+        Build a 4-session court schedule for a given number of courts.
 
-        1. Dedicated primary court blocks per sport — no intra-court changeovers.
-        2. Pool overflow: once a sport finishes its pool games its courts become
-           available to whichever sport has the most remaining pool games, so a
-           sport with fewer courts (e.g. VBW on 1 court) can compress its
-           schedule by claiming freed BBM/VBM courts.
-        3. Early playoffs (QF + Semi) → sat2 only; Finals → sun2 only,
-           guaranteeing the championship games always fall on the last day.
+        Returns a list of 4 session grids:
+            grids[0] = 1st Saturday  (n_sat time slots)
+            grids[1] = 1st Sunday    (n_sun time slots)
+            grids[2] = 2nd Saturday  (n_sat time slots)
+            grids[3] = 2nd Sunday    (n_sun time slots)
+        Each grid is grids[session][time_slot][court_index] = game_id or "".
+
+        ── Court allocation ──────────────────────────────────────────────────
+        Courts are divided into contiguous "primary blocks", one per sport,
+        allocated proportionally.  Remainder courts go to the first sport(s)
+        (i.e., Basketball gets an extra court before Volleyball does).
+
+        Example with 5 courts and 3 sports:
+            base = 5 // 3 = 1, extras = 5 % 3 = 2
+            BBM → courts [0, 1]   (base 1 + 1 extra)
+            VBM → courts [2, 3]   (base 1 + 1 extra)
+            VBW → courts [4]      (base 1, no extra)
+
+        Rationale: keeps each court dedicated to one sport type, so no
+        net-height adjustment or equipment swap is needed mid-court.
+
+        ── Phase 1 — Pool fill (sat1 → sun1 → sat2) ─────────────────────────
+        For every time slot, courts are visited left-to-right (court 0, 1, …):
+
+        • If the primary sport for that court still has pool games left,
+          place the next game there (primary-first rule).
+        • If the primary sport has finished its pool games, the court is
+          idle.  The idle court is given to whichever sport currently has
+          the most remaining pool games (greedy-most-needy rule).
+
+        Effect in 5-court scenario (equal teams, 12 pool games each):
+            Slots 0–5   : BBM fills courts 0-1, VBM fills courts 2-3,
+                          VBW fills court 4  (all 3 sports running in parallel)
+            Slot 6+     : BBM and VBM are done; their 4 courts become idle.
+                          VBW still has 6 games → claims all 4 idle courts
+                          plus its own, running 5 VBW games simultaneously.
+                          VBW finishes at slot 7 (≈15:00) instead of slot 11
+                          (≈19:00) — the whole church leaves ~4 hours earlier.
+
+        Pool games never spill into sun2; that session is reserved for finals.
+
+        ── Phase 2 — Early playoffs (QF + Semis) on sat2 ───────────────────
+        After pool fill, each sport's empty cells in sat2 are collected in
+        (time_slot, court) order.  Early-round playoff games (QF-1…4 if 8
+        playoff teams, Semi-1 and Semi-2 otherwise) are placed there.
+
+        Playoffs are placed on the sport's primary courts only — no court
+        sharing — so the same nets and equipment remain in place.
+
+        ── Phase 3 — Finals on sun2 ─────────────────────────────────────────
+        Final and 3rd-place games are placed on each sport's empty cells in
+        sun2, again primary courts only.  This guarantees that championship
+        games always fall on the last day of the festival, regardless of how
+        pool play distributes across the earlier sessions.
+
+        ── Changing the algorithm ───────────────────────────────────────────
+        • Court count scenarios: edit SCHEDULE_SKETCH_N_COURTS in config.py.
+        • Session hours: edit SCHEDULE_SKETCH_SATURDAY_START / LAST_GAME and
+          SCHEDULE_SKETCH_SUNDAY_START / LAST_GAME in config.py.
+        • Court allocation order: the sport order in sport_defs inside
+          _write_court_schedule_sketch controls which sport gets extra courts
+          (earlier in the list = higher priority for extras).
+        • Pool overflow policy: replace the greedy-most-needy rule (the
+          `max(range(n_sports), key=lambda i: len(pool_remaining[i]))` line)
+          with any other priority function — e.g., fixed sport priority,
+          round-robin, or "same-sport block only" to revert to strict blocks.
+        • Playoff session assignment: swap early_playoff_queues and
+          final_queues arguments, or add a third category (e.g. Semis on
+          sun1) by adding a new fill phase following the same pattern.
         """
         n_sports = len(pool_queues)
         n_slots = [n_sat, n_sun, n_sat, n_sun]
@@ -1214,7 +1278,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             [[""] * n_courts for _ in range(n)] for n in n_slots
         ]
 
-        # Allocate contiguous primary court blocks; extras go to earlier sports
+        # Court block allocation
         base = n_courts // n_sports
         extras = n_courts % n_sports
         court_blocks: List[List[int]] = []
@@ -1226,11 +1290,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         court_to_primary = {c: i for i, courts in enumerate(court_blocks) for c in courts}
 
-        # --- Pool fill: sat1 → sun1 → sat2 ---
-        # Each court serves its primary sport first.  Once a sport's pool is
-        # exhausted, idle courts are redirected to the most-needy remaining sport.
+        # Phase 1: pool fill — primary-first, then greedy-most-needy for idle courts
         pool_remaining = [deque(q) for q in pool_queues]
-        for sess_idx in range(3):
+        for sess_idx in range(3):  # sat1, sun1, sat2
             for t in range(n_slots[sess_idx]):
                 for c in range(n_courts):
                     primary = court_to_primary[c]
@@ -1241,7 +1303,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         if pool_remaining[most_needy]:
                             grids[sess_idx][t][c] = pool_remaining[most_needy].popleft()
 
-        # --- Early playoffs (QF + Semi): first empty cells on primary courts in sat2 ---
+        # Phase 2: early playoffs (QF + Semi) on primary courts in sat2
         for early_q, courts in zip(early_playoff_queues, court_blocks):
             cells = [
                 (2, t, c)
@@ -1254,7 +1316,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     s, t, c = cells[i]
                     grids[s][t][c] = game_id
 
-        # --- Finals (Final + 3rd): first empty cells on primary courts in sun2 ---
+        # Phase 3: finals (Final + 3rd) on primary courts in sun2
         for final_q, courts in zip(final_queues, court_blocks):
             cells = [
                 (3, t, c)
@@ -1275,8 +1337,17 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
     ) -> Tuple[List[str], List[str]]:
         """Return (early_ids, final_ids) split by which weekend they belong to.
 
-        early_ids  (QF + Semi)  → 2nd Saturday
-        final_ids  (Final + 3rd) → 2nd Sunday
+        early_ids  — QF + Semi games, scheduled on 2nd Saturday.
+        final_ids  — Final (+ optional 3rd-place), scheduled on 2nd Sunday.
+
+        Bracket size is determined by playoff_teams (from COURT_ESTIMATE_PLAYOFF_RULES):
+            0 teams  → no playoff games
+            4 teams  → Semi-1, Semi-2 | Final [+ 3rd]
+            8 teams  → QF-1…4, Semi-1, Semi-2 | Final [+ 3rd]
+
+        To add a new bracket size (e.g. 16 teams with quarter-finals already
+        called Round-of-16), extend the if/elif chain here and add matching
+        rows to COURT_ESTIMATE_PLAYOFF_RULES in config.py.
         """
         early_ids: List[str] = []
         if playoff_teams >= 8:
@@ -1307,7 +1378,6 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         """
         from openpyxl.styles import PatternFill, Font, Alignment
 
-        pool_gpg = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
         mpg = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
         include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
 
@@ -1318,13 +1388,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW", SCHEDULE_SKETCH_COLOR_VB_WOMEN),
         ]
 
-        # --- Compute game IDs per sport ---
+        # --- Compute game IDs per sport (per-sport pool games per team) ---
         sport_meta: Dict[str, Dict] = {}
         for event_name, prefix, color in sport_defs:
             min_sz = self._get_min_team_size(event_name)
             counts = self._count_estimating_teams(roster_rows, event_name, min_sz)
             n_teams = counts["n_estimating"] if counts["n_estimating"] >= 2 else 8
-            s = self._compute_court_slots(n_teams, mpg)
+            gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM)
+            s = self._compute_court_slots(n_teams, mpg, pool_games_per_team=gpg)
             early_ids, final_ids = self._make_playoff_ids(
                 prefix, s["playoff_teams"], include_third
             )
@@ -1332,6 +1403,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "prefix": prefix,
                 "color": color,
                 "n_teams": n_teams,
+                "pool_gpg": gpg,
                 "pool_ids":   [f"{prefix}-{i:02d}" for i in range(1, s["pool_slots"] + 1)],
                 "early_ids":  early_ids,   # QF + Semi → 2nd Saturday
                 "final_ids":  final_ids,   # Final + 3rd → 2nd Sunday
@@ -1388,11 +1460,15 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         COL_HDR_ROW     = 4
         DATA_START_ROW  = 5
 
-        # --- Row 1: inputs summary ---
+        # --- Row 1: inputs summary (per-sport pool games per team) ---
         ws.cell(row=INPUTS_ROW, column=1, value="Inputs:").font = bold_font
-        ws.cell(row=INPUTS_ROW, column=2, value=f"Pool games/team: {pool_gpg}")
-        ws.cell(row=INPUTS_ROW, column=5, value=f"Minutes/game: {mpg}")
-        ws.cell(row=INPUTS_ROW, column=9, value=f"3rd place: {'Yes' if include_third else 'No'}")
+        col = 2
+        for ev, prefix, _ in sport_defs:
+            ws.cell(row=INPUTS_ROW, column=col,
+                    value=f"{prefix} pool games/team: {sport_meta[ev]['pool_gpg']}")
+            col += 3
+        ws.cell(row=INPUTS_ROW, column=col,     value=f"Minutes/game: {mpg}")
+        ws.cell(row=INPUTS_ROW, column=col + 3, value=f"3rd place: {'Yes' if include_third else 'No'}")
 
         # --- Row 2: per-sport game counts ---
         ws.cell(row=2, column=1, value="Game totals:").font = bold_font
