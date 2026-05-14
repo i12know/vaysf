@@ -135,6 +135,10 @@ Validation is JSON-driven with Pydantic models. The rules live in a JSON file re
 3. Run `pytest` (mock mode) to confirm the rule behaves as intended.
 4. Note the rule change in `CHANGELOG.md` with a reference to the issue or request that motivated it.
 
+## Scheduling pipeline
+
+Game scheduling runs as a four-step pipeline: roster export → `schedule_input.json` → CP-SAT solver → Excel timetable. Before writing or modifying any scheduling code (Steps 1–4), read `docs/SCHEDULING.md`. It describes the pipeline, the `schedule_input.json` schema, what the OR-Tools POC proved, and the five constraint gaps that must be filled in Issues #93 and #94.
+
 ## Pastor approval workflow
 
 Pastors approve (or decline) their church's participants through the WordPress admin or via email link. The middleware pulls approval status from WordPress, then writes it back to ChMeetings group membership via API. If the API sync fails repeatedly, the `--excel-fallback` path is available but should be treated as a symptom that needs root-cause investigation, not a permanent workaround.
