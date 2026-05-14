@@ -21,6 +21,7 @@ from config import (
     ATHLETE_FEE_LATE,
     REGISTRATION_DEADLINE,
     SPORT_TYPE,
+    RACQUET_SPORTS,
     is_racquet_sport,
     COURT_ESTIMATE_EVENTS,
     COURT_ESTIMATE_RACQUET_EVENTS,
@@ -30,7 +31,9 @@ from config import (
     COURT_ESTIMATE_MIN_TEAM_SIZE,
     COURT_ESTIMATE_MINUTES_PER_GAME,
     COURT_ESTIMATE_PLAYOFF_RULES,
+    POD_SPORT_ABBREV,
 )
+from validation.name_matcher import normalized_name as _norm_name
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
 from validation.models import RulesManager
@@ -1129,6 +1132,318 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             "team_codes": "",
         }
 
+    # ── Pod-Divisions / Pod-Entries-Review helpers (Issue #88) ──────────────
+
+    @staticmethod
+    def _pod_format_class(sport_format: str) -> str:
+        """Classify a sport_format string into 'singles', 'doubles', or 'anomaly'."""
+        fmt = (sport_format or "").strip().casefold()
+        if "single" in fmt:
+            return "singles"
+        if "double" in fmt:
+            return "doubles"
+        return "anomaly"
+
+    @staticmethod
+    def _make_division_id(sport_type: str, sport_gender: str, format_class: str) -> str:
+        """Return a canonical division_id string, e.g. 'BAD-Men-Singles'."""
+        abbrev = POD_SPORT_ABBREV.get(sport_type, sport_type[:3].upper())
+        gender_part = sport_gender or "Unknown"
+        format_part = format_class.title() if format_class != "anomaly" else "Anomaly"
+        return f"{abbrev}-{gender_part}-{format_part}"
+
+    @staticmethod
+    def _build_pod_error_lookup(
+        validation_rows: List[Dict[str, Any]],
+    ) -> Dict[str, set]:
+        """Return {str(participant_id) → set(sport_types)} for open ERRORs."""
+        lookup: Dict[str, set] = {}
+        for v in validation_rows:
+            if str(v.get("Severity", "")).upper() != "ERROR":
+                continue
+            if str(v.get("Status", "")).lower() != "open":
+                continue
+            pid = str(v.get("Participant ID (WP)") or "").strip()
+            if not pid or pid in ("0",):
+                continue
+            sport = str(v.get("sport_type") or "").strip()
+            lookup.setdefault(pid, set()).add(sport)
+        return lookup
+
+    def _build_pod_divisions_rows(
+        self,
+        roster_rows: List[Dict[str, Any]],
+        validation_rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Build one summary row per pod division for the Pod-Divisions tab."""
+        error_lookup = self._build_pod_error_lookup(validation_rows)
+
+        # Accumulate per-division counts.
+        # key: (sport_type, sport_gender, format_class)
+        divs: Dict[tuple, Dict[str, Any]] = {}
+
+        for r in roster_rows:
+            sport_type = str(r.get("sport_type") or "").strip()
+            if sport_type not in RACQUET_SPORTS:
+                continue
+            sport_gender = str(r.get("sport_gender") or "").strip()
+            sport_format = str(r.get("sport_format") or "").strip()
+            fmt_class = self._pod_format_class(sport_format)
+
+            key = (sport_type, sport_gender, fmt_class)
+            if key not in divs:
+                divs[key] = {
+                    "sport_type": sport_type,
+                    "sport_gender": sport_gender,
+                    "sport_format": sport_format,
+                    "n_total": 0,
+                    "n_confirmed": 0,
+                    "n_anomaly": 0,
+                }
+
+            pid = str(r.get("Participant ID (WP)") or "").strip()
+            has_error = bool(pid and pid not in ("0",) and sport_type in error_lookup.get(pid, set()))
+
+            if fmt_class == "anomaly":
+                divs[key]["n_anomaly"] += 1
+            else:
+                divs[key]["n_total"] += 1
+                if not has_error:
+                    divs[key]["n_confirmed"] += 1
+
+        rows: List[Dict[str, Any]] = []
+        for (sport_type, sport_gender, fmt_class), div in sorted(divs.items()):
+            division_id = self._make_division_id(sport_type, sport_gender, fmt_class)
+            mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(sport_type, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME)
+
+            if fmt_class == "doubles":
+                planning = div["n_total"] // 2
+                confirmed = div["n_confirmed"] // 2
+            else:
+                planning = div["n_total"]
+                confirmed = div["n_confirmed"]
+
+            provisional = planning - confirmed
+            anomaly_count = div["n_anomaly"]
+
+            if planning == 0 and anomaly_count == 0:
+                status = "Empty"
+            elif planning == 0:
+                status = "AnomalyOnly"
+            elif anomaly_count > 0 or provisional > 0:
+                status = "Partial"
+            else:
+                status = "Ready"
+
+            rows.append({
+                "division_id": division_id,
+                "sport_type": sport_type,
+                "sport_gender": sport_gender,
+                "sport_format": div["sport_format"],
+                "resource_type": "Court",
+                "minutes_per_game": mpg,
+                "planning_entries": planning,
+                "confirmed_entries": confirmed,
+                "provisional_entries": provisional,
+                "anomaly_count": anomaly_count,
+                "division_status": status,
+                "notes": "",
+            })
+
+        return rows
+
+    def _build_pod_entries_review_rows(
+        self,
+        roster_rows: List[Dict[str, Any]],
+        validation_rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Build one review row per singles player, doubles pair, or anomaly.
+
+        Doubles are matched by reciprocal partner_name declarations using
+        normalized name comparison. Unmatched doubles surface as UnresolvedDoubles.
+        Confirmed/provisional status is determined by open ERROR presence.
+        """
+        error_lookup = self._build_pod_error_lookup(validation_rows)
+
+        # Separate racquet entries by format class.
+        singles_rows: List[Dict[str, Any]] = []
+        doubles_rows: List[Dict[str, Any]] = []
+        anomaly_rows: List[Dict[str, Any]] = []
+
+        for r in roster_rows:
+            sport_type = str(r.get("sport_type") or "").strip()
+            if sport_type not in RACQUET_SPORTS:
+                continue
+            fmt_class = self._pod_format_class(str(r.get("sport_format") or ""))
+            if fmt_class == "singles":
+                singles_rows.append(r)
+            elif fmt_class == "doubles":
+                doubles_rows.append(r)
+            else:
+                anomaly_rows.append(r)
+
+        entry_rows: List[Dict[str, Any]] = []
+        entry_counter = 0
+
+        def _full_name(r: Dict[str, Any]) -> str:
+            return f"{r.get('First Name', '')} {r.get('Last Name', '')}".strip()
+
+        def _pid(r: Dict[str, Any]) -> str:
+            return str(r.get("Participant ID (WP)") or r.get("ChMeetings ID") or "").strip()
+
+        def _has_error(r: Dict[str, Any]) -> bool:
+            pid = _pid(r)
+            sport = str(r.get("sport_type") or "").strip()
+            return bool(pid and pid not in ("0",) and sport in error_lookup.get(pid, set()))
+
+        # Singles — one entry per participant.
+        for r in singles_rows:
+            entry_counter += 1
+            sport_type = str(r.get("sport_type") or "").strip()
+            sport_gender = str(r.get("sport_gender") or "").strip()
+            division_id = self._make_division_id(sport_type, sport_gender, "singles")
+            entry_rows.append({
+                "entry_id": entry_counter,
+                "division_id": division_id,
+                "entry_type": "Singles",
+                "participant_1_name": _full_name(r),
+                "participant_2_name": "",
+                "source_participant_ids": _pid(r),
+                "church_team": str(r.get("Church Team") or ""),
+                "partner_status": "N/A",
+                "review_status": "NeedsReview" if _has_error(r) else "OK",
+                "notes": "",
+            })
+
+        # Doubles — attempt reciprocal pairing within each division.
+        # Group by (sport_type, sport_gender) across all churches.
+        doubles_by_div: Dict[tuple, List[Dict[str, Any]]] = {}
+        for r in doubles_rows:
+            sport_type = str(r.get("sport_type") or "").strip()
+            sport_gender = str(r.get("sport_gender") or "").strip()
+            doubles_by_div.setdefault((sport_type, sport_gender), []).append(r)
+
+        for (sport_type, sport_gender), div_rows in sorted(doubles_by_div.items()):
+            division_id = self._make_division_id(sport_type, sport_gender, "doubles")
+            name_to_rows: Dict[str, List[Dict[str, Any]]] = {}
+            for r in div_rows:
+                key = _norm_name(_full_name(r))
+                if key:
+                    name_to_rows.setdefault(key, []).append(r)
+
+            paired_pids: set = set()
+
+            for r in div_rows:
+                pid_a = _pid(r)
+                if pid_a and pid_a in paired_pids:
+                    continue
+
+                name_a = _full_name(r)
+                partner_decl = str(r.get("partner_name") or "").strip()
+
+                if not partner_decl:
+                    entry_counter += 1
+                    entry_rows.append({
+                        "entry_id": entry_counter,
+                        "division_id": division_id,
+                        "entry_type": "UnresolvedDoubles",
+                        "participant_1_name": name_a,
+                        "participant_2_name": "",
+                        "source_participant_ids": pid_a,
+                        "church_team": str(r.get("Church Team") or ""),
+                        "partner_status": "MissingPartner",
+                        "review_status": "NeedsReview",
+                        "notes": "No partner declared",
+                    })
+                    if pid_a:
+                        paired_pids.add(pid_a)
+                    continue
+
+                partner_key = _norm_name(partner_decl)
+                candidates = name_to_rows.get(partner_key, [])
+
+                # Look for a reciprocal candidate not yet paired.
+                name_a_key = _norm_name(name_a)
+                reciprocal = next(
+                    (
+                        c for c in candidates
+                        if _pid(c) not in paired_pids
+                        and _norm_name(str(c.get("partner_name") or "")) == name_a_key
+                    ),
+                    None,
+                )
+
+                if reciprocal:
+                    pid_b = _pid(reciprocal)
+                    entry_counter += 1
+                    both_ok = not _has_error(r) and not _has_error(reciprocal)
+                    churches = ", ".join(sorted({
+                        str(r.get("Church Team") or ""),
+                        str(reciprocal.get("Church Team") or ""),
+                    }))
+                    entry_rows.append({
+                        "entry_id": entry_counter,
+                        "division_id": division_id,
+                        "entry_type": "DoublesPair",
+                        "participant_1_name": name_a,
+                        "participant_2_name": _full_name(reciprocal),
+                        "source_participant_ids": ", ".join(filter(None, [pid_a, pid_b])),
+                        "church_team": churches,
+                        "partner_status": "Confirmed",
+                        "review_status": "OK" if both_ok else "NeedsReview",
+                        "notes": "",
+                    })
+                    if pid_a:
+                        paired_pids.add(pid_a)
+                    if pid_b:
+                        paired_pids.add(pid_b)
+                else:
+                    # Partner not found or non-reciprocal.
+                    if candidates:
+                        reason = "NonReciprocal"
+                        note = f"Partner '{partner_decl}' found but does not list this player back"
+                    else:
+                        reason = "PartnerNotFound"
+                        note = f"Partner '{partner_decl}' not in same-division roster"
+                    entry_counter += 1
+                    entry_rows.append({
+                        "entry_id": entry_counter,
+                        "division_id": division_id,
+                        "entry_type": "UnresolvedDoubles",
+                        "participant_1_name": name_a,
+                        "participant_2_name": "",
+                        "source_participant_ids": pid_a,
+                        "church_team": str(r.get("Church Team") or ""),
+                        "partner_status": reason,
+                        "review_status": "NeedsReview",
+                        "notes": note,
+                    })
+                    if pid_a:
+                        paired_pids.add(pid_a)
+
+        # Anomalies — non-standard format rows for racquet sports.
+        for r in anomaly_rows:
+            entry_counter += 1
+            sport_type = str(r.get("sport_type") or "").strip()
+            sport_gender = str(r.get("sport_gender") or "").strip()
+            division_id = self._make_division_id(sport_type, sport_gender, "anomaly")
+            entry_rows.append({
+                "entry_id": entry_counter,
+                "division_id": division_id,
+                "entry_type": "Anomaly",
+                "participant_1_name": _full_name(r),
+                "participant_2_name": "",
+                "source_participant_ids": _pid(r),
+                "church_team": str(r.get("Church Team") or ""),
+                "partner_status": "N/A",
+                "review_status": "NeedsReview",
+                "notes": f"Unexpected format '{r.get('sport_format', '')}' for racquet sport",
+            })
+
+        return entry_rows
+
+    # ── End pod helpers ──────────────────────────────────────────────────────
+
     def _build_venue_capacity_rows(self, roster_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         rows = []
 
@@ -1334,6 +1649,30 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     note_row = len(df_venue) + 3  # header + data rows + blank row
                     venue_ws.cell(row=note_row, column=1, value=snapshot_note)
                     logger.debug(f"Venue-Estimator tab: {len(df_venue)} rows.")
+
+                    # Pod-Divisions Tab (Issue #88) — division-level pod planning summary.
+                    pod_div_rows = self._build_pod_divisions_rows(roster_rows, validation_rows)
+                    pod_div_cols = [
+                        "division_id", "sport_type", "sport_gender", "sport_format",
+                        "resource_type", "minutes_per_game",
+                        "planning_entries", "confirmed_entries", "provisional_entries",
+                        "anomaly_count", "division_status", "notes",
+                    ]
+                    df_pod_div = pd.DataFrame(pod_div_rows, columns=pod_div_cols)
+                    df_pod_div.to_excel(writer, sheet_name="Pod-Divisions", index=False)
+                    logger.debug(f"Pod-Divisions tab: {len(df_pod_div)} rows.")
+
+                    # Pod-Entries-Review Tab (Issue #88) — coordinator review of each entry.
+                    pod_entry_rows = self._build_pod_entries_review_rows(roster_rows, validation_rows)
+                    pod_entry_cols = [
+                        "entry_id", "division_id", "entry_type",
+                        "participant_1_name", "participant_2_name",
+                        "source_participant_ids", "church_team",
+                        "partner_status", "review_status", "notes",
+                    ]
+                    df_pod_entries = pd.DataFrame(pod_entry_rows, columns=pod_entry_cols)
+                    df_pod_entries.to_excel(writer, sheet_name="Pod-Entries-Review", index=False)
+                    logger.debug(f"Pod-Entries-Review tab: {len(df_pod_entries)} rows.")
 
                 # Add yellow note to Photo column in Roster sheet
                 if not df_roster.empty:
