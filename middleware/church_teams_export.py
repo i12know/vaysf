@@ -1256,6 +1256,25 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         return grids
 
+    @staticmethod
+    def _make_playoff_ids(prefix: str, playoff_teams: int, include_third: bool) -> Tuple[List[str], List[str]]:
+        """Return (playoff_game_ids, third_place_ids) using named bracket labels.
+
+        Order reflects bracket chronology: QF → Semi → Final, with 3rd
+        alongside the Final on the last day.
+        """
+        playoff_ids: List[str] = []
+        if playoff_teams >= 8:
+            for i in range(1, 5):
+                playoff_ids.append(f"{prefix}-QF-{i}")
+            playoff_ids.extend([f"{prefix}-Semi-1", f"{prefix}-Semi-2"])
+            playoff_ids.append(f"{prefix}-Final")
+        elif playoff_teams >= 4:
+            playoff_ids.extend([f"{prefix}-Semi-1", f"{prefix}-Semi-2"])
+            playoff_ids.append(f"{prefix}-Final")
+        third_ids = [f"{prefix}-3rd"] if (include_third and playoff_teams >= 4) else []
+        return playoff_ids, third_ids
+
     def _write_court_schedule_sketch(
         self, ws, roster_rows: List[Dict[str, Any]]
     ) -> None:
@@ -1288,15 +1307,16 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             counts = self._count_estimating_teams(roster_rows, event_name, min_sz)
             n_teams = counts["n_estimating"] if counts["n_estimating"] >= 2 else 8
             s = self._compute_court_slots(n_teams, mpg)
-            p_end = s["pool_slots"]
-            po_end = p_end + s["playoff_slots"]
+            playoff_ids, third_ids = self._make_playoff_ids(
+                prefix, s["playoff_teams"], include_third
+            )
             sport_meta[event_name] = {
                 "prefix": prefix,
                 "color": color,
                 "n_teams": n_teams,
-                "pool_ids":    [f"{prefix}{i:02d}" for i in range(1, p_end + 1)],
-                "playoff_ids": [f"{prefix}{i:02d}" for i in range(p_end + 1, po_end + 1)],
-                "third_ids":   [f"{prefix}{i:02d}" for i in range(po_end + 1, s["total_slots"] + 1)],
+                "pool_ids":    [f"{prefix}-{i:02d}" for i in range(1, s["pool_slots"] + 1)],
+                "playoff_ids": playoff_ids,
+                "third_ids":   third_ids,
             }
 
         # --- Per-sport game queues (dedicated court blocks — no interleaving) ---
@@ -1419,8 +1439,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     for c in range(n_courts):
                         game_id = grid[sess_idx][t][c]
                         cell = ws.cell(row=current_row, column=start_col + 1 + c, value=game_id)
-                        if game_id and len(game_id) >= 3:
-                            fill = prefix_fill.get(game_id[:3])
+                        if game_id:
+                            fill = prefix_fill.get(game_id.split("-")[0])
                             if fill:
                                 cell.fill = fill
                 current_row += 1
@@ -1428,9 +1448,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         # --- Column widths ---
         from openpyxl.utils import get_column_letter
         for n_courts, start_col in zip(n_courts_list, scenario_starts):
-            ws.column_dimensions[get_column_letter(start_col)].width = 10     # Time
+            ws.column_dimensions[get_column_letter(start_col)].width = 10      # Time
             for c in range(n_courts):
-                ws.column_dimensions[get_column_letter(start_col + 1 + c)].width = 8  # Courts
+                ws.column_dimensions[get_column_letter(start_col + 1 + c)].width = 12  # Courts
 
         total_pool = sum(len(q) for q in pool_queues_by_sport)
         total_playoff = sum(len(q) for q in playoff_queues_by_sport)

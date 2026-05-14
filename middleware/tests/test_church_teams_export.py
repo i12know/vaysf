@@ -1047,14 +1047,14 @@ def test_build_scenario_schedule_pool_before_playoffs(mock_connectors):
 
     # Three sports, each with their own pool and playoff queues
     pool_queues = [
-        [f"BBM{i:02d}" for i in range(1, 5)],   # 4 BBM pool games
-        [f"VBM{i:02d}" for i in range(1, 5)],   # 4 VBM pool games
-        [f"VBW{i:02d}" for i in range(1, 5)],   # 4 VBW pool games
+        [f"BBM-{i:02d}" for i in range(1, 5)],   # 4 BBM pool games
+        [f"VBM-{i:02d}" for i in range(1, 5)],   # 4 VBM pool games
+        [f"VBW-{i:02d}" for i in range(1, 5)],   # 4 VBW pool games
     ]
     playoff_queues = [
-        ["BBM05", "BBM06", "BBM07"],
-        ["VBM05", "VBM06", "VBM07"],
-        ["VBW05", "VBW06", "VBW07"],
+        ["BBM-Semi-1", "BBM-Semi-2", "BBM-Final"],
+        ["VBM-Semi-1", "VBM-Semi-2", "VBM-Final"],
+        ["VBW-Semi-1", "VBW-Semi-2", "VBW-Final"],
     ]
 
     n_sat, n_sun = 13, 8  # 8AM-8PM / 1PM-8PM with 60-min slots
@@ -1146,18 +1146,26 @@ def test_court_schedule_sketch_game_id_prefixes(mock_connectors, tmp_path):
     cell_values = set()
     for row in ws.iter_rows():
         for cell in row:
-            if cell.value and isinstance(cell.value, str) and len(cell.value) == 5:
-                cell_values.add(cell.value)
+            v = cell.value
+            if isinstance(v, str) and "-" in v and v.split("-")[0] in ("BBM", "VBM", "VBW"):
+                cell_values.add(v)
 
-    bbm_ids = {v for v in cell_values if v.startswith("BBM")}
-    vbm_ids = {v for v in cell_values if v.startswith("VBM")}
-    vbw_ids = {v for v in cell_values if v.startswith("VBW")}
+    bbm_ids = {v for v in cell_values if v.startswith("BBM-")}
+    vbm_ids = {v for v in cell_values if v.startswith("VBM-")}
+    vbw_ids = {v for v in cell_values if v.startswith("VBW-")}
 
     assert bbm_ids, "Expected BBM game IDs in Court-Schedule-Sketch"
     assert vbm_ids, "Expected VBM game IDs in Court-Schedule-Sketch"
     assert vbw_ids, "Expected VBW game IDs in Court-Schedule-Sketch"
 
-    # IDs are sequential (01, 02, …) with two-digit suffix
-    for gid in bbm_ids | vbm_ids | vbw_ids:
-        assert gid[3:].isdigit(), f"Non-numeric suffix in game ID: {gid}"
-        assert len(gid[3:]) == 2, f"Expected two-digit suffix in game ID: {gid}"
+    # Pool IDs: BBM-01, BBM-02, … — two-digit numeric suffix after the dash
+    pool_ids = {v for v in cell_values if v[4:].isdigit() and len(v[4:]) == 2}
+    assert pool_ids, "Expected pool game IDs with two-digit suffix (e.g. BBM-01)"
+
+    # Playoff IDs: named labels (Final, Semi-N, QF-N, 3rd)
+    playoff_labels = {"Final", "Semi-1", "Semi-2", "QF-1", "QF-2", "QF-3", "QF-4", "3rd"}
+    found_playoff_labels = {v.split("-", 1)[1] for v in cell_values if not v[4:].isdigit()}
+    assert found_playoff_labels & playoff_labels, (
+        f"Expected named playoff labels in Court-Schedule-Sketch, got: {found_playoff_labels}"
+    )
+    assert "Final" in found_playoff_labels, "Expected BBM/VBM/VBW-Final in sketch"
