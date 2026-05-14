@@ -1649,6 +1649,23 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         return resources
 
     @staticmethod
+    def _clean_excel_text(val) -> str:
+        """Normalize spreadsheet cells so blanks/NaN become an empty string."""
+        if pd.isna(val):
+            return ""
+        return str(val).strip()
+
+    @staticmethod
+    def _float_from_excel(val, default: float) -> float:
+        """Convert spreadsheet cells to float while treating blanks/NaN as a default."""
+        if pd.isna(val) or val in (None, ""):
+            return default
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
     def _load_venue_input_rows(venue_input_path: Path) -> List[Dict[str, Any]]:
         """Expand venue_input.xlsx into per-resource objects for schedule_input.json.
 
@@ -1669,11 +1686,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         resource_counts: Dict[str, int] = {}
 
         for _, row in df.iterrows():
-            resource_type = str(row.get("Resource Type") or "").strip()
+            resource_type = ChurchTeamsExporter._clean_excel_text(row.get("Resource Type"))
             if not resource_type:
                 continue
-            qty = max(1, int(float(row.get("Quantity") or 1)))
-            slot_min = max(1, int(float(row.get("Slot Minutes") or 60)))
+            qty = max(1, int(ChurchTeamsExporter._float_from_excel(row.get("Quantity"), 1)))
+            slot_min = max(1, int(ChurchTeamsExporter._float_from_excel(row.get("Slot Minutes"), 60)))
             start = ChurchTeamsExporter._parse_hour(row.get("Start Time"))
             last_start = ChurchTeamsExporter._parse_hour(row.get("Last Start Time"))
             open_time = f"{int(start):02d}:{int(round((start % 1) * 60)):02d}"
@@ -2193,6 +2210,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
     def _parse_hour(val) -> float:
         """Convert a cell value to a decimal hour (e.g. datetime.time(13,0) → 13.0)."""
         import datetime as _dt
+        if pd.isna(val):
+            return 0.0
         if isinstance(val, _dt.time):
             return val.hour + val.minute / 60.0
         try:
@@ -2219,21 +2238,23 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         totals: Dict[str, int] = {}
         for _, row in df.iterrows():
-            resource_type = str(row.get("Resource Type") or "").strip()
+            resource_type = ChurchTeamsExporter._clean_excel_text(row.get("Resource Type"))
             if not resource_type:
                 continue
             avail = row.get("Available Slots")
             if pd.isna(avail) or not avail:
                 # Formula wasn't cached — compute from component columns.
-                qty       = float(row.get("Quantity") or 0)
+                qty       = ChurchTeamsExporter._float_from_excel(row.get("Quantity"), 0)
                 start     = ChurchTeamsExporter._parse_hour(row.get("Start Time"))
                 last_start = ChurchTeamsExporter._parse_hour(row.get("Last Start Time"))
-                slot_min  = float(row.get("Slot Minutes") or 1)
+                slot_min  = ChurchTeamsExporter._float_from_excel(row.get("Slot Minutes"), 1)
                 if slot_min > 0 and qty > 0 and last_start >= start:
                     avail = qty * ((last_start - start) * 60 / slot_min + 1)
                 else:
                     avail = 0
-            totals[resource_type] = totals.get(resource_type, 0) + int(avail)
+            totals[resource_type] = totals.get(resource_type, 0) + int(
+                ChurchTeamsExporter._float_from_excel(avail, 0)
+            )
         logger.debug(f"Loaded venue input: {totals}")
         return totals
 

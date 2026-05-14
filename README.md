@@ -70,11 +70,16 @@ copy .env.template .env
 # From the middleware/ directory - mock mode (no credentials needed)
 .\.venv\Scripts\python.exe -m pytest tests\ -v
 
-# Live mode (requires .env with real API keys)
+# Live mode against real systems (write tests skipped)
 set LIVE_TEST=true && .\.venv\Scripts\python.exe -m pytest tests\ -v -s
+
+# Real write tests (only when you intentionally want live mutations)
+set LIVE_TEST=true && set LIVE_MUTATION_TESTS=true && .\.venv\Scripts\python.exe -m pytest tests\ -v -s
 ```
 
 See [USAGE.md](docs/USAGE.md#running-tests) for full testing options including live group membership tests.
+
+Important: `LIVE_TEST=true` points pytest at real ChMeetings and WordPress systems. Tests that write data are skipped unless you also set `LIVE_MUTATION_TESTS=true`.
 
 4. **Basic Usage**
 

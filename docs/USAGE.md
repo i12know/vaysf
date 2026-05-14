@@ -47,6 +47,7 @@ All commands below assume you are in the `vaysf/middleware/` directory.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LIVE_TEST` | `false` | Set to `true` to run all tests against live APIs |
+| `LIVE_MUTATION_TESTS` | `false` | Set to `true` to allow tests that write to real ChMeetings or WordPress data |
 | `FULL_LIVE_TEST` | `false` | Set to `true` to also run the full participant sync (~570 people, takes several minutes) |
 | `CHM_TEST_GROUP_ID` | _(none)_ | ChMeetings group ID for live group membership round-trip tests |
 | `CHM_TEST_PERSON_ID` | _(none)_ | ChMeetings person ID for live group membership round-trip tests |
@@ -65,6 +66,8 @@ Expected result: `27 passed, 5 skipped` (skipped tests require live mode).
 
 Requires valid `.env` with `CHM_API_URL`, `CHM_API_KEY`, `WP_URL`, and `WP_API_KEY`.
 
+Important: `LIVE_TEST=true` targets real ChMeetings and WordPress systems. Pytest prints a large startup warning banner in this mode. Tests that write data are skipped unless `LIVE_MUTATION_TESTS=true` is also set.
+
 **Windows CMD:**
 ```cmd
 set LIVE_TEST=true && pytest tests/ -v -s
@@ -79,7 +82,7 @@ Expected result: most tests pass; `test_sync_participants` is skipped unless `FU
 
 ### Live Group Membership Tests
 
-`test_add_person_to_group` and `test_remove_person_from_group` perform a self-cleaning round-trip: add a person to a group, confirm they appear in `get_group_people()`, then remove them and confirm they're gone. These tests are skipped if either env var is missing.
+`test_add_person_to_group` and `test_remove_person_from_group` perform a self-cleaning round-trip: add a person to a group, confirm they appear in `get_group_people()`, then remove them and confirm they're gone. These tests are skipped unless `LIVE_TEST=true`, `LIVE_MUTATION_TESTS=true`, `CHM_TEST_GROUP_ID`, and `CHM_TEST_PERSON_ID` are all set.
 
 **How to find the IDs:**
 - **Group ID**: From the ChMeetings group URL - e.g., `?gid=999847` -> use `999847`
@@ -88,20 +91,21 @@ Expected result: most tests pass; `test_sync_participants` is skipped unless `FU
 **Windows CMD:**
 ```cmd
 set LIVE_TEST=true
+set LIVE_MUTATION_TESTS=true
 set CHM_TEST_GROUP_ID=999847
 set CHM_TEST_PERSON_ID=3692903
 pytest tests/test_chmeetings_connector.py::test_add_person_to_group tests/test_chmeetings_connector.py::test_remove_person_from_group -v -s
 ```
 
-**Warning:** Use a disposable test group/person. The test adds then immediately removes the person; if it crashes mid-way the person may remain in the group and need to be removed manually.
+**Warning:** Use a disposable test group/person. These tests write to the real system. If they crash mid-way the person may remain in the group and need to be removed manually.
 
 ### Full Live Tests
 
-Includes `test_sync_participants`, which processes all registered participants and takes several minutes.
+Includes `test_sync_participants`, which processes all registered participants and takes several minutes. This is a real write path into WordPress and therefore also requires `LIVE_MUTATION_TESTS=true`.
 
 **Windows CMD:**
 ```cmd
-set LIVE_TEST=true && set FULL_LIVE_TEST=true && pytest tests/ -v -s
+set LIVE_TEST=true && set LIVE_MUTATION_TESTS=true && set FULL_LIVE_TEST=true && pytest tests/ -v -s
 ```
 
 For details on what each API call does and how the response format changed in 2026, see [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md).

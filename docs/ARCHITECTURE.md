@@ -613,6 +613,7 @@ A `pytest.ini` in `middleware/` sets `pythonpath = .` so that `import chmeetings
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `LIVE_TEST` | `false` | Enable live API tests |
+| `LIVE_MUTATION_TESTS` | `false` | Allow live tests that write to real ChMeetings or WordPress data |
 | `FULL_LIVE_TEST` | `false` | Also run the slow full-participant-sync test |
 | `CHM_TEST_GROUP_ID` | _(none)_ | ChMeetings group ID for group membership round-trip |
 | `CHM_TEST_PERSON_ID` | _(none)_ | ChMeetings person ID for group membership round-trip |
@@ -621,11 +622,14 @@ A `pytest.ini` in `middleware/` sets `pythonpath = .` so that `import chmeetings
 # Mock mode (all tests, no credentials)
 pytest tests/ -v
 
-# Live mode
+# Live mode against real systems (write tests skipped)
 set LIVE_TEST=true && pytest tests/ -v -s
 
+# Live mode with real write tests enabled
+set LIVE_TEST=true && set LIVE_MUTATION_TESTS=true && pytest tests/ -v -s
+
 # Live mode with full sync + group membership tests
-set LIVE_TEST=true && set FULL_LIVE_TEST=true && set CHM_TEST_GROUP_ID=999847 && set CHM_TEST_PERSON_ID=3692903 && pytest tests/ -v -s
+set LIVE_TEST=true && set LIVE_MUTATION_TESTS=true && set FULL_LIVE_TEST=true && set CHM_TEST_GROUP_ID=999847 && set CHM_TEST_PERSON_ID=3692903 && pytest tests/ -v -s
 ```
 
 For detailed testing instructions see [USAGE.md](USAGE.md#running-tests).

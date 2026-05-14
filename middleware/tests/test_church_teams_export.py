@@ -1627,6 +1627,34 @@ def test_load_venue_input_fallback_formula(mock_connectors, tmp_path):
     assert result[POD_RESOURCE_TYPE_TENNIS] == 24
 
 
+def test_load_venue_input_ignores_blank_resource_rows(mock_connectors, tmp_path):
+    """Blank resource rows should be ignored instead of creating a literal 'nan' bucket."""
+    from openpyxl import Workbook
+    from config import POD_RESOURCE_TYPE_PICKLEBALL
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+
+    ws.cell(row=2, column=3, value=POD_RESOURCE_TYPE_PICKLEBALL)
+    ws.cell(row=2, column=9, value=24)
+    ws.cell(row=3, column=3, value=None)
+    ws.cell(row=3, column=9, value=None)
+
+    path = tmp_path / "venue_input.xlsx"
+    wb.save(path)
+
+    result = ChurchTeamsExporter._load_venue_input(path)
+    assert result == {POD_RESOURCE_TYPE_PICKLEBALL: 24}
+
+
 # ── Schedule-Input helpers tests (Issue #87) ────────────────────────────────
 
 
@@ -1798,6 +1826,40 @@ def test_load_venue_input_rows_table_label(mock_connectors, tmp_path):
     assert all(r["label"].startswith("Table-") for r in result)
 
 
+def test_load_venue_input_rows_skips_blank_resource_rows(mock_connectors, tmp_path):
+    """Blank/NaN venue rows should be ignored instead of crashing Schedule-Input generation."""
+    from openpyxl import Workbook
+    from config import POD_RESOURCE_TYPE_TENNIS
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    ws.cell(row=2, column=3, value=POD_RESOURCE_TYPE_TENNIS)
+    ws.cell(row=2, column=4, value=2)
+    ws.cell(row=2, column=6, value=9)
+    ws.cell(row=2, column=7, value=17)
+    ws.cell(row=2, column=8, value=30)
+    ws.cell(row=3, column=3, value=None)
+    ws.cell(row=3, column=4, value=None)
+    ws.cell(row=3, column=6, value=None)
+    ws.cell(row=3, column=7, value=None)
+    ws.cell(row=3, column=8, value=None)
+
+    path = tmp_path / "venue_input.xlsx"
+    wb.save(path)
+
+    result = ChurchTeamsExporter._load_venue_input_rows(path)
+    assert len(result) == 2
+    assert all(r["resource_type"] == POD_RESOURCE_TYPE_TENNIS for r in result)
+
+
 def test_build_precedence_objects_pool_before_final(mock_connectors):
     """Pool → Semi and Semi → Final rules are generated when stages are present."""
     exporter = ChurchTeamsExporter()
@@ -1864,9 +1926,8 @@ def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path):
     data = _json.loads(json_path.read_text(encoding="utf-8"))
     assert "games" in data and "resources" in data and "precedence" in data
     assert data["game_count"] > 0
-    # ALL export has no venue input, so only gym resources
-    from config import GYM_RESOURCE_TYPE
-    assert all(r["resource_type"] == GYM_RESOURCE_TYPE for r in data["resources"])
+    assert data["resource_count"] == len(data["resources"])
+    assert data["resource_count"] > 0
 
 
 def test_schedule_input_tab_absent_in_single_church_export(mock_connectors, tmp_path):

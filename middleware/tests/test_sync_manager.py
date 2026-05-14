@@ -7,6 +7,7 @@ import pytest
 from sync.manager import SyncManager
 from sync.participants import ParticipantSyncer  # Import for validation
 from loguru import logger
+from conftest import require_live_mutation_test
 from config import Config
 from wordpress.frontend_connector import Config as WPConfig
 from chmeetings.backend_connector import Config as CHMConfig
@@ -52,6 +53,7 @@ def test_sync_churches(sync_manager, tmp_path, mocker):
     live_test = os.getenv("LIVE_TEST", "false").lower() == "true"
 
     if live_test:
+        require_live_mutation_test("syncing church rows from Excel into the live WordPress database")
         # Live mode: Use CHURCH_EXCEL_FILE from config
         assert Config.WP_URL, "WP_URL must be set in .env for live test"
         assert Config.WP_API_KEY, "WP_API_KEY must be set in .env for live test"
@@ -233,6 +235,11 @@ def test_sync_participants(sync_manager, mocker, mock_chmeetings_data):
     full_live_test = os.getenv("FULL_LIVE_TEST", "false").strip().lower() == "true"
     if live_test and not full_live_test:
         pytest.skip("Full participant sync skipped in standard LIVE_TEST mode — set FULL_LIVE_TEST=true to run")
+
+    if live_test:
+        require_live_mutation_test(
+            "running the full live participant sync into WordPress participants, rosters, and validation issues"
+        )
 
     # Patch config values
     mocker.patch("sync.participants.Config.TEAM_PREFIX", "Team")
@@ -1233,6 +1240,20 @@ def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
         captured.append(roster_data)
         return {"roster_id": len(captured), **roster_data}
 
+    def get_rosters_side_effect(_params):
+        sync_manager.wordpress_connector.last_get_rosters_status = "ok"
+        return []
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        side_effect=get_rosters_side_effect,
+    )
+    mock_delete = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "delete_roster",
+        return_value=True,
+    )
     mocker.patch.object(participant_syncer, "_create_or_update_roster",
                         side_effect=capture_create_or_update_roster)
 
@@ -1251,6 +1272,7 @@ def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
     assert row["sport_gender"] == GENDER["MIXED"]
     assert row["participant_id"] == 42
     assert row["church_code"] == "RPC"
+    mock_delete.assert_not_called()
 
 
 def test_sync_rosters_skips_create_when_lookup_fails_after_retry(sync_manager, mocker):
@@ -1423,7 +1445,11 @@ def _setup_flip_test_mocks(sync_manager, mocker, chm_id, person_data, wp_existin
         side_effect=lambda params=None: [wp_existing] if params and params.get("chmeetings_id") == chm_id else [],
     )
     mocker.patch.object(sync_manager.wordpress_connector, "get_approvals", return_value=[])
-    mocker.patch.object(sync_manager.wordpress_connector, "get_rosters", return_value=[])
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        side_effect=lambda params=None: setattr(sync_manager.wordpress_connector, "last_get_rosters_status", "ok") or [],
+    )
     mocker.patch.object(sync_manager.wordpress_connector, "get_validation_issues", return_value=[])
     mocker.patch.object(sync_manager.wordpress_connector, "create_validation_issue", return_value={"issue_id": 1})
 
@@ -1434,6 +1460,7 @@ def _setup_flip_test_mocks(sync_manager, mocker, chm_id, person_data, wp_existin
 
     mocker.patch.object(sync_manager.wordpress_connector, "update_participant", side_effect=capture_update)
     mocker.patch.object(sync_manager.wordpress_connector, "create_roster", return_value={"roster_id": 1})
+    mocker.patch.object(sync_manager.wordpress_connector, "delete_roster", return_value=True)
     mock_update_person = mocker.patch.object(sync_manager.chm_connector, "update_person", return_value=True)
     return updated_calls, mock_update_person
 
