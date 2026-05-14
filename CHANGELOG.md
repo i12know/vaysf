@@ -8,7 +8,31 @@
   - Audit summary line now includes a `Removed: N/M (stuck/API-undeleteable: K)` count when removal is active; "stuck" records are ones where DELETE also returns 404 due to a ChMeetings platform bug (filed as ChMeetings support ticket **#20188** — follow up if stuck count remains non-zero after resolution)
   - Run without the flag first to review `data/team_group_orphan_audit.xlsx`, then re-run with `--remove-orphans` to clean up
   - Combines cleanly with `--church-code` to target a single church: `python main.py audit-team-groups --church-code GAC --remove-orphans`
-- Expanded `Venue-Capacity` tab to cover all Sports Fest events — closes [#83](https://github.com/i12know/vaysf/issues/83)
+- Added `Pod-Resource-Estimate` tab to the consolidated ALL Excel export — closes [#86](https://github.com/i12know/vaysf/issues/86)
+  - Compares current racquet-sport registration demand against staff-entered venue resources for Tennis, Pickleball, Pickleball 35+, Table Tennis, Table Tennis 35+, and Badminton
+  - Required slots use single-elimination formula: `entries − 1` (doubles counted as complete pairs, matching the Venue-Estimator definition)
+  - Available slots are read from `middleware/data/venue_input.xlsx` (staff fills this in); multiple pod rows for the same resource type are summed automatically
+  - Fit Status color-coded: **Green** (surplus ≥ 0), **Yellow** (short 1–3), **Red** (short 4+)
+  - If `venue_input.xlsx` is missing, the tab renders with a `"No venue data"` status and a notice pointing to the template
+  - Resource type groupings: Tennis Court (Tennis), Pickleball Court (Pickleball + Pickleball 35+), Table Tennis Table (Table Tennis + Table Tennis 35+), Badminton Court (Badminton)
+  - Added `python main.py generate-venue-template` command to create (or regenerate) `SportsFest_2026_Venue_Input_Template.xlsx` with pre-filled example rows and formula column `=D*(((G-F)*60/H)+1)` for Available Slots
+  - Starter template committed at `middleware/data/SportsFest_2026_Venue_Input_Template.xlsx`; staff copy it to `venue_input.xlsx`, fill in pod details, and re-run the export
+  - `POD_RESOURCE_TYPE_*` and `POD_RESOURCE_EVENT_TYPE` constants added to `config.py`; fit-status colour constants `POD_FIT_COLOR_*` and `POD_FIT_YELLOW_MAX = 3` also configurable there
+  - **Excel-only planning artifact** — no data is written to WordPress `sf_schedules`; no OR-Tools scheduling
+  - Tab is absent from per-church exports; only appears in the consolidated ALL export
+- Added `Court-Schedule-Sketch` tab to the consolidated ALL Excel export — closes [#85](https://github.com/i12know/vaysf/issues/85)
+  - Renders three side-by-side court-count scenarios (3, 4, 5 courts) separated by an empty column on a single worksheet
+  - Each scenario shows four sessions: 1st Saturday (08:00–20:00), 1st Sunday (13:00–20:00), 2nd Saturday (08:00–20:00), 2nd Sunday (13:00–20:00), matching Sports Fest two-weekend format
+  - Pool games fill Weekend 1 sessions first and spill into the start of 2nd Saturday; playoffs start from where pool play ends on 2nd Saturday; finals land in 2nd Sunday
+  - Game IDs are sequential placeholders (`BBM01`–`BBMnn` Basketball Men, `VBM01`–`VBMnn` Volleyball Men, `VBW01`–`VBWnn` Volleyball Women) — no actual team assignments or conflict enforcement
+  - Games are color-coded: brown (Basketball), blue (Volleyball Men), pink (Volleyball Women)
+  - Pool games are interleaved across sports (BBM01, VBM01, VBW01, BBM02, …) to balance court load
+  - Inputs summary row shows pool games/team, minutes/game, and 3rd-place flag; game count totals per sport shown on row 2
+  - Falls back to 8 teams per sport when fewer than 2 estimating teams exist (planning mode)
+  - **Excel-only planning artifact** — no data is written to WordPress `sf_schedules` until the OR-Tools scheduling review step
+  - Tab is absent from per-church exports; only appears in the consolidated ALL export alongside `Venue-Estimator`
+  - Added `SCHEDULE_SKETCH_*` constants in `config.py` for hours, court counts, and hex colours
+- Expanded `Venue-Estimator` tab to cover all Sports Fest events — closes [#83](https://github.com/i12know/vaysf/issues/83)
   - **Team sports** (Basketball, Volleyball Men/Women, Soccer, Bible Challenge): one row per event; a church counts as an "Estimating" team when its roster meets the minimum team size; "Potential" = estimating + partial (all churches with ≥ 1 entry)
   - **Racquet sports** (Badminton, Pickleball, Pickleball 35+, Table Tennis, Table Tennis 35+, Tennis): one row per sport; "Estimating" = complete pairs `floor(doubles / 2)` + singles; "Potential" = all individual registrations including unpaired
   - Added `SPORT_TYPE["SOCCER"] = "Soccer - Coed Exhibition"` and added Soccer to `SPORT_BY_CATEGORY["TEAM"]`

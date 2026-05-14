@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     )
     group_assignment_parser.add_argument(
         "--dry-run", action="store_true",
-        help="Preview only — show who would be assigned without making API calls",
+        help="Preview only - show who would be assigned without making API calls",
     )
 
     # Team-group clearing command
@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     clear_mode.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview only — show who would be removed without making API calls",
+        help="Preview only - show who would be removed without making API calls",
     )
     clear_mode.add_argument(
         "--execute",
@@ -154,6 +154,17 @@ def parse_args() -> argparse.Namespace:
                               help="Process a single ChMeetings person ID instead of the whole group (for testing)")
     reset_parser.add_argument("--probe", action="store_true",
                               help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id)")
+
+    # Generate-venue-template command
+    venue_template_parser = subparsers.add_parser(
+        "generate-venue-template",
+        help="Create (or regenerate) the blank venue input template for Pod-Resource-Estimate",
+    )
+    venue_template_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output path for the template xlsx (default: data/SportsFest_2026_Venue_Input_Template.xlsx)",
+    )
 
     # Check-consent command
     check_consent_parser = subparsers.add_parser(
@@ -507,6 +518,91 @@ def test_connectivity(system: str = "all", test_type: str = "connectivity", test
     return success
 
 
+def generate_venue_template(output_path: Optional[Path] = None) -> bool:
+    """Create (or regenerate) the blank venue input template xlsx.
+
+    Writes a Venue-Input sheet with column headers and example rows pre-filled
+    with the Available Slots formula so staff can adjust times and see the cell
+    update automatically.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import PatternFill, Font, Alignment
+    from config import (
+        DATA_DIR, VENUE_TEMPLATE_FILENAME,
+        POD_RESOURCE_TYPE_TENNIS, POD_RESOURCE_TYPE_PICKLEBALL,
+        POD_RESOURCE_TYPE_TABLE_TENNIS, POD_RESOURCE_TYPE_BADMINTON,
+        SCHEDULE_SKETCH_COLOR_HEADER,
+    )
+
+    if output_path is None:
+        output_path = DATA_DIR / VENUE_TEMPLATE_FILENAME
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+
+    header_fill = PatternFill("solid", fgColor=SCHEDULE_SKETCH_COLOR_HEADER)
+    header_font = Font(color="FFFFFF", bold=True)
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    # Example rows: (pod, venue, resource_type, qty, date, start_hr, last_hr, slot_min, contact, cost, notes)
+    examples = [
+        ("North OC Tennis Pod",  "City Park",        POD_RESOURCE_TYPE_TENNIS,       4, "2026-07-19", 13, 18, 60,  "TBD", "TBD", "Staff verified usable"),
+        ("Pickleball Pod A",     "Community Center", POD_RESOURCE_TYPE_PICKLEBALL,   6, "2026-07-19", 13, 18, 45,  "TBD", "TBD", "Includes 35+"),
+        ("Indoor Table Pod",     "Church Hall",      POD_RESOURCE_TYPE_TABLE_TENNIS, 6, "2026-07-20", 18, 21, 30,  "TBD", "TBD", "Includes 35+"),
+        ("Badminton Pod",        "School Gym",       POD_RESOURCE_TYPE_BADMINTON,    4, "2026-07-20", 18, 21, 45,  "TBD", "TBD", "Staff verified usable"),
+    ]
+
+    for row_idx, ex in enumerate(examples, start=2):
+        pod, venue, rtype, qty, date, start_hr, last_hr, slot_min, contact, cost, notes = ex
+        row_vals = [pod, venue, rtype, qty, date, start_hr, last_hr, slot_min, None, contact, cost, notes]
+        for col_idx, val in enumerate(row_vals, start=1):
+            if col_idx == 9:  # Available Slots — formula; col letters D=4 F=6 G=7 H=8
+                # Formula: Qty * ((LastStart - Start) * 60 / SlotMin + 1)
+                # where Start/LastStart are stored as decimal hours (integers like 13, 18)
+                cell = ws.cell(
+                    row=row_idx, column=col_idx,
+                    value=f"=D{row_idx}*(((G{row_idx}-F{row_idx})*60/H{row_idx})+1)",
+                )
+            else:
+                ws.cell(row=row_idx, column=col_idx, value=val)
+
+    # Column widths
+    col_widths = [22, 22, 22, 10, 12, 12, 16, 14, 16, 16, 10, 28]
+    from openpyxl.utils import get_column_letter
+    for i, w in enumerate(col_widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # Help note below examples
+    note_row = len(examples) + 3
+    ws.cell(
+        row=note_row, column=1,
+        value=(
+            "Available Slots formula: =D*(((G-F)*60/H)+1) "
+            "where D=Quantity, F=Start Time (decimal hour), G=Last Start Time (decimal hour), H=Slot Minutes. "
+            "Add one row per pod per date. Staff-entered resources are assumed valid."
+        ),
+    )
+
+    try:
+        wb.save(output_path)
+        logger.info(f"Venue input template written to: {output_path}")
+        return True
+    except OSError as e:
+        logger.error(f"Failed to write venue template to {output_path}: {e}")
+        return False
+
+
 def _log_json_block(title: str, payload) -> None:
     """Log structured JSON payloads in a readable block."""
     logger.info("=" * 60)
@@ -659,6 +755,11 @@ def main() -> None:
             except Exception as e:
                 logger.error(f"An exception occurred during report export: {e}", exc_info=True)
                 success = False
+    elif args.command == "generate-venue-template":
+        out = Path(args.output) if args.output else None
+        success = generate_venue_template(out)
+        if success:
+            logger.info("Venue input template created. Copy it to data/venue_input.xlsx, fill in your pod details, then re-run export-church-teams.")
     elif args.command == "config":
         success = validate_config()
     elif args.command == "schedule":

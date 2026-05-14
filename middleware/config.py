@@ -427,9 +427,23 @@ COURT_ESTIMATE_RACQUET_EVENTS = [
     SPORT_TYPE["TENNIS"],
 ]
 
-# Pool games per team. Kept low (2) to surface the *minimum* venue need.
-# Tune upward once a venue is confirmed.
+# Pool games per team — tune per sport once a venue is confirmed.
+# Kept at 2 as the minimum planning baseline.
 COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM = 2
+COURT_ESTIMATE_POOL_GAMES_BASKETBALL       = 2
+COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_MEN   = 2
+COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_WOMEN = 3
+COURT_ESTIMATE_POOL_GAMES_SOCCER           = 2
+COURT_ESTIMATE_POOL_GAMES_BIBLE_CHALLENGE  = 2
+
+COURT_ESTIMATE_POOL_GAMES_PER_TEAM = {
+    SPORT_TYPE["BASKETBALL"]:       COURT_ESTIMATE_POOL_GAMES_BASKETBALL,
+    SPORT_TYPE["VOLLEYBALL_MEN"]:   COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_MEN,
+    SPORT_TYPE["VOLLEYBALL_WOMEN"]: COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_WOMEN,
+    SPORT_TYPE["SOCCER"]:           COURT_ESTIMATE_POOL_GAMES_SOCCER,
+    SPORT_TYPE["BIBLE_CHALLENGE"]:  COURT_ESTIMATE_POOL_GAMES_BIBLE_CHALLENGE,
+}
+
 COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME = 60
 COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME = False
 
@@ -487,6 +501,44 @@ POD_SPORT_ABBREV = {
     SPORT_TYPE["TABLE_TENNIS_35"]: "TT35",
     SPORT_TYPE["TENNIS"]:          "TEN",
 }
+
+# Pod-Resource-Estimate constants (Issue #86)
+# Excel-only planning tool for satellite racquet-sport pods — no WordPress writes.
+VENUE_INPUT_FILENAME    = "venue_input.xlsx"
+VENUE_TEMPLATE_FILENAME = "SportsFest_2026_Venue_Input_Template.xlsx"
+
+POD_RESOURCE_TYPE_TENNIS       = "Tennis Court"
+POD_RESOURCE_TYPE_PICKLEBALL   = "Pickleball Court"
+POD_RESOURCE_TYPE_TABLE_TENNIS = "Table Tennis Table"
+POD_RESOURCE_TYPE_BADMINTON    = "Badminton Court"
+
+# Maps each racquet sport to its resource type for capacity comparison.
+POD_RESOURCE_EVENT_TYPE = {
+    SPORT_TYPE["TENNIS"]:          POD_RESOURCE_TYPE_TENNIS,
+    SPORT_TYPE["PICKLEBALL"]:      POD_RESOURCE_TYPE_PICKLEBALL,
+    SPORT_TYPE["PICKLEBALL_35"]:   POD_RESOURCE_TYPE_PICKLEBALL,
+    SPORT_TYPE["TABLE_TENNIS"]:    POD_RESOURCE_TYPE_TABLE_TENNIS,
+    SPORT_TYPE["TABLE_TENNIS_35"]: POD_RESOURCE_TYPE_TABLE_TENNIS,
+    SPORT_TYPE["BADMINTON"]:       POD_RESOURCE_TYPE_BADMINTON,
+}
+
+# Fit-status color fills (Excel conditional formatting equivalent).
+POD_FIT_COLOR_GREEN  = "C6EFCE"  # surplus ≥ 0
+POD_FIT_COLOR_YELLOW = "FFEB9C"  # short by 1–3
+POD_FIT_COLOR_RED    = "FFC7CE"  # short by 4+
+POD_FIT_YELLOW_MAX   = 3         # max shortage still rated Yellow
+
+# Court-Schedule-Sketch tab constants (Excel planning tool — no WordPress writes)
+SCHEDULE_SKETCH_SATURDAY_START    = 8   # first game hour (24h), 08:00 AM
+SCHEDULE_SKETCH_SATURDAY_LAST_GAME = 20  # last game start hour, 08:00 PM
+SCHEDULE_SKETCH_SUNDAY_START      = 13  # 1:00 PM
+SCHEDULE_SKETCH_SUNDAY_LAST_GAME  = 20  # 8:00 PM
+SCHEDULE_SKETCH_N_COURTS          = [3, 4, 5]  # scenario court counts
+SCHEDULE_SKETCH_COLOR_BASKETBALL  = "C4A882"   # brown
+SCHEDULE_SKETCH_COLOR_VB_MEN      = "9DC3E6"   # blue
+SCHEDULE_SKETCH_COLOR_VB_WOMEN    = "F4B8C1"   # pink
+SCHEDULE_SKETCH_COLOR_SECTION     = "D9D9D9"   # grey section divider
+SCHEDULE_SKETCH_COLOR_HEADER      = "595959"   # dark grey scenario header
 
 # Configuration class
 class Config:

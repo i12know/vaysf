@@ -82,8 +82,8 @@ Expected result: most tests pass; `test_sync_participants` is skipped unless `FU
 `test_add_person_to_group` and `test_remove_person_from_group` perform a self-cleaning round-trip: add a person to a group, confirm they appear in `get_group_people()`, then remove them and confirm they're gone. These tests are skipped if either env var is missing.
 
 **How to find the IDs:**
-- **Group ID**: From the ChMeetings group URL — e.g., `?gid=999847` → use `999847`
-- **Person ID**: From a member's profile URL — e.g., `.../MemberDashboard/3692903` → use `3692903`
+- **Group ID**: From the ChMeetings group URL - e.g., `?gid=999847` -> use `999847`
+- **Person ID**: From a member's profile URL - e.g., `.../MemberDashboard/3692903` -> use `3692903`
 
 **Windows CMD:**
 ```cmd
@@ -238,8 +238,8 @@ The Excel reports contain:
 - List of all participants with their details
 - Sports and formats they're registered for
 - Approval status
-- **Registration Date (WP)** — WordPress sports-fest registration timestamp (2026-MM-DD format)
-- **Athlete Fee** per participant — deadline-based pricing:
+- **Registration Date (WP)** - WordPress sports-fest registration timestamp (2026-MM-DD format)
+- **Athlete Fee** per participant - deadline-based pricing:
   - $35 for sports athletes (primary or secondary sport) registered before 2026-05-16
   - $60 for sports athletes registered on/after 2026-05-16 (late registration fee)
   - $20 for Other Events only athletes (no deadline increase)
@@ -290,13 +290,13 @@ python main.py export-church-teams --church-code TLC --force-resend-pending
 
 Participants receive a link to the Consent Form in their registration confirmation email. Once the church rep has exported completed consent form responses from ChMeetings, the middleware can match each response to a participant record and automatically check the consent checklist box (Box 6) on their ChMeetings profile.
 
-**Basic usage — process all churches:**
+**Basic usage - process all churches:**
 
 ```bash
 python main.py check-consent --file "data/Consent Form Export.xlsx"
 ```
 
-**Dry run — preview matches and write audit file without updating ChMeetings:**
+**Dry run - preview matches and write audit file without updating ChMeetings:**
 
 ```bash
 python main.py check-consent --file "data/Consent Form Export.xlsx" --dry-run
@@ -310,7 +310,7 @@ python main.py check-consent --file "data/Consent Form Export.xlsx" --church-cod
 
 The command writes an audit workbook (`data/consent_check_audit.xlsx`) on every run, including both matched and unmatched rows so you can investigate any gaps.
 
-> **Manual verification:** If a participant's consent form does not auto-link in ChMeetings (per ChMeetings ticket #11991 — linking only works when name and email match exactly), check the Forms section separately and connect the form manually before re-running `check-consent`.
+> **Manual verification:** If a participant's consent form does not auto-link in ChMeetings (per ChMeetings ticket #11991 - linking only works when name and email match exactly), check the Forms section separately and connect the form manually before re-running `check-consent`.
 
 ### Season Reset (Year-End Archive and Field Clear)
 
@@ -328,16 +328,16 @@ every VAY-SM member's ChMeetings profile must be archived and cleared.  The
 **Commands**
 
 ```bash
-# Dry run — show what would be archived and reset, make no changes
+# Dry run - show what would be archived and reset, make no changes
 python main.py reset-season --year 2025 --dry-run
 
 # Archive 2025 data as ChMeetings profile notes, then clear all custom fields
 python main.py reset-season --year 2025
 
-# Archive only — write notes but do not clear fields
+# Archive only - write notes but do not clear fields
 python main.py reset-season --year 2025 --archive-only
 
-# Reset only — clear fields without writing archive notes
+# Reset only - clear fields without writing archive notes
 python main.py reset-season --year 2025 --reset-only
 
 # Test against a single person before running on the full group
@@ -452,18 +452,18 @@ Before running on the full VAY-SM group, test with a single person and a small
 church team first:
 
 ```bash
-# 1. Probe — verify the PUT endpoint accepts clearing values (should all pass)
+# 1. Probe - verify the PUT endpoint accepts clearing values (should all pass)
 python main.py reset-season --year 2025 --probe --person-id <any_person_id>
 
-# 2. Single person — confirm archive note and field clear look correct
+# 2. Single person - confirm archive note and field clear look correct
 python main.py reset-season --year 2025 --person-id <any_person_id>
 
-# 3. Small group — set VAYSM_GROUP_ID to a small church team group ID
+# 3. Small group - set VAYSM_GROUP_ID to a small church team group ID
 set VAYSM_GROUP_ID=<small_group_id>
 python main.py reset-season --year 2025 --dry-run
 python main.py reset-season --year 2025
 
-# 4. Full run — restore VAYSM_GROUP_ID to the real VAY-SM group
+# 4. Full run - restore VAYSM_GROUP_ID to the real VAY-SM group
 set VAYSM_GROUP_ID=<vaysm_group_id>
 python main.py reset-season --year 2025
 ```
@@ -475,14 +475,14 @@ python main.py reset-season --year 2025
    2025 participant record from WordPress (`sf_participants`) and writes a
    structured note to their ChMeetings profile, e.g.:
 
-   > Sports Fest 2025 Archive — 2026-04-14 | Team: RPC | Primary: Badminton (Singles) | Secondary: Bible Challenge - Mixed Team | Member: Yes | Pastor Approved: approved | Checklist: 1✓ 2✓ 3✓ 4✓ 5✓ 6✗
+   > Sports Fest 2025 Archive - 2026-04-14 | Team: RPC | Primary: Badminton (Singles) | Secondary: Bible Challenge - Mixed Team | Member: Yes | Pastor Approved: approved | Checklist: 1[Y] 2[Y] 3[Y] 4[Y] 5[Y] 6[N]
 
-   Archive notes are idempotent — re-running will not create duplicate notes.
+   Archive notes are idempotent - re-running will not create duplicate notes.
 
 3. **Reset step** (skipped with `--archive-only`): calls
    `PUT /api/v1/people/{id}` to clear all Sports Fest and Church Rep
-   Verification custom fields (dropdowns → `null`, checkboxes → `[]`,
-   text fields → `null`).  The full person profile is included in the
+   Verification custom fields (dropdowns -> `null`, checkboxes -> `[]`,
+   text fields -> `null`). The full person profile is included in the
    request to preserve standard fields (email, mobile, birthdate, etc.)
    that would otherwise be wiped by the PUT full-replace semantics.
 
@@ -520,10 +520,10 @@ python main.py assign-groups --file "data/Individual Application Form.xlsx" --dr
 
 This command:
 - Scans ChMeetings for participants with a "Church Team" additional field who are not yet in their `Team [Code]` group
-- Calls `add_person_to_group()` directly for each unassigned participant — no Excel import step required
+- Calls `add_person_to_group()` directly for each unassigned participant - no Excel import step required
 - Writes `data/church_team_assignments.xlsx` as an audit log (in both live and dry-run modes); the `Outcome` column shows `added`, `failed`, `missing_group`, or `dry_run` per person
 - Logs a warning and skips any church code that has no matching group in ChMeetings (e.g. `Team OTHER` if that group doesn't exist)
-- Safe to re-run — participants already in their group are detected during identification and skipped
+- Safe to re-run - participants already in their group are detected during identification and skipped
 
 > **Current-season filter:** When `--file` is provided, only registrants present in that Individual Application export are considered for assignment; this is useful after a season reset when older ChMeetings people still retain stale church-team values.
 
@@ -538,7 +538,7 @@ python main.py sync --type approvals
 
 Over time, ChMeetings group memberships can contain person IDs that no longer resolve to a live person record (deleted or merged accounts). The `audit-team-groups` command identifies these orphaned IDs so you can clean them up.
 
-**Audit all Team groups (review only — no changes):**
+**Audit all Team groups (review only - no changes):**
 
 ```bash
 python main.py audit-team-groups
@@ -566,7 +566,7 @@ python main.py audit-team-groups --church-code GAC --remove-orphans
 
 The summary log will confirm how many were removed (e.g., `Removed: 21/21 orphaned membership(s).`). After cleanup, future `export-church-teams` runs will no longer log 404 warnings for those IDs.
 
-> During `export-church-teams`, orphaned IDs are silently skipped and a summary warning is logged per church (e.g., `Team GAC: skipped 10 orphaned member IDs — [...]`). Run `audit-team-groups` after seeing those warnings to get the full list, then use `--remove-orphans` to clean up.
+> During `export-church-teams`, orphaned IDs are silently skipped and a summary warning is logged per church (e.g., `Team GAC: skipped 10 orphaned member IDs - [...]`). Run `audit-team-groups` after seeing those warnings to get the full list, then use `--remove-orphans` to clean up.
 
 ### Inspecting a Single Person
 
@@ -576,7 +576,7 @@ For debugging, you can pull the full ChMeetings profile and any matching WordPre
 python main.py inspect-person --chm-id 3139537
 ```
 
-This prints all standard and custom fields from ChMeetings alongside the WordPress approval status, validation issues, and roster entries — useful when a participant's data looks inconsistent between the two systems.
+This prints all standard and custom fields from ChMeetings alongside the WordPress approval status, validation issues, and roster entries - useful when a participant's data looks inconsistent between the two systems.
 
 ### Scheduled Syncs
 
