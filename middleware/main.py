@@ -155,6 +155,45 @@ def parse_args() -> argparse.Namespace:
     reset_parser.add_argument("--probe", action="store_true",
                               help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id)")
 
+    # Solve-schedule command
+    solve_schedule_parser = subparsers.add_parser(
+        "solve-schedule",
+        help="Run CP-SAT scheduler: reads schedule_input.json, writes schedule_output.json",
+    )
+    solve_schedule_parser.add_argument(
+        "--input",
+        default=None,
+        help="Path to schedule_input.json (default: DATA_DIR/schedule_input.json)",
+    )
+    solve_schedule_parser.add_argument(
+        "--output",
+        default=None,
+        help="Path for schedule_output.json (default: DATA_DIR/schedule_output.json)",
+    )
+
+    # Produce-schedule command
+    produce_schedule_parser = subparsers.add_parser(
+        "produce-schedule",
+        help="Render schedule_output.json as a human-readable Excel timetable",
+    )
+    produce_schedule_parser.add_argument(
+        "--input",
+        default=None,
+        dest="schedule_output",
+        help="Path to schedule_output.json (default: DATA_DIR/schedule_output.json)",
+    )
+    produce_schedule_parser.add_argument(
+        "--constraint",
+        default=None,
+        dest="schedule_input",
+        help="Path to schedule_input.json (default: DATA_DIR/schedule_input.json)",
+    )
+    produce_schedule_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output path for xlsx (default: EXPORT_DIR/VAYSF_Schedule_YYYY-MM-DD.xlsx)",
+    )
+
     # Generate-venue-template command
     venue_template_parser = subparsers.add_parser(
         "generate-venue-template",
@@ -755,6 +794,31 @@ def main() -> None:
             except Exception as e:
                 logger.error(f"An exception occurred during report export: {e}", exc_info=True)
                 success = False
+    elif args.command == "solve-schedule":
+        from scheduler import run_solve_schedule
+        input_path = Path(args.input) if args.input else DATA_DIR / "schedule_input.json"
+        output_path = Path(args.output) if args.output else DATA_DIR / "schedule_output.json"
+        exit_code = run_solve_schedule(input_path, output_path)
+        sys.exit(exit_code)
+    elif args.command == "produce-schedule":
+        so_path = Path(args.schedule_output) if args.schedule_output else DATA_DIR / "schedule_output.json"
+        si_path = Path(args.schedule_input)  if args.schedule_input  else DATA_DIR / "schedule_input.json"
+        if args.output:
+            out_path = Path(args.output)
+        else:
+            today = datetime.date.today().strftime("%Y-%m-%d")
+            out_path = Path(EXPORT_DIR) / f"VAYSF_Schedule_{today}.xlsx"
+        try:
+            so_data = json.loads(so_path.read_text(encoding="utf-8"))
+            si_data = json.loads(si_path.read_text(encoding="utf-8"))
+        except FileNotFoundError as exc:
+            logger.error(f"export-schedule: required file not found — {exc.filename}")
+            success = False
+        else:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            ChurchTeamsExporter._write_schedule_output_report(out_path, so_data, si_data)
+            logger.info(f"Schedule Excel written to: {out_path.resolve()}")
+            success = True
     elif args.command == "generate-venue-template":
         out = Path(args.output) if args.output else None
         success = generate_venue_template(out)

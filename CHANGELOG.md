@@ -2,7 +2,76 @@
 
 ## Unreleased
 
+### Breaking Changes / Refactor
+- Solver now handles **pool play only**; playoffs managed via Playoff-Slots tab in `venue_input.xlsx`
+  - Gym sport playoff games (QF/Semi/Final/3rd) removed from `schedule_input.json` `games` array — `_build_gym_game_objects()` now emits pool-play games only
+  - New `Playoff-Slots` tab in `venue_input.xlsx`: coordinators fill in one row per playoff game with columns `game_id`, `event`, `stage`, `resource_id`, `slot`; optional `team_a_id`, `team_b_id`, `duration_minutes`
+  - If the tab is absent, a `WARNING` is logged and `playoff_slots` is an empty list — no crash
+  - Playoff slots are stored in `schedule_input.json` under `"playoff_slots"` and merged into `schedule_output.json` `"assignments"` by the solver unchanged — last-minute changes require only editing the tab and re-running `produce-schedule` (no re-solve needed)
+  - Finale order is now controlled by row order in the Playoff-Slots tab rather than solver constraints
+  - Removed constraints C5 (stage ordering), C8 (per-game time windows), C9 (finale sequence) from the CP-SAT solver
+  - Removed config constants: `SCHEDULE_STAGE_WINDOWS`, `SCHEDULE_FINAL_SEQUENCE`, `GYM_SPORT_EVENTS`
+  - Removed methods: `_build_precedence_objects()`, `_build_sequence_objects()`; replaced with `_load_playoff_slots()`
+  - Updated `_write_schedule_input_tab()`: Precedence section replaced with Playoff-Slots section
+  - 8 solver tests removed (C5/C8/C9); 1 new test added (`test_solve_playoff_slots_passed_through`); 22 tests total
+
+### Bug Fixes
+- Reserve manual playoff slots from the pool-play solver
+  - New `validate_playoff_slots()` validates each playoff row (real `resource_id`, real `slot` label, no duplicate court/slot) and extracts per-pool `blocked_slots` so the CP-SAT pool-play solver cannot place a pool game on a court/time already given to a playoff game
+  - New `ensure_unique_assignment_slots()` guards the merged output against collisions
+  - 2 new solver tests: pool game pushed off a reserved slot, duplicate playoff reservation raises
+- Fixed C6 min-rest constraint incorrectly spanning day boundaries — resolves issue #97 A1
+  - Global slot indices are contiguous across days, so the last slot of Sat-1 and the first slot of Sun-1 were treated as "adjacent" and a team was falsely forbidden from playing both
+  - Added `global_to_day` map in `_solve_one_pool()`; C6 `AddBoolOr` is now skipped when the two adjacent global indices belong to different days
+  - Added regression test `test_solve_c6_min_rest_does_not_span_day_boundary`
+
 ### New Features
+- Added gym-mode venue modeling to `venue_input.xlsx` for gyms that can be configured one way or another but not both at once (e.g. 1 Basketball Court **or** 2 Volleyball Courts per time block)
+  - New `Exclusive Venue Group` column in the `Venue-Input` tab: rows sharing a group value compete for the same physical gym; `_load_venue_input_rows()` attaches the value to each resource object as `exclusive_group` (empty string when blank)
+  - New `Gym-Modes` tab: one row per gym with `Gym Name` and per-mode capacity columns (`Basketball Courts`, `Volleyball Courts`, `Badminton Courts`, `Pickleball Courts`, `Soccer Fields`)
+  - New `_load_gym_modes()` loader returns `{gym_name: {resource_type: courts_per_block}}`; trailing footer/note rows are ignored
+  - If the file or `Gym-Modes` tab is absent, a `WARNING` is logged and `gym_modes` is an empty dict — no crash (same graceful-degradation pattern as `Playoff-Slots`)
+  - `schedule_input.json` gains a top-level `gym_modes` object; the Schedule-Input tab gains a `GYM-MODES` section and an `exclusive_group` column in the Resources section
+  - 6 new tests covering the `Exclusive Venue Group` reader and the `Gym-Modes` loader
+- Refactored `solve-schedule` to decompose by resource-type pool — closes issue #93 comment (pool decomposition requirement from live-run testing)
+  - Games are partitioned by `resource_type` and each pool runs an independent CP-SAT solve; a Badminton Court shortage no longer cascades into INFEASIBLE for Gym Courts or Tennis
+  - New top-level status `PARTIAL` (some pools solved, some failed); exit code 1 covers PARTIAL/INFEASIBLE/UNKNOWN
+  - `schedule_output.json` now includes `pool_results` array with per-pool `{resource_type, status, assignments, unscheduled, diagnostics?}`; diagnostics are attached to the failing pool rather than at the top level
+  - `produce-schedule` Schedule-by-Sport tab gains a **Pool Results** section showing per-pool status and shortage summaries when `pool_results` is present
+  - 4 new tests covering pool decomposition: `pool_results` always present, partial feasibility, two independent pools both optimal, partial exit code
+- Added `python main.py produce-schedule [--input …] [--constraint …] [--output …]` Excel schedule renderer — closes [#94](https://github.com/i12know/vaysf/issues/94)
+  - Reads `schedule_output.json` (produced by `solve-schedule`) via `--input` and `schedule_input.json` (produced by `export-church-teams`) via `--constraint`, writes `VAYSF_Schedule_YYYY-MM-DD.xlsx` to `EXPORT_DIR`
+  - **Schedule-by-Time** tab: grid view (rows = time slots, columns = courts), color-coded by sport (brown = Basketball, blue = VB Men, pink = VB Women), title row merged, column headers from first session resources, session section headers in grey, blank row between sessions, freeze at A3
+  - **Schedule-by-Sport** tab: flat list sorted by event → stage order (Pool < R1 < QF < Semi < Final < 3rd) → round → slot, auto-filter, freeze at A2, unscheduled section in red at bottom when applicable, snapshot note at bottom of both tabs
+  - Both tabs carry a snapshot line: `Generated: … | Status: … | Scheduled: N | Unscheduled: N`
+  - Implemented via `_build_schedule_output_flat_rows()` and `_write_schedule_output_report()` static methods on `ChurchTeamsExporter`
+  - 9 new tests covering flat-row count, field presence, sort order, time extraction, day display, empty input, tab presence, grid content, and unscheduled section
+- Added `python main.py solve-schedule [--input …] [--output …]` CP-SAT scheduler — closes [#93](https://github.com/i12know/vaysf/issues/93)
+  - Reads `schedule_input.json` (produced by `export-church-teams`), solves a CP-SAT assignment model, writes `schedule_output.json`
+  - Implements seven constraints: C1 (each game assigned to one slot/court), C2 (one game per slot/court, multi-slot aware), C3 (no team plays two games in the same slot), C4 (court-type routing — gym games to Gym Courts, racquet games to their matching resource type), C5 (stage ordering — Pool before Semi, Semi before Final via the `precedence` rules in the input), C6 (minimum rest — no team plays in adjacent global time slots), C7 (multi-slot games — duration > slot_minutes blocks consecutive slots)
+  - Objective: pack games toward the earliest slots (minimize latest occupied global slot)
+  - Exit codes: 0 = OPTIMAL/FEASIBLE, 1 = INFEASIBLE, 2 = error (missing input or ortools not installed)
+  - Timeout configurable via `SCHEDULE_SOLVER_TIMEOUT` env var (default 30 s)
+  - Import guard: `from ortools.sat.python import cp_model` is inside the function so the module is importable without ortools
+  - 15 new tests in `middleware/tests/test_scheduler.py`
+- Hardened `schedule_input.json` contract for solver-ready team IDs, pool IDs, and gym resource selection — closes [#96](https://github.com/i12know/vaysf/issues/96)
+  - Pool games now carry stable placeholder team IDs (`BBM-P1-T1`, `BBM-P1-T2`, …) instead of `null`; the same ID is reused across all games involving that team so the solver can enforce C3 and C6 constraints in planning mode
+  - Gym/team pool planning now uses deterministic templates instead of generic round-robin inference: `2` teams -> direct match, `3` -> RR-3, `4` -> 4-match matrix, `5` -> 5-match cycle, `6+` -> a 3/4-pool composition that keeps every team at exactly 2 pool games
+  - Playoff games use explicit seed/winner references (`BBM-Seed-1`, `WIN-BBM-QF-1`, `WIN-BBM-Semi-1`, `LOSE-BBM-Semi-2`) rather than `null`
+  - Pool games now emit a non-empty `pool_id` (`"P1"`, `"P2"`, …); playoff/final games emit `""`
+  - `schedule_input.json` now includes `gym_court_scenario` (the explicit court count used); controlled by new `SCHEDULE_SOLVER_GYM_COURTS = 4` constant in `config.py` — change the constant to switch between 3/4/5-court scenarios without touching code
+  - `_build_schedule_input()` calls `_build_gym_resource_objects(SCHEDULE_SOLVER_GYM_COURTS)` explicitly instead of relying on the invisible `n_courts=4` default
+  - New helper `_make_pool_game_pairs()` encapsulates pool generation and team ID assignment
+  - 4 new tests; existing structure tests updated
+- Normalized Layer 1 team-sport planning around exact two-game pool play
+  - Volleyball Women now uses the same 2-game/team baseline as Basketball and Volleyball Men
+  - `Venue-Estimator` now shows target vs actual pool games/team, pool composition, and BYE slots so the workbook matches the generated pool policy
+  - `docs/SCHEDULING.md` now correctly states that `earliest_slot` / `latest_slot` remain reserved fields and are not currently enforced by the solver
+- Added command-level and local pipeline regression coverage for scheduling commands
+  - New `tests/test_main.py` covers `parse_args()`, default path resolution in `main.py`, and a local `export-church-teams -> solve-schedule -> produce-schedule` happy path using a repo-local fake export artifact
+  - This closes the remaining `#97` testing gaps around CLI wiring (C1) and a deterministic end-to-end scheduling pipeline check (C2)
+
+
 - Added `--remove-orphans` flag to `python main.py audit-team-groups`
   - After identifying each orphaned Team-group membership (person_id returns 404 from ChMeetings), the membership is deleted from the group via `DELETE /api/v1/groups/{group_id}/memberships/{person_id}`
   - Audit summary line now includes a `Removed: N/M (stuck/API-undeleteable: K)` count when removal is active; "stuck" records are ones where DELETE also returns 404 due to a ChMeetings platform bug (filed as ChMeetings support ticket **#20188** — follow up if stuck count remains non-zero after resolution)
@@ -27,7 +96,7 @@
   - Game IDs are sequential placeholders (`BBM01`–`BBMnn` Basketball Men, `VBM01`–`VBMnn` Volleyball Men, `VBW01`–`VBWnn` Volleyball Women) — no actual team assignments or conflict enforcement
   - Games are color-coded: brown (Basketball), blue (Volleyball Men), pink (Volleyball Women)
   - Pool games are interleaved across sports (BBM01, VBM01, VBW01, BBM02, …) to balance court load
-  - Inputs summary row shows pool games/team, minutes/game, and 3rd-place flag; game count totals per sport shown on row 2
+  - Inputs summary row now shows target/actual pool games per team, minutes/game, and 3rd-place flag; row 2 shows actual pool-game totals plus pool composition
   - Falls back to 8 teams per sport when fewer than 2 estimating teams exist (planning mode)
   - **Excel-only planning artifact** — no data is written to WordPress `sf_schedules` until the OR-Tools scheduling review step
   - Tab is absent from per-church exports; only appears in the consolidated ALL export alongside `Venue-Estimator`

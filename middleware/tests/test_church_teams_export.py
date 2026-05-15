@@ -923,6 +923,10 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
     assert "Potential Teams/Entries" in venue_df.columns
     assert "Estimating Teams/Entries" in venue_df.columns
     assert "Teams" in venue_df.columns
+    assert "Target Pool Games/Team" in venue_df.columns
+    assert "Actual Pool Games/Team" in venue_df.columns
+    assert "Pool Composition" in venue_df.columns
+    assert "BYE Slots" in venue_df.columns
     assert "Estimated Court Hours" in venue_df.columns
     # 5 team sports + 6 racquet sports
     assert len(venue_df[venue_df["Minutes Per Game"].notna()]) == 11  # 5 team + 6 racquet sports
@@ -935,9 +939,9 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
     assert int(bball["Estimating Teams/Entries"]) == 1   # RPC's 6 basketball players qualify
     assert int(bball["Potential Teams/Entries"]) == 1    # RPC (estimating) counts in potential too
     assert str(bball["Teams"]) == "RPC"
-    assert int(bball["Pool Slots"]) == 1         # ceil(1*2/2) = 1
+    assert int(bball["Pool Slots"]) == 0         # 1 team can't play pool games (B3: actual=0)
     assert int(bball["Playoff Teams"]) == 0      # 1 team → no playoff
-    assert int(bball["Total Court Slots"]) == 1
+    assert int(bball["Total Court Slots"]) == 0
 
     vb_men = venue_df[venue_df["Event"] == "Volleyball - Men Team"].iloc[0]
     assert int(vb_men["Estimating Teams/Entries"]) == 0  # no volleyball rosters
@@ -1025,6 +1029,7 @@ def test_build_pod_divisions_rows_singles(mock_connectors):
     div = rows[0]
     assert div["division_id"] == "BAD-Men-Singles"
     assert div["sport_type"] == "Badminton"
+    assert div["resource_type"] == "Badminton Court"
     assert div["planning_entries"] == 3
     assert div["confirmed_entries"] == 2  # participant 2 has error
     assert div["provisional_entries"] == 1
@@ -1049,6 +1054,7 @@ def test_build_pod_divisions_rows_doubles(mock_connectors):
     assert len(rows) == 1
     div = rows[0]
     assert div["division_id"] == "TT-Men-Doubles"
+    assert div["resource_type"] == "Table Tennis Table"
     assert div["planning_entries"] == 2   # floor(4/2)
     assert div["confirmed_entries"] == 2  # no errors
     assert div["provisional_entries"] == 0
@@ -1688,17 +1694,19 @@ def test_build_gym_game_objects_structure(mock_connectors):
         assert required_fields <= g.keys(), f"Missing fields in {g}"
     from config import GYM_RESOURCE_TYPE
     assert all(g["resource_type"] == GYM_RESOURCE_TYPE for g in games)
-    assert all(g["team_a_id"] is None and g["team_b_id"] is None for g in games)
+    # team_a_id and team_b_id must be non-null strings for all games (pool + playoff)
+    assert all(
+        isinstance(g["team_a_id"], str) and isinstance(g["team_b_id"], str)
+        for g in games
+    ), "All games must have non-null team_a_id and team_b_id"
 
 
 def test_build_gym_game_objects_stages(mock_connectors):
-    """With 8 BBM teams, Pool + Semi + Final stages are all present."""
+    """With 8 BBM teams, only Pool stage is present (playoffs go in Playoff-Slots tab)."""
     exporter = ChurchTeamsExporter()
     games = exporter._build_gym_game_objects(_make_gym_roster(8))
     bbm_stages = {g["stage"] for g in games if g["event"] == SPORT_TYPE["BASKETBALL"]}
-    assert "Pool" in bbm_stages
-    assert "Semi" in bbm_stages or "QF" in bbm_stages
-    assert "Final" in bbm_stages
+    assert bbm_stages == {"Pool"}, f"Expected only Pool stage; got {bbm_stages}"
 
 
 def test_build_gym_game_objects_prefix_format(mock_connectors):
@@ -1711,8 +1719,63 @@ def test_build_gym_game_objects_prefix_format(mock_connectors):
     assert all(re.match(r"BBM-\d{2}$", gid) for gid in pool_ids)
 
 
+def test_build_gym_game_objects_stable_team_ids(mock_connectors):
+    """The same placeholder team ID is reused across multiple pool games for that team."""
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_gym_game_objects(_make_gym_roster(8))
+    bbm_pool = [g for g in games if g["stage"] == "Pool" and g["event"] == SPORT_TYPE["BASKETBALL"]]
+    assert bbm_pool, "Expected Basketball pool games"
+
+    # Collect all team IDs and count appearances
+    from collections import Counter
+    appearances: Counter = Counter()
+    for g in bbm_pool:
+        appearances[g["team_a_id"]] += 1
+        appearances[g["team_b_id"]] += 1
+
+    # The normalized 2-game policy keeps every team at exactly 2 pool games.
+    assert appearances, "Expected stable placeholder team IDs to be reused"
+    assert all(count == 2 for count in appearances.values()), appearances
+
+
+def test_build_gym_game_objects_pool_id_nonempty(mock_connectors):
+    """Pool games carry a non-empty pool_id; playoff/final games have empty pool_id."""
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_gym_game_objects(_make_gym_roster(8))
+    pool_games = [g for g in games if g["stage"] == "Pool"]
+    playoff_games = [g for g in games if g["stage"] not in ("Pool",)]
+
+    assert pool_games, "Expected pool games"
+    assert all(g["pool_id"] != "" for g in pool_games), "Pool games must have non-empty pool_id"
+    assert all(g["pool_id"] == "" for g in playoff_games), "Playoff/final games must have empty pool_id"
+
+
+def test_build_gym_game_objects_team_id_format(mock_connectors):
+    """Pool game team IDs follow the stable placeholder format PREFIX-Px-Ty."""
+    import re as _re
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_gym_game_objects(_make_gym_roster(8))
+    bbm_pool = [g for g in games if g["stage"] == "Pool" and g["event"] == SPORT_TYPE["BASKETBALL"]]
+    for g in bbm_pool:
+        assert _re.match(r"BBM-P\d+-T\d+$", g["team_a_id"]), f"Unexpected team_a_id: {g['team_a_id']}"
+        assert _re.match(r"BBM-P\d+-T\d+$", g["team_b_id"]), f"Unexpected team_b_id: {g['team_b_id']}"
+
+
+def test_build_schedule_input_gym_court_scenario(mock_connectors, tmp_path):
+    """gym_court_scenario in schedule_input matches SCHEDULE_SOLVER_GYM_COURTS."""
+    from config import SCHEDULE_SOLVER_GYM_COURTS
+    exporter = ChurchTeamsExporter()
+    si = exporter._build_schedule_input(_make_gym_roster(), [], tmp_path / "missing.xlsx")
+    assert si["gym_court_scenario"] == SCHEDULE_SOLVER_GYM_COURTS
+    gym_resources = [r for r in si["resources"] if r["resource_type"] == "Gym Court"]
+    n_sessions = 4  # Sat-1, Sun-1, Sat-2, Sun-2
+    assert len(gym_resources) == SCHEDULE_SOLVER_GYM_COURTS * n_sessions
+
+
 def test_build_pod_game_objects_single_elimination(mock_connectors):
     """With 3 entries in a division, 2 game placeholders are generated."""
+    from config import POD_RESOURCE_EVENT_TYPE
+
     roster_rows = [
         {"Church Team": "RPC", "Participant ID (WP)": i,
          "sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Women",
@@ -1724,6 +1787,7 @@ def test_build_pod_game_objects_single_elimination(mock_connectors):
     assert len(games) == 2, f"Expected 2 games (3-1=2), got {len(games)}"
     assert all(g["game_id"].startswith("BAD-Women-Singles-") for g in games)
     assert all(g["stage"] == "R1" for g in games)
+    assert all(g["resource_type"] == POD_RESOURCE_EVENT_TYPE[SPORT_TYPE["BADMINTON"]] for g in games)
     assert games[0]["game_id"] == "BAD-Women-Singles-01"
 
 
@@ -1757,6 +1821,14 @@ def test_build_gym_resource_objects_labels(mock_connectors):
     ids = {r["resource_id"] for r in resources}
     assert "GYM-Sat-1-1" in ids
     assert "GYM-Sun-2-3" in ids
+
+
+def test_build_gym_resource_objects_include_blank_exclusive_group(mock_connectors):
+    """Gym resources carry the same exclusive_group field as venue-loaded resources."""
+    resources = ChurchTeamsExporter._build_gym_resource_objects(n_courts=2)
+    assert resources
+    assert all("exclusive_group" in r for r in resources)
+    assert all(r["exclusive_group"] == "" for r in resources)
 
 
 def test_load_venue_input_rows_missing_file(mock_connectors, tmp_path):
@@ -1860,15 +1932,131 @@ def test_load_venue_input_rows_skips_blank_resource_rows(mock_connectors, tmp_pa
     assert all(r["resource_type"] == POD_RESOURCE_TYPE_TENNIS for r in result)
 
 
-def test_build_precedence_objects_pool_before_final(mock_connectors):
-    """Pool → Semi and Semi → Final rules are generated when stages are present."""
-    exporter = ChurchTeamsExporter()
-    games = exporter._build_gym_game_objects(_make_gym_roster(8))
-    rules = ChurchTeamsExporter._build_precedence_objects(games)
-    assert rules, "Expected precedence rules for sports with playoffs"
-    bbm_rules = [r for r in rules if r["event"] == SPORT_TYPE["BASKETBALL"]]
-    stage_pairs = {(r["earlier_stage"], r["later_stage"]) for r in bbm_rules}
-    assert ("Semi", "Final") in stage_pairs
+def _write_venue_input(path, headers, data_rows, gym_modes_rows=None):
+    """Write a venue_input.xlsx with a Venue-Input tab (and optional Gym-Modes)."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    for r, data in enumerate(data_rows, start=2):
+        for c, val in enumerate(data, start=1):
+            ws.cell(row=r, column=c, value=val)
+    if gym_modes_rows is not None:
+        gm = wb.create_sheet("Gym-Modes")
+        for r, data in enumerate(gym_modes_rows, start=1):
+            for c, val in enumerate(data, start=1):
+                gm.cell(row=r, column=c, value=val)
+    wb.save(path)
+
+
+def test_load_venue_input_rows_reads_exclusive_group(mock_connectors, tmp_path):
+    """Exclusive Venue Group column is attached to each emitted resource object."""
+    from config import POD_RESOURCE_TYPE_TENNIS
+
+    headers = [
+        "Pod Name", "Venue Name", "Exclusive Venue Group", "Resource Type",
+        "Quantity", "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["BB Pod", "Midsize Gym", "Midsize Gym", POD_RESOURCE_TYPE_TENNIS,
+         2, None, 9, 17, 30, None, None, None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows)
+
+    result = ChurchTeamsExporter._load_venue_input_rows(path)
+    assert len(result) == 2
+    assert all(r["exclusive_group"] == "Midsize Gym" for r in result)
+
+
+def test_load_venue_input_rows_blank_exclusive_group(mock_connectors, tmp_path):
+    """A row with no Exclusive Venue Group yields an empty-string group."""
+    from config import POD_RESOURCE_TYPE_TENNIS
+
+    headers = [
+        "Pod Name", "Venue Name", "Exclusive Venue Group", "Resource Type",
+        "Quantity", "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Tennis Pod", "Chapman", None, POD_RESOURCE_TYPE_TENNIS,
+         1, None, 9, 17, 60, None, None, None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows)
+
+    result = ChurchTeamsExporter._load_venue_input_rows(path)
+    assert result[0]["exclusive_group"] == ""
+
+
+def test_load_gym_modes_missing_file(mock_connectors, tmp_path):
+    """Returns empty dict when venue_input.xlsx does not exist."""
+    assert ChurchTeamsExporter._load_gym_modes(tmp_path / "missing.xlsx") == {}
+
+
+def test_load_gym_modes_missing_tab(mock_connectors, tmp_path):
+    """File present but no Gym-Modes tab → empty dict (warning, no crash)."""
+    headers = ["Pod Name", "Resource Type", "Quantity"]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, [["P", "Tennis Court", 1]])
+    assert ChurchTeamsExporter._load_gym_modes(path) == {}
+
+
+def test_load_gym_modes_reads_capacities(mock_connectors, tmp_path):
+    """Gym-Modes tab is parsed into {gym: {resource_type: courts_per_block}}."""
+    headers = ["Pod Name", "Resource Type", "Quantity"]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts",
+         "Badminton Courts", "Pickleball Courts", "Soccer Fields", "Notes"],
+        ["Midsize Gym", 1, 2, 6, 8, 1, "either-or"],
+        ["Big Gym", 2, 3, 12, 0, 0, "larger"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, [["P", "Tennis Court", 1]], gym_modes)
+
+    result = ChurchTeamsExporter._load_gym_modes(path)
+    assert result["Midsize Gym"] == {
+        "Basketball Court": 1, "Volleyball Court": 2,
+        "Badminton Court": 6, "Pickleball Court": 8, "Soccer Field": 1,
+    }
+    assert result["Big Gym"]["Volleyball Court"] == 3
+    assert result["Big Gym"]["Pickleball Court"] == 0
+
+
+def test_load_gym_modes_trims_header_whitespace(mock_connectors, tmp_path):
+    """Operator-edited headers with trailing spaces are normalized before row access."""
+    headers = ["Pod Name", "Resource Type", "Quantity"]
+    gym_modes = [
+        ["Gym Name ", "Basketball Courts ", "Volleyball Courts ", "Notes "],
+        ["Midsize Gym", 1, 2, "either-or"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, [["P", "Tennis Court", 1]], gym_modes)
+
+    result = ChurchTeamsExporter._load_gym_modes(path)
+    assert result["Midsize Gym"]["Basketball Court"] == 1
+    assert result["Midsize Gym"]["Volleyball Court"] == 2
+
+
+def test_load_gym_modes_skips_note_row(mock_connectors, tmp_path):
+    """A footer row with text in Gym Name but no capacities is ignored."""
+    headers = ["Pod Name", "Resource Type", "Quantity"]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts",
+         "Badminton Courts", "Pickleball Courts", "Soccer Fields", "Notes"],
+        ["Midsize Gym", 1, 2, 6, 8, 1, "either-or"],
+        ["Capacity-per-mode coefficients for the LP estimator.",
+         None, None, None, None, None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, [["P", "Tennis Court", 1]], gym_modes)
+
+    result = ChurchTeamsExporter._load_gym_modes(path)
+    assert list(result.keys()) == ["Midsize Gym"]
 
 
 def test_build_schedule_input_keys(mock_connectors, tmp_path):
@@ -1876,7 +2064,8 @@ def test_build_schedule_input_keys(mock_connectors, tmp_path):
     exporter = ChurchTeamsExporter()
     si = exporter._build_schedule_input(_make_gym_roster(), [], tmp_path / "missing.xlsx")
     assert set(si.keys()) == {
-        "generated_at", "game_count", "resource_count", "games", "resources", "precedence"
+        "generated_at", "gym_court_scenario", "game_count", "resource_count",
+        "games", "resources", "playoff_slots", "gym_modes",
     }
     assert si["game_count"] == len(si["games"])
     assert si["resource_count"] == len(si["resources"])
@@ -1924,7 +2113,8 @@ def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path):
 
     import json as _json
     data = _json.loads(json_path.read_text(encoding="utf-8"))
-    assert "games" in data and "resources" in data and "precedence" in data
+    assert "games" in data and "resources" in data and "playoff_slots" in data
+    assert "gym_court_scenario" in data
     assert data["game_count"] > 0
     assert data["resource_count"] == len(data["resources"])
     assert data["resource_count"] > 0
@@ -1937,3 +2127,356 @@ def test_schedule_input_tab_absent_in_single_church_export(mock_connectors, tmp_
     exporter._write_excel_report(path, [], [], _make_gym_roster(2), [])
     sheets = pd.ExcelFile(path).sheet_names
     assert "Schedule-Input" not in sheets
+
+
+# ---------------------------------------------------------------------------
+# Issue #94 — _build_schedule_output_flat_rows
+# ---------------------------------------------------------------------------
+
+def _make_schedule_pair():
+    """Return (schedule_output, schedule_input) test fixtures."""
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "BBM-01", "event": "Basketball - Men Team",
+                "stage": "Pool", "pool_id": "P1", "round": 1,
+                "team_a_id": "BBM-P1-T1", "team_b_id": "BBM-P1-T2",
+                "duration_minutes": 60, "resource_type": "Gym Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+            {
+                "game_id": "BBM-Final", "event": "Basketball - Men Team",
+                "stage": "Final", "pool_id": "", "round": 1,
+                "team_a_id": "WIN-BBM-Semi-1", "team_b_id": "WIN-BBM-Semi-2",
+                "duration_minutes": 60, "resource_type": "Gym Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+        ],
+        "resources": [
+            {
+                "resource_id": "GYM-Sat-1-1", "resource_type": "Gym Court",
+                "label": "Court-1", "day": "Sat-1",
+                "open_time": "08:00", "close_time": "12:00", "slot_minutes": 60,
+            }
+        ],
+        "precedence": [],
+    }
+    schedule_output = {
+        "solved_at": "2026-05-01T10:00:00",
+        "status": "OPTIMAL",
+        "solver_wall_seconds": 0.1,
+        "assignments": [
+            {"game_id": "BBM-01",    "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-08:00"},
+            {"game_id": "BBM-Final", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-10:00"},
+        ],
+        "unscheduled": [],
+    }
+    return schedule_output, schedule_input
+
+
+def test_build_schedule_output_flat_rows_count():
+    """Returns one row per assignment."""
+    from church_teams_export import ChurchTeamsExporter
+    so, si = _make_schedule_pair()
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    assert len(rows) == 2
+
+
+def test_build_schedule_output_flat_rows_fields():
+    """Each row contains expected keys with non-empty event."""
+    from church_teams_export import ChurchTeamsExporter
+    so, si = _make_schedule_pair()
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    required = {"game_id", "event", "stage", "round", "team_a_id", "team_b_id",
+                "resource_label", "day", "slot", "duration_minutes"}
+    for row in rows:
+        assert required.issubset(row.keys())
+        assert row["event"] == "Basketball - Men Team"
+
+
+def test_build_schedule_output_flat_rows_sorted():
+    """Rows are sorted Pool before Final (stage order)."""
+    from church_teams_export import ChurchTeamsExporter
+    so, si = _make_schedule_pair()
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    stages = [r["stage"] for r in rows]
+    assert stages == ["Pool", "Final"]
+
+
+def test_build_schedule_output_flat_rows_time_part():
+    """The slot field extracts the HH:MM part from the full slot label."""
+    from church_teams_export import ChurchTeamsExporter
+    so, si = _make_schedule_pair()
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    pool_row = next(r for r in rows if r["game_id"] == "BBM-01")
+    assert pool_row["slot"] == "08:00"
+
+
+def test_build_schedule_output_flat_rows_day_display():
+    """Sat-1 is translated to '1st Sat'."""
+    from church_teams_export import ChurchTeamsExporter
+    so, si = _make_schedule_pair()
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    assert all(r["day"] == "1st Sat" for r in rows)
+
+
+def test_build_schedule_output_flat_rows_empty():
+    """Empty assignments list returns empty rows."""
+    from church_teams_export import ChurchTeamsExporter
+    so = {"assignments": [], "unscheduled": []}
+    si = {"games": [], "resources": [], "precedence": []}
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# B3 — _compute_court_slots matches _make_pool_game_pairs actual count
+# ---------------------------------------------------------------------------
+
+def test_compute_court_slots_matches_normalized_policy_8teams_gpg2(mock_connectors):
+    """8 teams / gpg=2 now stays at 8 pool games under the normalized policy."""
+    from church_teams_export import ChurchTeamsExporter
+
+    n_teams, gpg = 8, 2
+    actual = len(ChurchTeamsExporter._make_pool_game_pairs("_", n_teams, gpg))
+    assert actual == 8  # pools [4,4] with 4-match matrices -> 4 + 4
+
+    exporter = ChurchTeamsExporter()
+    s_formula = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg)
+    s_actual  = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg,
+                                              actual_pool_games=actual)
+    assert s_formula["pool_slots"] == 8
+    assert s_actual["pool_slots"]  == 8
+
+
+def test_make_pool_game_pairs_exact_two_games_per_team(mock_connectors):
+    """Normalized B4 policy keeps every team at the same exact pool-game count."""
+    from church_teams_export import ChurchTeamsExporter
+    from collections import Counter
+
+    cases = [
+        (3, 2, 2, 3),
+        (4, 2, 2, 4),
+        (5, 2, 2, 5),
+        (7, 2, 2, 7),
+        (8, 2, 2, 8),
+        (12, 2, 2, 12),
+        (20, 2, 2, 20),
+    ]
+    for n_teams, gpg, expected_games_per_team, expected_total_games in cases:
+        pairs = ChurchTeamsExporter._make_pool_game_pairs("T", n_teams, gpg)
+        games_per_team: Counter = Counter()
+        for a, b, _ in pairs:
+            games_per_team[a] += 1
+            games_per_team[b] += 1
+        assert len(pairs) == expected_total_games, (
+            f"n_teams={n_teams}: total pool games {len(pairs)} != {expected_total_games}"
+        )
+        assert games_per_team, f"Expected generated games for n_teams={n_teams}"
+        assert all(count == expected_games_per_team for count in games_per_team.values()), (
+            f"n_teams={n_teams}, gpg={gpg}: {dict(games_per_team)}"
+        )
+
+
+def test_make_pool_game_pairs_direct_match_for_two_teams(mock_connectors):
+    """Two teams stay as a single direct match rather than an over-built pool."""
+    from church_teams_export import ChurchTeamsExporter
+
+    pairs = ChurchTeamsExporter._make_pool_game_pairs("T", 2, 2)
+    assert pairs == [("T-P1-T1", "T-P1-T2", "P1")]
+
+
+def test_make_pool_game_pairs_legacy_fallback_for_nondefault_target(mock_connectors):
+    """Non-default targets keep the legacy balanced round-robin fallback."""
+    from church_teams_export import ChurchTeamsExporter
+    from collections import Counter
+
+    pairs = ChurchTeamsExporter._make_pool_game_pairs("T", 9, 3)
+    games_per_team: Counter = Counter()
+    for a, b, _ in pairs:
+        games_per_team[a] += 1
+        games_per_team[b] += 1
+    assert min(games_per_team.values()) >= 3
+
+
+def test_compute_court_slots_consistent_with_make_pool_game_pairs(mock_connectors):
+    """pool_slots from _compute_court_slots equals len(_make_pool_game_pairs) for
+    several (n_teams, gpg) combinations."""
+    from church_teams_export import ChurchTeamsExporter
+
+    exporter = ChurchTeamsExporter()
+    cases = [(2, 2), (5, 2), (8, 2), (12, 2), (9, 3)]
+    for n_teams, gpg in cases:
+        actual = len(ChurchTeamsExporter._make_pool_game_pairs("_", n_teams, gpg))
+        s = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg,
+                                          actual_pool_games=actual)
+        assert s["pool_slots"] == actual, (
+            f"n_teams={n_teams}, gpg={gpg}: pool_slots={s['pool_slots']} != actual={actual}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# B5 — _warn_if_schedules_mismatched
+# ---------------------------------------------------------------------------
+
+def test_warn_if_schedules_mismatched_clean(mock_connectors):
+    """Returns True and no warning when all assignment IDs are in schedule_input."""
+    from church_teams_export import ChurchTeamsExporter
+
+    so = {"assignments": [{"game_id": "G1", "resource_id": "R1", "slot": "Sat-1-08:00"}]}
+    si = {"games": [{"game_id": "G1"}], "playoff_slots": []}
+    assert ChurchTeamsExporter._warn_if_schedules_mismatched(so, si) is True
+
+
+def test_warn_if_schedules_mismatched_playoff_ok(mock_connectors):
+    """Returns True when assignment ID matches a playoff_slot, not a game."""
+    from church_teams_export import ChurchTeamsExporter
+
+    so = {"assignments": [{"game_id": "BBM-Final", "resource_id": "R1", "slot": "Sat-2-14:00"}]}
+    si = {"games": [], "playoff_slots": [{"game_id": "BBM-Final"}]}
+    assert ChurchTeamsExporter._warn_if_schedules_mismatched(so, si) is True
+
+
+def test_warn_if_schedules_mismatched_detects_orphan(mock_connectors):
+    """Returns False and logs a warning when an assignment game_id is unknown."""
+    from loguru import logger
+    from church_teams_export import ChurchTeamsExporter
+
+    messages = []
+    sink_id = logger.add(lambda msg: messages.append(msg), level="WARNING")
+    try:
+        so = {"assignments": [{"game_id": "STALE-99", "resource_id": "R1", "slot": "Sat-1-08:00"}]}
+        si = {"games": [{"game_id": "G1"}], "playoff_slots": []}
+        result = ChurchTeamsExporter._warn_if_schedules_mismatched(so, si)
+    finally:
+        logger.remove(sink_id)
+    assert result is False
+    assert any("STALE-99" in m for m in messages)
+    assert any("different runs" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# Issue #94 — _write_schedule_output_report
+# ---------------------------------------------------------------------------
+
+def test_write_schedule_output_report_creates_file(tmp_path):
+    """_write_schedule_output_report writes an xlsx with both expected tabs."""
+    from church_teams_export import ChurchTeamsExporter
+    import openpyxl
+    so, si = _make_schedule_pair()
+    out = tmp_path / "sched.xlsx"
+    ChurchTeamsExporter._write_schedule_output_report(out, so, si)
+    assert out.exists()
+    wb = openpyxl.load_workbook(out)
+    assert "Schedule-by-Time" in wb.sheetnames
+    assert "Schedule-by-Sport" in wb.sheetnames
+
+
+def test_write_schedule_output_report_tab1_has_data(tmp_path):
+    """Schedule-by-Time tab has a title in row 1 and game text in the grid."""
+    from church_teams_export import ChurchTeamsExporter
+    import openpyxl
+    so, si = _make_schedule_pair()
+    out = tmp_path / "sched.xlsx"
+    ChurchTeamsExporter._write_schedule_output_report(out, so, si)
+    ws = openpyxl.load_workbook(out)["Schedule-by-Time"]
+    title = ws.cell(row=1, column=1).value
+    assert title and "Sports Fest" in title
+    # At least one game should appear somewhere in the grid
+    all_values = [ws.cell(row=r, column=c).value
+                  for r in range(1, ws.max_row + 1)
+                  for c in range(1, ws.max_column + 1)]
+    assert any("BBM" in str(v) for v in all_values if v)
+
+
+def test_write_schedule_output_report_tab2_flat_list(tmp_path):
+    """Schedule-by-Sport tab has a header row and one data row per assignment."""
+    from church_teams_export import ChurchTeamsExporter
+    import openpyxl
+    so, si = _make_schedule_pair()
+    out = tmp_path / "sched.xlsx"
+    ChurchTeamsExporter._write_schedule_output_report(out, so, si)
+    ws = openpyxl.load_workbook(out)["Schedule-by-Sport"]
+    assert ws.cell(row=1, column=1).value == "game_id"
+    assert ws.cell(row=2, column=1).value == "BBM-01"    # Pool comes first
+    assert ws.cell(row=3, column=1).value == "BBM-Final"
+
+
+def test_write_schedule_output_report_unscheduled_section(tmp_path):
+    """Unscheduled section appears in Schedule-by-Sport when games are unscheduled."""
+    from church_teams_export import ChurchTeamsExporter
+    import openpyxl
+    so, si = _make_schedule_pair()
+    so["unscheduled"] = ["BBM-QF-1"]
+    out = tmp_path / "sched.xlsx"
+    ChurchTeamsExporter._write_schedule_output_report(out, so, si)
+    ws = openpyxl.load_workbook(out)["Schedule-by-Sport"]
+    all_values = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
+    assert any("Unscheduled" in str(v) for v in all_values if v)
+    assert any("BBM-QF-1" in str(v) for v in all_values if v)
+
+
+def test_write_schedule_output_report_groups_mixed_pod_windows(tmp_path):
+    """Pod resources with different slot windows render as separate time-grid sections."""
+    from church_teams_export import ChurchTeamsExporter
+    import openpyxl
+
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "PCK-01", "event": "Pickleball",
+                "stage": "R1", "pool_id": "", "round": 1,
+                "team_a_id": None, "team_b_id": None,
+                "duration_minutes": 20, "resource_type": "Pickleball Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+            {
+                "game_id": "TT-01", "event": "Table Tennis",
+                "stage": "R1", "pool_id": "", "round": 1,
+                "team_a_id": None, "team_b_id": None,
+                "duration_minutes": 30, "resource_type": "Table Tennis Table",
+                "earliest_slot": None, "latest_slot": None,
+            },
+        ],
+        "resources": [
+            {
+                "resource_id": "PCK-1", "resource_type": "Pickleball Court",
+                "label": "Court-1", "day": "Day-1",
+                "open_time": "13:00", "close_time": "13:40", "slot_minutes": 20,
+            },
+            {
+                "resource_id": "TT-1", "resource_type": "Table Tennis Table",
+                "label": "Table-1", "day": "Day-1",
+                "open_time": "18:00", "close_time": "19:00", "slot_minutes": 30,
+            },
+        ],
+        "precedence": [],
+    }
+    schedule_output = {
+        "solved_at": "2026-05-15T07:07:48",
+        "status": "PARTIAL",
+        "solver_wall_seconds": 0.2,
+        "assignments": [
+            {"game_id": "PCK-01", "resource_id": "PCK-1", "slot": "Day-1-13:00"},
+            {"game_id": "TT-01", "resource_id": "TT-1", "slot": "Day-1-18:00"},
+        ],
+        "unscheduled": [],
+        "pool_results": [],
+    }
+    out = tmp_path / "sched.xlsx"
+    ChurchTeamsExporter._write_schedule_output_report(out, schedule_output, schedule_input)
+    ws = openpyxl.load_workbook(out)["Schedule-by-Time"]
+
+    all_values = [
+        ws.cell(row=r, column=c).value
+        for r in range(1, ws.max_row + 1)
+        for c in range(1, ws.max_column + 1)
+    ]
+    string_values = [str(v) for v in all_values if v is not None]
+
+    assert any("Pickleball Court" in v for v in string_values)
+    assert any("Table Tennis Table" in v for v in string_values)
+    assert "13:00" in string_values
+    assert "18:00" in string_values
+    assert any("PCK-01" in v for v in string_values)
+    assert any("TT-01" in v for v in string_values)

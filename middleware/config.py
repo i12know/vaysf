@@ -428,11 +428,13 @@ COURT_ESTIMATE_RACQUET_EVENTS = [
 ]
 
 # Pool games per team — tune per sport once a venue is confirmed.
-# Kept at 2 as the minimum planning baseline.
+# Layer 1 team-sport planning is normalized around two pool games per team.
+# Individual events may still override this, but the current Sports Fest policy
+# keeps the live schedule-prep path on the exact-2-game baseline.
 COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM = 2
 COURT_ESTIMATE_POOL_GAMES_BASKETBALL       = 2
 COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_MEN   = 2
-COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_WOMEN = 3
+COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_WOMEN = 2
 COURT_ESTIMATE_POOL_GAMES_SOCCER           = 2
 COURT_ESTIMATE_POOL_GAMES_BIBLE_CHALLENGE  = 2
 
@@ -540,6 +542,15 @@ SCHEDULE_SKETCH_COLOR_VB_MEN      = "9DC3E6"   # blue
 SCHEDULE_SKETCH_COLOR_VB_WOMEN    = "F4B8C1"   # pink
 SCHEDULE_SKETCH_COLOR_SECTION     = "D9D9D9"   # grey section divider
 SCHEDULE_SKETCH_COLOR_HEADER      = "595959"   # dark grey scenario header
+
+# Gym court count used when generating schedule_input.json for the CP-SAT solver.
+# Change this constant (not the code) to switch between 3/4/5-court scenarios.
+SCHEDULE_SOLVER_GYM_COURTS = 4
+
+# Fixed random seed for the CP-SAT solver.  Keeps schedules reproducible across
+# runs with identical inputs — the same optimal assignment is produced every time.
+# Change to 0 to disable the seed (CP-SAT default: non-deterministic).
+SCHEDULE_SOLVER_RANDOM_SEED = 42
 
 # Configuration class
 class Config:
