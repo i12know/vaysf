@@ -276,6 +276,11 @@ def _solve_one_pool(
         all_labels.update(slots)
     sorted_labels  = sorted(all_labels, key=_slot_sort_key)
     slot_to_global = {lbl: i for i, lbl in enumerate(sorted_labels)}
+    # Map global slot index → day prefix (e.g. "Sat-1") for C6 day-boundary guard
+    global_to_day: dict[int, str] = {
+        i: lbl.rsplit("-", maxsplit=1)[0]
+        for i, lbl in enumerate(sorted_labels)
+    }
     n_global       = len(sorted_labels)
 
     model     = cp_model.CpModel()
@@ -381,8 +386,14 @@ def _solve_one_pool(
 
     for team, by_idx in team_global_assignments.items():
         for g_idx, vars_at_g in by_idx.items():
+            next_vars = by_idx.get(g_idx + 1, [])
+            if not next_vars:
+                continue
+            # Skip cross-day pairs — overnight gap is not a "no-rest" violation
+            if global_to_day.get(g_idx) != global_to_day.get(g_idx + 1):
+                continue
             for v1 in vars_at_g:
-                for v2 in by_idx.get(g_idx + 1, []):
+                for v2 in next_vars:
                     # NOT (v1 AND v2) — at most one of adjacent-slot vars can be true
                     model.AddBoolOr([v1.Not(), v2.Not()])
 

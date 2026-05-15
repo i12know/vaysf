@@ -511,3 +511,26 @@ def test_solve_partial_exit_code(tmp_path):
     assert any(a["game_id"] == "G1" for a in data["assignments"])
     pools = {pr["resource_type"]: pr for pr in data["pool_results"]}
     assert "diagnostics" in pools["Badminton Court"]
+
+
+def test_solve_c6_min_rest_does_not_span_day_boundary():
+    """A team that plays the last slot of one day and the first of the next must be OPTIMAL.
+
+    Before the A1 fix, contiguous global slot indices made the last slot of Sat-1 and
+    the first slot of Sun-1 appear 'adjacent', triggering a false min-rest violation.
+    """
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+    si = _minimal_schedule_input(
+        games=[
+            _gym_game("G1", "T1", "T2"),   # forced onto Sat-1 (only available slot)
+            _gym_game("G2", "T1", "T3"),   # forced onto Sun-1 (only available slot)
+        ],
+        resources=[
+            _gym_resource("GYM-Sat-1-1", day="Sat-1", open_time="20:00", close_time="21:00"),
+            _gym_resource("GYM-Sun-1-1", day="Sun-1", open_time="13:00", close_time="14:00"),
+        ],
+    )
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_OPTIMAL
+    assert len(result["assignments"]) == 2

@@ -216,7 +216,7 @@ The JSON file stays in `DATA_DIR` as the machine-readable backup.
 | C3 | No team plays two games in the same time slot | `AddAtMostOne` per (team, slot_label) |
 | C4 | Court-type routing — game assigned only to matching `resource_type` | filter before building vars |
 | C5 | Stage ordering — earlier_stage games precede later_stage games | pairwise `Add(g_l_slot > g_e_slot)` on global slot IntVars |
-| C6 | Minimum rest — no team plays in two adjacent global slots | `AddBoolOr([v1.Not(), v2.Not()])` for adjacent slot pairs |
+| C6 | Minimum rest — no team plays in two adjacent global slots (within the same day only; cross-day pairs are skipped) | `AddBoolOr([v1.Not(), v2.Not()])` for same-day adjacent slot pairs |
 | C7 | Multi-slot games — duration > slot_minutes blocks consecutive slots | restrict start positions; expand slot_occupancy |
 
 **Out of scope (future work):**

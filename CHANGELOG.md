@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Bug Fixes
+- Fixed C6 min-rest constraint incorrectly spanning day boundaries — resolves issue #97 A1
+  - Global slot indices are contiguous across days, so the last slot of Sat-1 and the first slot of Sun-1 were treated as "adjacent" and a team was falsely forbidden from playing both
+  - Added `global_to_day` map in `_solve_one_pool()`; C6 `AddBoolOr` is now skipped when the two adjacent global indices belong to different days
+  - Added regression test `test_solve_c6_min_rest_does_not_span_day_boundary`
+
 ### New Features
 - Refactored `solve-schedule` to decompose by resource-type pool — closes issue #93 comment (pool decomposition requirement from live-run testing)
   - Games are partitioned by `resource_type` and each pool runs an independent CP-SAT solve; a Badminton Court shortage no longer cascades into INFEASIBLE for Gym Courts or Tennis
