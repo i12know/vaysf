@@ -39,7 +39,11 @@ Key constants that shape the output live in `config.py`:
 `COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME`, `GYM_RESOURCE_TYPE`,
 `SCHEDULE_STAGE_WINDOWS` (per-stage `earliest_slot`/`latest_slot` bounds written
 into every game object — edit this dict to move the finals block or pin pool
-rounds to Weekend 1).
+rounds to Weekend 1),
+`SCHEDULE_FINAL_SEQUENCE` (ordered list of `(event_name, stage)` tuples that
+determines the exact back-to-back order of the closing ceremony games — edit
+this list to reorder the finale; same-resource-type pairs are enforced by C9
+in the solver, cross-resource-type pairs require C8 exact-slot pinning).
 
 ### Step 2 — `schedule_input.json` schema (hardened by Issue #96)
 
@@ -222,6 +226,7 @@ The JSON file stays in `DATA_DIR` as the machine-readable backup.
 | C6 | Minimum rest — no team plays in two adjacent global slots (within the same day only; cross-day pairs are skipped) | `AddBoolOr([v1.Not(), v2.Not()])` for same-day adjacent slot pairs |
 | C7 | Multi-slot games — duration > slot_minutes blocks consecutive slots | restrict start positions; expand slot_occupancy |
 | C8 | Per-game time windows — `earliest_slot` / `latest_slot` from `schedule_input.json` | `Add(gslot >= lo)` / `Add(gslot <= hi)` on global slot IntVar |
+| C9 | Finale sequence — exact cross-sport ordering between named game IDs via `sequence` rules | pairwise `Add(g_l_slot > g_e_slot)` on global slot IntVars |
 
 **Out of scope (future work):**
 - Cross-sport participant conflicts (person in both Basketball and Badminton).

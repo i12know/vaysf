@@ -55,6 +55,7 @@ from config import (
     POD_FIT_COLOR_RED,
     POD_FIT_YELLOW_MAX,
     SCHEDULE_STAGE_WINDOWS,
+    SCHEDULE_FINAL_SEQUENCE,
 )
 from validation.name_matcher import normalized_name as _norm_name
 from chmeetings.backend_connector import ChMeetingsConnector
@@ -1797,6 +1798,37 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     })
         return rules
 
+    @staticmethod
+    def _build_sequence_objects(
+        all_games: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Return C9 ordering constraints from SCHEDULE_FINAL_SEQUENCE.
+
+        Consecutive (event, stage) pairs in the config list are converted to
+        {earlier_game_id, later_game_id} rules.  Only pairs where both game IDs
+        exist in all_games are emitted; cross-resource-type pairs where one game
+        is absent from a given pool are silently skipped by the solver.
+        """
+        game_id_by_event_stage: dict[tuple[str, str], list[str]] = {}
+        for g in all_games:
+            key = (g["event"], g["stage"])
+            game_id_by_event_stage.setdefault(key, []).append(g["game_id"])
+
+        rules: List[Dict[str, Any]] = []
+        for i in range(len(SCHEDULE_FINAL_SEQUENCE) - 1):
+            earlier_key = SCHEDULE_FINAL_SEQUENCE[i]
+            later_key   = SCHEDULE_FINAL_SEQUENCE[i + 1]
+            earlier_ids = game_id_by_event_stage.get(earlier_key, [])
+            later_ids   = game_id_by_event_stage.get(later_key, [])
+            for e_id in earlier_ids:
+                for l_id in later_ids:
+                    rules.append({
+                        "rule":            f"Finale order: {earlier_key[0]} {earlier_key[1]} before {later_key[0]} {later_key[1]}",
+                        "earlier_game_id": e_id,
+                        "later_game_id":   l_id,
+                    })
+        return rules
+
     def _build_schedule_input(
         self,
         roster_rows: List[Dict[str, Any]],
@@ -1821,6 +1853,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         all_resources = gym_resources + pod_resources
 
         precedence = self._build_precedence_objects(gym_games)
+        sequence   = self._build_sequence_objects(all_games)
 
         return {
             "generated_at":       datetime.now().isoformat(timespec="seconds"),
@@ -1830,6 +1863,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             "games":              all_games,
             "resources":          all_resources,
             "precedence":         precedence,
+            "sequence":           sequence,
         }
 
     @staticmethod

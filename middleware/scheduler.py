@@ -373,6 +373,15 @@ def _solve_one_pool(
                 if g_e in game_global_slot and g_l in game_global_slot:
                     model.Add(game_global_slot[g_l] > game_global_slot[g_e])
 
+    # C9 — finale sequence: enforce exact ordering between named game IDs
+    # Rules where one or both game IDs are absent from this pool are silently skipped
+    # (cross-resource-type finale pairs live in separate pools; handle them via C8).
+    for rule in pool_input.get("sequence", []):
+        g_e = rule.get("earlier_game_id")
+        g_l = rule.get("later_game_id")
+        if g_e in game_global_slot and g_l in game_global_slot:
+            model.Add(game_global_slot[g_l] > game_global_slot[g_e])
+
     # C6 — minimum rest: no team plays in two adjacent global slots
     team_global_assignments: dict[str, dict[int, list[Any]]] = {}
     for gid, vd in game_vars.items():
@@ -521,6 +530,21 @@ def solve(
         if rt:
             precedence_by_type.setdefault(rt, []).append(rule)
 
+    # Route each sequence rule to its pool via game_id → resource_type.
+    # Cross-pool rules (earlier and later in different pools) are sent to both
+    # pools; _solve_one_pool silently skips rules where one ID is absent.
+    game_id_to_type: dict[str, str] = {g["game_id"]: g["resource_type"] for g in games}
+    sequence: list[dict] = schedule_input.get("sequence", [])
+    sequence_by_type: dict[str, list[dict]] = {}
+    for rule in sequence:
+        types_touched: set[str] = set()
+        for key in ("earlier_game_id", "later_game_id"):
+            rt = game_id_to_type.get(rule.get(key, ""))
+            if rt:
+                types_touched.add(rt)
+        for rt in types_touched:
+            sequence_by_type.setdefault(rt, []).append(rule)
+
     if not games_by_type:
         return {
             "status":              STATUS_OPTIMAL,
@@ -540,6 +564,7 @@ def solve(
             "games":      games_by_type[resource_type],
             "resources":  resources_by_type.get(resource_type, []),
             "precedence": precedence_by_type.get(resource_type, []),
+            "sequence":   sequence_by_type.get(resource_type, []),
         }
         result = _solve_one_pool(pool_input, timeout_seconds)
         result["resource_type"] = resource_type

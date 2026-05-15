@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Bug Fixes
+- Implemented C9 finale sequence constraint — exact cross-sport ordering for closing ceremony
+  - Added `SCHEDULE_FINAL_SEQUENCE` list to `config.py`: an ordered list of `(event_name, stage)` tuples specifying the exact back-to-back game order; default is VB Women → VB Men → Basketball finals
+  - `_build_sequence_objects()` converts consecutive pairs in the list into `{earlier_game_id, later_game_id}` rules emitted in `schedule_input.json` under `"sequence"`
+  - Solver C9: for each sequence rule where both game IDs appear in the same pool, `Add(game_global_slot[later] > game_global_slot[earlier])` enforces the declared order
+  - Cross-resource-type pairs (e.g. a pod sport followed by a gym sport) are routed to both pools; each pool's solver silently skips the rule for the absent game ID — handle these via exact-slot pinning in `SCHEDULE_STAGE_WINDOWS`
+  - 3 new tests: ordering respected, circular cycle → INFEASIBLE, cross-pool rule skipped gracefully
 - Implemented C8 per-game time-window constraints — resolves issue #97 B1
   - `earliest_slot` and `latest_slot` fields in `schedule_input.json` game objects are now enforced by the CP-SAT solver (`Add(gslot >= lo)` / `Add(gslot <= hi)` on the game's global slot IntVar)
   - `SCHEDULE_STAGE_WINDOWS` dict added to `config.py`: maps `(event_name, stage)` to `(earliest_slot, latest_slot)` slot labels; pool/QF/Semi games are pinned to Weekend 1 (Sat-1/Sun-1), Finals/3rd to Weekend 2 (Sat-2 onward); edit this dict to move the finale block or add Bible Challenge windows

@@ -567,6 +567,25 @@ SCHEDULE_STAGE_WINDOWS: dict[tuple[str, str], tuple[str | None, str | None]] = {
     **{(ev, "3rd"):   ("Sat-2-08:00", None)           for ev in GYM_SPORT_EVENTS},
 }
 
+# Finale sequence — ordered list of (event_name, stage) specifying the exact
+# back-to-back order for the closing ceremony block.  Consecutive pairs generate
+# C9 ordering constraints in the CP-SAT solver so the solver cannot swap them.
+#
+# Rules:
+#   • Same resource_type pairs (e.g. all three gym sports) are enforced by the
+#     solver directly — no extra config needed beyond this list.
+#   • Cross-resource-type pairs (e.g. a pod sport followed by a gym sport) are
+#     enforced via exact-slot pinning: set earliest_slot == latest_slot for the
+#     pod game in SCHEDULE_STAGE_WINDOWS so the solver for that pool is forced
+#     to a specific slot, then set the gym sport's earliest_slot to the next slot.
+#
+# Change the order here to change the finale order — no code changes required.
+SCHEDULE_FINAL_SEQUENCE: list[tuple[str, str]] = [
+    ("Volleyball - Women Team", "Final"),
+    ("Volleyball - Men Team",   "Final"),
+    ("Basketball - Men Team",   "Final"),
+]
+
 # Configuration class
 class Config:
     """Configuration settings for VAYSF middleware."""

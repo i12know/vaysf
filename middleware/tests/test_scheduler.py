@@ -600,3 +600,93 @@ def test_solve_c6_min_rest_does_not_span_day_boundary():
     result = solve(si, timeout_seconds=10.0)
     assert result["status"] == STATUS_OPTIMAL
     assert len(result["assignments"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# C9 — finale sequence ordering
+# ---------------------------------------------------------------------------
+
+def _seq_rule(earlier_id, later_id):
+    return {
+        "rule":            f"Finale: {earlier_id} before {later_id}",
+        "earlier_game_id": earlier_id,
+        "later_game_id":   later_id,
+    }
+
+
+def test_solve_c9_sequence_ordering_respected():
+    """Three finals on the same resource are assigned in the declared order."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    # Three single-court 3-slot window — solver must sequence them.
+    # Sequence rule: G1 < G2 < G3.
+    si = {
+        "games": [
+            _gym_game("G1", "T1", "T2", stage="Final"),
+            _gym_game("G2", "T3", "T4", stage="Final"),
+            _gym_game("G3", "T5", "T6", stage="Final"),
+        ],
+        "resources": [
+            _gym_resource("C1", open_time="14:00", close_time="17:00"),
+        ],
+        "precedence": [],
+        "sequence": [
+            _seq_rule("G1", "G2"),
+            _seq_rule("G2", "G3"),
+        ],
+    }
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_OPTIMAL
+
+    slot_by_game = {a["game_id"]: a["slot"] for a in result["assignments"]}
+    assert slot_by_game["G1"] < slot_by_game["G2"]
+    assert slot_by_game["G2"] < slot_by_game["G3"]
+
+
+def test_solve_c9_sequence_infeasible_when_impossible():
+    """Circular sequence (G1 < G2 and G2 < G1) is INFEASIBLE."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_INFEASIBLE
+
+    si = {
+        "games": [
+            _gym_game("G1", "T1", "T2", stage="Final"),
+            _gym_game("G2", "T3", "T4", stage="Final"),
+        ],
+        "resources": [
+            _gym_resource("C1", open_time="14:00", close_time="16:00"),
+        ],
+        "precedence": [],
+        "sequence": [
+            _seq_rule("G1", "G2"),
+            _seq_rule("G2", "G1"),  # creates cycle → infeasible
+        ],
+    }
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_INFEASIBLE
+
+
+def test_solve_c9_cross_pool_rule_skipped_gracefully():
+    """A sequence rule whose game IDs span different pools does not crash."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    # G1 is a Gym Court game, G2 is a Badminton Court game.
+    # The sequence rule between them cannot be enforced (different pools) but
+    # must not raise an error — each pool schedules its own game freely.
+    si = {
+        "games": [
+            _gym_game("G1", "T1", "T2", stage="Final"),
+            _bad_game("G2"),
+        ],
+        "resources": [
+            _gym_resource("GYM-1", open_time="14:00", close_time="15:00"),
+            _bad_resource("BAD-1", close_time="15:00"),
+        ],
+        "precedence": [],
+        "sequence": [_seq_rule("G1", "G2")],
+    }
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_OPTIMAL
+    assert len(result["assignments"]) == 2
