@@ -526,6 +526,12 @@ def _solve_one_pool(
     else:
         unscheduled = [g["game_id"] for g in games]
 
+    # If any game in this pool had no candidate placement vars, CP-SAT can still
+    # report the reduced model as solved. Surface that as an infeasible pool so
+    # downstream JSON/report consumers do not see "OPTIMAL" beside dropped games.
+    if status in (STATUS_OPTIMAL, STATUS_FEASIBLE) and unscheduled:
+        status = STATUS_INFEASIBLE
+
     result: dict[str, Any] = {
         "status":              status,
         "solver_wall_seconds": round(wall_time, 3),
@@ -743,9 +749,8 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         )
         return 2
 
-    # A2 — OPTIMAL/FEASIBLE but some games had no compatible resource (C4 routing gap).
-    # The solver cannot schedule what it cannot see; surface this as a non-zero exit
-    # so callers don't silently consume an incomplete schedule.
+    # Defensive fallback: solved statuses should not carry unscheduled games, but if
+    # they ever do, keep the CLI non-zero so callers do not silently accept it.
     if result["unscheduled"]:
         logger.warning(
             f"{len(result['unscheduled'])} game(s) could not be scheduled because "

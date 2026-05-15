@@ -166,11 +166,11 @@ def test_solve_team_conflict_infeasible():
 def test_solve_court_type_routing():
     """A Badminton game must not be assigned to a Gym Court resource.
 
-    With no compatible resources the game lands in 'unscheduled'; the solver
-    still returns OPTIMAL (trivially — no constraints to violate for that game).
+    With no compatible resources the pool is infeasible, so downstream JSON and
+    workbook consumers do not see an OPTIMAL status beside dropped games.
     """
     pytest.importorskip("ortools")
-    from scheduler import solve, STATUS_OPTIMAL
+    from scheduler import solve, STATUS_INFEASIBLE
     si = _minimal_schedule_input(
         games=[{
             "game_id": "G1", "event": "Badminton",
@@ -182,9 +182,12 @@ def test_solve_court_type_routing():
         resources=[_gym_resource("GYM-Sat-1-1")],  # only Gym Court — wrong type
     )
     result = solve(si, timeout_seconds=10.0)
-    assert result["status"] == STATUS_OPTIMAL
+    assert result["status"] == STATUS_INFEASIBLE
     assert result["assignments"] == []
     assert "G1" in result["unscheduled"]
+    pool = result["pool_results"][0]
+    assert pool["status"] == STATUS_INFEASIBLE
+    assert "diagnostics" in pool
 
 
 def test_solve_min_rest_between_games():
@@ -370,14 +373,14 @@ def test_run_solve_schedule_missing_input(tmp_path):
 
 
 def test_run_solve_schedule_unroutable_game_exits_1(tmp_path):
-    """A game with no compatible resource returns exit 1 even if solver says OPTIMAL.
+    """A game with no compatible resource returns exit 1 and writes INFEASIBLE output.
 
     Before the A2 fix, run_solve_schedule returned 0 for this case, silently
     producing an incomplete schedule that produce-schedule would render without
     the missing game.
     """
     pytest.importorskip("ortools")
-    from scheduler import run_solve_schedule
+    from scheduler import run_solve_schedule, STATUS_INFEASIBLE
 
     si = _minimal_schedule_input(
         games=[{
@@ -397,7 +400,31 @@ def test_run_solve_schedule_unroutable_game_exits_1(tmp_path):
     assert exit_code == 1
 
     data = __import__("json").loads(output_path.read_text(encoding="utf-8"))
+    assert data["status"] == STATUS_INFEASIBLE
     assert "BAD-01" in data["unscheduled"]
+
+
+def test_solve_unroutable_pool_makes_top_level_partial():
+    """A solved pool plus an unroutable pool must aggregate to PARTIAL, not OPTIMAL."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_PARTIAL, STATUS_OPTIMAL, STATUS_INFEASIBLE
+
+    si = _minimal_schedule_input(
+        games=[
+            _gym_game("G1", "T1", "T2"),
+            _bad_game("BAD-01", "A", "B"),
+        ],
+        resources=[_gym_resource("GYM-Sat-1-1")],  # no Badminton Court resources
+    )
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_PARTIAL
+    assert any(a["game_id"] == "G1" for a in result["assignments"])
+    assert result["unscheduled"] == ["BAD-01"]
+    pools = {pr["resource_type"]: pr for pr in result["pool_results"]}
+    assert pools["Gym Court"]["status"] == STATUS_OPTIMAL
+    assert pools["Badminton Court"]["status"] == STATUS_INFEASIBLE
+    assert "diagnostics" in pools["Badminton Court"]
 
 
 def test_solver_uses_fixed_random_seed():
