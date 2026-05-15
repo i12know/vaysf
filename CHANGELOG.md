@@ -67,6 +67,9 @@
   - Volleyball Women now uses the same 2-game/team baseline as Basketball and Volleyball Men
   - `Venue-Estimator` now shows target vs actual pool games/team, pool composition, and BYE slots so the workbook matches the generated pool policy
   - `docs/SCHEDULING.md` now correctly states that `earliest_slot` / `latest_slot` remain reserved fields and are not currently enforced by the solver
+- Added command-level and local pipeline regression coverage for scheduling commands
+  - New `tests/test_main.py` covers `parse_args()`, default path resolution in `main.py`, and a local `export-church-teams -> solve-schedule -> produce-schedule` happy path using a repo-local fake export artifact
+  - This closes the remaining `#97` testing gaps around CLI wiring (C1) and a deterministic end-to-end scheduling pipeline check (C2)
 
 
 - Added `--remove-orphans` flag to `python main.py audit-team-groups`
