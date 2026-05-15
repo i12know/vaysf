@@ -1924,24 +1924,13 @@ def test_load_venue_input_rows_skips_blank_resource_rows(mock_connectors, tmp_pa
     assert all(r["resource_type"] == POD_RESOURCE_TYPE_TENNIS for r in result)
 
 
-def test_build_precedence_objects_pool_before_final(mock_connectors):
-    """Pool → Semi and Semi → Final rules are generated when stages are present."""
-    exporter = ChurchTeamsExporter()
-    games = exporter._build_gym_game_objects(_make_gym_roster(8))
-    rules = ChurchTeamsExporter._build_precedence_objects(games)
-    assert rules, "Expected precedence rules for sports with playoffs"
-    bbm_rules = [r for r in rules if r["event"] == SPORT_TYPE["BASKETBALL"]]
-    stage_pairs = {(r["earlier_stage"], r["later_stage"]) for r in bbm_rules}
-    assert ("Semi", "Final") in stage_pairs
-
-
 def test_build_schedule_input_keys(mock_connectors, tmp_path):
     """_build_schedule_input returns dict with all required top-level keys."""
     exporter = ChurchTeamsExporter()
     si = exporter._build_schedule_input(_make_gym_roster(), [], tmp_path / "missing.xlsx")
     assert set(si.keys()) == {
         "generated_at", "gym_court_scenario", "game_count", "resource_count",
-        "games", "resources", "precedence",
+        "games", "resources", "playoff_slots",
     }
     assert si["game_count"] == len(si["games"])
     assert si["resource_count"] == len(si["resources"])
@@ -1989,7 +1978,7 @@ def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path):
 
     import json as _json
     data = _json.loads(json_path.read_text(encoding="utf-8"))
-    assert "games" in data and "resources" in data and "precedence" in data
+    assert "games" in data and "resources" in data and "playoff_slots" in data
     assert "gym_court_scenario" in data
     assert data["game_count"] > 0
     assert data["resource_count"] == len(data["resources"])

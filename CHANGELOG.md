@@ -16,8 +16,6 @@
   - 8 solver tests removed (C5/C8/C9); 1 new test added (`test_solve_playoff_slots_passed_through`); 22 tests total
 
 ### Bug Fixes
-  - An unrecognised slot label (e.g. `"Sun-2-14:00"` in a pool that has no Sun-2 resources) logs a warning and is silently skipped rather than crashing
-  - 4 new tests: `earliest_slot` respected, `latest_slot` respected, inverted window → INFEASIBLE, unknown label → ignored
 - Fixed C6 min-rest constraint incorrectly spanning day boundaries — resolves issue #97 A1
   - Global slot indices are contiguous across days, so the last slot of Sat-1 and the first slot of Sun-1 were treated as "adjacent" and a team was falsely forbidden from playing both
   - Added `global_to_day` map in `_solve_one_pool()`; C6 `AddBoolOr` is now skipped when the two adjacent global indices belong to different days
