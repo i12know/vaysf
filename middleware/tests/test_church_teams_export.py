@@ -1998,3 +1998,164 @@ def test_schedule_input_tab_absent_in_single_church_export(mock_connectors, tmp_
     exporter._write_excel_report(path, [], [], _make_gym_roster(2), [])
     sheets = pd.ExcelFile(path).sheet_names
     assert "Schedule-Input" not in sheets
+
+
+# ---------------------------------------------------------------------------
+# Issue #94 — _build_schedule_output_flat_rows
+# ---------------------------------------------------------------------------
+
+def _make_schedule_pair():
+    """Return (schedule_output, schedule_input) test fixtures."""
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "BBM-01", "event": "Basketball - Men Team",
+                "stage": "Pool", "pool_id": "P1", "round": 1,
+                "team_a_id": "BBM-P1-T1", "team_b_id": "BBM-P1-T2",
+                "duration_minutes": 60, "resource_type": "Gym Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+            {
+                "game_id": "BBM-Final", "event": "Basketball - Men Team",
+                "stage": "Final", "pool_id": "", "round": 1,
+                "team_a_id": "WIN-BBM-Semi-1", "team_b_id": "WIN-BBM-Semi-2",
+                "duration_minutes": 60, "resource_type": "Gym Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+        ],
+        "resources": [
+            {
+                "resource_id": "GYM-Sat-1-1", "resource_type": "Gym Court",
+                "label": "Court-1", "day": "Sat-1",
+                "open_time": "08:00", "close_time": "12:00", "slot_minutes": 60,
+            }
+        ],
+        "precedence": [],
+    }
+    schedule_output = {
+        "solved_at": "2026-05-01T10:00:00",
+        "status": "OPTIMAL",
+        "solver_wall_seconds": 0.1,
+        "assignments": [
+            {"game_id": "BBM-01",    "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-08:00"},
+            {"game_id": "BBM-Final", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-10:00"},
+        ],
+        "unscheduled": [],
+    }
+    return schedule_output, schedule_input
+
+
+def test_build_schedule_output_flat_rows_count():
+    """Returns one row per assignment."""
+    from church_teams_export import ChurchTeamsExporter
+    so, si = _make_schedule_pair()
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    assert len(rows) == 2
+
+
+def test_build_schedule_output_flat_rows_fields():
+    """Each row contains expected keys with non-empty event."""
+    from church_teams_export import ChurchTeamsExporter
+    so, si = _make_schedule_pair()
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    required = {"game_id", "event", "stage", "round", "team_a_id", "team_b_id",
+                "resource_label", "day", "slot", "duration_minutes"}
+    for row in rows:
+        assert required.issubset(row.keys())
+        assert row["event"] == "Basketball - Men Team"
+
+
+def test_build_schedule_output_flat_rows_sorted():
+    """Rows are sorted Pool before Final (stage order)."""
+    from church_teams_export import ChurchTeamsExporter
+    so, si = _make_schedule_pair()
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    stages = [r["stage"] for r in rows]
+    assert stages == ["Pool", "Final"]
+
+
+def test_build_schedule_output_flat_rows_time_part():
+    """The slot field extracts the HH:MM part from the full slot label."""
+    from church_teams_export import ChurchTeamsExporter
+    so, si = _make_schedule_pair()
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    pool_row = next(r for r in rows if r["game_id"] == "BBM-01")
+    assert pool_row["slot"] == "08:00"
+
+
+def test_build_schedule_output_flat_rows_day_display():
+    """Sat-1 is translated to '1st Sat'."""
+    from church_teams_export import ChurchTeamsExporter
+    so, si = _make_schedule_pair()
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    assert all(r["day"] == "1st Sat" for r in rows)
+
+
+def test_build_schedule_output_flat_rows_empty():
+    """Empty assignments list returns empty rows."""
+    from church_teams_export import ChurchTeamsExporter
+    so = {"assignments": [], "unscheduled": []}
+    si = {"games": [], "resources": [], "precedence": []}
+    rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
+    assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# Issue #94 — _write_schedule_output_report
+# ---------------------------------------------------------------------------
+
+def test_write_schedule_output_report_creates_file(tmp_path):
+    """_write_schedule_output_report writes an xlsx with both expected tabs."""
+    from church_teams_export import ChurchTeamsExporter
+    import openpyxl
+    so, si = _make_schedule_pair()
+    out = tmp_path / "sched.xlsx"
+    ChurchTeamsExporter._write_schedule_output_report(out, so, si)
+    assert out.exists()
+    wb = openpyxl.load_workbook(out)
+    assert "Schedule-by-Time" in wb.sheetnames
+    assert "Schedule-by-Sport" in wb.sheetnames
+
+
+def test_write_schedule_output_report_tab1_has_data(tmp_path):
+    """Schedule-by-Time tab has a title in row 1 and game text in the grid."""
+    from church_teams_export import ChurchTeamsExporter
+    import openpyxl
+    so, si = _make_schedule_pair()
+    out = tmp_path / "sched.xlsx"
+    ChurchTeamsExporter._write_schedule_output_report(out, so, si)
+    ws = openpyxl.load_workbook(out)["Schedule-by-Time"]
+    title = ws.cell(row=1, column=1).value
+    assert title and "Sports Fest" in title
+    # At least one game should appear somewhere in the grid
+    all_values = [ws.cell(row=r, column=c).value
+                  for r in range(1, ws.max_row + 1)
+                  for c in range(1, ws.max_column + 1)]
+    assert any("BBM" in str(v) for v in all_values if v)
+
+
+def test_write_schedule_output_report_tab2_flat_list(tmp_path):
+    """Schedule-by-Sport tab has a header row and one data row per assignment."""
+    from church_teams_export import ChurchTeamsExporter
+    import openpyxl
+    so, si = _make_schedule_pair()
+    out = tmp_path / "sched.xlsx"
+    ChurchTeamsExporter._write_schedule_output_report(out, so, si)
+    ws = openpyxl.load_workbook(out)["Schedule-by-Sport"]
+    assert ws.cell(row=1, column=1).value == "game_id"
+    assert ws.cell(row=2, column=1).value == "BBM-01"    # Pool comes first
+    assert ws.cell(row=3, column=1).value == "BBM-Final"
+
+
+def test_write_schedule_output_report_unscheduled_section(tmp_path):
+    """Unscheduled section appears in Schedule-by-Sport when games are unscheduled."""
+    from church_teams_export import ChurchTeamsExporter
+    import openpyxl
+    so, si = _make_schedule_pair()
+    so["unscheduled"] = ["BBM-QF-1"]
+    out = tmp_path / "sched.xlsx"
+    ChurchTeamsExporter._write_schedule_output_report(out, so, si)
+    ws = openpyxl.load_workbook(out)["Schedule-by-Sport"]
+    all_values = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
+    assert any("Unscheduled" in str(v) for v in all_values if v)
+    assert any("BBM-QF-1" in str(v) for v in all_values if v)

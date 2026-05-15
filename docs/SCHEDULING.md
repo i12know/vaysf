@@ -12,7 +12,7 @@ and Claude sessions do not need to reverse-engineer the design from code.
 Step 1                  Step 2                  Step 3                  Step 4
 export-church-teams  →  schedule_input.json  →  solve-schedule       →  export-schedule
                         + Schedule-Input tab    schedule_output.json    VAYSF_Schedule_*.xlsx
-                        (Issue #87, done)       (Issue #93, open)       (Issue #94, open)
+                        (Issue #87, done)       (Issue #93, done)       (Issue #94, done)
 ```
 
 ### Step 1 — Build scheduling inputs (`export-church-teams`)
@@ -144,10 +144,10 @@ Output shape:
 }
 ```
 
-### Step 4 — Excel output (`export-schedule`) — Issue #94
+### Step 4 — Excel output (`export-schedule`) — Issue #94 (done)
 
 ```bash
-python main.py export-schedule [--input path/to/schedule_output.json]
+python main.py export-schedule [--input path/to/schedule_output.json] [--schedule-input path/to/schedule_input.json] [--output path/to/VAYSF_Schedule.xlsx]
 ```
 
 Reads `schedule_output.json`, writes `VAYSF_Schedule_YYYY-MM-DD.xlsx` to
@@ -237,7 +237,7 @@ The general workflow when a new scheduling rule is needed:
 |------|----------|
 | Schedule-Input implementation | Issue #87; `church_teams_export.py` → `_build_schedule_input()` |
 | OR-Tools POC | Issue #90; `middleware/scratch/ortools_poc.py` + `ortools_poc_report.md` |
-| CP-SAT solver module | Issue #93 (open) |
-| Excel schedule output | Issue #94 (open, depends on #93) |
+| CP-SAT solver module | Issue #93 (done); `middleware/scheduler.py` |
+| Excel schedule output | Issue #94 (done); `church_teams_export.py` → `_write_schedule_output_report()` |
 | Venue resource template | `middleware/data/venue_input.xlsx` (gitignored; template at `venue_input_template.xlsx`) |
 | Schedule config constants | `middleware/config.py` — `SCHEDULE_SKETCH_*`, `COURT_ESTIMATE_*`, `GYM_RESOURCE_TYPE`, `POD_RESOURCE_TYPE_*` |

@@ -171,6 +171,29 @@ def parse_args() -> argparse.Namespace:
         help="Path for schedule_output.json (default: DATA_DIR/schedule_output.json)",
     )
 
+    # Export-schedule command
+    export_schedule_parser = subparsers.add_parser(
+        "export-schedule",
+        help="Render schedule_output.json as a human-readable Excel timetable",
+    )
+    export_schedule_parser.add_argument(
+        "--input",
+        default=None,
+        dest="schedule_output",
+        help="Path to schedule_output.json (default: DATA_DIR/schedule_output.json)",
+    )
+    export_schedule_parser.add_argument(
+        "--schedule-input",
+        default=None,
+        dest="schedule_input",
+        help="Path to schedule_input.json (default: DATA_DIR/schedule_input.json)",
+    )
+    export_schedule_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output path for xlsx (default: EXPORT_DIR/VAYSF_Schedule_YYYY-MM-DD.xlsx)",
+    )
+
     # Generate-venue-template command
     venue_template_parser = subparsers.add_parser(
         "generate-venue-template",
@@ -777,6 +800,25 @@ def main() -> None:
         output_path = Path(args.output) if args.output else DATA_DIR / "schedule_output.json"
         exit_code = run_solve_schedule(input_path, output_path)
         sys.exit(exit_code)
+    elif args.command == "export-schedule":
+        so_path = Path(args.schedule_output) if args.schedule_output else DATA_DIR / "schedule_output.json"
+        si_path = Path(args.schedule_input)  if args.schedule_input  else DATA_DIR / "schedule_input.json"
+        if args.output:
+            out_path = Path(args.output)
+        else:
+            today = datetime.date.today().strftime("%Y-%m-%d")
+            out_path = Path(EXPORT_DIR) / f"VAYSF_Schedule_{today}.xlsx"
+        try:
+            so_data = json.loads(so_path.read_text(encoding="utf-8"))
+            si_data = json.loads(si_path.read_text(encoding="utf-8"))
+        except FileNotFoundError as exc:
+            logger.error(f"export-schedule: required file not found — {exc.filename}")
+            success = False
+        else:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            ChurchTeamsExporter._write_schedule_output_report(out_path, so_data, si_data)
+            logger.info(f"Schedule Excel written to: {out_path.resolve()}")
+            success = True
     elif args.command == "generate-venue-template":
         out = Path(args.output) if args.output else None
         success = generate_venue_template(out)

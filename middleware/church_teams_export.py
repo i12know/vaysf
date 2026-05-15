@@ -2973,6 +2973,256 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             logger.error(f"Error resending approval for participant {participant_contact.get('First Name')} {participant_contact.get('Last Name')}: {e}", exc_info=True)
             return False
                     
+    @staticmethod
+    def _build_schedule_output_flat_rows(
+        schedule_output: Dict[str, Any],
+        schedule_input: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Build sorted flat-list rows for the Schedule-by-Sport tab.
+
+        Each row joins one assignment from schedule_output with game metadata
+        from schedule_input.  Rows are sorted by event → stage order → round → slot.
+        """
+        game_meta = {g["game_id"]: g for g in schedule_input.get("games", [])}
+        res_meta  = {r["resource_id"]: r for r in schedule_input.get("resources", [])}
+        _STAGE_ORDER = {"Pool": 0, "R1": 1, "QF": 2, "Semi": 3, "Final": 4, "3rd": 5}
+        _DAY_DISPLAY = {
+            "Sat-1": "1st Sat", "Sun-1": "1st Sun",
+            "Sat-2": "2nd Sat", "Sun-2": "2nd Sun",
+        }
+        rows: List[Dict[str, Any]] = []
+        for a in schedule_output.get("assignments", []):
+            gid  = a["game_id"]
+            rid  = a["resource_id"]
+            slot = a["slot"]
+            game = game_meta.get(gid, {})
+            res  = res_meta.get(rid, {})
+            time_part = slot.rsplit("-", maxsplit=1)[-1] if "-" in slot else slot
+            rows.append({
+                "game_id":          gid,
+                "event":            game.get("event", ""),
+                "stage":            game.get("stage", ""),
+                "round":            game.get("round", ""),
+                "team_a_id":        game.get("team_a_id", ""),
+                "team_b_id":        game.get("team_b_id", ""),
+                "resource_label":   res.get("label", rid),
+                "day":              _DAY_DISPLAY.get(res.get("day", ""), res.get("day", "")),
+                "slot":             time_part,
+                "duration_minutes": game.get("duration_minutes", ""),
+            })
+        rows.sort(key=lambda r: (
+            r["event"],
+            _STAGE_ORDER.get(str(r["stage"]), 99),
+            int(r["round"]) if isinstance(r["round"], int) else 0,
+            r["slot"],
+        ))
+        return rows
+
+    @staticmethod
+    def _write_schedule_output_report(
+        filepath: Path,
+        schedule_output: Dict[str, Any],
+        schedule_input: Dict[str, Any],
+    ) -> None:
+        """Write Schedule-by-Time and Schedule-by-Sport Excel tabs from solver output.
+
+        Tab 1 — Schedule-by-Time: grid (rows = time slots, columns = courts),
+          colour-coded by sport, with session sections separated by grey rows.
+        Tab 2 — Schedule-by-Sport: flat list sorted by event → stage → round,
+          with auto-filter and an unscheduled section when applicable.
+        """
+        from openpyxl import Workbook
+        from openpyxl.styles import PatternFill, Font, Alignment
+        from openpyxl.utils import get_column_letter
+
+        game_meta: Dict[str, Dict[str, Any]] = {
+            g["game_id"]: g for g in schedule_input.get("games", [])
+        }
+        res_meta: Dict[str, Dict[str, Any]] = {
+            r["resource_id"]: r for r in schedule_input.get("resources", [])
+        }
+        assign_map: Dict[Tuple[str, str], Dict[str, Any]] = {
+            (a["resource_id"], a["slot"]): game_meta.get(a["game_id"], {"game_id": a["game_id"]})
+            for a in schedule_output.get("assignments", [])
+        }
+
+        solved_at     = schedule_output.get("solved_at", "")
+        status        = schedule_output.get("status", "")
+        n_assigned    = len(schedule_output.get("assignments", []))
+        n_unscheduled = len(schedule_output.get("unscheduled", []))
+        snapshot      = (
+            f"Generated: {solved_at}  |  Status: {status}  |  "
+            f"Scheduled: {n_assigned}  |  Unscheduled: {n_unscheduled}"
+        )
+
+        sec_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_SECTION, fill_type="solid")
+        hdr_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_HEADER,  fill_type="solid")
+        hdr_font = Font(bold=True, color="FFFFFF")
+        bold_font = Font(bold=True)
+        center   = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        left     = Alignment(horizontal="left",   vertical="center", wrap_text=True)
+        red_fill = PatternFill(fgColor="FFC7CE", fill_type="solid")
+
+        _SPORT_COLORS: Dict[str, str] = {
+            SPORT_TYPE["BASKETBALL"]:       SCHEDULE_SKETCH_COLOR_BASKETBALL,
+            SPORT_TYPE["VOLLEYBALL_MEN"]:   SCHEDULE_SKETCH_COLOR_VB_MEN,
+            SPORT_TYPE["VOLLEYBALL_WOMEN"]: SCHEDULE_SKETCH_COLOR_VB_WOMEN,
+        }
+        _DAY_ORDER   = {"Sat-1": 0, "Sun-1": 1, "Sat-2": 2, "Sun-2": 3}
+        _DAY_DISPLAY = {
+            "Sat-1": "1st Saturday", "Sun-1": "1st Sunday",
+            "Sat-2": "2nd Saturday", "Sun-2": "2nd Sunday",
+        }
+
+        def _sport_fill(event: str) -> PatternFill:
+            return PatternFill(
+                fgColor=_SPORT_COLORS.get(event, "EBF1DE"), fill_type="solid"
+            )
+
+        def _slot_times(res: Dict[str, Any]) -> List[str]:
+            o_h, o_m = map(int, res["open_time"].split(":"))
+            c_h, c_m = map(int, res["close_time"].split(":"))
+            sm        = res["slot_minutes"]
+            open_min  = o_h * 60 + o_m
+            close_min = c_h * 60 + c_m
+            times: List[str] = []
+            t = open_min
+            while t + sm <= close_min:
+                times.append(f"{t // 60:02d}:{t % 60:02d}")
+                t += sm
+            return times
+
+        def _cell_text(game: Dict[str, Any]) -> str:
+            gid = game.get("game_id", "")
+            a   = str(game.get("team_a_id") or "")
+            b   = str(game.get("team_b_id") or "")
+            # Show teams only when they look like real church codes (≤5 chars, no hyphens)
+            if a and b and len(a) <= 5 and "-" not in a:
+                return f"{gid}\n{a} vs {b}"
+            return gid
+
+        # Group resources by session
+        sessions: Dict[str, List[Dict[str, Any]]] = {}
+        for res in schedule_input.get("resources", []):
+            sessions.setdefault(res["day"], []).append(res)
+        sorted_days = sorted(
+            sessions.keys(), key=lambda d: (_DAY_ORDER.get(d, 99), d)
+        )
+        max_courts = max((len(v) for v in sessions.values()), default=4)
+        n_cols     = 1 + max_courts
+
+        wb = Workbook()
+
+        # ── Tab 1: Schedule-by-Time ──────────────────────────────────────────
+        ws1       = wb.active
+        ws1.title = "Schedule-by-Time"
+
+        # Row 1 — report title (merged)
+        ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_cols)
+        c = ws1.cell(row=1, column=1, value="VAY Sports Fest — Schedule by Time")
+        c.fill, c.font, c.alignment = hdr_fill, hdr_font, center
+
+        # Row 2 — column headers: Time + court labels from first session
+        ws1.cell(row=2, column=1, value="Time").font = bold_font
+        first_res = sorted(
+            sessions.get(sorted_days[0], [])[:max_courts], key=lambda r: r["resource_id"]
+        ) if sorted_days else []
+        for ci, res in enumerate(first_res, start=2):
+            c = ws1.cell(row=2, column=ci, value=res["label"])
+            c.fill, c.font, c.alignment = sec_fill, bold_font, center
+        ws1.freeze_panes = "A3"
+
+        cur_row = 3
+        for day in sorted_days:
+            day_res = sorted(sessions[day], key=lambda r: r["resource_id"])
+            if not day_res:
+                continue
+
+            # Section header (grey, merged)
+            ws1.merge_cells(
+                start_row=cur_row, start_column=1,
+                end_row=cur_row, end_column=n_cols,
+            )
+            c = ws1.cell(row=cur_row, column=1, value=_DAY_DISPLAY.get(day, day))
+            c.fill, c.font, c.alignment = sec_fill, bold_font, center
+            cur_row += 1
+
+            # Data rows — one per time slot in this session
+            for t_str in _slot_times(day_res[0]):
+                slot_label = f"{day}-{t_str}"
+                ws1.cell(row=cur_row, column=1, value=t_str).alignment = center
+                for ci, res in enumerate(day_res, start=2):
+                    game = assign_map.get((res["resource_id"], slot_label))
+                    cell = ws1.cell(row=cur_row, column=ci)
+                    if game:
+                        cell.value = _cell_text(game)
+                        cell.fill  = _sport_fill(game.get("event", ""))
+                    cell.alignment = center
+                cur_row += 1
+
+            cur_row += 1  # blank row between sessions
+
+        ws1.cell(row=cur_row + 1, column=1, value=snapshot)
+        ws1.column_dimensions["A"].width = 7
+        for ci in range(2, n_cols + 1):
+            ws1.column_dimensions[get_column_letter(ci)].width = 18
+
+        # ── Tab 2: Schedule-by-Sport ─────────────────────────────────────────
+        ws2       = wb.create_sheet("Schedule-by-Sport")
+        flat_rows = ChurchTeamsExporter._build_schedule_output_flat_rows(
+            schedule_output, schedule_input
+        )
+        col_defs = [
+            ("game_id",          14),
+            ("event",            28),
+            ("stage",             8),
+            ("round",             6),
+            ("team_a_id",        20),
+            ("team_b_id",        20),
+            ("resource_label",   14),
+            ("day",              10),
+            ("slot",              8),
+            ("duration_minutes", 16),
+        ]
+        cols = [col for col, _ in col_defs]
+
+        for ci, (col, _) in enumerate(col_defs, start=1):
+            cell = ws2.cell(row=1, column=ci, value=col)
+            cell.fill, cell.font = hdr_fill, hdr_font
+            cell.alignment = Alignment(horizontal="center")
+        ws2.freeze_panes = "A2"
+        ws2.auto_filter.ref = f"A1:{get_column_letter(len(col_defs))}1"
+
+        for ri, row in enumerate(flat_rows, start=2):
+            fill = _sport_fill(row.get("event", ""))
+            for ci, col in enumerate(cols, start=1):
+                cell = ws2.cell(row=ri, column=ci, value=row.get(col, ""))
+                cell.fill, cell.alignment = fill, left
+
+        # Unscheduled section at bottom
+        unscheduled = schedule_output.get("unscheduled", [])
+        ri = len(flat_rows) + 3
+        if unscheduled:
+            ws2.merge_cells(
+                start_row=ri, start_column=1, end_row=ri, end_column=len(col_defs)
+            )
+            c = ws2.cell(
+                row=ri, column=1,
+                value=f"Unscheduled Games ({len(unscheduled)})",
+            )
+            c.fill, c.font = red_fill, Font(bold=True)
+            for gid in unscheduled:
+                ri += 1
+                ws2.cell(row=ri, column=1, value=gid).fill = red_fill
+            ri += 2
+
+        ws2.cell(row=ri, column=1, value=snapshot)
+        for ci, (_, width) in enumerate(col_defs, start=1):
+            ws2.column_dimensions[get_column_letter(ci)].width = width
+
+        wb.save(filepath)
+        logger.info(f"Schedule output report written to: {filepath}")
+
     def close(self):
         """Closes any open connections (if necessary)."""
         logger.info("Closing ChurchTeamsExporter resources.") # MODIFIED LOGGER MESSAGE

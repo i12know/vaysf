@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### New Features
+- Added `python main.py export-schedule [--input …] [--schedule-input …] [--output …]` Excel schedule renderer — closes [#94](https://github.com/i12know/vaysf/issues/94)
+  - Reads `schedule_output.json` (produced by `solve-schedule`) and `schedule_input.json` (produced by `export-church-teams`), writes `VAYSF_Schedule_YYYY-MM-DD.xlsx` to `EXPORT_DIR`
+  - **Schedule-by-Time** tab: grid view (rows = time slots, columns = courts), color-coded by sport (brown = Basketball, blue = VB Men, pink = VB Women), title row merged, column headers from first session resources, session section headers in grey, blank row between sessions, freeze at A3
+  - **Schedule-by-Sport** tab: flat list sorted by event → stage order (Pool < R1 < QF < Semi < Final < 3rd) → round → slot, auto-filter, freeze at A2, unscheduled section in red at bottom when applicable, snapshot note at bottom of both tabs
+  - Both tabs carry a snapshot line: `Generated: … | Status: … | Scheduled: N | Unscheduled: N`
+  - Implemented via `_build_schedule_output_flat_rows()` and `_write_schedule_output_report()` static methods on `ChurchTeamsExporter`
+  - 9 new tests covering flat-row count, field presence, sort order, time extraction, day display, empty input, tab presence, grid content, and unscheduled section
 - Added `python main.py solve-schedule [--input …] [--output …]` CP-SAT scheduler — closes [#93](https://github.com/i12know/vaysf/issues/93)
   - Reads `schedule_input.json` (produced by `export-church-teams`), solves a CP-SAT assignment model, writes `schedule_output.json`
   - Implements seven constraints: C1 (each game assigned to one slot/court), C2 (one game per slot/court, multi-slot aware), C3 (no team plays two games in the same slot), C4 (court-type routing — gym games to Gym Courts, racquet games to their matching resource type), C5 (stage ordering — Pool before Semi, Semi before Final via the `precedence` rules in the input), C6 (minimum rest — no team plays in adjacent global time slots), C7 (multi-slot games — duration > slot_minutes blocks consecutive slots)
