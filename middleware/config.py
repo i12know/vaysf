@@ -545,6 +545,11 @@ SCHEDULE_SKETCH_COLOR_HEADER      = "595959"   # dark grey scenario header
 # Change this constant (not the code) to switch between 3/4/5-court scenarios.
 SCHEDULE_SOLVER_GYM_COURTS = 4
 
+# Fixed random seed for the CP-SAT solver.  Keeps schedules reproducible across
+# runs with identical inputs — the same optimal assignment is produced every time.
+# Change to 0 to disable the seed (CP-SAT default: non-deterministic).
+SCHEDULE_SOLVER_RANDOM_SEED = 42
+
 # Configuration class
 class Config:
     """Configuration settings for VAYSF middleware."""

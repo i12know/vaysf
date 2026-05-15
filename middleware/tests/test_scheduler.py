@@ -188,7 +188,11 @@ def test_solve_court_type_routing():
 
 
 def test_solve_min_rest_between_games():
-    """A team with two games must not play in adjacent slots."""
+    """A team with two games must not play in adjacent slots (C3 fix for C6 intent check).
+
+    The assertion compares global slot-index distance (>= 2 = at least one slot gap)
+    rather than minutes, so it stays valid if slot_minutes changes.
+    """
     pytest.importorskip("ortools")
     from scheduler import solve, STATUS_OPTIMAL, _slot_sort_key
     si = _minimal_schedule_input(
@@ -201,14 +205,23 @@ def test_solve_min_rest_between_games():
             _gym_resource("GYM-Sat-1-2", close_time="12:00"),
         ],
     )
+    resources = [
+        _gym_resource("GYM-Sat-1-1", close_time="12:00"),
+        _gym_resource("GYM-Sat-1-2", close_time="12:00"),
+    ]
     result = solve(si, timeout_seconds=10.0)
     assert result["status"] == STATUS_OPTIMAL
-    slots = {a["game_id"]: a["slot"] for a in result["assignments"]}
-    key1 = _slot_sort_key(slots["G1"])
-    key2 = _slot_sort_key(slots["G2"])
-    # Slots must differ by at least 2 positions (min rest = no consecutive slots)
-    assert abs(key1[1] - key2[1]) >= 120 or key1[0] != key2[0], (
-        f"T1 played consecutive slots: {slots['G1']} and {slots['G2']}"
+    assigned = {a["game_id"]: a["slot"] for a in result["assignments"]}
+    # Rebuild the same global slot ordering the solver used, then check distance.
+    # This avoids hardcoding slot_minutes (the original C3 coupling issue).
+    from scheduler import build_resource_slots
+    all_labels = sorted(
+        {s for sl in build_resource_slots(resources).values() for s in sl},
+        key=_slot_sort_key,
+    )
+    slot_idx = {s: i for i, s in enumerate(all_labels)}
+    assert abs(slot_idx[assigned["G1"]] - slot_idx[assigned["G2"]]) >= 2, (
+        f"T1 played in adjacent slots: {assigned['G1']} and {assigned['G2']}"
     )
 
 
@@ -345,7 +358,7 @@ def test_run_solve_schedule_infeasible_writes_diagnostics(tmp_path):
 
 
 def test_run_solve_schedule_missing_input(tmp_path):
-    """run_solve_schedule returns exit code 2 when input file is missing."""
+    """run_solve_schedule returns exit code 3 when input file is missing."""
     pytest.importorskip("ortools")
     from scheduler import run_solve_schedule
 
@@ -353,7 +366,61 @@ def test_run_solve_schedule_missing_input(tmp_path):
         tmp_path / "nonexistent.json",
         tmp_path / "out.json",
     )
-    assert exit_code == 2
+    assert exit_code == 3
+
+
+def test_run_solve_schedule_unroutable_game_exits_1(tmp_path):
+    """A game with no compatible resource returns exit 1 even if solver says OPTIMAL.
+
+    Before the A2 fix, run_solve_schedule returned 0 for this case, silently
+    producing an incomplete schedule that produce-schedule would render without
+    the missing game.
+    """
+    pytest.importorskip("ortools")
+    from scheduler import run_solve_schedule
+
+    si = _minimal_schedule_input(
+        games=[{
+            "game_id": "BAD-01", "event": "Badminton",
+            "stage": "R1", "pool_id": "", "round": 1,
+            "team_a_id": "A", "team_b_id": "B",
+            "duration_minutes": 30, "resource_type": "Badminton Court",
+            "earliest_slot": None, "latest_slot": None,
+        }],
+        resources=[_gym_resource("GYM-Sat-1-1")],  # Gym Court only — wrong type
+    )
+    input_path = tmp_path / "schedule_input.json"
+    input_path.write_text(__import__("json").dumps(si), encoding="utf-8")
+    output_path = tmp_path / "schedule_output.json"
+
+    exit_code = run_solve_schedule(input_path, output_path)
+    assert exit_code == 1
+
+    data = __import__("json").loads(output_path.read_text(encoding="utf-8"))
+    assert "BAD-01" in data["unscheduled"]
+
+
+def test_solver_uses_fixed_random_seed():
+    """Two identical solve() calls produce the same assignment order (B6 determinism)."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = _minimal_schedule_input(
+        games=[
+            _gym_game("G1", "T1", "T2"),
+            _gym_game("G2", "T3", "T4"),
+            _gym_game("G3", "T1", "T3"),
+        ],
+        resources=[_gym_resource("GYM-Sat-1-1", close_time="12:00")],
+    )
+    result_a = solve(si, timeout_seconds=10.0)
+    result_b = solve(si, timeout_seconds=10.0)
+
+    assert result_a["status"] == STATUS_OPTIMAL
+    assert result_b["status"] == STATUS_OPTIMAL
+    slots_a = {a["game_id"]: a["slot"] for a in result_a["assignments"]}
+    slots_b = {a["game_id"]: a["slot"] for a in result_b["assignments"]}
+    assert slots_a == slots_b
 
 
 # ---------------------------------------------------------------------------

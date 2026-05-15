@@ -6,9 +6,10 @@ CLI:
 
 Reads  : schedule_input.json (written by export-church-teams, Issue #87/#96)
 Writes : schedule_output.json to DATA_DIR (or --output path)
-Exits  : 0 = OPTIMAL or FEASIBLE (all pools solved)
-         1 = PARTIAL (some pools failed) / INFEASIBLE (no pools solved) / UNKNOWN
-         2 = error (bad input or ortools missing)
+Exits  : 0 = OPTIMAL or FEASIBLE, all games scheduled
+         1 = any games unscheduled (PARTIAL / INFEASIBLE / unroutable games)
+         2 = solver timed out (UNKNOWN) — increase SCHEDULE_SOLVER_TIMEOUT
+         3 = error (bad input or ortools missing)
 
 Architecture — pool decomposition:
   Games are partitioned by resource_type and solved independently.
@@ -43,6 +44,8 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+from config import SCHEDULE_SOLVER_RANDOM_SEED
 
 _DAY_ORDER: dict[str, int] = {"Sat-1": 0, "Sun-1": 1, "Sat-2": 2, "Sun-2": 3}
 _DEFAULT_TIMEOUT = float(os.getenv("SCHEDULE_SOLVER_TIMEOUT", "30.0"))
@@ -489,6 +492,8 @@ def _solve_one_pool(
     # Solve
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = timeout_seconds
+    if SCHEDULE_SOLVER_RANDOM_SEED:
+        solver.parameters.random_seed = SCHEDULE_SOLVER_RANDOM_SEED
     status_code = solver.Solve(model)
 
     wall_time   = solver.WallTime()
@@ -656,15 +661,16 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
     """Load schedule_input.json, solve, write schedule_output.json.
 
     Returns exit code:
-        0 = OPTIMAL or FEASIBLE (every pool solved)
-        1 = PARTIAL (some pools failed) / INFEASIBLE / UNKNOWN
-        2 = error (missing input, bad JSON, ortools not installed)
+        0 = every pool solved, every game scheduled
+        1 = any games unscheduled (PARTIAL, INFEASIBLE, or no compatible resource)
+        2 = solver timed out (UNKNOWN) — increase SCHEDULE_SOLVER_TIMEOUT env var
+        3 = error (missing input, bad JSON, ortools not installed)
     """
     try:
         schedule_input = load_schedule_input(input_path)
     except Exception as e:
         logger.error(f"Failed to load {input_path}: {e}")
-        return 2
+        return 3
 
     logger.info(
         f"Loaded {len(schedule_input['games'])} games, "
@@ -675,10 +681,10 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         result = solve(schedule_input)
     except ImportError:
         logger.error("ortools not installed. Run: pip install ortools>=9.8")
-        return 2
+        return 3
     except Exception as e:
         logger.error(f"Solver error: {e}", exc_info=True)
-        return 2
+        return 3
 
     output = {
         "solved_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
@@ -692,7 +698,7 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         logger.info(f"schedule_output.json written to {output_path}")
     except OSError as e:
         logger.error(f"Failed to write {output_path}: {e}")
-        return 2
+        return 3
 
     if result["status"] == STATUS_PARTIAL:
         failed = [
@@ -729,7 +735,24 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         return 1
 
     if result["status"] == STATUS_UNKNOWN:
-        logger.warning("Solver timed out or reached resource limit without a solution.")
+        timeout_used = os.getenv("SCHEDULE_SOLVER_TIMEOUT", "30")
+        logger.warning(
+            f"Solver timed out after {timeout_used}s without finding a solution. "
+            "This is not proven infeasible — increase SCHEDULE_SOLVER_TIMEOUT and re-run. "
+            f"Current timeout: {timeout_used}s."
+        )
+        return 2
+
+    # A2 — OPTIMAL/FEASIBLE but some games had no compatible resource (C4 routing gap).
+    # The solver cannot schedule what it cannot see; surface this as a non-zero exit
+    # so callers don't silently consume an incomplete schedule.
+    if result["unscheduled"]:
+        logger.warning(
+            f"{len(result['unscheduled'])} game(s) could not be scheduled because "
+            "no compatible resource exists for their resource_type. "
+            "Check that every game's resource_type matches at least one resource in "
+            f"schedule_input.json. Unscheduled: {result['unscheduled']}"
+        )
         return 1
 
     return 0
