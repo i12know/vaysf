@@ -1,4 +1,5 @@
 @echo off
+setlocal
 REM ============================================================
 REM  run-schedule.bat
 REM  Step 1: solve-schedule  (CP-SAT solver)
@@ -9,15 +10,52 @@ REM      run-schedule.bat
 REM
 REM  Optional overrides (set before running or pass inline):
 REM      set SCHEDULE_SOLVER_TIMEOUT=60
+REM      set EXPORT_DIR=G:\Shared drives\...\VAYSF-data
 REM ============================================================
+
+if not defined EXPORT_DIR (
+    if exist ".env" (
+        for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+            if /I "%%A"=="EXPORT_DIR" set "EXPORT_DIR=%%B"
+        )
+    )
+)
+
+if defined EXPORT_DIR (
+    set "EXPORT_DIR=%EXPORT_DIR:"=%"
+    set "SCHEDULE_INPUT_PATH=%EXPORT_DIR%\schedule_input.json"
+    set "SCHEDULE_OUTPUT_PATH=%EXPORT_DIR%\schedule_output.json"
+) else (
+    set "SCHEDULE_INPUT_PATH=%CD%\data\schedule_input.json"
+    set "SCHEDULE_OUTPUT_PATH=%CD%\data\schedule_output.json"
+)
+
+if exist ".venv\Scripts\python.exe" (
+    set "PYTHON_EXE=.venv\Scripts\python.exe"
+) else (
+    set "PYTHON_EXE=python"
+)
 
 echo.
 echo ============================================================
-echo  STEP 1 — solve-schedule
+echo  STEP 1 - solve-schedule
 echo ============================================================
-python main.py solve-schedule
+echo  Input : %SCHEDULE_INPUT_PATH%
+echo  Output: %SCHEDULE_OUTPUT_PATH%
+echo  Python: %PYTHON_EXE%
+
+if not exist "%SCHEDULE_INPUT_PATH%" (
+    echo  [ERROR] schedule_input.json was not found at:
+    echo          %SCHEDULE_INPUT_PATH%
+    echo          Run export-church-teams first, or set EXPORT_DIR correctly.
+    set SOLVE_CODE=3
+    goto after_solve
+)
+
+%PYTHON_EXE% main.py solve-schedule --input "%SCHEDULE_INPUT_PATH%" --output "%SCHEDULE_OUTPUT_PATH%"
 set SOLVE_CODE=%ERRORLEVEL%
 
+:after_solve
 echo.
 echo  Exit code: %SOLVE_CODE%
 
@@ -46,7 +84,7 @@ if %SOLVE_CODE% == 2 (
 )
 
 if %SOLVE_CODE% == 3 (
-    echo  [ERROR] A hard error occurred — bad input file, invalid JSON,
+    echo  [ERROR] A hard error occurred - bad input file, invalid JSON,
     echo          or ortools is not installed.
     echo          Check the log above for details.
     goto end
@@ -58,9 +96,9 @@ goto end
 :produce
 echo.
 echo ============================================================
-echo  STEP 2 — produce-schedule
+echo  STEP 2 - produce-schedule
 echo ============================================================
-python main.py produce-schedule
+%PYTHON_EXE% main.py produce-schedule --input "%SCHEDULE_OUTPUT_PATH%" --constraint "%SCHEDULE_INPUT_PATH%"
 set PRODUCE_CODE=%ERRORLEVEL%
 
 echo.
