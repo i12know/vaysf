@@ -21,7 +21,6 @@ Constraints implemented (per pool):
   C2  Each (resource, slot) hosts at most one game (multi-slot aware).
   C3  No team plays two games in the same time slot.
   C4  Court-type routing — each game is assigned only to matching resource_type.
-  C5  Stage ordering — earlier_stage games finish before later_stage games start.
   C6  Minimum rest — no team plays in two adjacent global time slots.
   C7  Multi-slot games — a game whose duration > slot_minutes blocks consecutive slots.
 
@@ -112,11 +111,91 @@ def build_resource_slots(resources: list[dict]) -> dict[str, list[str]]:
     return result
 
 
+def validate_playoff_slots(
+    playoff_slots: list[dict[str, Any]],
+    resources: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, set[str]]]]:
+    """Validate manual playoff slots and return reserved solver slots by pool.
+
+    Manual playoff rows are not re-solved, but they must still refer to real
+    resources and real slot labels so the pool-play solver can reserve those
+    exact court/time pairs.
+    """
+    if not playoff_slots:
+        return [], {}
+
+    res_by_id = {resource["resource_id"]: resource for resource in resources}
+    res_slots = build_resource_slots(resources)
+    reserved_by_type: dict[str, dict[str, set[str]]] = defaultdict(
+        lambda: defaultdict(set)
+    )
+    validated: list[dict[str, Any]] = []
+    seen_keys: dict[tuple[str, str], str] = {}
+
+    for playoff_slot in playoff_slots:
+        game_id = str(playoff_slot.get("game_id", "")).strip() or "<unknown>"
+        resource_id = str(playoff_slot.get("resource_id", "")).strip()
+        slot = str(playoff_slot.get("slot", "")).strip()
+        if not resource_id or not slot:
+            raise ValueError(
+                f"Playoff slot {game_id!r} is missing required resource_id/slot values."
+            )
+
+        resource = res_by_id.get(resource_id)
+        if resource is None:
+            raise ValueError(
+                f"Playoff slot {game_id!r} references unknown resource_id {resource_id!r}."
+            )
+
+        valid_slots = set(res_slots.get(resource_id, []))
+        if slot not in valid_slots:
+            raise ValueError(
+                f"Playoff slot {game_id!r} uses slot {slot!r}, which is not a valid slot "
+                f"for resource {resource_id!r}."
+            )
+
+        key = (resource_id, slot)
+        previous_game = seen_keys.get(key)
+        if previous_game is not None:
+            raise ValueError(
+                f"Duplicate playoff slot reservation for {resource_id!r} at {slot!r}: "
+                f"{previous_game!r} and {game_id!r}."
+            )
+        seen_keys[key] = game_id
+
+        normalized = dict(playoff_slot)
+        normalized.setdefault("resource_type", resource["resource_type"])
+        validated.append(normalized)
+        reserved_by_type[resource["resource_type"]][resource_id].add(slot)
+
+    return validated, reserved_by_type
+
+
+def ensure_unique_assignment_slots(assignments: list[dict[str, Any]]) -> None:
+    """Raise when two assignments occupy the same (resource_id, slot) pair."""
+    seen: dict[tuple[str, str], str] = {}
+    for assignment in assignments:
+        resource_id = assignment.get("resource_id")
+        slot = assignment.get("slot")
+        game_id = assignment.get("game_id", "<unknown>")
+        if not resource_id or not slot:
+            continue
+        key = (resource_id, slot)
+        previous_game = seen.get(key)
+        if previous_game is not None:
+            raise ValueError(
+                f"Assignment collision on {resource_id!r} at {slot!r}: "
+                f"{previous_game!r} and {game_id!r}."
+            )
+        seen[key] = game_id
+
+
 def build_infeasibility_diagnostics(schedule_input: dict[str, Any]) -> list[dict[str, Any]]:
     """Return lower-bound capacity diagnostics for operator-facing INFEASIBLE cases.
 
     The diagnostics intentionally stay simple:
-    - `available_slots` = total start slots available across all resources of a type
+    - `available_slots` = total unreserved start slots available across all
+      resources of a type
     - `required_slots`  = sum of the minimum slots each game would occupy on any
       compatible resource of that type
 
@@ -126,6 +205,10 @@ def build_infeasibility_diagnostics(schedule_input: dict[str, Any]) -> list[dict
     games: list[dict]     = schedule_input["games"]
     resources: list[dict] = schedule_input["resources"]
     res_slots = build_resource_slots(resources)
+    blocked_slots: dict[str, set[str]] = {
+        resource_id: set(slots)
+        for resource_id, slots in schedule_input.get("blocked_slots", {}).items()
+    }
 
     resources_by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for resource in resources:
@@ -134,7 +217,11 @@ def build_infeasibility_diagnostics(schedule_input: dict[str, Any]) -> list[dict
     available_by_type: dict[str, int] = {}
     for resource_type, typed_resources in resources_by_type.items():
         available_by_type[resource_type] = sum(
-            len(res_slots[resource["resource_id"]])
+            sum(
+                1
+                for slot in res_slots[resource["resource_id"]]
+                if slot not in blocked_slots.get(resource["resource_id"], set())
+            )
             for resource in typed_resources
         )
 
@@ -244,8 +331,9 @@ def _solve_one_pool(
 ) -> dict[str, Any]:
     """Build and solve a CP-SAT model for one resource-type pool.
 
-    pool_input must contain 'games', 'resources', and 'precedence' for a single
-    resource_type.  Called by solve() once per pool.
+    pool_input must contain 'games' and 'resources' for a single resource_type.
+    Optional 'blocked_slots' reserves exact (resource_id, slot) pairs for manual
+    playoff games before the pool-play solver runs. Called by solve() once per pool.
 
     Returns a dict with keys:
         status              : 'OPTIMAL' | 'FEASIBLE' | 'INFEASIBLE' | 'UNKNOWN'
@@ -260,8 +348,12 @@ def _solve_one_pool(
     games:     list[dict] = pool_input["games"]
     resources: list[dict] = pool_input["resources"]
 
-    res_by_id:   dict[str, dict]        = {r["resource_id"]: r for r in resources}
-    res_slots:   dict[str, list[str]]   = build_resource_slots(resources)
+    res_by_id:      dict[str, dict]      = {r["resource_id"]: r for r in resources}
+    res_slots:      dict[str, list[str]] = build_resource_slots(resources)
+    blocked_slots = {
+        resource_id: set(slots)
+        for resource_id, slots in pool_input.get("blocked_slots", {}).items()
+    }
 
     # C4 — court-type routing (within this pool all games share one resource_type,
     # but res_by_type keeps the structure consistent with the constraint code)
@@ -269,7 +361,7 @@ def _solve_one_pool(
     for r in resources:
         res_by_type.setdefault(r["resource_type"], []).append(r["resource_id"])
 
-    # Build global slot ordering for C5 (stage ordering) and C6 (min rest)
+    # Build global slot ordering for C6 (min rest)
     all_labels: set[str] = set()
     for slots in res_slots.values():
         all_labels.update(slots)
@@ -302,6 +394,12 @@ def _solve_one_pool(
             # C7 — multi-slot: game occupies ceil(duration/slot_min) consecutive slots
             n_slots  = max(1, math.ceil(duration / slot_min))
             for t in range(len(slots) - n_slots + 1):
+                occupied_labels = slots[t : t + n_slots]
+                if any(
+                    label in blocked_slots.get(rid, set())
+                    for label in occupied_labels
+                ):
+                    continue
                 var = model.NewBoolVar(f"x_{gid}_{rid}_{t}")
                 game_vars[gid][(rid, t)] = var
 
@@ -466,6 +564,10 @@ def solve(
     """
     games:     list[dict] = schedule_input["games"]
     resources: list[dict] = schedule_input["resources"]
+    playoff_slots, blocked_slots_by_type = validate_playoff_slots(
+        schedule_input.get("playoff_slots", []),
+        resources,
+    )
 
     # Partition games and resources by resource_type for independent pool solves
     games_by_type:     dict[str, list[dict]] = {}
@@ -480,7 +582,7 @@ def solve(
         return {
             "status":              STATUS_OPTIMAL,
             "solver_wall_seconds": 0.0,
-            "assignments":         list(schedule_input.get("playoff_slots", [])),
+            "assignments":         list(playoff_slots),
             "unscheduled":         [],
             "pool_results":        [],
         }
@@ -492,8 +594,9 @@ def solve(
 
     for resource_type in sorted(games_by_type.keys()):
         pool_input = {
-            "games":     games_by_type[resource_type],
-            "resources": resources_by_type.get(resource_type, []),
+            "games":         games_by_type[resource_type],
+            "resources":     resources_by_type.get(resource_type, []),
+            "blocked_slots": blocked_slots_by_type.get(resource_type, {}),
         }
         result = _solve_one_pool(pool_input, timeout_seconds)
         result["resource_type"] = resource_type
@@ -522,18 +625,12 @@ def solve(
         top_status = STATUS_INFEASIBLE
 
     # Merge pre-assigned playoff slots from schedule_input into assignments.
-    playoff_slots: list[dict] = schedule_input.get("playoff_slots", [])
     if playoff_slots:
         for ps in playoff_slots:
-            if ps.get("resource_id") and ps.get("slot"):
-                all_assignments.append({
-                    "game_id":     ps["game_id"],
-                    "resource_id": ps["resource_id"],
-                    "slot":        ps["slot"],
-                    "event":       ps.get("event", ""),
-                    "stage":       ps.get("stage", ""),
-                })
+            all_assignments.append(dict(ps))
         logger.info(f"Merged {len(playoff_slots)} pre-assigned playoff slots into output.")
+
+    ensure_unique_assignment_slots(all_assignments)
 
     logger.info(
         f"Solver (all pools): status={top_status}, "

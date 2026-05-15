@@ -146,14 +146,19 @@ python main.py solve-schedule [--input path/to/schedule_input.json] [--output pa
 ```
 
 Reads `schedule_input.json`, runs the OR-Tools CP-SAT model for **pool play
-games only**, then merges pre-assigned `playoff_slots` from the input into the
-output.  Writes `schedule_output.json` to `DATA_DIR` (or `--output` path).
+games only**, reserves any manual `playoff_slots` from the same court/time
+inventory, then merges those playoff assignments into the output. Writes
+`schedule_output.json` to `DATA_DIR` (or `--output` path).
 Exit codes: 0 = OPTIMAL/FEASIBLE (all pools solved), 1 = PARTIAL/INFEASIBLE/UNKNOWN,
 2 = error.
 
-Playoff slots are passed through unchanged — the solver does not re-assign or
-validate them.  If `playoff_slots` is empty (tab missing from `venue_input.xlsx`),
-the output `assignments` array contains only pool play games.
+Playoff slots are not re-assigned by the solver, but they **are** validated
+against the resource list and reserved before pool play is packed. If a
+playoff row points at an unknown court, an invalid slot label, or duplicates an
+existing playoff reservation, `solve-schedule` fails loudly instead of emitting
+a silent collision. If `playoff_slots` is empty (tab missing from
+`venue_input.xlsx`), the output `assignments` array contains only pool play
+games.
 
 Configurable timeout via `SCHEDULE_SOLVER_TIMEOUT` env var (default: 30 s).
 

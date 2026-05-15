@@ -384,7 +384,10 @@ def test_solve_pool_results_always_present():
     from scheduler import solve, STATUS_OPTIMAL
     si = _minimal_schedule_input(
         games=[_gym_game("G1", "T1", "T2")],
-        resources=[_gym_resource("GYM-Sat-1-1")],
+        resources=[
+            _gym_resource("GYM-Sat-1-1"),
+            _gym_resource("GYM-Sat-2-1", day="Sat-2"),
+        ],
     )
     result = solve(si)
     assert result["status"] == STATUS_OPTIMAL
@@ -518,11 +521,14 @@ def test_solve_playoff_slots_passed_through():
     from scheduler import solve, STATUS_OPTIMAL
     si = _minimal_schedule_input(
         games=[_gym_game("G1", "T1", "T2")],
-        resources=[_gym_resource("GYM-Sat-1-1")],
+        resources=[
+            _gym_resource("GYM-Sat-1-1"),
+            _gym_resource("GYM-Sat-2-1", day="Sat-2"),
+        ],
     )
     si["playoff_slots"] = [
         {"game_id": "BBM-Final", "event": "Basketball - Men Team", "stage": "Final",
-         "resource_id": "GYM-Sat-2-1", "slot": "Sat-2-14:00"},
+         "resource_id": "GYM-Sat-2-1", "slot": "Sat-2-09:00"},
     ]
     result = solve(si, timeout_seconds=10.0)
     assert result["status"] == STATUS_OPTIMAL
@@ -530,27 +536,58 @@ def test_solve_playoff_slots_passed_through():
     assert "G1" in game_ids
     assert "BBM-Final" in game_ids
     final_asgn = next(a for a in result["assignments"] if a["game_id"] == "BBM-Final")
-    assert final_asgn["slot"] == "Sat-2-14:00"
+    assert final_asgn["slot"] == "Sat-2-09:00"
     assert final_asgn["stage"] == "Final"
 
 
-def test_solve_playoff_slots_passed_through():
-    """playoff_slots from schedule_input are merged into solver output assignments."""
+def test_solve_playoff_slots_reserve_pool_slots():
+    """Manual playoff slots reserve the same court/time from the pool-play solver."""
     pytest.importorskip("ortools")
     from scheduler import solve, STATUS_OPTIMAL
     si = _minimal_schedule_input(
         games=[_gym_game("G1", "T1", "T2")],
-        resources=[_gym_resource("GYM-Sat-1-1")],
+        resources=[_gym_resource("GYM-Sat-1-1", close_time="10:00")],
     )
     si["playoff_slots"] = [
-        {"game_id": "BBM-Final", "event": "Basketball - Men Team", "stage": "Final",
-         "resource_id": "GYM-Sat-2-1", "slot": "Sat-2-14:00"},
+        {
+            "game_id": "BBM-Final",
+            "event": "Basketball - Men Team",
+            "stage": "Final",
+            "resource_id": "GYM-Sat-1-1",
+            "slot": "Sat-1-08:00",
+        },
     ]
     result = solve(si, timeout_seconds=10.0)
     assert result["status"] == STATUS_OPTIMAL
-    game_ids = {a["game_id"] for a in result["assignments"]}
-    assert "G1" in game_ids
-    assert "BBM-Final" in game_ids
+    pool_asgn = next(a for a in result["assignments"] if a["game_id"] == "G1")
     final_asgn = next(a for a in result["assignments"] if a["game_id"] == "BBM-Final")
-    assert final_asgn["slot"] == "Sat-2-14:00"
-    assert final_asgn["stage"] == "Final"
+    assert pool_asgn["slot"] == "Sat-1-09:00"
+    assert final_asgn["slot"] == "Sat-1-08:00"
+
+
+def test_solve_duplicate_playoff_slot_raises():
+    """Duplicate manual playoff reservations fail loudly before rendering can hide them."""
+    pytest.importorskip("ortools")
+    from scheduler import solve
+    si = _minimal_schedule_input(
+        games=[_gym_game("G1", "T1", "T2")],
+        resources=[_gym_resource("GYM-Sat-1-1", close_time="10:00")],
+    )
+    si["playoff_slots"] = [
+        {
+            "game_id": "BBM-Semi-1",
+            "event": "Basketball - Men Team",
+            "stage": "Semi",
+            "resource_id": "GYM-Sat-1-1",
+            "slot": "Sat-1-08:00",
+        },
+        {
+            "game_id": "BBM-Final",
+            "event": "Basketball - Men Team",
+            "stage": "Final",
+            "resource_id": "GYM-Sat-1-1",
+            "slot": "Sat-1-08:00",
+        },
+    ]
+    with pytest.raises(ValueError, match="Duplicate playoff slot reservation"):
+        solve(si, timeout_seconds=10.0)
