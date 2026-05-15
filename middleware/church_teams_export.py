@@ -54,6 +54,7 @@ from config import (
     POD_FIT_COLOR_YELLOW,
     POD_FIT_COLOR_RED,
     POD_FIT_YELLOW_MAX,
+    SCHEDULE_STAGE_WINDOWS,
 )
 from validation.name_matcher import normalized_name as _norm_name
 from chmeetings.backend_connector import ChMeetingsConnector
@@ -1555,6 +1556,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             # Pool games — stable team IDs and non-empty pool_id
             pool_pairs = self._make_pool_game_pairs(prefix, n_teams, gpg)
             for pair_idx, (team_a_id, team_b_id, pool_id) in enumerate(pool_pairs, start=1):
+                _pool_window = SCHEDULE_STAGE_WINDOWS.get((event_name, "Pool"), (None, None))
                 games.append({
                     "game_id": f"{prefix}-{pair_idx:02d}",
                     "event": event_name,
@@ -1565,8 +1567,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "team_b_id": team_b_id,
                     "duration_minutes": mpg,
                     "resource_type": GYM_RESOURCE_TYPE,
-                    "earliest_slot": None,
-                    "latest_slot": None,
+                    "earliest_slot": _pool_window[0],
+                    "latest_slot":   _pool_window[1],
                 })
 
             # Early playoff games (QF, Semi) — seed/winner references
@@ -1586,6 +1588,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     else:
                         team_a_id = f"{prefix}-Seed-{semi_count * 2 - 1}"
                         team_b_id = f"{prefix}-Seed-{semi_count * 2}"
+                _early_window = SCHEDULE_STAGE_WINDOWS.get((event_name, stage), (None, None))
                 games.append({
                     "game_id": gid,
                     "event": event_name,
@@ -1596,8 +1599,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "team_b_id": team_b_id,
                     "duration_minutes": mpg,
                     "resource_type": GYM_RESOURCE_TYPE,
-                    "earliest_slot": None,
-                    "latest_slot": None,
+                    "earliest_slot": _early_window[0],
+                    "latest_slot":   _early_window[1],
                 })
 
             # Final games (Final and optional 3rd) — winner/loser references
@@ -1609,6 +1612,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 else:  # 3rd place
                     team_a_id = f"LOSE-{prefix}-Semi-1"
                     team_b_id = f"LOSE-{prefix}-Semi-2"
+                _final_window = SCHEDULE_STAGE_WINDOWS.get((event_name, stage), (None, None))
                 games.append({
                     "game_id": gid,
                     "event": event_name,
@@ -1619,8 +1623,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "team_b_id": team_b_id,
                     "duration_minutes": mpg,
                     "resource_type": GYM_RESOURCE_TYPE,
-                    "earliest_slot": None,
-                    "latest_slot": None,
+                    "earliest_slot": _final_window[0],
+                    "latest_slot":   _final_window[1],
                 })
 
         return games

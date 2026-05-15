@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Bug Fixes
+- Implemented C8 per-game time-window constraints — resolves issue #97 B1
+  - `earliest_slot` and `latest_slot` fields in `schedule_input.json` game objects are now enforced by the CP-SAT solver (`Add(gslot >= lo)` / `Add(gslot <= hi)` on the game's global slot IntVar)
+  - `SCHEDULE_STAGE_WINDOWS` dict added to `config.py`: maps `(event_name, stage)` to `(earliest_slot, latest_slot)` slot labels; pool/QF/Semi games are pinned to Weekend 1 (Sat-1/Sun-1), Finals/3rd to Weekend 2 (Sat-2 onward); edit this dict to move the finale block or add Bible Challenge windows
+  - `_build_gym_game_objects()` now reads `SCHEDULE_STAGE_WINDOWS` and populates `earliest_slot`/`latest_slot` on every game object instead of always emitting `None`
+  - An unrecognised slot label (e.g. `"Sun-2-14:00"` in a pool that has no Sun-2 resources) logs a warning and is silently skipped rather than crashing
+  - 4 new tests: `earliest_slot` respected, `latest_slot` respected, inverted window → INFEASIBLE, unknown label → ignored
 - Fixed C6 min-rest constraint incorrectly spanning day boundaries — resolves issue #97 A1
   - Global slot indices are contiguous across days, so the last slot of Sat-1 and the first slot of Sun-1 were treated as "adjacent" and a team was falsely forbidden from playing both
   - Added `global_to_day` map in `_solve_one_pool()`; C6 `AddBoolOr` is now skipped when the two adjacent global indices belong to different days

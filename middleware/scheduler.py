@@ -397,6 +397,26 @@ def _solve_one_pool(
                     # NOT (v1 AND v2) — at most one of adjacent-slot vars can be true
                     model.AddBoolOr([v1.Not(), v2.Not()])
 
+    # C8 — per-game time windows (earliest_slot / latest_slot from schedule_input.json)
+    for game in games:
+        gid = game["game_id"]
+        if gid not in game_global_slot:
+            continue
+        lo_label = game.get("earliest_slot")
+        hi_label = game.get("latest_slot")
+        if lo_label:
+            lo = slot_to_global.get(lo_label)
+            if lo is not None:
+                model.Add(game_global_slot[gid] >= lo)
+            else:
+                logger.warning(f"Game {gid!r}: earliest_slot {lo_label!r} not in this pool's slots; ignored")
+        if hi_label:
+            hi = slot_to_global.get(hi_label)
+            if hi is not None:
+                model.Add(game_global_slot[gid] <= hi)
+            else:
+                logger.warning(f"Game {gid!r}: latest_slot {hi_label!r} not in this pool's slots; ignored")
+
     # Objective — minimize the latest occupied global slot (pack games toward start)
     if game_global_slot:
         latest = model.NewIntVar(0, max(n_global - 1, 0), "latest_slot")

@@ -513,6 +513,72 @@ def test_solve_partial_exit_code(tmp_path):
     assert "diagnostics" in pools["Badminton Court"]
 
 
+def test_solve_c8_earliest_slot_respected():
+    """A game with earliest_slot is not placed before that slot."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+    # Two slots available: Sat-1-08:00 and Sat-1-09:00.
+    # earliest_slot = Sat-1-09:00 → must land on the second slot.
+    game = _gym_game("G1", "T1", "T2")
+    game["earliest_slot"] = "Sat-1-09:00"
+    si = _minimal_schedule_input(
+        games=[game],
+        resources=[_gym_resource("GYM-Sat-1-1", open_time="08:00", close_time="10:00")],
+    )
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_OPTIMAL
+    assert result["assignments"][0]["slot"] == "Sat-1-09:00"
+
+
+def test_solve_c8_latest_slot_respected():
+    """A game with latest_slot is not placed after that slot."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+    # Two slots available: Sat-1-08:00 and Sat-1-09:00.
+    # latest_slot = Sat-1-08:00 → must land on the first slot.
+    game = _gym_game("G1", "T1", "T2")
+    game["latest_slot"] = "Sat-1-08:00"
+    si = _minimal_schedule_input(
+        games=[game],
+        resources=[_gym_resource("GYM-Sat-1-1", open_time="08:00", close_time="10:00")],
+    )
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_OPTIMAL
+    assert result["assignments"][0]["slot"] == "Sat-1-08:00"
+
+
+def test_solve_c8_window_too_tight_is_infeasible():
+    """A game with an inverted window (earliest > latest) is INFEASIBLE."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_INFEASIBLE
+    # Resource has two slots: 08:00 and 09:00.
+    # earliest_slot=09:00 (gslot >= 1) AND latest_slot=08:00 (gslot <= 0) → impossible.
+    game = _gym_game("G1", "T1", "T2")
+    game["earliest_slot"] = "Sat-1-09:00"
+    game["latest_slot"]   = "Sat-1-08:00"
+    si = _minimal_schedule_input(
+        games=[game],
+        resources=[_gym_resource("GYM-Sat-1-1", open_time="08:00", close_time="10:00")],
+    )
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_INFEASIBLE
+
+
+def test_solve_c8_unknown_slot_label_is_ignored():
+    """A game with an earliest_slot label not in any resource slot is scheduled normally."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+    game = _gym_game("G1", "T1", "T2")
+    game["earliest_slot"] = "Sun-2-14:00"   # label exists in no resource → ignored
+    si = _minimal_schedule_input(
+        games=[game],
+        resources=[_gym_resource("GYM-Sat-1-1", open_time="08:00", close_time="09:00")],
+    )
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_OPTIMAL
+    assert len(result["assignments"]) == 1
+
+
 def test_solve_c6_min_rest_does_not_span_day_boundary():
     """A team that plays the last slot of one day and the first of the next must be OPTIMAL.
 
