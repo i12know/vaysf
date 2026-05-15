@@ -171,24 +171,24 @@ def parse_args() -> argparse.Namespace:
         help="Path for schedule_output.json (default: DATA_DIR/schedule_output.json)",
     )
 
-    # Export-schedule command
-    export_schedule_parser = subparsers.add_parser(
-        "export-schedule",
+    # Produce-schedule command
+    produce_schedule_parser = subparsers.add_parser(
+        "produce-schedule",
         help="Render schedule_output.json as a human-readable Excel timetable",
     )
-    export_schedule_parser.add_argument(
+    produce_schedule_parser.add_argument(
         "--input",
         default=None,
         dest="schedule_output",
         help="Path to schedule_output.json (default: DATA_DIR/schedule_output.json)",
     )
-    export_schedule_parser.add_argument(
-        "--schedule-input",
+    produce_schedule_parser.add_argument(
+        "--constraint",
         default=None,
         dest="schedule_input",
         help="Path to schedule_input.json (default: DATA_DIR/schedule_input.json)",
     )
-    export_schedule_parser.add_argument(
+    produce_schedule_parser.add_argument(
         "--output",
         default=None,
         help="Output path for xlsx (default: EXPORT_DIR/VAYSF_Schedule_YYYY-MM-DD.xlsx)",
@@ -800,7 +800,7 @@ def main() -> None:
         output_path = Path(args.output) if args.output else DATA_DIR / "schedule_output.json"
         exit_code = run_solve_schedule(input_path, output_path)
         sys.exit(exit_code)
-    elif args.command == "export-schedule":
+    elif args.command == "produce-schedule":
         so_path = Path(args.schedule_output) if args.schedule_output else DATA_DIR / "schedule_output.json"
         si_path = Path(args.schedule_input)  if args.schedule_input  else DATA_DIR / "schedule_input.json"
         if args.output:

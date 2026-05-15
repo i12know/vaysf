@@ -144,10 +144,10 @@ Output shape:
 }
 ```
 
-### Step 4 — Excel output (`export-schedule`) — Issue #94 (done)
+### Step 4 — Excel output (`produce-schedule`) — Issue #94 (done)
 
 ```bash
-python main.py export-schedule [--input path/to/schedule_output.json] [--schedule-input path/to/schedule_input.json] [--output path/to/VAYSF_Schedule.xlsx]
+python main.py produce-schedule [--input path/to/schedule_output.json] [--constraint path/to/schedule_input.json] [--output path/to/VAYSF_Schedule.xlsx]
 ```
 
 Reads `schedule_output.json`, writes `VAYSF_Schedule_YYYY-MM-DD.xlsx` to

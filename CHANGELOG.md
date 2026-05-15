@@ -3,8 +3,8 @@
 ## Unreleased
 
 ### New Features
-- Added `python main.py export-schedule [--input …] [--schedule-input …] [--output …]` Excel schedule renderer — closes [#94](https://github.com/i12know/vaysf/issues/94)
-  - Reads `schedule_output.json` (produced by `solve-schedule`) and `schedule_input.json` (produced by `export-church-teams`), writes `VAYSF_Schedule_YYYY-MM-DD.xlsx` to `EXPORT_DIR`
+- Added `python main.py produce-schedule [--input …] [--constraint …] [--output …]` Excel schedule renderer — closes [#94](https://github.com/i12know/vaysf/issues/94)
+  - Reads `schedule_output.json` (produced by `solve-schedule`) via `--input` and `schedule_input.json` (produced by `export-church-teams`) via `--constraint`, writes `VAYSF_Schedule_YYYY-MM-DD.xlsx` to `EXPORT_DIR`
   - **Schedule-by-Time** tab: grid view (rows = time slots, columns = courts), color-coded by sport (brown = Basketball, blue = VB Men, pink = VB Women), title row merged, column headers from first session resources, session section headers in grey, blank row between sessions, freeze at A3
   - **Schedule-by-Sport** tab: flat list sorted by event → stage order (Pool < R1 < QF < Semi < Final < 3rd) → round → slot, auto-filter, freeze at A2, unscheduled section in red at bottom when applicable, snapshot note at bottom of both tabs
   - Both tabs carry a snapshot line: `Generated: … | Status: … | Scheduled: N | Unscheduled: N`
