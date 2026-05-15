@@ -428,11 +428,13 @@ COURT_ESTIMATE_RACQUET_EVENTS = [
 ]
 
 # Pool games per team — tune per sport once a venue is confirmed.
-# Kept at 2 as the minimum planning baseline.
+# Layer 1 team-sport planning is normalized around two pool games per team.
+# Individual events may still override this, but the current Sports Fest policy
+# keeps the live schedule-prep path on the exact-2-game baseline.
 COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM = 2
 COURT_ESTIMATE_POOL_GAMES_BASKETBALL       = 2
 COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_MEN   = 2
-COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_WOMEN = 3
+COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_WOMEN = 2
 COURT_ESTIMATE_POOL_GAMES_SOCCER           = 2
 COURT_ESTIMATE_POOL_GAMES_BIBLE_CHALLENGE  = 2
 

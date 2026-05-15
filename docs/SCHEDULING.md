@@ -120,8 +120,11 @@ Every **game object** (pool play only) looks like:
   The same placeholder ID is reused across every game that team plays, so
   the solver can enforce team-overlap (C3) and min-rest (C6) constraints
   even before final church assignments are known.
-- Teams are grouped into balanced pools of size `gpg + 1` (full round-robin
-  within each pool gives each team exactly `gpg` games).
+- Team sports currently use a deterministic normalized pool format for
+  planning: `2` teams -> direct match, `3` -> 3-team round robin,
+  `4` -> fixed 4-match matrix, `5` -> fixed 5-match cycle, `6+` -> a
+  composition of 3-team and 4-team pools that keeps every team at exactly
+  `2` pool games.
 - `null` is never emitted; every game has non-null `team_a_id` and `team_b_id`.
 
 **`pool_id`:**
@@ -326,9 +329,9 @@ Remaining future work:
   a participant → games mapping (from roster data), which is not yet in
   `schedule_input.json`.
 - **Pool play time windows.** `earliest_slot` / `latest_slot` fields are
-  enforced by the solver via `Add(gslot >= lo)` / `Add(gslot <= hi)` on each
-  game's global slot variable.  Stage windows are configured in
-  `SCHEDULE_STAGE_WINDOWS` in `config.py`.
+  present in the schema but are currently emitted as `null` and are not
+  enforced by the solver. Restore a C8-style constraint only after upstream
+  data starts populating real pool-game blackout or window values.
 
 ---
 

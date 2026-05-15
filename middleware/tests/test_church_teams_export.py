@@ -923,6 +923,10 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
     assert "Potential Teams/Entries" in venue_df.columns
     assert "Estimating Teams/Entries" in venue_df.columns
     assert "Teams" in venue_df.columns
+    assert "Target Pool Games/Team" in venue_df.columns
+    assert "Actual Pool Games/Team" in venue_df.columns
+    assert "Pool Composition" in venue_df.columns
+    assert "BYE Slots" in venue_df.columns
     assert "Estimated Court Hours" in venue_df.columns
     # 5 team sports + 6 racquet sports
     assert len(venue_df[venue_df["Minutes Per Game"].notna()]) == 11  # 5 team + 6 racquet sports
@@ -1729,11 +1733,9 @@ def test_build_gym_game_objects_stable_team_ids(mock_connectors):
         appearances[g["team_a_id"]] += 1
         appearances[g["team_b_id"]] += 1
 
-    # Every team must appear in at least 2 games (gpg=2 for Basketball)
-    # Some teams in smaller edge pools may appear fewer times, but all appear at least once
-    assert all(count >= 1 for count in appearances.values()), "Each team must appear at least once"
-    # At least some teams appear in exactly 2 games (normal pool size = 3 teams)
-    assert any(count >= 2 for count in appearances.values()), "Some teams must appear in multiple games"
+    # The normalized 2-game policy keeps every team at exactly 2 pool games.
+    assert appearances, "Expected stable placeholder team IDs to be reused"
+    assert all(count == 2 for count in appearances.values()), appearances
 
 
 def test_build_gym_game_objects_pool_id_nonempty(mock_connectors):
@@ -2231,49 +2233,70 @@ def test_build_schedule_output_flat_rows_empty():
 # B3 — _compute_court_slots matches _make_pool_game_pairs actual count
 # ---------------------------------------------------------------------------
 
-def test_compute_court_slots_formula_vs_actual_8teams_gpg2(mock_connectors):
-    """8 teams / gpg=2: formula gives 8 but actual round-robin (B4-balanced pools) is 12.
-
-    B4 fix: floor division gives pools [4,4] (each team plays 3 games ≥ gpg=2).
-    Old ceil division gave pools [3,3,2] where the 2-team pool played only 1 game.
-    _compute_court_slots called with actual_pool_games returns 12, not 8.
-    """
+def test_compute_court_slots_matches_normalized_policy_8teams_gpg2(mock_connectors):
+    """8 teams / gpg=2 now stays at 8 pool games under the normalized policy."""
     from church_teams_export import ChurchTeamsExporter
 
     n_teams, gpg = 8, 2
     actual = len(ChurchTeamsExporter._make_pool_game_pairs("_", n_teams, gpg))
-    assert actual == 12  # pools [4,4] → C(4,2)+C(4,2) = 6+6
+    assert actual == 8  # pools [4,4] with 4-match matrices -> 4 + 4
 
     exporter = ChurchTeamsExporter()
     s_formula = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg)
     s_actual  = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg,
                                               actual_pool_games=actual)
-    assert s_formula["pool_slots"] == 8    # ceil(8*2/2) formula estimate
-    assert s_actual["pool_slots"]  == 12   # correct actual count
+    assert s_formula["pool_slots"] == 8
+    assert s_actual["pool_slots"]  == 8
 
 
-def test_make_pool_game_pairs_all_teams_play_at_least_gpg(mock_connectors):
-    """B4: every team plays at least gpg games regardless of n_teams % (gpg+1)."""
+def test_make_pool_game_pairs_exact_two_games_per_team(mock_connectors):
+    """Normalized B4 policy keeps every team at the same exact pool-game count."""
     from church_teams_export import ChurchTeamsExporter
     from collections import Counter
 
     cases = [
-        (7, 2),   # old: pools [3,2,2] → min 1 game; new: [4,3] → min 2 = gpg
-        (8, 2),   # old: pools [3,3,2] → min 1 game; new: [4,4] → min 3 ≥ gpg
-        (9, 3),   # old: pools [4,3,3] → min 2 game; new: [5,4] → min 3 = gpg
-        (10, 3),  # old: pools [4,4,4] → exact; new: same, no change
-        (5, 2),   # 1 pool of 5 → each plays 4 ≥ gpg=2
+        (3, 2, 2, 3),
+        (4, 2, 2, 4),
+        (5, 2, 2, 5),
+        (7, 2, 2, 7),
+        (8, 2, 2, 8),
+        (12, 2, 2, 12),
+        (20, 2, 2, 20),
     ]
-    for n_teams, gpg in cases:
+    for n_teams, gpg, expected_games_per_team, expected_total_games in cases:
         pairs = ChurchTeamsExporter._make_pool_game_pairs("T", n_teams, gpg)
         games_per_team: Counter = Counter()
         for a, b, _ in pairs:
             games_per_team[a] += 1
             games_per_team[b] += 1
-        min_games = min(games_per_team.values()) if games_per_team else 0
-        assert min_games >= gpg, (
-            f"n_teams={n_teams}, gpg={gpg}: min games={min_games} < gpg"
+        assert len(pairs) == expected_total_games, (
+            f"n_teams={n_teams}: total pool games {len(pairs)} != {expected_total_games}"
         )
+        assert games_per_team, f"Expected generated games for n_teams={n_teams}"
+        assert all(count == expected_games_per_team for count in games_per_team.values()), (
+            f"n_teams={n_teams}, gpg={gpg}: {dict(games_per_team)}"
+        )
+
+
+def test_make_pool_game_pairs_direct_match_for_two_teams(mock_connectors):
+    """Two teams stay as a single direct match rather than an over-built pool."""
+    from church_teams_export import ChurchTeamsExporter
+
+    pairs = ChurchTeamsExporter._make_pool_game_pairs("T", 2, 2)
+    assert pairs == [("T-P1-T1", "T-P1-T2", "P1")]
+
+
+def test_make_pool_game_pairs_legacy_fallback_for_nondefault_target(mock_connectors):
+    """Non-default targets keep the legacy balanced round-robin fallback."""
+    from church_teams_export import ChurchTeamsExporter
+    from collections import Counter
+
+    pairs = ChurchTeamsExporter._make_pool_game_pairs("T", 9, 3)
+    games_per_team: Counter = Counter()
+    for a, b, _ in pairs:
+        games_per_team[a] += 1
+        games_per_team[b] += 1
+    assert min(games_per_team.values()) >= 3
 
 
 def test_compute_court_slots_consistent_with_make_pool_game_pairs(mock_connectors):
@@ -2282,7 +2305,7 @@ def test_compute_court_slots_consistent_with_make_pool_game_pairs(mock_connector
     from church_teams_export import ChurchTeamsExporter
 
     exporter = ChurchTeamsExporter()
-    cases = [(4, 3), (6, 2), (8, 2), (9, 3), (10, 2), (12, 3)]
+    cases = [(2, 2), (5, 2), (8, 2), (12, 2), (9, 3)]
     for n_teams, gpg in cases:
         actual = len(ChurchTeamsExporter._make_pool_game_pairs("_", n_teams, gpg))
         s = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg,

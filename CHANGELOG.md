@@ -56,13 +56,17 @@
   - 15 new tests in `middleware/tests/test_scheduler.py`
 - Hardened `schedule_input.json` contract for solver-ready team IDs, pool IDs, and gym resource selection — closes [#96](https://github.com/i12know/vaysf/issues/96)
   - Pool games now carry stable placeholder team IDs (`BBM-P1-T1`, `BBM-P1-T2`, …) instead of `null`; the same ID is reused across all games involving that team so the solver can enforce C3 and C6 constraints in planning mode
-  - Teams are distributed into balanced pools of size `gpg + 1`; a full round-robin within each pool gives each team exactly `gpg` games
+  - Gym/team pool planning now uses deterministic templates instead of generic round-robin inference: `2` teams -> direct match, `3` -> RR-3, `4` -> 4-match matrix, `5` -> 5-match cycle, `6+` -> a 3/4-pool composition that keeps every team at exactly 2 pool games
   - Playoff games use explicit seed/winner references (`BBM-Seed-1`, `WIN-BBM-QF-1`, `WIN-BBM-Semi-1`, `LOSE-BBM-Semi-2`) rather than `null`
   - Pool games now emit a non-empty `pool_id` (`"P1"`, `"P2"`, …); playoff/final games emit `""`
   - `schedule_input.json` now includes `gym_court_scenario` (the explicit court count used); controlled by new `SCHEDULE_SOLVER_GYM_COURTS = 4` constant in `config.py` — change the constant to switch between 3/4/5-court scenarios without touching code
   - `_build_schedule_input()` calls `_build_gym_resource_objects(SCHEDULE_SOLVER_GYM_COURTS)` explicitly instead of relying on the invisible `n_courts=4` default
   - New helper `_make_pool_game_pairs()` encapsulates pool generation and team ID assignment
   - 4 new tests; existing structure tests updated
+- Normalized Layer 1 team-sport planning around exact two-game pool play
+  - Volleyball Women now uses the same 2-game/team baseline as Basketball and Volleyball Men
+  - `Venue-Estimator` now shows target vs actual pool games/team, pool composition, and BYE slots so the workbook matches the generated pool policy
+  - `docs/SCHEDULING.md` now correctly states that `earliest_slot` / `latest_slot` remain reserved fields and are not currently enforced by the solver
 
 
 - Added `--remove-orphans` flag to `python main.py audit-team-groups`
@@ -89,7 +93,7 @@
   - Game IDs are sequential placeholders (`BBM01`–`BBMnn` Basketball Men, `VBM01`–`VBMnn` Volleyball Men, `VBW01`–`VBWnn` Volleyball Women) — no actual team assignments or conflict enforcement
   - Games are color-coded: brown (Basketball), blue (Volleyball Men), pink (Volleyball Women)
   - Pool games are interleaved across sports (BBM01, VBM01, VBW01, BBM02, …) to balance court load
-  - Inputs summary row shows pool games/team, minutes/game, and 3rd-place flag; game count totals per sport shown on row 2
+  - Inputs summary row now shows target/actual pool games per team, minutes/game, and 3rd-place flag; row 2 shows actual pool-game totals plus pool composition
   - Falls back to 8 teams per sport when fewer than 2 estimating teams exist (planning mode)
   - **Excel-only planning artifact** — no data is written to WordPress `sf_schedules` until the OR-Tools scheduling review step
   - Tab is absent from per-church exports; only appears in the consolidated ALL export alongside `Venue-Estimator`

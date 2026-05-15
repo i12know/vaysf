@@ -1114,8 +1114,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         # When the caller already knows the exact game count (e.g. from
         # _make_pool_game_pairs), use it directly so the Venue-Estimator and
-        # schedule_input.json agree on the number of pool games (B3 fix).
-        # The formula ceil(n*gpg/2) over-counts when pools are uneven.
+        # schedule_input.json stay aligned with the current pool-generation
+        # policy instead of falling back to a rough ceil(n*gpg/2) estimate.
         if actual_pool_games is not None:
             pool_slots = actual_pool_games
         else:
@@ -1485,15 +1485,20 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             counts = self._count_estimating_teams(roster_rows, event_name, min_team_size)
             mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(event_name, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME)
             gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM)
+            pool_plan = self._summarize_pool_policy(counts["n_estimating"], gpg)
             actual = len(self._make_pool_game_pairs("_", counts["n_estimating"], gpg))
             s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg,
-                                          pool_games_per_team=gpg, actual_pool_games=actual)
+                                          pool_games_per_team=gpg,
+                                          actual_pool_games=actual)
             rows.append({
                 "Event": event_name,
                 "Potential Teams/Entries": counts["n_potential"],
                 "Estimating Teams/Entries": counts["n_estimating"],
                 "Teams": counts["team_codes"],
-                "Pool Games Per Team": s["pool_games_per_team"],
+                "Target Pool Games/Team": pool_plan["target_pool_games_per_team"],
+                "Actual Pool Games/Team": pool_plan["actual_pool_games_per_team"],
+                "Pool Composition": pool_plan["pool_composition"],
+                "BYE Slots": pool_plan["bye_slots"],
                 "Minutes Per Game": s["minutes_per_game"],
                 "Pool Slots": s["pool_slots"],
                 "Playoff Teams": s["playoff_teams"],
@@ -1514,7 +1519,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "Potential Teams/Entries": counts["n_potential"],
                 "Estimating Teams/Entries": counts["n_estimating"],
                 "Teams": counts["team_codes"],
-                "Pool Games Per Team": s["pool_games_per_team"],
+                "Target Pool Games/Team": None,
+                "Actual Pool Games/Team": None,
+                "Pool Composition": "",
+                "BYE Slots": None,
                 "Minutes Per Game": s["minutes_per_game"],
                 "Pool Slots": s["pool_slots"],
                 "Playoff Teams": s["playoff_teams"],
@@ -2103,30 +2111,68 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         return grids
 
     @staticmethod
-    @staticmethod
-    def _make_pool_game_pairs(
-        prefix: str, n_teams: int, gpg: int
-    ) -> List[Tuple[str, str, str]]:
-        """Return (team_a_id, team_b_id, pool_id) tuples for pool-play games.
-
-        Teams are split into balanced pools of size ≥ (gpg+1).  Floor division
-        is used for n_pools so every pool has at least gpg+1 teams, guaranteeing
-        each team plays at least gpg games.  Teams distribute via round-robin so
-        pool sizes differ by at most 1 (some pools may be gpg+2 when n_teams is
-        not divisible by gpg+1, giving those teams one extra game).
-
-        Team IDs are stable planning placeholders: {prefix}-P{pool}-T{slot}.
-        The same placeholder is reused across all games involving that team,
-        allowing the solver to enforce team-overlap and min-rest constraints.
-        """
+    def _two_game_pool_sizes(n_teams: int) -> List[int]:
+        """Return deterministic pool sizes for the normalized 2-game/team policy."""
         if n_teams < 2:
             return []
+        if n_teams in (2, 3, 4, 5):
+            return [n_teams]
+
+        for n_fours in range(n_teams // 4, -1, -1):
+            remainder = n_teams - (4 * n_fours)
+            if remainder >= 0 and remainder % 3 == 0:
+                return ([4] * n_fours) + ([3] * (remainder // 3))
+
+        raise ValueError(f"Unable to build normalized 2-game pools for n_teams={n_teams}")
+
+    @staticmethod
+    def _summarize_pool_policy(n_teams: int, gpg: int) -> Dict[str, Any]:
+        """Return operator-facing metadata for the current pool-generation policy."""
+        if n_teams < 2:
+            return {
+                "target_pool_games_per_team": gpg,
+                "actual_pool_games_per_team": 0,
+                "pool_composition": "",
+                "bye_slots": 0,
+                "actual_pool_games": 0,
+            }
+
+        if gpg != 2:
+            actual_pool_games = len(
+                ChurchTeamsExporter._make_legacy_pool_game_pairs("_", n_teams, gpg)
+            )
+            return {
+                "target_pool_games_per_team": gpg,
+                "actual_pool_games_per_team": None,
+                "pool_composition": "",
+                "bye_slots": 0,
+                "actual_pool_games": actual_pool_games,
+            }
+
+        pool_sizes = ChurchTeamsExporter._two_game_pool_sizes(n_teams)
+        games_by_pool_size = {2: 1, 3: 3, 4: 4, 5: 5}
+        return {
+            "target_pool_games_per_team": gpg,
+            "actual_pool_games_per_team": 1 if n_teams == 2 else 2,
+            "pool_composition": " + ".join(str(size) for size in pool_sizes),
+            "bye_slots": 5 * pool_sizes.count(5),
+            "actual_pool_games": sum(games_by_pool_size[size] for size in pool_sizes),
+        }
+
+    @staticmethod
+    def _make_legacy_pool_game_pairs(
+        prefix: str, n_teams: int, gpg: int
+    ) -> List[Tuple[str, str, str]]:
+        """Legacy balanced round-robin fallback for non-default pool-game targets."""
+        if n_teams < 2:
+            return []
+
         target_pool_size = max(2, gpg + 1)
-        n_pools = max(1, n_teams // target_pool_size)  # floor: all pools ≥ target
+        n_pools = max(1, n_teams // target_pool_size)
 
         pools: List[List[int]] = [[] for _ in range(n_pools)]
         for i in range(n_teams):
-            pools[i % n_pools].append(i + 1)  # 1-indexed team number
+            pools[i % n_pools].append(i + 1)
 
         team_id: Dict[int, str] = {}
         for p_idx, pool_teams in enumerate(pools, start=1):
@@ -2143,6 +2189,56 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         team_id[pool_teams[j]],
                         pool_id,
                     ))
+        return pairs
+
+    @staticmethod
+    def _make_pool_game_pairs(
+        prefix: str, n_teams: int, gpg: int
+    ) -> List[Tuple[str, str, str]]:
+        """Return (team_a_id, team_b_id, pool_id) tuples for pool-play games.
+
+        Current Layer 1 planning normalizes team sports around exact two-game
+        pool play:
+        - 2 teams  -> one direct match
+        - 3 teams  -> 3-team round robin
+        - 4 teams  -> 4-match matrix (every team plays exactly twice)
+        - 5 teams  -> 5-match cycle (every team plays exactly twice)
+        - 6+ teams -> deterministic composition of 3-team and 4-team pools
+
+        If a non-default target is requested, fall back to the older balanced
+        round-robin pool builder so the helper remains backwards-compatible for
+        tests and historical data exploration.
+
+        Team IDs are stable planning placeholders: {prefix}-P{pool}-T{slot}.
+        The same placeholder is reused across all games involving that team,
+        allowing the solver to enforce team-overlap and min-rest constraints.
+        """
+        if n_teams < 2:
+            return []
+        if gpg != 2:
+            return ChurchTeamsExporter._make_legacy_pool_game_pairs(prefix, n_teams, gpg)
+
+        template_pairs = {
+            2: [(0, 1)],
+            3: [(0, 1), (0, 2), (1, 2)],
+            4: [(0, 1), (2, 3), (0, 2), (1, 3)],
+            5: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)],
+        }
+        pool_sizes = ChurchTeamsExporter._two_game_pool_sizes(n_teams)
+
+        pairs: List[Tuple[str, str, str]] = []
+        for p_idx, pool_size in enumerate(pool_sizes, start=1):
+            pool_id = f"P{p_idx}"
+            pool_team_ids = [
+                f"{prefix}-P{p_idx}-T{slot_idx}"
+                for slot_idx in range(1, pool_size + 1)
+            ]
+            for team_a_idx, team_b_idx in template_pairs[pool_size]:
+                pairs.append((
+                    pool_team_ids[team_a_idx],
+                    pool_team_ids[team_b_idx],
+                    pool_id,
+                ))
         return pairs
 
     @staticmethod
@@ -2209,8 +2305,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             counts = self._count_estimating_teams(roster_rows, event_name, min_sz)
             n_teams = counts["n_estimating"] if counts["n_estimating"] >= 2 else 8
             gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM)
+            pool_plan = self._summarize_pool_policy(n_teams, gpg)
             actual = len(self._make_pool_game_pairs("_", n_teams, gpg))
-            s = self._compute_court_slots(n_teams, mpg, pool_games_per_team=gpg, actual_pool_games=actual)
+            s = self._compute_court_slots(
+                n_teams,
+                mpg,
+                pool_games_per_team=gpg,
+                actual_pool_games=actual,
+            )
             early_ids, final_ids = self._make_playoff_ids(
                 prefix, s["playoff_teams"], include_third
             )
@@ -2218,7 +2320,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "prefix": prefix,
                 "color": color,
                 "n_teams": n_teams,
-                "pool_gpg": gpg,
+                "target_pool_gpg": pool_plan["target_pool_games_per_team"],
+                "actual_pool_gpg": pool_plan["actual_pool_games_per_team"],
+                "pool_composition": pool_plan["pool_composition"],
                 "pool_ids":   [f"{prefix}-{i:02d}" for i in range(1, s["pool_slots"] + 1)],
                 "early_ids":  early_ids,   # QF + Semi → 2nd Saturday
                 "final_ids":  final_ids,   # Final + 3rd → 2nd Sunday
@@ -2275,12 +2379,19 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         COL_HDR_ROW     = 4
         DATA_START_ROW  = 5
 
-        # --- Row 1: inputs summary (per-sport pool games per team) ---
+        # --- Row 1: inputs summary (target/actual pool games per team) ---
         ws.cell(row=INPUTS_ROW, column=1, value="Inputs:").font = bold_font
         col = 2
         for ev, prefix, _ in sport_defs:
-            ws.cell(row=INPUTS_ROW, column=col,
-                    value=f"{prefix} pool games/team: {sport_meta[ev]['pool_gpg']}")
+            meta = sport_meta[ev]
+            ws.cell(
+                row=INPUTS_ROW,
+                column=col,
+                value=(
+                    f"{prefix} pool target/actual: "
+                    f"{meta['target_pool_gpg']}/{meta['actual_pool_gpg']}"
+                ),
+            )
             col += 3
         ws.cell(row=INPUTS_ROW, column=col,     value=f"Minutes/game: {mpg}")
         ws.cell(row=INPUTS_ROW, column=col + 3, value=f"3rd place: {'Yes' if include_third else 'No'}")
@@ -2291,7 +2402,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         for ev, prefix, _ in sport_defs:
             meta = sport_meta[ev]
             total = len(meta["pool_ids"]) + len(meta["early_ids"]) + len(meta["final_ids"])
-            label = f"{prefix}: {meta['n_teams']} teams, {total} games ({len(meta['pool_ids'])} pool)"
+            label = (
+                f"{prefix}: {meta['n_teams']} teams, {total} games "
+                f"({len(meta['pool_ids'])} pool, pools {meta['pool_composition']})"
+            )
             ws.cell(row=2, column=col_offset, value=label)
             col_offset += 5
 
@@ -2674,7 +2788,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     venue_rows = self._build_venue_capacity_rows(roster_rows)
                     venue_cols = [
                         "Event", "Potential Teams/Entries", "Estimating Teams/Entries", "Teams",
-                        "Pool Games Per Team", "Minutes Per Game", "Pool Slots",
+                        "Target Pool Games/Team", "Actual Pool Games/Team",
+                        "Pool Composition", "BYE Slots", "Minutes Per Game", "Pool Slots",
                         "Playoff Teams", "Playoff Slots", "Third Place?",
                         "Third Place Slots", "Total Court Slots", "Estimated Court Hours",
                     ]
