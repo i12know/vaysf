@@ -16,12 +16,23 @@
   - 8 solver tests removed (C5/C8/C9); 1 new test added (`test_solve_playoff_slots_passed_through`); 22 tests total
 
 ### Bug Fixes
+- Reserve manual playoff slots from the pool-play solver
+  - New `validate_playoff_slots()` validates each playoff row (real `resource_id`, real `slot` label, no duplicate court/slot) and extracts per-pool `blocked_slots` so the CP-SAT pool-play solver cannot place a pool game on a court/time already given to a playoff game
+  - New `ensure_unique_assignment_slots()` guards the merged output against collisions
+  - 2 new solver tests: pool game pushed off a reserved slot, duplicate playoff reservation raises
 - Fixed C6 min-rest constraint incorrectly spanning day boundaries — resolves issue #97 A1
   - Global slot indices are contiguous across days, so the last slot of Sat-1 and the first slot of Sun-1 were treated as "adjacent" and a team was falsely forbidden from playing both
   - Added `global_to_day` map in `_solve_one_pool()`; C6 `AddBoolOr` is now skipped when the two adjacent global indices belong to different days
   - Added regression test `test_solve_c6_min_rest_does_not_span_day_boundary`
 
 ### New Features
+- Added gym-mode venue modeling to `venue_input.xlsx` for gyms that can be configured one way or another but not both at once (e.g. 1 Basketball Court **or** 2 Volleyball Courts per time block)
+  - New `Exclusive Venue Group` column in the `Venue-Input` tab: rows sharing a group value compete for the same physical gym; `_load_venue_input_rows()` attaches the value to each resource object as `exclusive_group` (empty string when blank)
+  - New `Gym-Modes` tab: one row per gym with `Gym Name` and per-mode capacity columns (`Basketball Courts`, `Volleyball Courts`, `Badminton Courts`, `Pickleball Courts`, `Soccer Fields`)
+  - New `_load_gym_modes()` loader returns `{gym_name: {resource_type: courts_per_block}}`; trailing footer/note rows are ignored
+  - If the file or `Gym-Modes` tab is absent, a `WARNING` is logged and `gym_modes` is an empty dict — no crash (same graceful-degradation pattern as `Playoff-Slots`)
+  - `schedule_input.json` gains a top-level `gym_modes` object; the Schedule-Input tab gains a `GYM-MODES` section and an `exclusive_group` column in the Resources section
+  - 6 new tests covering the `Exclusive Venue Group` reader and the `Gym-Modes` loader
 - Refactored `solve-schedule` to decompose by resource-type pool — closes issue #93 comment (pool decomposition requirement from live-run testing)
   - Games are partitioned by `resource_type` and each pool runs an independent CP-SAT solve; a Badminton Court shortage no longer cascades into INFEASIBLE for Gym Courts or Tennis
   - New top-level status `PARTIAL` (some pools solved, some failed); exit code 1 covers PARTIAL/INFEASIBLE/UNKNOWN

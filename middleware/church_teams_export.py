@@ -1677,6 +1677,12 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             resource_type = ChurchTeamsExporter._clean_excel_text(row.get("Resource Type"))
             if not resource_type:
                 continue
+            # Exclusive Venue Group: rows sharing a group value compete for the
+            # same physical gym (only one mode active per time block). Optional
+            # column — blank means the resource stands alone.
+            exclusive_group = ChurchTeamsExporter._clean_excel_text(
+                row.get("Exclusive Venue Group")
+            )
             qty = max(1, int(ChurchTeamsExporter._float_from_excel(row.get("Quantity"), 1)))
             slot_min = max(1, int(ChurchTeamsExporter._float_from_excel(row.get("Slot Minutes"), 60)))
             start = ChurchTeamsExporter._parse_hour(row.get("Start Time"))
@@ -1694,13 +1700,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     f"Table-{i}" if "table" in resource_type.lower() else f"Court-{i}"
                 )
                 rows.append({
-                    "resource_id":   f"{abbrev}-{rc}",
-                    "resource_type": resource_type,
-                    "label":         label,
-                    "day":           "Day-1",
-                    "open_time":     open_time,
-                    "close_time":    close_time,
-                    "slot_minutes":  slot_min,
+                    "resource_id":     f"{abbrev}-{rc}",
+                    "resource_type":   resource_type,
+                    "label":           label,
+                    "day":             "Day-1",
+                    "open_time":       open_time,
+                    "close_time":      close_time,
+                    "slot_minutes":    slot_min,
+                    "exclusive_group": exclusive_group,
                 })
             resource_counts[resource_type] = rc
 
@@ -1759,6 +1766,74 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 logger.warning(f"Playoff-Slots row for {game_id!r} missing resource_id or slot; skipped.")
         return slots
 
+    @staticmethod
+    def _load_gym_modes(venue_input_path: Path) -> Dict[str, Dict[str, int]]:
+        """Load per-gym mode capacities from the Gym-Modes tab in venue_input.xlsx.
+
+        A gym that can be configured as either-or (e.g. 1 Basketball Court OR
+        2 Volleyball Courts per time block) records both options on one row.
+        Returns {gym_name: {resource_type: courts_per_block}}; 0 means that
+        mode is not available in that gym.
+
+        Returns an empty dict (with a WARNING) if the file or tab is absent —
+        the schedule is still produced; the gym-mode capacity estimator simply
+        has no mode data to work with.
+        """
+        # Maps a Gym-Modes column header to the resource_type it represents.
+        mode_column_map = {
+            "Basketball Courts": "Basketball Court",
+            "Volleyball Courts": "Volleyball Court",
+            "Badminton Courts":  "Badminton Court",
+            "Pickleball Courts": "Pickleball Court",
+            "Soccer Fields":     "Soccer Field",
+        }
+        if not venue_input_path.exists():
+            return {}
+        try:
+            df = pd.read_excel(venue_input_path, sheet_name="Gym-Modes", engine="openpyxl")
+        except Exception:
+            logger.warning(
+                "venue_input.xlsx is present but has no 'Gym-Modes' tab — "
+                "gym-mode capacity estimation will be skipped. "
+                "Add a 'Gym-Modes' tab to enable it."
+            )
+            return {}
+
+        cols = {str(c).strip() for c in df.columns}
+        if "Gym Name" not in cols:
+            logger.warning(
+                "Gym-Modes tab is missing the 'Gym Name' column — "
+                "gym-mode capacity estimation will be skipped."
+            )
+            return {}
+
+        active_modes = {col: rt for col, rt in mode_column_map.items() if col in cols}
+        if not active_modes:
+            logger.warning(
+                "Gym-Modes tab has no recognized mode columns "
+                f"({sorted(mode_column_map)}); gym-mode capacity estimation "
+                "will be skipped."
+            )
+            return {}
+
+        gym_modes: Dict[str, Dict[str, int]] = {}
+        for _, row in df.iterrows():
+            gym_name = ChurchTeamsExporter._clean_excel_text(row.get("Gym Name"))
+            if not gym_name:
+                continue
+            capacities = {
+                rt: int(ChurchTeamsExporter._float_from_excel(row.get(col), 0))
+                for col, rt in active_modes.items()
+            }
+            # Skip note/blank rows — a "gym" with zero capacity in every mode
+            # is the documentation footer, not a real venue.
+            if not any(capacities.values()):
+                continue
+            gym_modes[gym_name] = capacities
+
+        logger.debug(f"Loaded {len(gym_modes)} gym mode rows from {venue_input_path}")
+        return gym_modes
+
     def _build_schedule_input(
         self,
         roster_rows: List[Dict[str, Any]],
@@ -1768,7 +1843,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         """Assemble the full schedule_input package consumed by OR-Tools.
 
         Returns a dict with keys: generated_at, gym_court_scenario, game_count,
-        resource_count, games, resources, playoff_slots.
+        resource_count, games, resources, playoff_slots, gym_modes.
 
         Gym resources are built from the explicit SCHEDULE_SOLVER_GYM_COURTS
         constant (config.py) so the solver knows exactly which court scenario
@@ -1783,6 +1858,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         all_resources = gym_resources + pod_resources
 
         playoff_slots = self._load_playoff_slots(venue_input_path)
+        gym_modes = self._load_gym_modes(venue_input_path)
 
         return {
             "generated_at":       datetime.now().isoformat(timespec="seconds"),
@@ -1792,6 +1868,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             "games":              all_games,
             "resources":          all_resources,
             "playoff_slots":      playoff_slots,
+            "gym_modes":          gym_modes,
         }
 
     @staticmethod
@@ -1812,7 +1889,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         ]
         resource_cols = [
             "resource_id", "resource_type", "label", "day",
-            "open_time", "close_time", "slot_minutes",
+            "open_time", "close_time", "slot_minutes", "exclusive_group",
         ]
         playoff_slot_cols = ["game_id", "event", "stage", "resource_id", "slot"]
 
@@ -1851,9 +1928,19 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             else [{"game_id": "No playoff slots loaded — add Playoff-Slots tab to venue_input.xlsx"}]
         )
 
+        gym_modes = schedule_input.get("gym_modes", {})
+        gym_mode_rtypes = sorted({rt for caps in gym_modes.values() for rt in caps})
+        gym_mode_cols = ["gym_name", *gym_mode_rtypes]
+        gym_mode_rows = (
+            [{"gym_name": name, **caps} for name, caps in sorted(gym_modes.items())]
+            if gym_modes
+            else [{"gym_name": "No Gym-Modes tab loaded — add Gym-Modes tab to venue_input.xlsx"}]
+        )
+
         _write_section("GAMES",          game_cols,          schedule_input["games"])
         _write_section("RESOURCES",      resource_cols,      schedule_input["resources"])
         _write_section("PLAYOFF-SLOTS",  playoff_slot_cols,  playoff_note_rows)
+        _write_section("GYM-MODES",      gym_mode_cols,      gym_mode_rows)
 
         # Column widths
         col_widths = [20, 30, 10, 10, 8, 16, 16, 18, 22, 14, 12]

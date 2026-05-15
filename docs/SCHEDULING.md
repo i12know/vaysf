@@ -30,11 +30,40 @@ alongside the xlsx) containing:
   (Basketball, VB Men, VB Women); pod sports (single-elimination) are also
   included here for solver assignment.
 - **`resources`** — one object per physical court or table, expanded from
-  `venue_input.xlsx` quantities, each annotated with day and time window.
+  `venue_input.xlsx` quantities, each annotated with day, time window, and
+  `exclusive_group` (see below).
 - **`playoff_slots`** — pre-assigned playoff games loaded from the
   **Playoff-Slots** tab of `venue_input.xlsx` (see below).  If the tab is
   absent, a `WARNING` is logged and `playoff_slots` is an empty list — the
   pipeline does not crash.
+- **`gym_modes`** — per-gym mode capacities loaded from the **Gym-Modes**
+  tab of `venue_input.xlsx` (see below).  If the tab is absent, a `WARNING`
+  is logged and `gym_modes` is an empty dict — the pipeline does not crash.
+
+**`Exclusive Venue Group` column** (`venue_input.xlsx` → `Venue-Input` tab):
+
+A physical gym can often be configured one way *or* another but not both at
+once — e.g. 1 Basketball Court **or** 2 Volleyball Courts per time block.
+Add one Venue-Input row per mode and tag every row for the same physical gym
+with the same `Exclusive Venue Group` value.  Rows that share a group value
+compete for that one gym.  Leave the column blank for standalone resources.
+
+**Gym-Modes tab** (`venue_input.xlsx` → sheet `Gym-Modes`):
+
+Records the capacity-per-mode coefficients used by the gym-mode capacity
+estimator.  One row per gym.  Columns:
+
+| Column | Example | Notes |
+|--------|---------|-------|
+| `Gym Name` | `Midsize Gym` | Physical gym identifier |
+| `Basketball Courts` | `1` | Courts yielded in BB mode per time block |
+| `Volleyball Courts` | `2` | Courts yielded in VB mode per time block |
+| `Badminton Courts` | `6` | Courts yielded in BM mode per time block |
+| `Pickleball Courts` | `8` | Courts yielded in PB mode per time block |
+| `Soccer Fields` | `1` | Fields yielded in Soccer mode per time block |
+
+`0` means the mode is not available in that gym.  A trailing footer/note row
+(text in `Gym Name`, no capacities) is ignored.
 
 **Playoff-Slots tab** (`venue_input.xlsx` → sheet `Playoff-Slots`):
 
@@ -103,15 +132,20 @@ Every **resource object** looks like:
 
 ```json
 {
-  "resource_id":   "GYM-Sat-1-1",
-  "resource_type": "Gym Court",
-  "label":         "Court-1",
-  "day":           "Sat-1",
-  "open_time":     "08:00",
-  "close_time":    "21:00",
-  "slot_minutes":  60
+  "resource_id":     "GYM-Sat-1-1",
+  "resource_type":   "Gym Court",
+  "label":           "Court-1",
+  "day":             "Sat-1",
+  "open_time":       "08:00",
+  "close_time":      "21:00",
+  "slot_minutes":    60,
+  "exclusive_group": "Midsize Gym"
 }
 ```
+
+`exclusive_group` is the `Exclusive Venue Group` value from `venue_input.xlsx`
+(empty string for standalone resources, or for gym courts built from the
+`SCHEDULE_SOLVER_GYM_COURTS` scenario).
 
 Every **playoff_slot object** looks like:
 
@@ -124,6 +158,22 @@ Every **playoff_slot object** looks like:
   "slot":        "Sat-2-14:00"
 }
 ```
+
+The top-level **`gym_modes`** object maps each gym to its capacity per mode:
+
+```json
+{
+  "Midsize Gym": {
+    "Basketball Court": 1,
+    "Volleyball Court": 2,
+    "Badminton Court":  6,
+    "Pickleball Court": 8,
+    "Soccer Field":     1
+  }
+}
+```
+
+It is an empty object when the Gym-Modes tab is absent.
 
 **`gym_court_scenario`:** The number of gym courts used to build the `GYM-*`
 resources in this run.  Controlled by `SCHEDULE_SOLVER_GYM_COURTS` in

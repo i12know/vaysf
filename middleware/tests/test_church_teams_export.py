@@ -1922,13 +1922,125 @@ def test_load_venue_input_rows_skips_blank_resource_rows(mock_connectors, tmp_pa
     assert all(r["resource_type"] == POD_RESOURCE_TYPE_TENNIS for r in result)
 
 
+def _write_venue_input(path, headers, data_rows, gym_modes_rows=None):
+    """Write a venue_input.xlsx with a Venue-Input tab (and optional Gym-Modes)."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    for r, data in enumerate(data_rows, start=2):
+        for c, val in enumerate(data, start=1):
+            ws.cell(row=r, column=c, value=val)
+    if gym_modes_rows is not None:
+        gm = wb.create_sheet("Gym-Modes")
+        for r, data in enumerate(gym_modes_rows, start=1):
+            for c, val in enumerate(data, start=1):
+                gm.cell(row=r, column=c, value=val)
+    wb.save(path)
+
+
+def test_load_venue_input_rows_reads_exclusive_group(mock_connectors, tmp_path):
+    """Exclusive Venue Group column is attached to each emitted resource object."""
+    from config import POD_RESOURCE_TYPE_TENNIS
+
+    headers = [
+        "Pod Name", "Venue Name", "Exclusive Venue Group", "Resource Type",
+        "Quantity", "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["BB Pod", "Midsize Gym", "Midsize Gym", POD_RESOURCE_TYPE_TENNIS,
+         2, None, 9, 17, 30, None, None, None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows)
+
+    result = ChurchTeamsExporter._load_venue_input_rows(path)
+    assert len(result) == 2
+    assert all(r["exclusive_group"] == "Midsize Gym" for r in result)
+
+
+def test_load_venue_input_rows_blank_exclusive_group(mock_connectors, tmp_path):
+    """A row with no Exclusive Venue Group yields an empty-string group."""
+    from config import POD_RESOURCE_TYPE_TENNIS
+
+    headers = [
+        "Pod Name", "Venue Name", "Exclusive Venue Group", "Resource Type",
+        "Quantity", "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Tennis Pod", "Chapman", None, POD_RESOURCE_TYPE_TENNIS,
+         1, None, 9, 17, 60, None, None, None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows)
+
+    result = ChurchTeamsExporter._load_venue_input_rows(path)
+    assert result[0]["exclusive_group"] == ""
+
+
+def test_load_gym_modes_missing_file(mock_connectors, tmp_path):
+    """Returns empty dict when venue_input.xlsx does not exist."""
+    assert ChurchTeamsExporter._load_gym_modes(tmp_path / "missing.xlsx") == {}
+
+
+def test_load_gym_modes_missing_tab(mock_connectors, tmp_path):
+    """File present but no Gym-Modes tab → empty dict (warning, no crash)."""
+    headers = ["Pod Name", "Resource Type", "Quantity"]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, [["P", "Tennis Court", 1]])
+    assert ChurchTeamsExporter._load_gym_modes(path) == {}
+
+
+def test_load_gym_modes_reads_capacities(mock_connectors, tmp_path):
+    """Gym-Modes tab is parsed into {gym: {resource_type: courts_per_block}}."""
+    headers = ["Pod Name", "Resource Type", "Quantity"]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts",
+         "Badminton Courts", "Pickleball Courts", "Soccer Fields", "Notes"],
+        ["Midsize Gym", 1, 2, 6, 8, 1, "either-or"],
+        ["Big Gym", 2, 3, 12, 0, 0, "larger"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, [["P", "Tennis Court", 1]], gym_modes)
+
+    result = ChurchTeamsExporter._load_gym_modes(path)
+    assert result["Midsize Gym"] == {
+        "Basketball Court": 1, "Volleyball Court": 2,
+        "Badminton Court": 6, "Pickleball Court": 8, "Soccer Field": 1,
+    }
+    assert result["Big Gym"]["Volleyball Court"] == 3
+    assert result["Big Gym"]["Pickleball Court"] == 0
+
+
+def test_load_gym_modes_skips_note_row(mock_connectors, tmp_path):
+    """A footer row with text in Gym Name but no capacities is ignored."""
+    headers = ["Pod Name", "Resource Type", "Quantity"]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts",
+         "Badminton Courts", "Pickleball Courts", "Soccer Fields", "Notes"],
+        ["Midsize Gym", 1, 2, 6, 8, 1, "either-or"],
+        ["Capacity-per-mode coefficients for the LP estimator.",
+         None, None, None, None, None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, [["P", "Tennis Court", 1]], gym_modes)
+
+    result = ChurchTeamsExporter._load_gym_modes(path)
+    assert list(result.keys()) == ["Midsize Gym"]
+
+
 def test_build_schedule_input_keys(mock_connectors, tmp_path):
     """_build_schedule_input returns dict with all required top-level keys."""
     exporter = ChurchTeamsExporter()
     si = exporter._build_schedule_input(_make_gym_roster(), [], tmp_path / "missing.xlsx")
     assert set(si.keys()) == {
         "generated_at", "gym_court_scenario", "game_count", "resource_count",
-        "games", "resources", "playoff_slots",
+        "games", "resources", "playoff_slots", "gym_modes",
     }
     assert si["game_count"] == len(si["games"])
     assert si["resource_count"] == len(si["resources"])
