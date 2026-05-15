@@ -935,9 +935,9 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
     assert int(bball["Estimating Teams/Entries"]) == 1   # RPC's 6 basketball players qualify
     assert int(bball["Potential Teams/Entries"]) == 1    # RPC (estimating) counts in potential too
     assert str(bball["Teams"]) == "RPC"
-    assert int(bball["Pool Slots"]) == 1         # ceil(1*2/2) = 1
+    assert int(bball["Pool Slots"]) == 0         # 1 team can't play pool games (B3: actual=0)
     assert int(bball["Playoff Teams"]) == 0      # 1 team → no playoff
-    assert int(bball["Total Court Slots"]) == 1
+    assert int(bball["Total Court Slots"]) == 0
 
     vb_men = venue_df[venue_df["Event"] == "Volleyball - Men Team"].iloc[0]
     assert int(vb_men["Estimating Teams/Entries"]) == 0  # no volleyball rosters
@@ -2225,6 +2225,85 @@ def test_build_schedule_output_flat_rows_empty():
     si = {"games": [], "resources": [], "precedence": []}
     rows = ChurchTeamsExporter._build_schedule_output_flat_rows(so, si)
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# B3 — _compute_court_slots matches _make_pool_game_pairs actual count
+# ---------------------------------------------------------------------------
+
+def test_compute_court_slots_formula_vs_actual_8teams_gpg2(mock_connectors):
+    """8 teams / gpg=2: formula over-counts (8) but actual round-robin is 7 games.
+
+    _compute_court_slots called with actual_pool_games returns 7, not 8.
+    """
+    from church_teams_export import ChurchTeamsExporter
+
+    n_teams, gpg = 8, 2
+    actual = len(ChurchTeamsExporter._make_pool_game_pairs("_", n_teams, gpg))
+    assert actual == 7  # pools [3,3,2] → 3+3+1
+
+    exporter = ChurchTeamsExporter()
+    s_formula = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg)
+    s_actual  = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg,
+                                              actual_pool_games=actual)
+    assert s_formula["pool_slots"] == 8   # old over-counting formula
+    assert s_actual["pool_slots"]  == 7   # correct actual count
+
+
+def test_compute_court_slots_consistent_with_make_pool_game_pairs(mock_connectors):
+    """pool_slots from _compute_court_slots equals len(_make_pool_game_pairs) for
+    several (n_teams, gpg) combinations."""
+    from church_teams_export import ChurchTeamsExporter
+
+    exporter = ChurchTeamsExporter()
+    cases = [(4, 3), (6, 2), (8, 2), (9, 3), (10, 2), (12, 3)]
+    for n_teams, gpg in cases:
+        actual = len(ChurchTeamsExporter._make_pool_game_pairs("_", n_teams, gpg))
+        s = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg,
+                                          actual_pool_games=actual)
+        assert s["pool_slots"] == actual, (
+            f"n_teams={n_teams}, gpg={gpg}: pool_slots={s['pool_slots']} != actual={actual}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# B5 — _warn_if_schedules_mismatched
+# ---------------------------------------------------------------------------
+
+def test_warn_if_schedules_mismatched_clean(mock_connectors):
+    """Returns True and no warning when all assignment IDs are in schedule_input."""
+    from church_teams_export import ChurchTeamsExporter
+
+    so = {"assignments": [{"game_id": "G1", "resource_id": "R1", "slot": "Sat-1-08:00"}]}
+    si = {"games": [{"game_id": "G1"}], "playoff_slots": []}
+    assert ChurchTeamsExporter._warn_if_schedules_mismatched(so, si) is True
+
+
+def test_warn_if_schedules_mismatched_playoff_ok(mock_connectors):
+    """Returns True when assignment ID matches a playoff_slot, not a game."""
+    from church_teams_export import ChurchTeamsExporter
+
+    so = {"assignments": [{"game_id": "BBM-Final", "resource_id": "R1", "slot": "Sat-2-14:00"}]}
+    si = {"games": [], "playoff_slots": [{"game_id": "BBM-Final"}]}
+    assert ChurchTeamsExporter._warn_if_schedules_mismatched(so, si) is True
+
+
+def test_warn_if_schedules_mismatched_detects_orphan(mock_connectors):
+    """Returns False and logs a warning when an assignment game_id is unknown."""
+    from loguru import logger
+    from church_teams_export import ChurchTeamsExporter
+
+    messages = []
+    sink_id = logger.add(lambda msg: messages.append(msg), level="WARNING")
+    try:
+        so = {"assignments": [{"game_id": "STALE-99", "resource_id": "R1", "slot": "Sat-1-08:00"}]}
+        si = {"games": [{"game_id": "G1"}], "playoff_slots": []}
+        result = ChurchTeamsExporter._warn_if_schedules_mismatched(so, si)
+    finally:
+        logger.remove(sink_id)
+    assert result is False
+    assert any("STALE-99" in m for m in messages)
+    assert any("different runs" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------

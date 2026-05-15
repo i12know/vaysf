@@ -1108,10 +1108,18 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
     def _compute_court_slots(self, n_teams: int,
                               minutes_per_game: int = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
-                              pool_games_per_team: int = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM) -> Dict[str, Any]:
+                              pool_games_per_team: int = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM,
+                              actual_pool_games: Optional[int] = None) -> Dict[str, Any]:
         include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
 
-        pool_slots = ceil((n_teams * pool_games_per_team) / 2) if n_teams > 0 else 0
+        # When the caller already knows the exact game count (e.g. from
+        # _make_pool_game_pairs), use it directly so the Venue-Estimator and
+        # schedule_input.json agree on the number of pool games (B3 fix).
+        # The formula ceil(n*gpg/2) over-counts when pools are uneven.
+        if actual_pool_games is not None:
+            pool_slots = actual_pool_games
+        else:
+            pool_slots = ceil((n_teams * pool_games_per_team) / 2) if n_teams > 0 else 0
         playoff_teams = self._get_playoff_teams(n_teams)
         playoff_slots = max(playoff_teams - 1, 0)
         third_place_slots = 1 if include_third and playoff_teams >= 4 else 0
@@ -1477,7 +1485,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             counts = self._count_estimating_teams(roster_rows, event_name, min_team_size)
             mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(event_name, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME)
             gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM)
-            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg, pool_games_per_team=gpg)
+            actual = len(self._make_pool_game_pairs("_", counts["n_estimating"], gpg))
+            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg,
+                                          pool_games_per_team=gpg, actual_pool_games=actual)
             rows.append({
                 "Event": event_name,
                 "Potential Teams/Entries": counts["n_potential"],
@@ -2197,7 +2207,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             counts = self._count_estimating_teams(roster_rows, event_name, min_sz)
             n_teams = counts["n_estimating"] if counts["n_estimating"] >= 2 else 8
             gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM)
-            s = self._compute_court_slots(n_teams, mpg, pool_games_per_team=gpg)
+            actual = len(self._make_pool_game_pairs("_", n_teams, gpg))
+            s = self._compute_court_slots(n_teams, mpg, pool_games_per_team=gpg, actual_pool_games=actual)
             early_ids, final_ids = self._make_playoff_ids(
                 prefix, s["playoff_teams"], include_third
             )
@@ -3037,6 +3048,36 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             return False
                     
     @staticmethod
+    @staticmethod
+    def _warn_if_schedules_mismatched(
+        schedule_output: Dict[str, Any],
+        schedule_input: Dict[str, Any],
+    ) -> bool:
+        """Warn if schedule_output assignments reference game IDs absent from schedule_input.
+
+        Returns True when the files are consistent, False when orphaned game IDs are found.
+        Orphaned IDs typically mean --input and --constraint came from different runs, which
+        causes produce-schedule to silently render rows with blank event/stage fields (B5).
+        """
+        known_ids = (
+            {g["game_id"] for g in schedule_input.get("games", [])}
+            | {ps["game_id"] for ps in schedule_input.get("playoff_slots", [])}
+        )
+        assignment_ids = {
+            a["game_id"] for a in schedule_output.get("assignments", [])
+        }
+        orphaned = assignment_ids - known_ids
+        if orphaned:
+            logger.warning(
+                f"{len(orphaned)} assignment game_id(s) not found in schedule_input — "
+                "--input and --constraint may be from different runs. "
+                "Affected rows will render with blank event/stage. "
+                f"Orphaned IDs: {sorted(orphaned)}"
+            )
+            return False
+        return True
+
+    @staticmethod
     def _build_schedule_output_flat_rows(
         schedule_output: Dict[str, Any],
         schedule_input: Dict[str, Any],
@@ -3046,6 +3087,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         Each row joins one assignment from schedule_output with game metadata
         from schedule_input.  Rows are sorted by event → stage order → round → slot.
         """
+        ChurchTeamsExporter._warn_if_schedules_mismatched(schedule_output, schedule_input)
         game_meta = {g["game_id"]: g for g in schedule_input.get("games", [])}
         res_meta  = {r["resource_id"]: r for r in schedule_input.get("resources", [])}
         _STAGE_ORDER = {"Pool": 0, "R1": 1, "QF": 2, "Semi": 3, "Final": 4, "3rd": 5}
