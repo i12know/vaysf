@@ -2109,9 +2109,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
     ) -> List[Tuple[str, str, str]]:
         """Return (team_a_id, team_b_id, pool_id) tuples for pool-play games.
 
-        Teams are split into balanced pools of size (gpg+1).  A full round-robin
-        within a pool of that size gives each team exactly gpg games.  Edge pools
-        (when n_teams is not divisible by gpg+1) produce fewer games for those teams.
+        Teams are split into balanced pools of size ≥ (gpg+1).  Floor division
+        is used for n_pools so every pool has at least gpg+1 teams, guaranteeing
+        each team plays at least gpg games.  Teams distribute via round-robin so
+        pool sizes differ by at most 1 (some pools may be gpg+2 when n_teams is
+        not divisible by gpg+1, giving those teams one extra game).
 
         Team IDs are stable planning placeholders: {prefix}-P{pool}-T{slot}.
         The same placeholder is reused across all games involving that team,
@@ -2120,7 +2122,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         if n_teams < 2:
             return []
         target_pool_size = max(2, gpg + 1)
-        n_pools = max(1, -(-n_teams // target_pool_size))  # ceil division
+        n_pools = max(1, n_teams // target_pool_size)  # floor: all pools ≥ target
 
         pools: List[List[int]] = [[] for _ in range(n_pools)]
         for i in range(n_teams):

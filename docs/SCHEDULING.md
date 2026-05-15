@@ -291,8 +291,6 @@ re-running `produce-schedule` (no solver re-run needed).
 
 **Out of scope (future work):**
 - Cross-sport participant conflicts (person in both Basketball and Badminton).
-- Church-requested blackout windows for pool play (`earliest_slot` / `latest_slot`
-  fields are in the schema — wiring them up in the solver is a one-liner).
 
 ---
 
@@ -328,8 +326,9 @@ Remaining future work:
   a participant → games mapping (from roster data), which is not yet in
   `schedule_input.json`.
 - **Pool play time windows.** `earliest_slot` / `latest_slot` fields are
-  present in pool game objects.  Wiring them up in the solver is a one-liner
-  once they are populated upstream.
+  enforced by the solver via `Add(gslot >= lo)` / `Add(gslot <= hi)` on each
+  game's global slot variable.  Stage windows are configured in
+  `SCHEDULE_STAGE_WINDOWS` in `config.py`.
 
 ---
 

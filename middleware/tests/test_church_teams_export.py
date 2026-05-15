@@ -2232,22 +2232,48 @@ def test_build_schedule_output_flat_rows_empty():
 # ---------------------------------------------------------------------------
 
 def test_compute_court_slots_formula_vs_actual_8teams_gpg2(mock_connectors):
-    """8 teams / gpg=2: formula over-counts (8) but actual round-robin is 7 games.
+    """8 teams / gpg=2: formula gives 8 but actual round-robin (B4-balanced pools) is 12.
 
-    _compute_court_slots called with actual_pool_games returns 7, not 8.
+    B4 fix: floor division gives pools [4,4] (each team plays 3 games ≥ gpg=2).
+    Old ceil division gave pools [3,3,2] where the 2-team pool played only 1 game.
+    _compute_court_slots called with actual_pool_games returns 12, not 8.
     """
     from church_teams_export import ChurchTeamsExporter
 
     n_teams, gpg = 8, 2
     actual = len(ChurchTeamsExporter._make_pool_game_pairs("_", n_teams, gpg))
-    assert actual == 7  # pools [3,3,2] → 3+3+1
+    assert actual == 12  # pools [4,4] → C(4,2)+C(4,2) = 6+6
 
     exporter = ChurchTeamsExporter()
     s_formula = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg)
     s_actual  = exporter._compute_court_slots(n_teams, pool_games_per_team=gpg,
                                               actual_pool_games=actual)
-    assert s_formula["pool_slots"] == 8   # old over-counting formula
-    assert s_actual["pool_slots"]  == 7   # correct actual count
+    assert s_formula["pool_slots"] == 8    # ceil(8*2/2) formula estimate
+    assert s_actual["pool_slots"]  == 12   # correct actual count
+
+
+def test_make_pool_game_pairs_all_teams_play_at_least_gpg(mock_connectors):
+    """B4: every team plays at least gpg games regardless of n_teams % (gpg+1)."""
+    from church_teams_export import ChurchTeamsExporter
+    from collections import Counter
+
+    cases = [
+        (7, 2),   # old: pools [3,2,2] → min 1 game; new: [4,3] → min 2 = gpg
+        (8, 2),   # old: pools [3,3,2] → min 1 game; new: [4,4] → min 3 ≥ gpg
+        (9, 3),   # old: pools [4,3,3] → min 2 game; new: [5,4] → min 3 = gpg
+        (10, 3),  # old: pools [4,4,4] → exact; new: same, no change
+        (5, 2),   # 1 pool of 5 → each plays 4 ≥ gpg=2
+    ]
+    for n_teams, gpg in cases:
+        pairs = ChurchTeamsExporter._make_pool_game_pairs("T", n_teams, gpg)
+        games_per_team: Counter = Counter()
+        for a, b, _ in pairs:
+            games_per_team[a] += 1
+            games_per_team[b] += 1
+        min_games = min(games_per_team.values()) if games_per_team else 0
+        assert min_games >= gpg, (
+            f"n_teams={n_teams}, gpg={gpg}: min games={min_games} < gpg"
+        )
 
 
 def test_compute_court_slots_consistent_with_make_pool_game_pairs(mock_connectors):

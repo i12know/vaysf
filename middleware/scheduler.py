@@ -29,8 +29,6 @@ Objective (per pool): minimize the index of the latest occupied global slot.
 
 Out of scope (future work):
   - Cross-sport participant conflicts (a person in both Basketball and Badminton).
-  - Church-requested blackout windows (earliest_slot / latest_slot fields are in
-    the schema; wiring them up is a one-liner once they are populated upstream).
 """
 
 from __future__ import annotations
