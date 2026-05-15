@@ -1688,7 +1688,11 @@ def test_build_gym_game_objects_structure(mock_connectors):
         assert required_fields <= g.keys(), f"Missing fields in {g}"
     from config import GYM_RESOURCE_TYPE
     assert all(g["resource_type"] == GYM_RESOURCE_TYPE for g in games)
-    assert all(g["team_a_id"] is None and g["team_b_id"] is None for g in games)
+    # team_a_id and team_b_id must be non-null strings for all games (pool + playoff)
+    assert all(
+        isinstance(g["team_a_id"], str) and isinstance(g["team_b_id"], str)
+        for g in games
+    ), "All games must have non-null team_a_id and team_b_id"
 
 
 def test_build_gym_game_objects_stages(mock_connectors):
@@ -1709,6 +1713,61 @@ def test_build_gym_game_objects_prefix_format(mock_connectors):
     assert pool_ids, "Expected Basketball pool games"
     import re
     assert all(re.match(r"BBM-\d{2}$", gid) for gid in pool_ids)
+
+
+def test_build_gym_game_objects_stable_team_ids(mock_connectors):
+    """The same placeholder team ID is reused across multiple pool games for that team."""
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_gym_game_objects(_make_gym_roster(8))
+    bbm_pool = [g for g in games if g["stage"] == "Pool" and g["event"] == SPORT_TYPE["BASKETBALL"]]
+    assert bbm_pool, "Expected Basketball pool games"
+
+    # Collect all team IDs and count appearances
+    from collections import Counter
+    appearances: Counter = Counter()
+    for g in bbm_pool:
+        appearances[g["team_a_id"]] += 1
+        appearances[g["team_b_id"]] += 1
+
+    # Every team must appear in at least 2 games (gpg=2 for Basketball)
+    # Some teams in smaller edge pools may appear fewer times, but all appear at least once
+    assert all(count >= 1 for count in appearances.values()), "Each team must appear at least once"
+    # At least some teams appear in exactly 2 games (normal pool size = 3 teams)
+    assert any(count >= 2 for count in appearances.values()), "Some teams must appear in multiple games"
+
+
+def test_build_gym_game_objects_pool_id_nonempty(mock_connectors):
+    """Pool games carry a non-empty pool_id; playoff/final games have empty pool_id."""
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_gym_game_objects(_make_gym_roster(8))
+    pool_games = [g for g in games if g["stage"] == "Pool"]
+    playoff_games = [g for g in games if g["stage"] not in ("Pool",)]
+
+    assert pool_games, "Expected pool games"
+    assert all(g["pool_id"] != "" for g in pool_games), "Pool games must have non-empty pool_id"
+    assert all(g["pool_id"] == "" for g in playoff_games), "Playoff/final games must have empty pool_id"
+
+
+def test_build_gym_game_objects_team_id_format(mock_connectors):
+    """Pool game team IDs follow the stable placeholder format PREFIX-Px-Ty."""
+    import re as _re
+    exporter = ChurchTeamsExporter()
+    games = exporter._build_gym_game_objects(_make_gym_roster(8))
+    bbm_pool = [g for g in games if g["stage"] == "Pool" and g["event"] == SPORT_TYPE["BASKETBALL"]]
+    for g in bbm_pool:
+        assert _re.match(r"BBM-P\d+-T\d+$", g["team_a_id"]), f"Unexpected team_a_id: {g['team_a_id']}"
+        assert _re.match(r"BBM-P\d+-T\d+$", g["team_b_id"]), f"Unexpected team_b_id: {g['team_b_id']}"
+
+
+def test_build_schedule_input_gym_court_scenario(mock_connectors, tmp_path):
+    """gym_court_scenario in schedule_input matches SCHEDULE_SOLVER_GYM_COURTS."""
+    from config import SCHEDULE_SOLVER_GYM_COURTS
+    exporter = ChurchTeamsExporter()
+    si = exporter._build_schedule_input(_make_gym_roster(), [], tmp_path / "missing.xlsx")
+    assert si["gym_court_scenario"] == SCHEDULE_SOLVER_GYM_COURTS
+    gym_resources = [r for r in si["resources"] if r["resource_type"] == "Gym Court"]
+    n_sessions = 4  # Sat-1, Sun-1, Sat-2, Sun-2
+    assert len(gym_resources) == SCHEDULE_SOLVER_GYM_COURTS * n_sessions
 
 
 def test_build_pod_game_objects_single_elimination(mock_connectors):
@@ -1876,7 +1935,8 @@ def test_build_schedule_input_keys(mock_connectors, tmp_path):
     exporter = ChurchTeamsExporter()
     si = exporter._build_schedule_input(_make_gym_roster(), [], tmp_path / "missing.xlsx")
     assert set(si.keys()) == {
-        "generated_at", "game_count", "resource_count", "games", "resources", "precedence"
+        "generated_at", "gym_court_scenario", "game_count", "resource_count",
+        "games", "resources", "precedence",
     }
     assert si["game_count"] == len(si["games"])
     assert si["resource_count"] == len(si["resources"])
@@ -1925,6 +1985,7 @@ def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path):
     import json as _json
     data = _json.loads(json_path.read_text(encoding="utf-8"))
     assert "games" in data and "resources" in data and "precedence" in data
+    assert "gym_court_scenario" in data
     assert data["game_count"] > 0
     assert data["resource_count"] == len(data["resources"])
     assert data["resource_count"] > 0

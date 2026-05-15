@@ -38,25 +38,46 @@ Key constants that shape the output live in `config.py`:
 `SCHEDULE_SKETCH_SUNDAY_START`, `SCHEDULE_SKETCH_SUNDAY_LAST_GAME`,
 `COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME`, `GYM_RESOURCE_TYPE`.
 
-### Step 2 — `schedule_input.json` schema
+### Step 2 — `schedule_input.json` schema (hardened by Issue #96)
+
+The top-level object includes a `gym_court_scenario` field that records the
+explicit court count used to build the gym resources for this run.  Change
+`SCHEDULE_SOLVER_GYM_COURTS` in `config.py` (currently 4) to switch scenarios;
+do not rely on any default inside the code.
 
 Every **game object** looks like:
 
 ```json
 {
-  "game_id":          "BBM-P1-R2-G1",
+  "game_id":          "BBM-01",
   "event":            "Basketball - Men Team",
   "stage":            "Pool",
   "pool_id":          "P1",
-  "round":            2,
-  "team_a_id":        "ANH",
-  "team_b_id":        "GAC",
+  "round":            1,
+  "team_a_id":        "BBM-P1-T1",
+  "team_b_id":        "BBM-P1-T2",
   "duration_minutes": 60,
   "resource_type":    "Gym Court",
   "earliest_slot":    null,
   "latest_slot":      null
 }
 ```
+
+**`team_a_id` / `team_b_id` in planning mode:**
+- Pool games use stable placeholder IDs like `BBM-P1-T1`, `BBM-P1-T2`.
+  The same placeholder ID is reused across every game that team plays, so
+  the solver can enforce team-overlap (C3) and min-rest (C6) constraints
+  even before final church assignments are known.
+- Teams are grouped into balanced pools of size `gpg + 1` (full round-robin
+  within each pool gives each team exactly `gpg` games).
+- Playoff QF games use pool-seed references: `BBM-Seed-1`, `BBM-Seed-8`, etc.
+- Playoff Semi/Final/3rd games use winner/loser references:
+  `WIN-BBM-QF-1`, `WIN-BBM-Semi-1`, `LOSE-BBM-Semi-2`, etc.
+- `null` is never emitted; every game has non-null `team_a_id` and `team_b_id`.
+
+**`pool_id`:**
+- Non-empty string (`"P1"`, `"P2"`, …) for pool games.
+- Empty string `""` for all playoff/final games.
 
 Every **resource object** looks like:
 
@@ -72,35 +93,44 @@ Every **resource object** looks like:
 }
 ```
 
+**`gym_court_scenario`:** The number of gym courts used to build the `GYM-*`
+resources in this run.  Controlled by `SCHEDULE_SOLVER_GYM_COURTS` in
+`config.py`.  The solver reads this to know which scenario was selected —
+no hidden defaults.
+
 Every **precedence object** looks like:
 
 ```json
 {
-  "rule":          "stage_order",
+  "rule":          "All Pool before Semi",
   "event":         "Basketball - Men Team",
   "earlier_stage": "Pool",
-  "later_stage":   "Final"
+  "later_stage":   "Semi"
 }
 ```
 
 Field notes:
 - `resource_type` must match between game and resource; this is how the
-  solver knows which court pool to draw from.
-- `pool_id` is `""` for playoff/final games.
+  solver knows which court pool to draw from (C4 — court-type routing).
 - `earliest_slot` / `latest_slot` are optional hard windows per game
-  (`null` = unconstrained).
+  (`null` = unconstrained; wiring them up in the solver is a one-liner).
 - Gym sports (Basketball, Volleyball Men, Volleyball Women) use
   `GYM_RESOURCE_TYPE = "Gym Court"`. Pod sports each have their own
   `POD_RESOURCE_TYPE_*` constant.
 
-### Step 3 — CP-SAT solver (`solve-schedule`) — Issue #93
+### Step 3 — CP-SAT solver (`solve-schedule`) — Issue #93 (done)
 
 ```bash
-python main.py solve-schedule [--input path/to/schedule_input.json]
+python main.py solve-schedule [--input path/to/schedule_input.json] [--output path/to/schedule_output.json]
 ```
 
 Reads `schedule_input.json`, runs the OR-Tools CP-SAT model, writes
-`schedule_output.json` to `DATA_DIR`. Output shape:
+`schedule_output.json` to `DATA_DIR` (or `--output` path). Exit codes:
+0 = OPTIMAL/FEASIBLE, 1 = INFEASIBLE, 2 = error (bad input or ortools missing).
+
+Configurable timeout via `SCHEDULE_SOLVER_TIMEOUT` env var (default: 30 s).
+
+Output shape:
 
 ```json
 {
@@ -130,6 +160,23 @@ Reads `schedule_output.json`, writes `VAYSF_Schedule_YYYY-MM-DD.xlsx` to
 
 The JSON file stays in `DATA_DIR` as the machine-readable backup.
 
+**Constraints implemented in `scheduler.py`:**
+
+| ID | Constraint | CP-SAT construct |
+|----|-----------|-----------------|
+| C1 | Each game assigned to exactly one (resource, start_slot) | `AddExactlyOne` |
+| C2 | Each (resource, slot) hosts at most one game (multi-slot aware) | `AddAtMostOne` |
+| C3 | No team plays two games in the same time slot | `AddAtMostOne` per (team, slot_label) |
+| C4 | Court-type routing — game assigned only to matching `resource_type` | filter before building vars |
+| C5 | Stage ordering — earlier_stage games precede later_stage games | pairwise `Add(g_l_slot > g_e_slot)` on global slot IntVars |
+| C6 | Minimum rest — no team plays in two adjacent global slots | `AddBoolOr([v1.Not(), v2.Not()])` for adjacent slot pairs |
+| C7 | Multi-slot games — duration > slot_minutes blocks consecutive slots | restrict start positions; expand slot_occupancy |
+
+**Out of scope (future work):**
+- Cross-sport participant conflicts (person in both Basketball and Badminton).
+- Church-requested blackout windows (`earliest_slot` / `latest_slot` fields
+  already in the schema — wiring them up is a one-liner).
+
 ---
 
 ## OR-Tools POC — What Was Proven
@@ -154,31 +201,19 @@ validated the `schedule_input.json` schema. Full findings are in
 
 ## Constraint Gaps (POC → Production)
 
-The POC modelled only Basketball Men pool play. Five constraints are still
-missing and must be added in Issue #93:
+All five constraints identified in the POC report have been implemented in
+`middleware/scheduler.py` (Issue #93).  See the constraint table in the
+Step 3 section above.
 
-1. **Court-type routing.** Basketball games must be assigned to `Gym Court`
-   resources; racquet games to their respective `POD_RESOURCE_TYPE_*` courts.
-   Fix: filter the court pool by `resource_type` before building variables.
+Remaining future work (out of scope for Issue #93):
 
-2. **Stage ordering.** Playoff games must be scheduled after all pool games
-   finish. Fix: use the `precedence` list from `schedule_input.json` to add
-   `model.Add(playoff_slot > max_pool_slot)` constraints.
-
-3. **Session windowing.** Games must fall within the open/close window of
-   their resource. The POC hard-coded `Sat-1 08:00–20:00`; the full solver
-   must read `open_time`/`close_time` per resource object and restrict the
-   slot domain accordingly.
-
-4. **Minimum rest between games.** A team that plays at slot T should not
-   play again at slot T+1. Fix: for each team, add `AddAtMostOne` over
-   consecutive-slot pairs.
-
-5. **Multi-slot games.** A 60-min game in a 30-min slot resolution blocks 2
-   consecutive slots on the same court. Fix: use `model.NewIntervalVar` (or
-   keep slot resolution == game duration within each sport, which is the
-   current approach and works as long as all games in a sport share the same
-   duration).
+- **Cross-sport participant conflicts.** A person registered for both
+  Basketball and Badminton must not have games at the same time.  Requires
+  a participant → games mapping (from roster data), which is not yet in
+  `schedule_input.json`.
+- **Church-requested blackout windows.** `earliest_slot` / `latest_slot`
+  fields are already in the game schema.  Wiring them up in the solver
+  is a one-liner once they are populated upstream.
 
 ---
 

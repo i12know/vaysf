@@ -541,6 +541,10 @@ SCHEDULE_SKETCH_COLOR_VB_WOMEN    = "F4B8C1"   # pink
 SCHEDULE_SKETCH_COLOR_SECTION     = "D9D9D9"   # grey section divider
 SCHEDULE_SKETCH_COLOR_HEADER      = "595959"   # dark grey scenario header
 
+# Gym court count used when generating schedule_input.json for the CP-SAT solver.
+# Change this constant (not the code) to switch between 3/4/5-court scenarios.
+SCHEDULE_SOLVER_GYM_COURTS = 4
+
 # Configuration class
 class Config:
     """Configuration settings for VAYSF middleware."""

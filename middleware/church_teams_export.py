@@ -47,6 +47,7 @@ from config import (
     SCHEDULE_SKETCH_COLOR_SECTION,
     SCHEDULE_SKETCH_COLOR_HEADER,
     GYM_RESOURCE_TYPE,
+    SCHEDULE_SOLVER_GYM_COURTS,
     VENUE_INPUT_FILENAME,
     POD_RESOURCE_EVENT_TYPE,
     POD_FIT_COLOR_GREEN,
@@ -1521,8 +1522,12 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
     ) -> List[Dict[str, Any]]:
         """Return game placeholder dicts for gym sports (Basketball, VB Men, VB Women).
 
-        Pool IDs are sequential (BBM-01, VBM-01, …).  Team assignments are null —
-        this is a planning input for the OR-Tools scheduler.
+        Pool games carry stable placeholder team IDs (e.g. BBM-P1-T1, BBM-P1-T2)
+        and non-empty pool_id values so the solver can enforce team-overlap and
+        min-rest constraints even before final church assignments are known.
+
+        Playoff games use seed/winner references (e.g. BBM-Seed-1, WIN-BBM-QF-1)
+        rather than null, documenting the bracket dependency for the solver.
         """
         sport_defs = [
             (SPORT_TYPE["BASKETBALL"],       "BBM"),
@@ -1545,35 +1550,75 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 prefix, s["playoff_teams"], include_third
             )
 
-            for i, gid in enumerate(
-                [f"{prefix}-{j:02d}" for j in range(1, s["pool_slots"] + 1)], start=1
-            ):
+            # Pool games — stable team IDs and non-empty pool_id
+            pool_pairs = self._make_pool_game_pairs(prefix, n_teams, gpg)
+            for pair_idx, (team_a_id, team_b_id, pool_id) in enumerate(pool_pairs, start=1):
                 games.append({
-                    "game_id": gid, "event": event_name, "stage": "Pool",
-                    "pool_id": "", "round": i,
-                    "team_a_id": None, "team_b_id": None,
-                    "duration_minutes": mpg, "resource_type": GYM_RESOURCE_TYPE,
-                    "earliest_slot": None, "latest_slot": None,
+                    "game_id": f"{prefix}-{pair_idx:02d}",
+                    "event": event_name,
+                    "stage": "Pool",
+                    "pool_id": pool_id,
+                    "round": pair_idx,
+                    "team_a_id": team_a_id,
+                    "team_b_id": team_b_id,
+                    "duration_minutes": mpg,
+                    "resource_type": GYM_RESOURCE_TYPE,
+                    "earliest_slot": None,
+                    "latest_slot": None,
                 })
 
+            # Early playoff games (QF, Semi) — seed/winner references
+            qf_count = 0
+            semi_count = 0
             for i, gid in enumerate(early_ids, start=1):
-                stage = gid.split("-")[1] if "-" in gid else "Playoff"
+                stage = gid.split("-")[1]
+                if stage == "QF":
+                    qf_count += 1
+                    team_a_id = f"{prefix}-Seed-{qf_count}"
+                    team_b_id = f"{prefix}-Seed-{s['playoff_teams'] - qf_count + 1}"
+                else:  # Semi
+                    semi_count += 1
+                    if s["playoff_teams"] >= 8:
+                        team_a_id = f"WIN-{prefix}-QF-{(semi_count - 1) * 3 + 1}"
+                        team_b_id = f"WIN-{prefix}-QF-{(semi_count - 1) * 3 + 4}"
+                    else:
+                        team_a_id = f"{prefix}-Seed-{semi_count * 2 - 1}"
+                        team_b_id = f"{prefix}-Seed-{semi_count * 2}"
                 games.append({
-                    "game_id": gid, "event": event_name, "stage": stage,
-                    "pool_id": "", "round": i,
-                    "team_a_id": None, "team_b_id": None,
-                    "duration_minutes": mpg, "resource_type": GYM_RESOURCE_TYPE,
-                    "earliest_slot": None, "latest_slot": None,
+                    "game_id": gid,
+                    "event": event_name,
+                    "stage": stage,
+                    "pool_id": "",
+                    "round": i,
+                    "team_a_id": team_a_id,
+                    "team_b_id": team_b_id,
+                    "duration_minutes": mpg,
+                    "resource_type": GYM_RESOURCE_TYPE,
+                    "earliest_slot": None,
+                    "latest_slot": None,
                 })
 
+            # Final games (Final and optional 3rd) — winner/loser references
             for i, gid in enumerate(final_ids, start=1):
                 stage = gid.split("-")[1] if "-" in gid else "Final"
+                if stage == "Final":
+                    team_a_id = f"WIN-{prefix}-Semi-1"
+                    team_b_id = f"WIN-{prefix}-Semi-2"
+                else:  # 3rd place
+                    team_a_id = f"LOSE-{prefix}-Semi-1"
+                    team_b_id = f"LOSE-{prefix}-Semi-2"
                 games.append({
-                    "game_id": gid, "event": event_name, "stage": stage,
-                    "pool_id": "", "round": i,
-                    "team_a_id": None, "team_b_id": None,
-                    "duration_minutes": mpg, "resource_type": GYM_RESOURCE_TYPE,
-                    "earliest_slot": None, "latest_slot": None,
+                    "game_id": gid,
+                    "event": event_name,
+                    "stage": stage,
+                    "pool_id": "",
+                    "round": i,
+                    "team_a_id": team_a_id,
+                    "team_b_id": team_b_id,
+                    "duration_minutes": mpg,
+                    "resource_type": GYM_RESOURCE_TYPE,
+                    "earliest_slot": None,
+                    "latest_slot": None,
                 })
 
         return games
@@ -1754,26 +1799,31 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
     ) -> Dict[str, Any]:
         """Assemble the full schedule_input package consumed by OR-Tools.
 
-        Returns a dict with keys: generated_at, game_count, resource_count,
-        games, resources, precedence.
+        Returns a dict with keys: generated_at, gym_court_scenario, game_count,
+        resource_count, games, resources, precedence.
+
+        Gym resources are built from the explicit SCHEDULE_SOLVER_GYM_COURTS
+        constant (config.py) so the solver knows exactly which court scenario
+        was chosen for this run.
         """
         gym_games = self._build_gym_game_objects(roster_rows)
         pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
         all_games = gym_games + pod_games
 
-        gym_resources = self._build_gym_resource_objects()
+        gym_resources = self._build_gym_resource_objects(SCHEDULE_SOLVER_GYM_COURTS)
         pod_resources = self._load_venue_input_rows(venue_input_path)
         all_resources = gym_resources + pod_resources
 
         precedence = self._build_precedence_objects(gym_games)
 
         return {
-            "generated_at":   datetime.now().isoformat(timespec="seconds"),
-            "game_count":     len(all_games),
-            "resource_count": len(all_resources),
-            "games":          all_games,
-            "resources":      all_resources,
-            "precedence":     precedence,
+            "generated_at":       datetime.now().isoformat(timespec="seconds"),
+            "gym_court_scenario": SCHEDULE_SOLVER_GYM_COURTS,
+            "game_count":         len(all_games),
+            "resource_count":     len(all_resources),
+            "games":              all_games,
+            "resources":          all_resources,
+            "precedence":         precedence,
         }
 
     @staticmethod
@@ -1978,6 +2028,47 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     grids[s][t][c] = game_id
 
         return grids
+
+    @staticmethod
+    @staticmethod
+    def _make_pool_game_pairs(
+        prefix: str, n_teams: int, gpg: int
+    ) -> List[Tuple[str, str, str]]:
+        """Return (team_a_id, team_b_id, pool_id) tuples for pool-play games.
+
+        Teams are split into balanced pools of size (gpg+1).  A full round-robin
+        within a pool of that size gives each team exactly gpg games.  Edge pools
+        (when n_teams is not divisible by gpg+1) produce fewer games for those teams.
+
+        Team IDs are stable planning placeholders: {prefix}-P{pool}-T{slot}.
+        The same placeholder is reused across all games involving that team,
+        allowing the solver to enforce team-overlap and min-rest constraints.
+        """
+        if n_teams < 2:
+            return []
+        target_pool_size = max(2, gpg + 1)
+        n_pools = max(1, -(-n_teams // target_pool_size))  # ceil division
+
+        pools: List[List[int]] = [[] for _ in range(n_pools)]
+        for i in range(n_teams):
+            pools[i % n_pools].append(i + 1)  # 1-indexed team number
+
+        team_id: Dict[int, str] = {}
+        for p_idx, pool_teams in enumerate(pools, start=1):
+            for t_idx, team_num in enumerate(pool_teams, start=1):
+                team_id[team_num] = f"{prefix}-P{p_idx}-T{t_idx}"
+
+        pairs: List[Tuple[str, str, str]] = []
+        for p_idx, pool_teams in enumerate(pools, start=1):
+            pool_id = f"P{p_idx}"
+            for i in range(len(pool_teams)):
+                for j in range(i + 1, len(pool_teams)):
+                    pairs.append((
+                        team_id[pool_teams[i]],
+                        team_id[pool_teams[j]],
+                        pool_id,
+                    ))
+        return pairs
 
     @staticmethod
     def _make_playoff_ids(

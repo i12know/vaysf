@@ -155,6 +155,22 @@ def parse_args() -> argparse.Namespace:
     reset_parser.add_argument("--probe", action="store_true",
                               help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id)")
 
+    # Solve-schedule command
+    solve_schedule_parser = subparsers.add_parser(
+        "solve-schedule",
+        help="Run CP-SAT scheduler: reads schedule_input.json, writes schedule_output.json",
+    )
+    solve_schedule_parser.add_argument(
+        "--input",
+        default=None,
+        help="Path to schedule_input.json (default: DATA_DIR/schedule_input.json)",
+    )
+    solve_schedule_parser.add_argument(
+        "--output",
+        default=None,
+        help="Path for schedule_output.json (default: DATA_DIR/schedule_output.json)",
+    )
+
     # Generate-venue-template command
     venue_template_parser = subparsers.add_parser(
         "generate-venue-template",
@@ -755,6 +771,12 @@ def main() -> None:
             except Exception as e:
                 logger.error(f"An exception occurred during report export: {e}", exc_info=True)
                 success = False
+    elif args.command == "solve-schedule":
+        from scheduler import run_solve_schedule
+        input_path = Path(args.input) if args.input else DATA_DIR / "schedule_input.json"
+        output_path = Path(args.output) if args.output else DATA_DIR / "schedule_output.json"
+        exit_code = run_solve_schedule(input_path, output_path)
+        sys.exit(exit_code)
     elif args.command == "generate-venue-template":
         out = Path(args.output) if args.output else None
         success = generate_venue_template(out)
