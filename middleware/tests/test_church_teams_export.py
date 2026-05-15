@@ -1821,6 +1821,14 @@ def test_build_gym_resource_objects_labels(mock_connectors):
     assert "GYM-Sun-2-3" in ids
 
 
+def test_build_gym_resource_objects_include_blank_exclusive_group(mock_connectors):
+    """Gym resources carry the same exclusive_group field as venue-loaded resources."""
+    resources = ChurchTeamsExporter._build_gym_resource_objects(n_courts=2)
+    assert resources
+    assert all("exclusive_group" in r for r in resources)
+    assert all(r["exclusive_group"] == "" for r in resources)
+
+
 def test_load_venue_input_rows_missing_file(mock_connectors, tmp_path):
     """Returns empty list when venue_input.xlsx does not exist."""
     result = ChurchTeamsExporter._load_venue_input_rows(tmp_path / "missing.xlsx")
@@ -2015,6 +2023,21 @@ def test_load_gym_modes_reads_capacities(mock_connectors, tmp_path):
     }
     assert result["Big Gym"]["Volleyball Court"] == 3
     assert result["Big Gym"]["Pickleball Court"] == 0
+
+
+def test_load_gym_modes_trims_header_whitespace(mock_connectors, tmp_path):
+    """Operator-edited headers with trailing spaces are normalized before row access."""
+    headers = ["Pod Name", "Resource Type", "Quantity"]
+    gym_modes = [
+        ["Gym Name ", "Basketball Courts ", "Volleyball Courts ", "Notes "],
+        ["Midsize Gym", 1, 2, "either-or"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, [["P", "Tennis Court", 1]], gym_modes)
+
+    result = ChurchTeamsExporter._load_gym_modes(path)
+    assert result["Midsize Gym"]["Basketball Court"] == 1
+    assert result["Midsize Gym"]["Volleyball Court"] == 2
 
 
 def test_load_gym_modes_skips_note_row(mock_connectors, tmp_path):

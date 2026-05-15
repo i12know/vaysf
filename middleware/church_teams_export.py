@@ -1633,6 +1633,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "open_time":     open_time,
                     "close_time":    close_time,
                     "slot_minutes":  mpg,
+                    "exclusive_group": "",
                 })
         return resources
 
@@ -1799,7 +1800,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             )
             return {}
 
-        cols = {str(c).strip() for c in df.columns}
+        df = df.rename(columns=lambda c: str(c).strip())
+        cols = set(df.columns)
         if "Gym Name" not in cols:
             logger.warning(
                 "Gym-Modes tab is missing the 'Gym Name' column — "
