@@ -3103,15 +3103,56 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 return f"{gid}\n{a} vs {b}"
             return gid
 
-        # Group resources by session
-        sessions: Dict[str, List[Dict[str, Any]]] = {}
+        def _time_sort_key(hhmm: str) -> int:
+            h, m = map(int, hhmm.split(":"))
+            return h * 60 + m
+
+        def _resource_group_key(res: Dict[str, Any]) -> Tuple[str, str, str, str, int]:
+            return (
+                str(res.get("day", "")),
+                str(res.get("resource_type", "")),
+                str(res.get("open_time", "")),
+                str(res.get("close_time", "")),
+                int(res.get("slot_minutes", 0) or 0),
+            )
+
+        # Group resources by uniform day/window/resource pool so pod schedules with
+        # mixed slot lengths do not get collapsed into one broken "Day-1" grid.
+        resource_groups: Dict[Tuple[str, str, str, str, int], List[Dict[str, Any]]] = {}
         for res in schedule_input.get("resources", []):
-            sessions.setdefault(res["day"], []).append(res)
-        sorted_days = sorted(
-            sessions.keys(), key=lambda d: (_DAY_ORDER.get(d, 99), d)
+            resource_groups.setdefault(_resource_group_key(res), []).append(res)
+
+        group_counts_by_day: Dict[str, int] = {}
+        for day, _, _, _, _ in resource_groups.keys():
+            group_counts_by_day[day] = group_counts_by_day.get(day, 0) + 1
+
+        sorted_group_keys = sorted(
+            resource_groups.keys(),
+            key=lambda key: (
+                _DAY_ORDER.get(key[0], 99),
+                key[0],
+                _time_sort_key(key[2]) if key[2] else 0,
+                _time_sort_key(key[3]) if key[3] else 0,
+                key[4],
+                key[1],
+            ),
         )
-        max_courts = max((len(v) for v in sessions.values()), default=4)
-        n_cols     = 1 + max_courts
+        max_resources = max((len(v) for v in resource_groups.values()), default=4)
+        n_cols        = 1 + max_resources
+
+        def _section_label(group_key: Tuple[str, str, str, str, int]) -> str:
+            day, resource_type, open_time, close_time, slot_minutes = group_key
+            day_label = _DAY_DISPLAY.get(day, day)
+            if (
+                day in _DAY_DISPLAY
+                and resource_type == GYM_RESOURCE_TYPE
+                and group_counts_by_day.get(day, 0) == 1
+            ):
+                return day_label
+            return (
+                f"{day_label} — {resource_type} "
+                f"({open_time}-{close_time}, {slot_minutes}m)"
+            )
 
         wb = Workbook()
 
@@ -3124,19 +3165,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         c = ws1.cell(row=1, column=1, value="VAY Sports Fest — Schedule by Time")
         c.fill, c.font, c.alignment = hdr_fill, hdr_font, center
 
-        # Row 2 — column headers: Time + court labels from first session
-        ws1.cell(row=2, column=1, value="Time").font = bold_font
-        first_res = sorted(
-            sessions.get(sorted_days[0], [])[:max_courts], key=lambda r: r["resource_id"]
-        ) if sorted_days else []
-        for ci, res in enumerate(first_res, start=2):
-            c = ws1.cell(row=2, column=ci, value=res["label"])
-            c.fill, c.font, c.alignment = sec_fill, bold_font, center
-        ws1.freeze_panes = "A3"
+        ws1.freeze_panes = "A2"
 
         cur_row = 3
-        for day in sorted_days:
-            day_res = sorted(sessions[day], key=lambda r: r["resource_id"])
+        for group_key in sorted_group_keys:
+            day_res = sorted(resource_groups[group_key], key=lambda r: r["resource_id"])
             if not day_res:
                 continue
 
@@ -3145,11 +3178,21 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 start_row=cur_row, start_column=1,
                 end_row=cur_row, end_column=n_cols,
             )
-            c = ws1.cell(row=cur_row, column=1, value=_DAY_DISPLAY.get(day, day))
+            c = ws1.cell(row=cur_row, column=1, value=_section_label(group_key))
             c.fill, c.font, c.alignment = sec_fill, bold_font, center
             cur_row += 1
 
-            # Data rows — one per time slot in this session
+            # Column headers for this group
+            ws1.cell(row=cur_row, column=1, value="Time").font = bold_font
+            ws1.cell(row=cur_row, column=1).fill = sec_fill
+            ws1.cell(row=cur_row, column=1).alignment = center
+            for ci, res in enumerate(day_res, start=2):
+                c = ws1.cell(row=cur_row, column=ci, value=res["label"])
+                c.fill, c.font, c.alignment = sec_fill, bold_font, center
+            cur_row += 1
+
+            day = group_key[0]
+            # Data rows — one per time slot in this uniform resource group
             for t_str in _slot_times(day_res[0]):
                 slot_label = f"{day}-{t_str}"
                 ws1.cell(row=cur_row, column=1, value=t_str).alignment = center

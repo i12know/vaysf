@@ -200,6 +200,11 @@ Reads `schedule_output.json`, writes `VAYSF_Schedule_YYYY-MM-DD.xlsx` to
 - **Schedule-by-Sport** — flat list with auto-filter, for sport directors
   checking their division.
 
+When one day mixes resources with different time windows or slot lengths
+(common for pod sports), **Schedule-by-Time** renders separate sections per
+uniform day/resource/window group so pod assignments are not collapsed into one
+misaligned `Day-1` grid.
+
 The JSON file stays in `DATA_DIR` as the machine-readable backup.
 
 **Constraints implemented in `scheduler.py`:**

@@ -2164,3 +2164,69 @@ def test_write_schedule_output_report_unscheduled_section(tmp_path):
     all_values = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
     assert any("Unscheduled" in str(v) for v in all_values if v)
     assert any("BBM-QF-1" in str(v) for v in all_values if v)
+
+
+def test_write_schedule_output_report_groups_mixed_pod_windows(tmp_path):
+    """Pod resources with different slot windows render as separate time-grid sections."""
+    from church_teams_export import ChurchTeamsExporter
+    import openpyxl
+
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "PCK-01", "event": "Pickleball",
+                "stage": "R1", "pool_id": "", "round": 1,
+                "team_a_id": None, "team_b_id": None,
+                "duration_minutes": 20, "resource_type": "Pickleball Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+            {
+                "game_id": "TT-01", "event": "Table Tennis",
+                "stage": "R1", "pool_id": "", "round": 1,
+                "team_a_id": None, "team_b_id": None,
+                "duration_minutes": 30, "resource_type": "Table Tennis Table",
+                "earliest_slot": None, "latest_slot": None,
+            },
+        ],
+        "resources": [
+            {
+                "resource_id": "PCK-1", "resource_type": "Pickleball Court",
+                "label": "Court-1", "day": "Day-1",
+                "open_time": "13:00", "close_time": "13:40", "slot_minutes": 20,
+            },
+            {
+                "resource_id": "TT-1", "resource_type": "Table Tennis Table",
+                "label": "Table-1", "day": "Day-1",
+                "open_time": "18:00", "close_time": "19:00", "slot_minutes": 30,
+            },
+        ],
+        "precedence": [],
+    }
+    schedule_output = {
+        "solved_at": "2026-05-15T07:07:48",
+        "status": "PARTIAL",
+        "solver_wall_seconds": 0.2,
+        "assignments": [
+            {"game_id": "PCK-01", "resource_id": "PCK-1", "slot": "Day-1-13:00"},
+            {"game_id": "TT-01", "resource_id": "TT-1", "slot": "Day-1-18:00"},
+        ],
+        "unscheduled": [],
+        "pool_results": [],
+    }
+    out = tmp_path / "sched.xlsx"
+    ChurchTeamsExporter._write_schedule_output_report(out, schedule_output, schedule_input)
+    ws = openpyxl.load_workbook(out)["Schedule-by-Time"]
+
+    all_values = [
+        ws.cell(row=r, column=c).value
+        for r in range(1, ws.max_row + 1)
+        for c in range(1, ws.max_column + 1)
+    ]
+    string_values = [str(v) for v in all_values if v is not None]
+
+    assert any("Pickleball Court" in v for v in string_values)
+    assert any("Table Tennis Table" in v for v in string_values)
+    assert "13:00" in string_values
+    assert "18:00" in string_values
+    assert any("PCK-01" in v for v in string_values)
+    assert any("TT-01" in v for v in string_values)
