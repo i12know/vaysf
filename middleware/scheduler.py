@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -100,6 +101,138 @@ def build_resource_slots(resources: list[dict]) -> dict[str, list[str]]:
             t += slot_min
         result[res["resource_id"]] = slots
     return result
+
+
+def build_infeasibility_diagnostics(schedule_input: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return lower-bound capacity diagnostics for operator-facing INFEASIBLE cases.
+
+    The diagnostics intentionally stay simple:
+    - `available_slots` = total start slots available across all resources of a type
+    - `required_slots`  = sum of the minimum slots each game would occupy on any
+      compatible resource of that type
+
+    This does not prove why every infeasible solve failed, but it does surface
+    obvious shortages such as "Badminton Court needs 24 slots, only 20 exist".
+    """
+    games: list[dict] = schedule_input["games"]
+    resources: list[dict] = schedule_input["resources"]
+    res_slots = build_resource_slots(resources)
+
+    resources_by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for resource in resources:
+        resources_by_type[resource["resource_type"]].append(resource)
+
+    available_by_type: dict[str, int] = {}
+    for resource_type, typed_resources in resources_by_type.items():
+        available_by_type[resource_type] = sum(
+            len(res_slots[resource["resource_id"]])
+            for resource in typed_resources
+        )
+
+    required_by_type: dict[str, int] = defaultdict(int)
+    event_rollups: dict[tuple[str, str], dict[str, Any]] = {}
+    missing_rollups: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for game in games:
+        event = game["event"]
+        resource_type = game["resource_type"]
+        compatible = resources_by_type.get(resource_type, [])
+
+        if not compatible:
+            key = (event, resource_type)
+            rollup = missing_rollups.setdefault(key, {
+                "event": event,
+                "resource_type": resource_type,
+                "game_count": 0,
+            })
+            rollup["game_count"] += 1
+            continue
+
+        min_slots = min(
+            max(1, math.ceil(game["duration_minutes"] / resource["slot_minutes"]))
+            for resource in compatible
+        )
+        key = (event, resource_type)
+        rollup = event_rollups.setdefault(key, {
+            "event": event,
+            "resource_type": resource_type,
+            "game_count": 0,
+            "required_slots": 0,
+        })
+        rollup["game_count"] += 1
+        rollup["required_slots"] += min_slots
+        required_by_type[resource_type] += min_slots
+
+    diagnostics: list[dict[str, Any]] = []
+    resource_types = sorted({
+        *(event_resource_type for _, event_resource_type in event_rollups.keys()),
+        *(event_resource_type for _, event_resource_type in missing_rollups.keys()),
+    })
+
+    for resource_type in resource_types:
+        events = sorted(
+            (
+                rollup for rollup in event_rollups.values()
+                if rollup["resource_type"] == resource_type
+            ),
+            key=lambda rollup: (-rollup["required_slots"], rollup["event"]),
+        )
+        missing_events = sorted(
+            (
+                rollup for rollup in missing_rollups.values()
+                if rollup["resource_type"] == resource_type
+            ),
+            key=lambda rollup: (-rollup["game_count"], rollup["event"]),
+        )
+        required_slots = required_by_type.get(resource_type, 0)
+        available_slots = available_by_type.get(resource_type, 0)
+        diagnostics.append({
+            "resource_type": resource_type,
+            "required_slots": required_slots,
+            "available_slots": available_slots,
+            "shortage_slots": max(required_slots - available_slots, 0),
+            "events": events,
+            "missing_resource_events": missing_events,
+        })
+
+    return diagnostics
+
+
+def format_infeasibility_diagnostics(diagnostics: list[dict[str, Any]]) -> list[str]:
+    """Render operator-friendly lower-bound diagnostics for logging/output."""
+    lines: list[str] = []
+    for diagnostic in diagnostics:
+        resource_type = diagnostic["resource_type"]
+        required_slots = diagnostic["required_slots"]
+        available_slots = diagnostic["available_slots"]
+        shortage_slots = diagnostic["shortage_slots"]
+
+        for missing in diagnostic.get("missing_resource_events", []):
+            lines.append(
+                f"{missing['event']}: {missing['game_count']} game(s) require "
+                f"{resource_type}, but 0 compatible slots are available."
+            )
+
+        if required_slots:
+            if shortage_slots:
+                lines.append(
+                    f"{resource_type}: requires at least {required_slots} slot(s), "
+                    f"but only {available_slots} slot(s) are available "
+                    f"(short {shortage_slots})."
+                )
+            else:
+                lines.append(
+                    f"{resource_type}: requires at least {required_slots} slot(s); "
+                    f"{available_slots} slot(s) are available."
+                )
+
+        for event in diagnostic.get("events", []):
+            lines.append(
+                f"  {event['event']}: {event['game_count']} game(s) would need "
+                f"at least {event['required_slots']} slot(s)."
+            )
+
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +469,11 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         **result,
     }
 
+    diagnostics: list[dict[str, Any]] = []
+    if result["status"] == STATUS_INFEASIBLE:
+        diagnostics = build_infeasibility_diagnostics(schedule_input)
+        output["diagnostics"] = diagnostics
+
     try:
         output_path.write_text(
             json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -347,6 +485,20 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
 
     if result["status"] == STATUS_INFEASIBLE:
         logger.error("INFEASIBLE: no valid schedule exists with the current constraints.")
+        diagnostic_lines = format_infeasibility_diagnostics(diagnostics)
+        if diagnostic_lines:
+            logger.error("Lower-bound capacity diagnostics:")
+            for line in diagnostic_lines:
+                logger.error(line)
+            if not any(
+                diagnostic["shortage_slots"] > 0
+                or diagnostic.get("missing_resource_events")
+                for diagnostic in diagnostics
+            ):
+                logger.warning(
+                    "No raw slot shortage was detected. The infeasibility may instead "
+                    "come from same-team conflicts, stage ordering, or min-rest spacing."
+                )
         return 1
     if result["status"] == STATUS_UNKNOWN:
         logger.warning("Solver timed out or reached resource limit without a solution.")

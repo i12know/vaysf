@@ -144,6 +144,14 @@ Output shape:
 }
 ```
 
+When the solver returns `INFEASIBLE`, `schedule_output.json` also includes an
+optional **`diagnostics`** array with lower-bound capacity summaries such as:
+
+- per-resource-type required slots vs available slots
+- per-event required slot estimates inside that shared resource pool
+
+Example use: `Badminton Court requires at least 24 slots, but only 20 are available`.
+
 ### Step 4 — Excel output (`produce-schedule`) — Issue #94 (done)
 
 ```bash

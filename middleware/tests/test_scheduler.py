@@ -247,6 +247,49 @@ def test_solve_empty_input():
     assert result["unscheduled"] == []
 
 
+def test_build_infeasibility_diagnostics_reports_slot_shortage():
+    """Capacity diagnostics summarize required vs available slots by resource type."""
+    from scheduler import build_infeasibility_diagnostics
+
+    si = _minimal_schedule_input(
+        games=[
+            {
+                "game_id": "BAD-01", "event": "Badminton",
+                "stage": "R1", "pool_id": "", "round": 1,
+                "team_a_id": None, "team_b_id": None,
+                "duration_minutes": 30, "resource_type": "Badminton Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+            {
+                "game_id": "BAD-02", "event": "Badminton",
+                "stage": "R1", "pool_id": "", "round": 2,
+                "team_a_id": None, "team_b_id": None,
+                "duration_minutes": 30, "resource_type": "Badminton Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+        ],
+        resources=[{
+            "resource_id": "BAD-1", "resource_type": "Badminton Court",
+            "label": "Court-1", "day": "Day-1",
+            "open_time": "09:00", "close_time": "09:30", "slot_minutes": 30,
+        }],
+    )
+
+    diagnostics = build_infeasibility_diagnostics(si)
+    assert len(diagnostics) == 1
+    diag = diagnostics[0]
+    assert diag["resource_type"] == "Badminton Court"
+    assert diag["required_slots"] == 2
+    assert diag["available_slots"] == 1
+    assert diag["shortage_slots"] == 1
+    assert diag["events"] == [{
+        "event": "Badminton",
+        "resource_type": "Badminton Court",
+        "game_count": 2,
+        "required_slots": 2,
+    }]
+
+
 def test_run_solve_schedule_writes_output(tmp_path):
     """run_solve_schedule writes a valid schedule_output.json and returns 0."""
     pytest.importorskip("ortools")
@@ -270,6 +313,55 @@ def test_run_solve_schedule_writes_output(tmp_path):
     assert "assignments" in data
     assert len(data["assignments"]) == 1
     assert data["unscheduled"] == []
+
+
+def test_run_solve_schedule_infeasible_writes_diagnostics(tmp_path):
+    """INFEASIBLE output includes lower-bound slot diagnostics for operators."""
+    pytest.importorskip("ortools")
+    from scheduler import run_solve_schedule, STATUS_INFEASIBLE
+
+    si = _minimal_schedule_input(
+        games=[
+            {
+                "game_id": "BAD-01", "event": "Badminton",
+                "stage": "R1", "pool_id": "", "round": 1,
+                "team_a_id": None, "team_b_id": None,
+                "duration_minutes": 30, "resource_type": "Badminton Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+            {
+                "game_id": "BAD-02", "event": "Badminton",
+                "stage": "R1", "pool_id": "", "round": 2,
+                "team_a_id": None, "team_b_id": None,
+                "duration_minutes": 30, "resource_type": "Badminton Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+        ],
+        resources=[{
+            "resource_id": "BAD-1", "resource_type": "Badminton Court",
+            "label": "Court-1", "day": "Day-1",
+            "open_time": "09:00", "close_time": "09:30", "slot_minutes": 30,
+        }],
+    )
+    input_path = tmp_path / "schedule_input.json"
+    input_path.write_text(json.dumps(si), encoding="utf-8")
+    output_path = tmp_path / "schedule_output.json"
+
+    exit_code = run_solve_schedule(input_path, output_path)
+    assert exit_code == 1
+    assert output_path.exists()
+
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert data["status"] == STATUS_INFEASIBLE
+    assert data["assignments"] == []
+    assert sorted(data["unscheduled"]) == ["BAD-01", "BAD-02"]
+    assert "diagnostics" in data
+    diag = data["diagnostics"][0]
+    assert diag["resource_type"] == "Badminton Court"
+    assert diag["required_slots"] == 2
+    assert diag["available_slots"] == 1
+    assert diag["shortage_slots"] == 1
+    assert diag["events"][0]["event"] == "Badminton"
 
 
 def test_run_solve_schedule_missing_input(tmp_path):
