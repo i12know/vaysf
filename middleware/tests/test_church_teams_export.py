@@ -1698,13 +1698,11 @@ def test_build_gym_game_objects_structure(mock_connectors):
 
 
 def test_build_gym_game_objects_stages(mock_connectors):
-    """With 8 BBM teams, Pool + Semi + Final stages are all present."""
+    """With 8 BBM teams, only Pool stage is present (playoffs go in Playoff-Slots tab)."""
     exporter = ChurchTeamsExporter()
     games = exporter._build_gym_game_objects(_make_gym_roster(8))
     bbm_stages = {g["stage"] for g in games if g["event"] == SPORT_TYPE["BASKETBALL"]}
-    assert "Pool" in bbm_stages
-    assert "Semi" in bbm_stages or "QF" in bbm_stages
-    assert "Final" in bbm_stages
+    assert bbm_stages == {"Pool"}, f"Expected only Pool stage; got {bbm_stages}"
 
 
 def test_build_gym_game_objects_prefix_format(mock_connectors):
