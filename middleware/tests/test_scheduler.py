@@ -355,8 +355,12 @@ def test_run_solve_schedule_infeasible_writes_diagnostics(tmp_path):
     assert data["status"] == STATUS_INFEASIBLE
     assert data["assignments"] == []
     assert sorted(data["unscheduled"]) == ["BAD-01", "BAD-02"]
-    assert "diagnostics" in data
-    diag = data["diagnostics"][0]
+    # diagnostics now live inside pool_results, not at the top level
+    assert "pool_results" in data
+    pool = data["pool_results"][0]
+    assert pool["resource_type"] == "Badminton Court"
+    assert "diagnostics" in pool
+    diag = pool["diagnostics"][0]
     assert diag["resource_type"] == "Badminton Court"
     assert diag["required_slots"] == 2
     assert diag["available_slots"] == 1
@@ -374,3 +378,136 @@ def test_run_solve_schedule_missing_input(tmp_path):
         tmp_path / "out.json",
     )
     assert exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# Pool decomposition tests
+# ---------------------------------------------------------------------------
+
+def _bad_resource(resource_id, day="Day-1", open_time="09:00", close_time="10:30"):
+    return {
+        "resource_id": resource_id, "resource_type": "Badminton Court",
+        "label": "Court-1", "day": day,
+        "open_time": open_time, "close_time": close_time, "slot_minutes": 30,
+    }
+
+
+def _bad_game(game_id, team_a="A", team_b="B"):
+    return {
+        "game_id": game_id, "event": "Badminton",
+        "stage": "R1", "pool_id": "", "round": 1,
+        "team_a_id": team_a, "team_b_id": team_b,
+        "duration_minutes": 30, "resource_type": "Badminton Court",
+        "earliest_slot": None, "latest_slot": None,
+    }
+
+
+def test_solve_pool_results_always_present():
+    """solve() always returns pool_results even for a single resource type."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+    si = _minimal_schedule_input(
+        games=[_gym_game("G1", "T1", "T2")],
+        resources=[_gym_resource("GYM-Sat-1-1")],
+    )
+    result = solve(si)
+    assert result["status"] == STATUS_OPTIMAL
+    assert "pool_results" in result
+    assert len(result["pool_results"]) == 1
+    pr = result["pool_results"][0]
+    assert pr["resource_type"] == "Gym Court"
+    assert pr["status"] == STATUS_OPTIMAL
+    assert len(pr["assignments"]) == 1
+
+
+def test_solve_partial_feasibility():
+    """Two independent pools: one feasible, one infeasible → PARTIAL status.
+
+    Gym Court pool has enough slots; Badminton Court pool does not.
+    The Gym Court assignments must survive even though Badminton is infeasible.
+    """
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_PARTIAL, STATUS_OPTIMAL, STATUS_INFEASIBLE
+
+    si = _minimal_schedule_input(
+        games=[
+            _gym_game("G1", "T1", "T2"),                    # Gym Court — feasible
+            _bad_game("BAD-01", "A", "B"),                   # Badminton Court — infeasible
+            _bad_game("BAD-02", "C", "D"),                   # Badminton Court — infeasible
+        ],
+        resources=[
+            _gym_resource("GYM-Sat-1-1"),                    # Gym Court: 3 slots
+            _bad_resource("BAD-1", close_time="09:30"),      # Badminton: only 1 slot for 2 games
+        ],
+    )
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_PARTIAL
+
+    # Gym assignment must be preserved
+    gym_assignments = [a for a in result["assignments"] if a["game_id"] == "G1"]
+    assert len(gym_assignments) == 1
+
+    # Badminton games are unscheduled
+    assert "BAD-01" in result["unscheduled"] or "BAD-02" in result["unscheduled"]
+
+    # pool_results carries per-pool outcome
+    pools = {pr["resource_type"]: pr for pr in result["pool_results"]}
+    assert pools["Gym Court"]["status"] == STATUS_OPTIMAL
+    assert pools["Badminton Court"]["status"] == STATUS_INFEASIBLE
+    assert "diagnostics" in pools["Badminton Court"]
+
+
+def test_solve_two_independent_pools_both_optimal():
+    """Two pools with sufficient resources both solve OPTIMAL independently."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = _minimal_schedule_input(
+        games=[
+            _gym_game("G1", "T1", "T2"),
+            _bad_game("BAD-01", "A", "B"),
+        ],
+        resources=[
+            _gym_resource("GYM-Sat-1-1"),
+            _bad_resource("BAD-1"),                          # 3 slots — enough for 1 game
+        ],
+    )
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    assert len(result["assignments"]) == 2
+    assert result["unscheduled"] == []
+    pools = {pr["resource_type"]: pr for pr in result["pool_results"]}
+    assert pools["Gym Court"]["status"] == STATUS_OPTIMAL
+    assert pools["Badminton Court"]["status"] == STATUS_OPTIMAL
+
+
+def test_solve_partial_exit_code(tmp_path):
+    """run_solve_schedule returns exit code 1 for PARTIAL and writes pool_results."""
+    pytest.importorskip("ortools")
+    from scheduler import run_solve_schedule, STATUS_PARTIAL
+
+    si = _minimal_schedule_input(
+        games=[
+            _gym_game("G1", "T1", "T2"),
+            _bad_game("BAD-01"),
+            _bad_game("BAD-02"),
+        ],
+        resources=[
+            _gym_resource("GYM-Sat-1-1"),
+            _bad_resource("BAD-1", close_time="09:30"),      # 1 slot, 2 games → infeasible
+        ],
+    )
+    input_path = tmp_path / "schedule_input.json"
+    input_path.write_text(json.dumps(si), encoding="utf-8")
+    output_path = tmp_path / "schedule_output.json"
+
+    exit_code = run_solve_schedule(input_path, output_path)
+    assert exit_code == 1
+
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert data["status"] == STATUS_PARTIAL
+    assert any(a["game_id"] == "G1" for a in data["assignments"])
+    pools = {pr["resource_type"]: pr for pr in data["pool_results"]}
+    assert "diagnostics" in pools["Badminton Court"]

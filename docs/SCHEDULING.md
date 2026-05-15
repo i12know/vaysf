@@ -126,31 +126,65 @@ python main.py solve-schedule [--input path/to/schedule_input.json] [--output pa
 
 Reads `schedule_input.json`, runs the OR-Tools CP-SAT model, writes
 `schedule_output.json` to `DATA_DIR` (or `--output` path). Exit codes:
-0 = OPTIMAL/FEASIBLE, 1 = INFEASIBLE, 2 = error (bad input or ortools missing).
+0 = OPTIMAL/FEASIBLE (all pools solved), 1 = PARTIAL/INFEASIBLE/UNKNOWN, 2 = error.
 
 Configurable timeout via `SCHEDULE_SOLVER_TIMEOUT` env var (default: 30 s).
+
+**Pool decomposition:** games are partitioned by `resource_type` and solved in
+independent CP-SAT models. A capacity shortage in one pool (e.g. Badminton Court)
+does not cascade into an INFEASIBLE result for other pools (e.g. Gym Courts).
+Top-level `status` values:
+
+| Status | Meaning |
+|--------|---------|
+| `OPTIMAL` | Every pool solved optimally |
+| `FEASIBLE` | Every pool solved (at least one FEASIBLE) |
+| `PARTIAL` | At least one pool solved; at least one pool failed |
+| `INFEASIBLE` | No pools produced any assignments |
+| `UNKNOWN` | Timeout with no solution found |
 
 Output shape:
 
 ```json
 {
   "solved_at": "...",
-  "status": "OPTIMAL",
-  "solver_wall_seconds": 0.4,
+  "status": "PARTIAL",
+  "solver_wall_seconds": 1.2,
   "assignments": [
-    {"game_id": "BBM-P1-R2-G1", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-09:00"}
+    {"game_id": "BBM-01", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-09:00"}
   ],
-  "unscheduled": []
+  "unscheduled": ["BAD-01", "BAD-02"],
+  "pool_results": [
+    {
+      "resource_type": "Gym Court",
+      "status": "OPTIMAL",
+      "solver_wall_seconds": 0.4,
+      "assignments": [...],
+      "unscheduled": []
+    },
+    {
+      "resource_type": "Badminton Court",
+      "status": "INFEASIBLE",
+      "solver_wall_seconds": 0.8,
+      "assignments": [],
+      "unscheduled": ["BAD-01", "BAD-02"],
+      "diagnostics": [
+        {
+          "resource_type": "Badminton Court",
+          "required_slots": 24,
+          "available_slots": 20,
+          "shortage_slots": 4,
+          "events": [...]
+        }
+      ]
+    }
+  ]
 }
 ```
 
-When the solver returns `INFEASIBLE`, `schedule_output.json` also includes an
-optional **`diagnostics`** array with lower-bound capacity summaries such as:
-
-- per-resource-type required slots vs available slots
-- per-event required slot estimates inside that shared resource pool
-
-Example use: `Badminton Court requires at least 24 slots, but only 20 are available`.
+When a pool returns `INFEASIBLE` or `UNKNOWN`, its entry in `pool_results`
+includes a **`diagnostics`** array with lower-bound capacity summaries
+(required slots vs available slots per resource type and per event).
 
 ### Step 4 — Excel output (`produce-schedule`) — Issue #94 (done)
 

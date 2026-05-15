@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### New Features
+- Refactored `solve-schedule` to decompose by resource-type pool — closes issue #93 comment (pool decomposition requirement from live-run testing)
+  - Games are partitioned by `resource_type` and each pool runs an independent CP-SAT solve; a Badminton Court shortage no longer cascades into INFEASIBLE for Gym Courts or Tennis
+  - New top-level status `PARTIAL` (some pools solved, some failed); exit code 1 covers PARTIAL/INFEASIBLE/UNKNOWN
+  - `schedule_output.json` now includes `pool_results` array with per-pool `{resource_type, status, assignments, unscheduled, diagnostics?}`; diagnostics are attached to the failing pool rather than at the top level
+  - `produce-schedule` Schedule-by-Sport tab gains a **Pool Results** section showing per-pool status and shortage summaries when `pool_results` is present
+  - 4 new tests covering pool decomposition: `pool_results` always present, partial feasibility, two independent pools both optimal, partial exit code
 - Added `python main.py produce-schedule [--input …] [--constraint …] [--output …]` Excel schedule renderer — closes [#94](https://github.com/i12know/vaysf/issues/94)
   - Reads `schedule_output.json` (produced by `solve-schedule`) via `--input` and `schedule_input.json` (produced by `export-church-teams`) via `--constraint`, writes `VAYSF_Schedule_YYYY-MM-DD.xlsx` to `EXPORT_DIR`
   - **Schedule-by-Time** tab: grid view (rows = time slots, columns = courts), color-coded by sport (brown = Basketball, blue = VB Men, pink = VB Women), title row merged, column headers from first session resources, session section headers in grey, blank row between sessions, freeze at A3

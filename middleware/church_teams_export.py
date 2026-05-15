@@ -3218,6 +3218,39 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 ws2.cell(row=ri, column=1, value=gid).fill = red_fill
             ri += 2
 
+        # Pool results summary — shown when pool_results present
+        pool_results = schedule_output.get("pool_results", [])
+        if pool_results:
+            ws2.merge_cells(
+                start_row=ri, start_column=1, end_row=ri, end_column=len(col_defs)
+            )
+            c = ws2.cell(row=ri, column=1, value="Pool Results")
+            c.fill, c.font = sec_fill, Font(bold=True)
+            ri += 1
+            for pr in pool_results:
+                pr_status = pr.get("status", "")
+                pr_fill   = red_fill if pr_status not in ("OPTIMAL", "FEASIBLE") else PatternFill(
+                    fgColor="C6EFCE", fill_type="solid"
+                )
+                ws2.cell(row=ri, column=1, value=pr.get("resource_type", "")).fill = pr_fill
+                ws2.cell(row=ri, column=2, value=pr_status).fill                   = pr_fill
+                ws2.cell(row=ri, column=3, value=f"Assigned: {len(pr.get('assignments', []))}").fill  = pr_fill
+                ws2.cell(row=ri, column=4, value=f"Unscheduled: {len(pr.get('unscheduled', []))}").fill = pr_fill
+                ri += 1
+                for diag in pr.get("diagnostics", []):
+                    for line in (diag.get("missing_resource_events") or []):
+                        ws2.cell(row=ri, column=2,
+                                 value=f"  No resources: {line.get('event','')} ({line.get('game_count',0)} games)"
+                                 ).fill = red_fill
+                        ri += 1
+                    if diag.get("shortage_slots", 0) > 0:
+                        ws2.cell(row=ri, column=2,
+                                 value=f"  Short {diag['shortage_slots']} slot(s): "
+                                       f"need {diag['required_slots']}, have {diag['available_slots']}"
+                                 ).fill = red_fill
+                        ri += 1
+            ri += 1
+
         ws2.cell(row=ri, column=1, value=snapshot)
         for ci, (_, width) in enumerate(col_defs, start=1):
             ws2.column_dimensions[get_column_letter(ci)].width = width

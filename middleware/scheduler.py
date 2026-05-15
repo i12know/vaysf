@@ -6,9 +6,17 @@ CLI:
 
 Reads  : schedule_input.json (written by export-church-teams, Issue #87/#96)
 Writes : schedule_output.json to DATA_DIR (or --output path)
-Exits  : 0 = OPTIMAL or FEASIBLE, 1 = INFEASIBLE, 2 = error
+Exits  : 0 = OPTIMAL or FEASIBLE (all pools solved)
+         1 = PARTIAL (some pools failed) / INFEASIBLE (no pools solved) / UNKNOWN
+         2 = error (bad input or ortools missing)
 
-Constraints implemented:
+Architecture — pool decomposition:
+  Games are partitioned by resource_type and solved independently.
+  A Badminton slot shortage cannot cascade into an INFEASIBLE result for Tennis or
+  Gym sports.  Each pool's result lands in pool_results[]; the top-level status
+  reflects the worst outcome across all pools.
+
+Constraints implemented (per pool):
   C1  Each game assigned to exactly one (resource, start_slot).
   C2  Each (resource, slot) hosts at most one game (multi-slot aware).
   C3  No team plays two games in the same time slot.
@@ -17,9 +25,9 @@ Constraints implemented:
   C6  Minimum rest — no team plays in two adjacent global time slots.
   C7  Multi-slot games — a game whose duration > slot_minutes blocks consecutive slots.
 
-Objective: minimize the index of the latest occupied global slot (pack games early).
+Objective (per pool): minimize the index of the latest occupied global slot.
 
-Out of scope for this issue (document for future work):
+Out of scope (future work):
   - Cross-sport participant conflicts (a person in both Basketball and Badminton).
   - Church-requested blackout windows (earliest_slot / latest_slot fields are in
     the schema; wiring them up is a one-liner once they are populated upstream).
@@ -41,10 +49,11 @@ _DAY_ORDER: dict[str, int] = {"Sat-1": 0, "Sun-1": 1, "Sat-2": 2, "Sun-2": 3}
 _DEFAULT_TIMEOUT = float(os.getenv("SCHEDULE_SOLVER_TIMEOUT", "30.0"))
 _OUTPUT_FILENAME = "schedule_output.json"
 
-STATUS_OPTIMAL = "OPTIMAL"
-STATUS_FEASIBLE = "FEASIBLE"
+STATUS_OPTIMAL    = "OPTIMAL"
+STATUS_FEASIBLE   = "FEASIBLE"
+STATUS_PARTIAL    = "PARTIAL"
 STATUS_INFEASIBLE = "INFEASIBLE"
-STATUS_UNKNOWN = "UNKNOWN"
+STATUS_UNKNOWN    = "UNKNOWN"
 
 
 # ---------------------------------------------------------------------------
@@ -90,10 +99,10 @@ def build_resource_slots(resources: list[dict]) -> dict[str, list[str]]:
     """
     result: dict[str, list[str]] = {}
     for res in resources:
-        open_min = _parse_time_minutes(res["open_time"])
+        open_min  = _parse_time_minutes(res["open_time"])
         close_min = _parse_time_minutes(res["close_time"])
-        slot_min = res["slot_minutes"]
-        day = res["day"]
+        slot_min  = res["slot_minutes"]
+        day       = res["day"]
         slots: list[str] = []
         t = open_min
         while t + slot_min <= close_min:
@@ -114,7 +123,7 @@ def build_infeasibility_diagnostics(schedule_input: dict[str, Any]) -> list[dict
     This does not prove why every infeasible solve failed, but it does surface
     obvious shortages such as "Badminton Court needs 24 slots, only 20 exist".
     """
-    games: list[dict] = schedule_input["games"]
+    games: list[dict]     = schedule_input["games"]
     resources: list[dict] = schedule_input["resources"]
     res_slots = build_resource_slots(resources)
 
@@ -130,20 +139,18 @@ def build_infeasibility_diagnostics(schedule_input: dict[str, Any]) -> list[dict
         )
 
     required_by_type: dict[str, int] = defaultdict(int)
-    event_rollups: dict[tuple[str, str], dict[str, Any]] = {}
-    missing_rollups: dict[tuple[str, str], dict[str, Any]] = {}
+    event_rollups:    dict[tuple[str, str], dict[str, Any]] = {}
+    missing_rollups:  dict[tuple[str, str], dict[str, Any]] = {}
 
     for game in games:
-        event = game["event"]
+        event         = game["event"]
         resource_type = game["resource_type"]
-        compatible = resources_by_type.get(resource_type, [])
+        compatible    = resources_by_type.get(resource_type, [])
 
         if not compatible:
-            key = (event, resource_type)
+            key    = (event, resource_type)
             rollup = missing_rollups.setdefault(key, {
-                "event": event,
-                "resource_type": resource_type,
-                "game_count": 0,
+                "event": event, "resource_type": resource_type, "game_count": 0,
             })
             rollup["game_count"] += 1
             continue
@@ -152,46 +159,38 @@ def build_infeasibility_diagnostics(schedule_input: dict[str, Any]) -> list[dict
             max(1, math.ceil(game["duration_minutes"] / resource["slot_minutes"]))
             for resource in compatible
         )
-        key = (event, resource_type)
+        key    = (event, resource_type)
         rollup = event_rollups.setdefault(key, {
-            "event": event,
-            "resource_type": resource_type,
-            "game_count": 0,
-            "required_slots": 0,
+            "event": event, "resource_type": resource_type,
+            "game_count": 0, "required_slots": 0,
         })
-        rollup["game_count"] += 1
+        rollup["game_count"]    += 1
         rollup["required_slots"] += min_slots
         required_by_type[resource_type] += min_slots
 
     diagnostics: list[dict[str, Any]] = []
     resource_types = sorted({
-        *(event_resource_type for _, event_resource_type in event_rollups.keys()),
-        *(event_resource_type for _, event_resource_type in missing_rollups.keys()),
+        *(rt for _, rt in event_rollups.keys()),
+        *(rt for _, rt in missing_rollups.keys()),
     })
 
     for resource_type in resource_types:
         events = sorted(
-            (
-                rollup for rollup in event_rollups.values()
-                if rollup["resource_type"] == resource_type
-            ),
-            key=lambda rollup: (-rollup["required_slots"], rollup["event"]),
+            (r for r in event_rollups.values() if r["resource_type"] == resource_type),
+            key=lambda r: (-r["required_slots"], r["event"]),
         )
         missing_events = sorted(
-            (
-                rollup for rollup in missing_rollups.values()
-                if rollup["resource_type"] == resource_type
-            ),
-            key=lambda rollup: (-rollup["game_count"], rollup["event"]),
+            (r for r in missing_rollups.values() if r["resource_type"] == resource_type),
+            key=lambda r: (-r["game_count"], r["event"]),
         )
-        required_slots = required_by_type.get(resource_type, 0)
+        required_slots  = required_by_type.get(resource_type, 0)
         available_slots = available_by_type.get(resource_type, 0)
         diagnostics.append({
-            "resource_type": resource_type,
-            "required_slots": required_slots,
-            "available_slots": available_slots,
-            "shortage_slots": max(required_slots - available_slots, 0),
-            "events": events,
+            "resource_type":         resource_type,
+            "required_slots":        required_slots,
+            "available_slots":       available_slots,
+            "shortage_slots":        max(required_slots - available_slots, 0),
+            "events":                events,
             "missing_resource_events": missing_events,
         })
 
@@ -202,10 +201,10 @@ def format_infeasibility_diagnostics(diagnostics: list[dict[str, Any]]) -> list[
     """Render operator-friendly lower-bound diagnostics for logging/output."""
     lines: list[str] = []
     for diagnostic in diagnostics:
-        resource_type = diagnostic["resource_type"]
-        required_slots = diagnostic["required_slots"]
+        resource_type   = diagnostic["resource_type"]
+        required_slots  = diagnostic["required_slots"]
         available_slots = diagnostic["available_slots"]
-        shortage_slots = diagnostic["shortage_slots"]
+        shortage_slots  = diagnostic["shortage_slots"]
 
         for missing in diagnostic.get("missing_resource_events", []):
             lines.append(
@@ -236,31 +235,37 @@ def format_infeasibility_diagnostics(diagnostics: list[dict[str, Any]]) -> list[
 
 
 # ---------------------------------------------------------------------------
-# Solver
+# Single-pool solver (internal)
 # ---------------------------------------------------------------------------
 
-def solve(
-    schedule_input: dict[str, Any],
-    timeout_seconds: float = _DEFAULT_TIMEOUT,
+def _solve_one_pool(
+    pool_input: dict[str, Any],
+    timeout_seconds: float,
 ) -> dict[str, Any]:
-    """Build and solve the CP-SAT assignment model.
+    """Build and solve a CP-SAT model for one resource-type pool.
+
+    pool_input must contain 'games', 'resources', and 'precedence' for a single
+    resource_type.  Called by solve() once per pool.
 
     Returns a dict with keys:
         status              : 'OPTIMAL' | 'FEASIBLE' | 'INFEASIBLE' | 'UNKNOWN'
         solver_wall_seconds : float
         assignments         : list of {game_id, resource_id, slot}
         unscheduled         : list of game_ids the solver could not place
+        diagnostics         : (only present when status is not OPTIMAL/FEASIBLE)
+                              lower-bound capacity summary for this pool
     """
-    from ortools.sat.python import cp_model  # import guard — keeps module importable without ortools
+    from ortools.sat.python import cp_model  # import guard
 
-    games: list[dict] = schedule_input["games"]
-    resources: list[dict] = schedule_input["resources"]
-    precedence: list[dict] = schedule_input.get("precedence", [])
+    games:      list[dict] = pool_input["games"]
+    resources:  list[dict] = pool_input["resources"]
+    precedence: list[dict] = pool_input.get("precedence", [])
 
-    res_by_id: dict[str, dict] = {r["resource_id"]: r for r in resources}
-    res_slots: dict[str, list[str]] = build_resource_slots(resources)
+    res_by_id:   dict[str, dict]        = {r["resource_id"]: r for r in resources}
+    res_slots:   dict[str, list[str]]   = build_resource_slots(resources)
 
-    # C4 — court-type routing: group resource IDs by resource_type
+    # C4 — court-type routing (within this pool all games share one resource_type,
+    # but res_by_type keeps the structure consistent with the constraint code)
     res_by_type: dict[str, list[str]] = {}
     for r in resources:
         res_by_type.setdefault(r["resource_type"], []).append(r["resource_id"])
@@ -269,29 +274,29 @@ def solve(
     all_labels: set[str] = set()
     for slots in res_slots.values():
         all_labels.update(slots)
-    sorted_labels = sorted(all_labels, key=_slot_sort_key)
-    slot_to_global: dict[str, int] = {lbl: i for i, lbl in enumerate(sorted_labels)}
-    n_global = len(sorted_labels)
+    sorted_labels  = sorted(all_labels, key=_slot_sort_key)
+    slot_to_global = {lbl: i for i, lbl in enumerate(sorted_labels)}
+    n_global       = len(sorted_labels)
 
-    model = cp_model.CpModel()
-    game_meta: dict[str, dict] = {g["game_id"]: g for g in games}
+    model     = cp_model.CpModel()
+    game_meta = {g["game_id"]: g for g in games}
 
     # Decision variables: x[(gid, rid, t)] = BoolVar
     # True iff game gid starts on resource rid at slot index t.
     game_vars: dict[str, dict[tuple[str, int], Any]] = {}
 
     for game in games:
-        gid = game["game_id"]
+        gid           = game["game_id"]
         resource_type = game["resource_type"]
-        duration = game["duration_minutes"]
-        compatible = res_by_type.get(resource_type, [])
+        duration      = game["duration_minutes"]
+        compatible    = res_by_type.get(resource_type, [])
 
         game_vars[gid] = {}
         for rid in compatible:
-            slots = res_slots[rid]
+            slots    = res_slots[rid]
             slot_min = res_by_id[rid]["slot_minutes"]
             # C7 — multi-slot: game occupies ceil(duration/slot_min) consecutive slots
-            n_slots = max(1, math.ceil(duration / slot_min))
+            n_slots  = max(1, math.ceil(duration / slot_min))
             for t in range(len(slots) - n_slots + 1):
                 var = model.NewBoolVar(f"x_{gid}_{rid}_{t}")
                 game_vars[gid][(rid, t)] = var
@@ -310,7 +315,7 @@ def solve(
         duration = game_meta[gid]["duration_minutes"]
         for (rid, t), var in vd.items():
             slot_min = res_by_id[rid]["slot_minutes"]
-            n_slots = max(1, math.ceil(duration / slot_min))
+            n_slots  = max(1, math.ceil(duration / slot_min))
             for s in range(t, t + n_slots):
                 slot_occupancy.setdefault((rid, s), []).append(var)
 
@@ -321,13 +326,13 @@ def solve(
     # C3 — no team plays two games in the same time slot
     team_slot_vars: dict[tuple[str, str], list[Any]] = {}
     for gid, vd in game_vars.items():
-        game = game_meta[gid]
-        teams = [t for t in (game.get("team_a_id"), game.get("team_b_id")) if t]
+        game     = game_meta[gid]
+        teams    = [t for t in (game.get("team_a_id"), game.get("team_b_id")) if t]
         duration = game["duration_minutes"]
         for (rid, t), var in vd.items():
-            slots = res_slots[rid]
+            slots    = res_slots[rid]
             slot_min = res_by_id[rid]["slot_minutes"]
-            n_slots = max(1, math.ceil(duration / slot_min))
+            n_slots  = max(1, math.ceil(duration / slot_min))
             for s in range(t, t + n_slots):
                 slot_label = slots[s]
                 for team in teams:
@@ -342,7 +347,7 @@ def solve(
     for gid, vd in game_vars.items():
         if not vd:
             continue
-        gv = model.NewIntVar(0, n_global - 1, f"gslot_{gid}")
+        gv = model.NewIntVar(0, max(n_global - 1, 0), f"gslot_{gid}")
         game_global_slot[gid] = gv
         for (rid, t), var in vd.items():
             label = res_slots[rid][t]
@@ -355,9 +360,9 @@ def solve(
         by_event_stage.setdefault(key, []).append(game["game_id"])
 
     for rule in precedence:
-        event = rule["event"]
+        event       = rule["event"]
         earlier_gids = by_event_stage.get((event, rule["earlier_stage"]), [])
-        later_gids = by_event_stage.get((event, rule["later_stage"]), [])
+        later_gids   = by_event_stage.get((event, rule["later_stage"]),   [])
         for g_e in earlier_gids:
             for g_l in later_gids:
                 if g_e in game_global_slot and g_l in game_global_slot:
@@ -366,10 +371,10 @@ def solve(
     # C6 — minimum rest: no team plays in two adjacent global slots
     team_global_assignments: dict[str, dict[int, list[Any]]] = {}
     for gid, vd in game_vars.items():
-        game = game_meta[gid]
+        game  = game_meta[gid]
         teams = [t for t in (game.get("team_a_id"), game.get("team_b_id")) if t]
         for (rid, t), var in vd.items():
-            label = res_slots[rid][t]
+            label      = res_slots[rid][t]
             global_idx = slot_to_global[label]
             for team in teams:
                 team_global_assignments.setdefault(team, {}).setdefault(global_idx, []).append(var)
@@ -378,12 +383,12 @@ def solve(
         for g_idx, vars_at_g in by_idx.items():
             for v1 in vars_at_g:
                 for v2 in by_idx.get(g_idx + 1, []):
-                    # NOT (v1 AND v2) — at most one of adjacent-slot variables can be true
+                    # NOT (v1 AND v2) — at most one of adjacent-slot vars can be true
                     model.AddBoolOr([v1.Not(), v2.Not()])
 
     # Objective — minimize the latest occupied global slot (pack games toward start)
     if game_global_slot:
-        latest = model.NewIntVar(0, n_global - 1, "latest_slot")
+        latest = model.NewIntVar(0, max(n_global - 1, 0), "latest_slot")
         for gv in game_global_slot.values():
             model.Add(latest >= gv)
         model.Minimize(latest)
@@ -393,18 +398,18 @@ def solve(
     solver.parameters.max_time_in_seconds = timeout_seconds
     status_code = solver.Solve(model)
 
-    wall_time = solver.WallTime()
+    wall_time   = solver.WallTime()
     status_name = solver.StatusName(status_code)
 
     status_map = {
-        "OPTIMAL": STATUS_OPTIMAL,
-        "FEASIBLE": STATUS_FEASIBLE,
+        "OPTIMAL":    STATUS_OPTIMAL,
+        "FEASIBLE":   STATUS_FEASIBLE,
         "INFEASIBLE": STATUS_INFEASIBLE,
     }
     status = status_map.get(status_name, STATUS_UNKNOWN)
 
     assignments: list[dict] = []
-    unscheduled: list[str] = []
+    unscheduled: list[str]  = []
 
     if status in (STATUS_OPTIMAL, STATUS_FEASIBLE):
         for gid, vd in game_vars.items():
@@ -412,9 +417,9 @@ def solve(
             for (rid, t), var in vd.items():
                 if solver.Value(var):
                     assignments.append({
-                        "game_id": gid,
+                        "game_id":     gid,
                         "resource_id": rid,
-                        "slot": res_slots[rid][t],
+                        "slot":        res_slots[rid][t],
                     })
                     assigned = True
                     break
@@ -423,15 +428,127 @@ def solve(
     else:
         unscheduled = [g["game_id"] for g in games]
 
-    logger.info(
-        f"Solver: status={status}, wall_time={wall_time:.3f}s, "
-        f"assigned={len(assignments)}, unscheduled={len(unscheduled)}"
-    )
-    return {
-        "status": status,
+    result: dict[str, Any] = {
+        "status":              status,
         "solver_wall_seconds": round(wall_time, 3),
-        "assignments": assignments,
-        "unscheduled": unscheduled,
+        "assignments":         assignments,
+        "unscheduled":         unscheduled,
+    }
+    if status not in (STATUS_OPTIMAL, STATUS_FEASIBLE):
+        result["diagnostics"] = build_infeasibility_diagnostics(pool_input)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Public solver — decomposes by resource_type pool
+# ---------------------------------------------------------------------------
+
+def solve(
+    schedule_input: dict[str, Any],
+    timeout_seconds: float = _DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Partition games by resource_type and solve each pool independently.
+
+    A capacity shortage in one pool (e.g. Badminton Courts) does not cascade
+    into an INFEASIBLE result for other pools (e.g. Gym Courts or Tennis).
+
+    Returns a dict with keys:
+        status              : 'OPTIMAL' | 'FEASIBLE' | 'PARTIAL' | 'INFEASIBLE' | 'UNKNOWN'
+        solver_wall_seconds : float  (sum across all pools)
+        assignments         : list of {game_id, resource_id, slot}  (all pools merged)
+        unscheduled         : list of game_ids  (all failed pools merged)
+        pool_results        : list of per-pool result dicts, each with
+                              {resource_type, status, solver_wall_seconds,
+                               assignments, unscheduled, diagnostics?}
+
+    Status semantics:
+        OPTIMAL    — every pool solved optimally
+        FEASIBLE   — every pool solved (at least one FEASIBLE, none failed)
+        PARTIAL    — at least one pool solved AND at least one pool failed
+        INFEASIBLE — every pool failed (no assignments anywhere)
+        UNKNOWN    — at least one pool timed out; none solved
+    """
+    games:      list[dict] = schedule_input["games"]
+    resources:  list[dict] = schedule_input["resources"]
+    precedence: list[dict] = schedule_input.get("precedence", [])
+
+    # Partition games and resources by resource_type
+    games_by_type:     dict[str, list[dict]] = {}
+    for g in games:
+        games_by_type.setdefault(g["resource_type"], []).append(g)
+
+    resources_by_type: dict[str, list[dict]] = {}
+    for r in resources:
+        resources_by_type.setdefault(r["resource_type"], []).append(r)
+
+    # Route each precedence rule to its pool via event → resource_type
+    event_to_type: dict[str, str] = {g["event"]: g["resource_type"] for g in games}
+    precedence_by_type: dict[str, list[dict]] = {}
+    for rule in precedence:
+        rt = event_to_type.get(rule["event"])
+        if rt:
+            precedence_by_type.setdefault(rt, []).append(rule)
+
+    if not games_by_type:
+        return {
+            "status":              STATUS_OPTIMAL,
+            "solver_wall_seconds": 0.0,
+            "assignments":         [],
+            "unscheduled":         [],
+            "pool_results":        [],
+        }
+
+    pool_results:       list[dict[str, Any]] = []
+    all_assignments:    list[dict]           = []
+    all_unscheduled:    list[str]            = []
+    total_wall_seconds: float                = 0.0
+
+    for resource_type in sorted(games_by_type.keys()):
+        pool_input = {
+            "games":      games_by_type[resource_type],
+            "resources":  resources_by_type.get(resource_type, []),
+            "precedence": precedence_by_type.get(resource_type, []),
+        }
+        result = _solve_one_pool(pool_input, timeout_seconds)
+        result["resource_type"] = resource_type
+        pool_results.append(result)
+        all_assignments.extend(result["assignments"])
+        all_unscheduled.extend(result["unscheduled"])
+        total_wall_seconds += result["solver_wall_seconds"]
+        logger.info(
+            f"Pool {resource_type!r}: status={result['status']}, "
+            f"assigned={len(result['assignments'])}, "
+            f"unscheduled={len(result['unscheduled'])}"
+        )
+
+    # Aggregate status across pools
+    pool_statuses = {pr["status"] for pr in pool_results}
+    solved        = {STATUS_OPTIMAL, STATUS_FEASIBLE}
+    if pool_statuses == {STATUS_OPTIMAL}:
+        top_status = STATUS_OPTIMAL
+    elif pool_statuses.issubset(solved):
+        top_status = STATUS_FEASIBLE
+    elif pool_statuses & solved:
+        top_status = STATUS_PARTIAL
+    elif STATUS_UNKNOWN in pool_statuses:
+        top_status = STATUS_UNKNOWN
+    else:
+        top_status = STATUS_INFEASIBLE
+
+    logger.info(
+        f"Solver (all pools): status={top_status}, "
+        f"wall_time={total_wall_seconds:.3f}s, "
+        f"assigned={len(all_assignments)}, unscheduled={len(all_unscheduled)}, "
+        f"pools={len(pool_results)}"
+    )
+
+    return {
+        "status":              top_status,
+        "solver_wall_seconds": round(total_wall_seconds, 3),
+        "assignments":         all_assignments,
+        "unscheduled":         all_unscheduled,
+        "pool_results":        pool_results,
     }
 
 
@@ -442,7 +559,10 @@ def solve(
 def run_solve_schedule(input_path: Path, output_path: Path) -> int:
     """Load schedule_input.json, solve, write schedule_output.json.
 
-    Returns exit code: 0 = OPTIMAL/FEASIBLE, 1 = INFEASIBLE/UNKNOWN, 2 = error.
+    Returns exit code:
+        0 = OPTIMAL or FEASIBLE (every pool solved)
+        1 = PARTIAL (some pools failed) / INFEASIBLE / UNKNOWN
+        2 = error (missing input, bad JSON, ortools not installed)
     """
     try:
         schedule_input = load_schedule_input(input_path)
@@ -469,11 +589,6 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         **result,
     }
 
-    diagnostics: list[dict[str, Any]] = []
-    if result["status"] == STATUS_INFEASIBLE:
-        diagnostics = build_infeasibility_diagnostics(schedule_input)
-        output["diagnostics"] = diagnostics
-
     try:
         output_path.write_text(
             json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -483,23 +598,40 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         logger.error(f"Failed to write {output_path}: {e}")
         return 2
 
-    if result["status"] == STATUS_INFEASIBLE:
-        logger.error("INFEASIBLE: no valid schedule exists with the current constraints.")
-        diagnostic_lines = format_infeasibility_diagnostics(diagnostics)
-        if diagnostic_lines:
-            logger.error("Lower-bound capacity diagnostics:")
-            for line in diagnostic_lines:
-                logger.error(line)
-            if not any(
-                diagnostic["shortage_slots"] > 0
-                or diagnostic.get("missing_resource_events")
-                for diagnostic in diagnostics
-            ):
-                logger.warning(
-                    "No raw slot shortage was detected. The infeasibility may instead "
-                    "come from same-team conflicts, stage ordering, or min-rest spacing."
-                )
+    if result["status"] == STATUS_PARTIAL:
+        failed = [
+            pr for pr in result["pool_results"]
+            if pr["status"] not in (STATUS_OPTIMAL, STATUS_FEASIBLE)
+        ]
+        logger.warning(
+            f"PARTIAL: {len(failed)} pool(s) could not be scheduled; "
+            f"{len(result['unscheduled'])} game(s) unscheduled. "
+            f"Assignments for feasible pools have been written."
+        )
+        for pr in failed:
+            logger.error(f"  Failed pool: {pr['resource_type']!r} — {pr['status']}")
+            for line in format_infeasibility_diagnostics(pr.get("diagnostics", [])):
+                logger.error(f"    {line}")
         return 1
+
+    if result["status"] == STATUS_INFEASIBLE:
+        logger.error("INFEASIBLE: no pools could be scheduled.")
+        for pr in result["pool_results"]:
+            logger.error(f"  Pool {pr['resource_type']!r}: {pr['status']}")
+            for line in format_infeasibility_diagnostics(pr.get("diagnostics", [])):
+                logger.error(f"    {line}")
+        has_shortage = any(
+            d.get("shortage_slots", 0) > 0 or d.get("missing_resource_events")
+            for pr in result["pool_results"]
+            for d in pr.get("diagnostics", [])
+        )
+        if not has_shortage:
+            logger.warning(
+                "No raw slot shortage detected. The infeasibility may come from "
+                "same-team conflicts, stage ordering, or min-rest spacing."
+            )
+        return 1
+
     if result["status"] == STATUS_UNKNOWN:
         logger.warning("Solver timed out or reached resource limit without a solution.")
         return 1
