@@ -166,11 +166,14 @@ function vaysf_get_participant($participant_id) {
 - Every new ChMeetings connector method must have both a mock and a live-mode test path
 - Use `mocker.patch.object` (pytest-mock) for external API calls
 - Gate live-only tests behind `os.getenv("LIVE_TEST", "false").strip().lower() == "true"`
-- For write operations, use a self-cleaning round-trip pattern: add → verify → remove → verify
+- For live write operations, also call `require_live_mutation_test(...)` so `LIVE_MUTATION_TESTS=true` is required explicitly
+- For write operations, use a self-cleaning round-trip pattern whenever possible: add → verify → remove → verify
 
 Example (connector test with mock + live paths):
 
 ```python
+from conftest import require_live_mutation_test
+
 def test_get_group_people(chm_connector, mocker, mock_chm_people_data):
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
     if live_test:
@@ -184,6 +187,16 @@ def test_get_group_people(chm_connector, mocker, mock_chm_people_data):
             mp.setattr("requests.Session.get", lambda *args, **kwargs: mock_response)
             people = chm_connector.get_group_people("G1")
             assert len(people) == 2
+```
+
+For a live write test, use the extra safeguard:
+
+```python
+def test_add_person_to_group(chm_connector):
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        require_live_mutation_test("adding/removing a real ChMeetings group membership")
+        ...
 ```
 
 ### PHP (WordPress Plugin)

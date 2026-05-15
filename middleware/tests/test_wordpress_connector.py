@@ -5,6 +5,7 @@ import pytest
 from wordpress.frontend_connector import WordPressConnector
 from loguru import logger
 from wordpress.frontend_connector import Config
+from conftest import require_live_mutation_test
 
 @pytest.fixture
 def wp_connector(mocker):
@@ -55,6 +56,7 @@ def test_create_and_update_church(wp_connector, mocker):
     update_data = {"church_name": "Updated Test Church Pytest", "sports_ministry_level": 3}  # Moved outside if/else
 
     if live_test:
+        require_live_mutation_test("creating/updating a live WordPress church record")
         # Create
         new_church = wp_connector.create_church(test_church)
         if new_church:
@@ -163,6 +165,7 @@ def test_send_email(wp_connector, mocker):
     }
 
     if live_test:
+        require_live_mutation_test("sending a real WordPress email")
         result = wp_connector.send_email(**email_data)
         logger.info(f"Live email result: {result}")
         assert result.get("success", False), "Live email sending failed"

@@ -89,12 +89,19 @@
   - `TeamValidator` now enforces JSON-driven minimum team sizes for team/exhibition events, including `other_events` selections such as soccer
 
 ### Bug Fixes
+- Fixed consolidated ALL-export workbook generation when `middleware/data/venue_input.xlsx` contains blank or partially filled rows
+  - Venue-input parsing now treats blank/`NaN` spreadsheet cells as empty instead of converting them into a literal `"nan"` resource type or crashing on `int(float(NaN))`
+  - `Pod-Resource-Estimate`, `Schedule-Input`, and `schedule_input.json` now continue to generate when staff leave trailing blank rows in the venue workbook
+  - Added regression coverage for blank venue-resource rows in both `_load_venue_input()` and `_load_venue_input_rows()`
 - Fixed stale orphaned participant issues in church-team exports and validation refreshes
   - `export-church-teams` now hides stale `INDIVIDUAL` WordPress validation issues that no longer map to any participant in the current ChMeetings Team-group snapshot
   - `sync --type validation` now self-resolves open `INDIVIDUAL` validation issues when the linked WordPress participant's `chmeetings_id` returns `404 Not Found` from ChMeetings
   - This prevents deleted/re-registered people from showing contradictory state such as receiving a fresh pastor approval email while still appearing on the church workbook's `Validation-Issues` tab under an older orphaned participant record
 
 ### Documentation
+- Documented the new live-test safety rail requiring `LIVE_MUTATION_TESTS=true` for tests that write to real ChMeetings or WordPress data
+  - Added a prominent warning to the README and test docs that `LIVE_TEST=true` points pytest at real systems
+  - Updated contributor guidance so future live write tests must call `require_live_mutation_test(...)`
 - Added `EXPORT_DIR` to `middleware/.env.template` with the shared Google Drive example used for church-team report exports
 - Updated `docs/USAGE.md` and `docs/TROUBLESHOOTING.md` with operator guidance for `inspect-person`, `audit-team-groups`, orphaned Team-group memberships, and shared-drive export configuration
 

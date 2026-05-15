@@ -1,5 +1,6 @@
 # church_teams_export.py
-# Version 1.2.0
+# Version 1.3.0
+import json
 import pandas as pd
 from pathlib import Path
 from loguru import logger
@@ -45,6 +46,7 @@ from config import (
     SCHEDULE_SKETCH_COLOR_VB_WOMEN,
     SCHEDULE_SKETCH_COLOR_SECTION,
     SCHEDULE_SKETCH_COLOR_HEADER,
+    GYM_RESOURCE_TYPE,
     VENUE_INPUT_FILENAME,
     POD_RESOURCE_EVENT_TYPE,
     POD_FIT_COLOR_GREEN,
@@ -1512,6 +1514,330 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         return rows
 
+    # ── Schedule-Input helpers (Issue #87) ──────────────────────────────────
+
+    def _build_gym_game_objects(
+        self, roster_rows: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Return game placeholder dicts for gym sports (Basketball, VB Men, VB Women).
+
+        Pool IDs are sequential (BBM-01, VBM-01, …).  Team assignments are null —
+        this is a planning input for the OR-Tools scheduler.
+        """
+        sport_defs = [
+            (SPORT_TYPE["BASKETBALL"],       "BBM"),
+            (SPORT_TYPE["VOLLEYBALL_MEN"],   "VBM"),
+            (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW"),
+        ]
+        mpg = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
+        include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
+        games: List[Dict[str, Any]] = []
+
+        for event_name, prefix in sport_defs:
+            min_sz = self._get_min_team_size(event_name)
+            counts = self._count_estimating_teams(roster_rows, event_name, min_sz)
+            n_teams = counts["n_estimating"] if counts["n_estimating"] >= 2 else 8
+            gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(
+                event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
+            )
+            s = self._compute_court_slots(n_teams, mpg, pool_games_per_team=gpg)
+            early_ids, final_ids = self._make_playoff_ids(
+                prefix, s["playoff_teams"], include_third
+            )
+
+            for i, gid in enumerate(
+                [f"{prefix}-{j:02d}" for j in range(1, s["pool_slots"] + 1)], start=1
+            ):
+                games.append({
+                    "game_id": gid, "event": event_name, "stage": "Pool",
+                    "pool_id": "", "round": i,
+                    "team_a_id": None, "team_b_id": None,
+                    "duration_minutes": mpg, "resource_type": GYM_RESOURCE_TYPE,
+                    "earliest_slot": None, "latest_slot": None,
+                })
+
+            for i, gid in enumerate(early_ids, start=1):
+                stage = gid.split("-")[1] if "-" in gid else "Playoff"
+                games.append({
+                    "game_id": gid, "event": event_name, "stage": stage,
+                    "pool_id": "", "round": i,
+                    "team_a_id": None, "team_b_id": None,
+                    "duration_minutes": mpg, "resource_type": GYM_RESOURCE_TYPE,
+                    "earliest_slot": None, "latest_slot": None,
+                })
+
+            for i, gid in enumerate(final_ids, start=1):
+                stage = gid.split("-")[1] if "-" in gid else "Final"
+                games.append({
+                    "game_id": gid, "event": event_name, "stage": stage,
+                    "pool_id": "", "round": i,
+                    "team_a_id": None, "team_b_id": None,
+                    "duration_minutes": mpg, "resource_type": GYM_RESOURCE_TYPE,
+                    "earliest_slot": None, "latest_slot": None,
+                })
+
+        return games
+
+    def _build_pod_game_objects(
+        self,
+        roster_rows: List[Dict[str, Any]],
+        validation_rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Return single-elimination game placeholder dicts for pod (racquet) sports.
+
+        Uses planning_entries (confirmed + provisional) from Pod-Divisions.
+        Number of games per division = planning_entries − 1 (single elimination).
+        Divisions with fewer than 2 planning entries are skipped.
+        """
+        div_rows = self._build_pod_divisions_rows(roster_rows, validation_rows)
+        games: List[Dict[str, Any]] = []
+        for div in div_rows:
+            if div["division_status"] in ("Empty", "AnomalyOnly"):
+                continue
+            n_entries = div["planning_entries"]
+            if n_entries < 2:
+                continue
+            division_id = div["division_id"]
+            sport_type = div["sport_type"]
+            resource_type = div["resource_type"]
+            mpg = div["minutes_per_game"]
+            for i in range(1, n_entries):  # n_entries - 1 games
+                games.append({
+                    "game_id": f"{division_id}-{i:02d}",
+                    "event": sport_type,
+                    "stage": "R1",
+                    "pool_id": "",
+                    "round": i,
+                    "team_a_id": None,
+                    "team_b_id": None,
+                    "duration_minutes": mpg,
+                    "resource_type": resource_type,
+                    "earliest_slot": None,
+                    "latest_slot": None,
+                })
+        return games
+
+    @staticmethod
+    def _build_gym_resource_objects(n_courts: int = 4) -> List[Dict[str, Any]]:
+        """Return one resource object per (session × court) for gym sports.
+
+        Four sessions: 1st Saturday, 1st Sunday, 2nd Saturday, 2nd Sunday.
+        Time windows are taken from SCHEDULE_SKETCH_* config constants.
+        close_time = last game start + slot_minutes (one slot after last start).
+        """
+        mpg = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
+        close_sat = f"{SCHEDULE_SKETCH_SATURDAY_LAST_GAME + mpg // 60:02d}:00"
+        close_sun = f"{SCHEDULE_SKETCH_SUNDAY_LAST_GAME + mpg // 60:02d}:00"
+        sessions = [
+            ("Sat-1", f"{SCHEDULE_SKETCH_SATURDAY_START:02d}:00", close_sat),
+            ("Sun-1", f"{SCHEDULE_SKETCH_SUNDAY_START:02d}:00",   close_sun),
+            ("Sat-2", f"{SCHEDULE_SKETCH_SATURDAY_START:02d}:00", close_sat),
+            ("Sun-2", f"{SCHEDULE_SKETCH_SUNDAY_START:02d}:00",   close_sun),
+        ]
+        resources: List[Dict[str, Any]] = []
+        for day_label, open_time, close_time in sessions:
+            for c in range(1, n_courts + 1):
+                resources.append({
+                    "resource_id":   f"GYM-{day_label}-{c}",
+                    "resource_type": GYM_RESOURCE_TYPE,
+                    "label":         f"Court-{c}",
+                    "day":           day_label,
+                    "open_time":     open_time,
+                    "close_time":    close_time,
+                    "slot_minutes":  mpg,
+                })
+        return resources
+
+    @staticmethod
+    def _clean_excel_text(val) -> str:
+        """Normalize spreadsheet cells so blanks/NaN become an empty string."""
+        if pd.isna(val):
+            return ""
+        return str(val).strip()
+
+    @staticmethod
+    def _float_from_excel(val, default: float) -> float:
+        """Convert spreadsheet cells to float while treating blanks/NaN as a default."""
+        if pd.isna(val) or val in (None, ""):
+            return default
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _load_venue_input_rows(venue_input_path: Path) -> List[Dict[str, Any]]:
+        """Expand venue_input.xlsx into per-resource objects for schedule_input.json.
+
+        Each row with Quantity=N emits N resource objects labelled Court-1…N or
+        Table-1…N.  Returns an empty list if the file does not exist.
+        """
+        if not venue_input_path.exists():
+            return []
+        try:
+            df = pd.read_excel(
+                venue_input_path, sheet_name="Venue-Input", engine="openpyxl"
+            )
+        except Exception as e:
+            logger.warning(f"Could not read venue input rows from {venue_input_path}: {e}")
+            return []
+
+        rows: List[Dict[str, Any]] = []
+        resource_counts: Dict[str, int] = {}
+
+        for _, row in df.iterrows():
+            resource_type = ChurchTeamsExporter._clean_excel_text(row.get("Resource Type"))
+            if not resource_type:
+                continue
+            qty = max(1, int(ChurchTeamsExporter._float_from_excel(row.get("Quantity"), 1)))
+            slot_min = max(1, int(ChurchTeamsExporter._float_from_excel(row.get("Slot Minutes"), 60)))
+            start = ChurchTeamsExporter._parse_hour(row.get("Start Time"))
+            last_start = ChurchTeamsExporter._parse_hour(row.get("Last Start Time"))
+            open_time = f"{int(start):02d}:{int(round((start % 1) * 60)):02d}"
+            close_decimal = last_start + slot_min / 60.0
+            close_time = f"{int(close_decimal):02d}:{int(round((close_decimal % 1) * 60)):02d}"
+
+            abbrev = resource_type.split()[0][:3].upper()
+            rc = resource_counts.get(resource_type, 0)
+
+            for i in range(1, qty + 1):
+                rc += 1
+                label = (
+                    f"Table-{i}" if "table" in resource_type.lower() else f"Court-{i}"
+                )
+                rows.append({
+                    "resource_id":   f"{abbrev}-{rc}",
+                    "resource_type": resource_type,
+                    "label":         label,
+                    "day":           "Day-1",
+                    "open_time":     open_time,
+                    "close_time":    close_time,
+                    "slot_minutes":  slot_min,
+                })
+            resource_counts[resource_type] = rc
+
+        logger.debug(f"Loaded {len(rows)} venue resource rows from {venue_input_path}")
+        return rows
+
+    @staticmethod
+    def _build_precedence_objects(
+        gym_games: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Return stage-ordering constraints: Pool → QF/Semi → Final → 3rd place."""
+        stage_pairs = [
+            ("Pool", "QF"),
+            ("Pool", "Semi"),
+            ("QF",   "Semi"),
+            ("Semi", "Final"),
+            ("Semi", "3rd"),
+            ("Final", "3rd"),
+        ]
+        rules: List[Dict[str, Any]] = []
+        events = sorted({g["event"] for g in gym_games})
+        for event in events:
+            stages_present = {g["stage"] for g in gym_games if g["event"] == event}
+            for earlier, later in stage_pairs:
+                if earlier in stages_present and later in stages_present:
+                    rules.append({
+                        "rule":          f"All {earlier} before {later}",
+                        "event":         event,
+                        "earlier_stage": earlier,
+                        "later_stage":   later,
+                    })
+        return rules
+
+    def _build_schedule_input(
+        self,
+        roster_rows: List[Dict[str, Any]],
+        validation_rows: List[Dict[str, Any]],
+        venue_input_path: Path,
+    ) -> Dict[str, Any]:
+        """Assemble the full schedule_input package consumed by OR-Tools.
+
+        Returns a dict with keys: generated_at, game_count, resource_count,
+        games, resources, precedence.
+        """
+        gym_games = self._build_gym_game_objects(roster_rows)
+        pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
+        all_games = gym_games + pod_games
+
+        gym_resources = self._build_gym_resource_objects()
+        pod_resources = self._load_venue_input_rows(venue_input_path)
+        all_resources = gym_resources + pod_resources
+
+        precedence = self._build_precedence_objects(gym_games)
+
+        return {
+            "generated_at":   datetime.now().isoformat(timespec="seconds"),
+            "game_count":     len(all_games),
+            "resource_count": len(all_resources),
+            "games":          all_games,
+            "resources":      all_resources,
+            "precedence":     precedence,
+        }
+
+    @staticmethod
+    def _write_schedule_input_tab(ws, schedule_input: Dict[str, Any]) -> None:
+        """Write Schedule-Input tab with Games, Resources, and Precedence sections."""
+        from openpyxl.styles import PatternFill, Font, Alignment
+        from openpyxl.utils import get_column_letter
+
+        hdr_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_HEADER, fill_type="solid")
+        hdr_font = Font(bold=True, color="FFFFFF")
+        sec_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_SECTION, fill_type="solid")
+        sec_font = Font(bold=True)
+
+        game_cols = [
+            "game_id", "event", "stage", "pool_id", "round",
+            "team_a_id", "team_b_id", "duration_minutes",
+            "resource_type", "earliest_slot", "latest_slot",
+        ]
+        resource_cols = [
+            "resource_id", "resource_type", "label", "day",
+            "open_time", "close_time", "slot_minutes",
+        ]
+        precedence_cols = ["rule", "event", "earlier_stage", "later_stage"]
+
+        current_row = 1
+
+        # Meta row
+        ws.cell(row=current_row, column=1, value="generated_at").font = sec_font
+        ws.cell(row=current_row, column=2, value=schedule_input["generated_at"])
+        ws.cell(
+            row=current_row, column=3,
+            value=f"Games: {schedule_input['game_count']}  Resources: {schedule_input['resource_count']}",
+        )
+        current_row += 2
+
+        def _write_section(title: str, cols: List[str], rows: List[Dict]) -> None:
+            nonlocal current_row
+            sec_cell = ws.cell(row=current_row, column=1, value=title)
+            sec_cell.fill = sec_fill
+            sec_cell.font = sec_font
+            current_row += 1
+            for c_idx, col in enumerate(cols, start=1):
+                cell = ws.cell(row=current_row, column=c_idx, value=col)
+                cell.fill = hdr_fill
+                cell.font = hdr_font
+                cell.alignment = Alignment(horizontal="center")
+            current_row += 1
+            for data_row in rows:
+                for c_idx, col in enumerate(cols, start=1):
+                    ws.cell(row=current_row, column=c_idx, value=data_row.get(col))
+                current_row += 1
+            current_row += 1  # blank separator
+
+        _write_section("GAMES",      game_cols,      schedule_input["games"])
+        _write_section("RESOURCES",  resource_cols,  schedule_input["resources"])
+        _write_section("PRECEDENCE", precedence_cols, schedule_input["precedence"])
+
+        # Column widths
+        col_widths = [20, 30, 10, 10, 8, 16, 16, 18, 22, 14, 12]
+        for i, w in enumerate(col_widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ── End Schedule-Input helpers ───────────────────────────────────────────
+
     @staticmethod
     def _build_scenario_schedule(
         n_courts: int,
@@ -1884,6 +2210,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
     def _parse_hour(val) -> float:
         """Convert a cell value to a decimal hour (e.g. datetime.time(13,0) → 13.0)."""
         import datetime as _dt
+        if pd.isna(val):
+            return 0.0
         if isinstance(val, _dt.time):
             return val.hour + val.minute / 60.0
         try:
@@ -1910,21 +2238,23 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         totals: Dict[str, int] = {}
         for _, row in df.iterrows():
-            resource_type = str(row.get("Resource Type") or "").strip()
+            resource_type = ChurchTeamsExporter._clean_excel_text(row.get("Resource Type"))
             if not resource_type:
                 continue
             avail = row.get("Available Slots")
             if pd.isna(avail) or not avail:
                 # Formula wasn't cached — compute from component columns.
-                qty       = float(row.get("Quantity") or 0)
+                qty       = ChurchTeamsExporter._float_from_excel(row.get("Quantity"), 0)
                 start     = ChurchTeamsExporter._parse_hour(row.get("Start Time"))
                 last_start = ChurchTeamsExporter._parse_hour(row.get("Last Start Time"))
-                slot_min  = float(row.get("Slot Minutes") or 1)
+                slot_min  = ChurchTeamsExporter._float_from_excel(row.get("Slot Minutes"), 1)
                 if slot_min > 0 and qty > 0 and last_start >= start:
                     avail = qty * ((last_start - start) * 60 / slot_min + 1)
                 else:
                     avail = 0
-            totals[resource_type] = totals.get(resource_type, 0) + int(avail)
+            totals[resource_type] = totals.get(resource_type, 0) + int(
+                ChurchTeamsExporter._float_from_excel(avail, 0)
+            )
         logger.debug(f"Loaded venue input: {totals}")
         return totals
 
@@ -2227,6 +2557,22 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     pod_rows = self._build_pod_resource_rows(roster_rows, available_by_resource)
                     pod_ws = writer.book.create_sheet(title="Pod-Resource-Estimate")
                     self._write_pod_resource_estimate(pod_ws, pod_rows, available_by_resource)
+
+                    # Schedule-Input Tab + JSON (Issue #87) — OR-Tools-ready planning artifact
+                    schedule_input = self._build_schedule_input(
+                        roster_rows, validation_rows, venue_input_path
+                    )
+                    si_ws = writer.book.create_sheet(title="Schedule-Input")
+                    self._write_schedule_input_tab(si_ws, schedule_input)
+                    json_path = filepath.parent / "schedule_input.json"
+                    json_path.write_text(
+                        json.dumps(schedule_input, indent=2, default=str),
+                        encoding="utf-8",
+                    )
+                    logger.info(
+                        f"Schedule-Input: {schedule_input['game_count']} games, "
+                        f"{schedule_input['resource_count']} resources → {json_path}"
+                    )
 
                 # Add yellow note to Photo column in Roster sheet
                 if not df_roster.empty:

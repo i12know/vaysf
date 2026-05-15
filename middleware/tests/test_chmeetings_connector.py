@@ -5,6 +5,7 @@ import sys
 import time
 import requests
 from chmeetings.backend_connector import ChMeetingsConnector
+from conftest import require_live_mutation_test
 from loguru import logger
 
 # Force logging to console
@@ -233,6 +234,9 @@ def test_add_person_to_group(chm_connector, mocker):
     test_person_id = os.getenv("CHM_TEST_PERSON_ID", "")
 
     if live_test:
+        require_live_mutation_test(
+            "ChMeetings group-membership round-trip (add person to group)"
+        )
         if not test_group_id or not test_person_id:
             pytest.skip(
                 "Set CHM_TEST_GROUP_ID and CHM_TEST_PERSON_ID env vars to run live group membership tests"
@@ -269,6 +273,9 @@ def test_remove_person_from_group(chm_connector, mocker):
     test_person_id = os.getenv("CHM_TEST_PERSON_ID", "")
 
     if live_test:
+        require_live_mutation_test(
+            "ChMeetings group-membership round-trip (remove person from group)"
+        )
         if not test_group_id or not test_person_id:
             pytest.skip(
                 "Set CHM_TEST_GROUP_ID and CHM_TEST_PERSON_ID env vars to run live group membership tests"
@@ -416,6 +423,7 @@ def test_add_member_note(chm_connector, mocker):
     person_id = "3505203"
     note_text = "Sports Fest 2025 | Team: RPC | Primary: Badminton | Member: Yes"
     if live_test:
+        require_live_mutation_test("ChMeetings profile note creation")
         person = chm_connector.get_person(person_id)
         if person is None:
             people = chm_connector.get_people({"include_additional_fields": False})
@@ -456,6 +464,7 @@ def test_update_person(chm_connector, mocker):
         {"field_id": 1313282, "value": None},
     ]
     if live_test:
+        require_live_mutation_test("ChMeetings person update via PUT")
         person = chm_connector.get_person(person_id)
         if person is None:
             people = chm_connector.get_people({"include_additional_fields": False})

@@ -117,6 +117,8 @@ To verify live API connectivity (requires `.env` with real credentials):
 set LIVE_TEST=true && pytest tests/ -v -s
 ```
 
+Important: `LIVE_TEST=true` points pytest at real ChMeetings and WordPress systems. Tests that write data are skipped unless you also set `LIVE_MUTATION_TESTS=true`.
+
 **Note:** `pytest.ini` in the `middleware/` directory configures the Python import path automatically. You do not need to set `PYTHONPATH` manually.
 
 For full testing options (including live group membership tests), see the [Usage Guide](USAGE.md#running-tests).
