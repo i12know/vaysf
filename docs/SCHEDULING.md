@@ -10,7 +10,7 @@ and Claude sessions do not need to reverse-engineer the design from code.
 
 ```
 Step 1                  Step 2                  Step 3                  Step 4
-export-church-teams  →  schedule_input.json  →  solve-schedule       →  export-schedule
+export-church-teams  →  schedule_input.json  →  solve-schedule       →  produce-schedule
                         + Schedule-Input tab    schedule_output.json    VAYSF_Schedule_*.xlsx
                         (Issue #87, done)       (Issue #93, done)       (Issue #94, done)
 ```
@@ -26,24 +26,40 @@ When `middleware/data/venue_input.xlsx` is present, the workbook also gets a
 **Schedule-Input** tab and a companion **`schedule_input.json`** (written
 alongside the xlsx) containing:
 
-- **`games`** — one object per match placeholder (pool rounds + playoff
-  bracket for gym sports; single-elimination bracket for pod sports).
+- **`games`** — one object per pool-play match placeholder for gym sports
+  (Basketball, VB Men, VB Women); pod sports (single-elimination) are also
+  included here for solver assignment.
 - **`resources`** — one object per physical court or table, expanded from
   `venue_input.xlsx` quantities, each annotated with day and time window.
-- **`precedence`** — stage-ordering rules (e.g. Pool must finish before
-  Semi-Final).
+- **`playoff_slots`** — pre-assigned playoff games loaded from the
+  **Playoff-Slots** tab of `venue_input.xlsx` (see below).  If the tab is
+  absent, a `WARNING` is logged and `playoff_slots` is an empty list — the
+  pipeline does not crash.
+
+**Playoff-Slots tab** (`venue_input.xlsx` → sheet `Playoff-Slots`):
+
+This is how you control the exact order and timing of QF/Semi/Final/3rd-place
+games.  Add one row per playoff game.  Required columns:
+
+| Column | Example | Notes |
+|--------|---------|-------|
+| `game_id` | `BBM-Final` | Unique identifier used in the schedule output |
+| `event` | `Basketball - Men Team` | Must match the event name exactly |
+| `stage` | `Final` | QF, Semi, Final, or 3rd |
+| `resource_id` | `GYM-Sat-2-1` | Must match a resource_id in the Resources section |
+| `slot` | `Sat-2-14:00` | Slot label in `Day-HH:MM` format |
+
+Optional columns: `team_a_id`, `team_b_id`, `duration_minutes`.
+
+To specify the exact finale order (e.g. VB Women → VB Men → Basketball back-to-back),
+simply put those games in that row order with consecutive `slot` values.  No solver
+constraints are needed — the timetable is the authority.
 
 Key constants that shape the output live in `config.py`:
 `SCHEDULE_SKETCH_SATURDAY_START`, `SCHEDULE_SKETCH_SATURDAY_LAST_GAME`,
 `SCHEDULE_SKETCH_SUNDAY_START`, `SCHEDULE_SKETCH_SUNDAY_LAST_GAME`,
 `COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME`, `GYM_RESOURCE_TYPE`,
-`SCHEDULE_STAGE_WINDOWS` (per-stage `earliest_slot`/`latest_slot` bounds written
-into every game object — edit this dict to move the finals block or pin pool
-rounds to Weekend 1),
-`SCHEDULE_FINAL_SEQUENCE` (ordered list of `(event_name, stage)` tuples that
-determines the exact back-to-back order of the closing ceremony games — edit
-this list to reorder the finale; same-resource-type pairs are enforced by C9
-in the solver, cross-resource-type pairs require C8 exact-slot pinning).
+`SCHEDULE_SOLVER_GYM_COURTS` (change to switch between 3/4/5-court scenarios).
 
 ### Step 2 — `schedule_input.json` schema (hardened by Issue #96)
 
@@ -52,7 +68,7 @@ explicit court count used to build the gym resources for this run.  Change
 `SCHEDULE_SOLVER_GYM_COURTS` in `config.py` (currently 4) to switch scenarios;
 do not rely on any default inside the code.
 
-Every **game object** looks like:
+Every **game object** (pool play only) looks like:
 
 ```json
 {
@@ -77,14 +93,11 @@ Every **game object** looks like:
   even before final church assignments are known.
 - Teams are grouped into balanced pools of size `gpg + 1` (full round-robin
   within each pool gives each team exactly `gpg` games).
-- Playoff QF games use pool-seed references: `BBM-Seed-1`, `BBM-Seed-8`, etc.
-- Playoff Semi/Final/3rd games use winner/loser references:
-  `WIN-BBM-QF-1`, `WIN-BBM-Semi-1`, `LOSE-BBM-Semi-2`, etc.
 - `null` is never emitted; every game has non-null `team_a_id` and `team_b_id`.
 
 **`pool_id`:**
 - Non-empty string (`"P1"`, `"P2"`, …) for pool games.
-- Empty string `""` for all playoff/final games.
+- Playoff games are not in `games` — they live in `playoff_slots`.
 
 Every **resource object** looks like:
 
@@ -100,27 +113,28 @@ Every **resource object** looks like:
 }
 ```
 
+Every **playoff_slot object** looks like:
+
+```json
+{
+  "game_id":     "BBM-Final",
+  "event":       "Basketball - Men Team",
+  "stage":       "Final",
+  "resource_id": "GYM-Sat-2-1",
+  "slot":        "Sat-2-14:00"
+}
+```
+
 **`gym_court_scenario`:** The number of gym courts used to build the `GYM-*`
 resources in this run.  Controlled by `SCHEDULE_SOLVER_GYM_COURTS` in
 `config.py`.  The solver reads this to know which scenario was selected —
 no hidden defaults.
 
-Every **precedence object** looks like:
-
-```json
-{
-  "rule":          "All Pool before Semi",
-  "event":         "Basketball - Men Team",
-  "earlier_stage": "Pool",
-  "later_stage":   "Semi"
-}
-```
-
 Field notes:
 - `resource_type` must match between game and resource; this is how the
   solver knows which court pool to draw from (C4 — court-type routing).
-- `earliest_slot` / `latest_slot` are optional hard windows per game
-  (`null` = unconstrained; wiring them up in the solver is a one-liner).
+- `earliest_slot` / `latest_slot` are present in pool game objects but
+  always `null` — they are reserved for future use.
 - Gym sports (Basketball, Volleyball Men, Volleyball Women) use
   `GYM_RESOURCE_TYPE = "Gym Court"`. Pod sports each have their own
   `POD_RESOURCE_TYPE_*` constant.
@@ -131,9 +145,15 @@ Field notes:
 python main.py solve-schedule [--input path/to/schedule_input.json] [--output path/to/schedule_output.json]
 ```
 
-Reads `schedule_input.json`, runs the OR-Tools CP-SAT model, writes
-`schedule_output.json` to `DATA_DIR` (or `--output` path). Exit codes:
-0 = OPTIMAL/FEASIBLE (all pools solved), 1 = PARTIAL/INFEASIBLE/UNKNOWN, 2 = error.
+Reads `schedule_input.json`, runs the OR-Tools CP-SAT model for **pool play
+games only**, then merges pre-assigned `playoff_slots` from the input into the
+output.  Writes `schedule_output.json` to `DATA_DIR` (or `--output` path).
+Exit codes: 0 = OPTIMAL/FEASIBLE (all pools solved), 1 = PARTIAL/INFEASIBLE/UNKNOWN,
+2 = error.
+
+Playoff slots are passed through unchanged — the solver does not re-assign or
+validate them.  If `playoff_slots` is empty (tab missing from `venue_input.xlsx`),
+the output `assignments` array contains only pool play games.
 
 Configurable timeout via `SCHEDULE_SOLVER_TIMEOUT` env var (default: 30 s).
 
@@ -158,34 +178,12 @@ Output shape:
   "status": "PARTIAL",
   "solver_wall_seconds": 1.2,
   "assignments": [
-    {"game_id": "BBM-01", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-09:00"}
+    {"game_id": "BBM-01",    "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-09:00"},
+    {"game_id": "BBM-Final", "event": "Basketball - Men Team", "stage": "Final",
+     "resource_id": "GYM-Sat-2-1", "slot": "Sat-2-14:00"}
   ],
   "unscheduled": ["BAD-01", "BAD-02"],
-  "pool_results": [
-    {
-      "resource_type": "Gym Court",
-      "status": "OPTIMAL",
-      "solver_wall_seconds": 0.4,
-      "assignments": [...],
-      "unscheduled": []
-    },
-    {
-      "resource_type": "Badminton Court",
-      "status": "INFEASIBLE",
-      "solver_wall_seconds": 0.8,
-      "assignments": [],
-      "unscheduled": ["BAD-01", "BAD-02"],
-      "diagnostics": [
-        {
-          "resource_type": "Badminton Court",
-          "required_slots": 24,
-          "available_slots": 20,
-          "shortage_slots": 4,
-          "events": [...]
-        }
-      ]
-    }
-  ]
+  "pool_results": [...]
 }
 ```
 
@@ -207,6 +205,10 @@ Reads `schedule_output.json`, writes `VAYSF_Schedule_YYYY-MM-DD.xlsx` to
 - **Schedule-by-Sport** — flat list with auto-filter, for sport directors
   checking their division.
 
+Playoff assignments (which carry `event` and `stage` in the assignment object
+itself) are rendered alongside pool play assignments.  The renderer falls back
+to the assignment's own fields when a game_id is not in the `games` list.
+
 When one day mixes resources with different time windows or slot lengths
 (common for pod sports), **Schedule-by-Time** renders separate sections per
 uniform day/resource/window group so pod assignments are not collapsed into one
@@ -222,16 +224,20 @@ The JSON file stays in `DATA_DIR` as the machine-readable backup.
 | C2 | Each (resource, slot) hosts at most one game (multi-slot aware) | `AddAtMostOne` |
 | C3 | No team plays two games in the same time slot | `AddAtMostOne` per (team, slot_label) |
 | C4 | Court-type routing — game assigned only to matching `resource_type` | filter before building vars |
-| C5 | Stage ordering — earlier_stage games precede later_stage games | pairwise `Add(g_l_slot > g_e_slot)` on global slot IntVars |
 | C6 | Minimum rest — no team plays in two adjacent global slots (within the same day only; cross-day pairs are skipped) | `AddBoolOr([v1.Not(), v2.Not()])` for same-day adjacent slot pairs |
 | C7 | Multi-slot games — duration > slot_minutes blocks consecutive slots | restrict start positions; expand slot_occupancy |
-| C8 | Per-game time windows — `earliest_slot` / `latest_slot` from `schedule_input.json` | `Add(gslot >= lo)` / `Add(gslot <= hi)` on global slot IntVar |
-| C9 | Finale sequence — exact cross-sport ordering between named game IDs via `sequence` rules | pairwise `Add(g_l_slot > g_e_slot)` on global slot IntVars |
+
+**Playoff scheduling (not solver constraints):**
+Playoff game timing is controlled entirely by the Playoff-Slots tab in
+`venue_input.xlsx` — the exact slot and court for each QF/Semi/Final/3rd game
+is specified there by the coordinator.  The solver only packs pool play.
+Last-minute changes during the tournament are handled by editing the tab and
+re-running `produce-schedule` (no solver re-run needed).
 
 **Out of scope (future work):**
 - Cross-sport participant conflicts (person in both Basketball and Badminton).
-- Church-requested blackout windows (`earliest_slot` / `latest_slot` fields
-  already in the schema — wiring them up is a one-liner).
+- Church-requested blackout windows for pool play (`earliest_slot` / `latest_slot`
+  fields are in the schema — wiring them up in the solver is a one-liner).
 
 ---
 
@@ -257,19 +263,18 @@ validated the `schedule_input.json` schema. Full findings are in
 
 ## Constraint Gaps (POC → Production)
 
-All five constraints identified in the POC report have been implemented in
-`middleware/scheduler.py` (Issue #93).  See the constraint table in the
-Step 3 section above.
+Constraints C1–C4, C6, C7 are implemented in `middleware/scheduler.py`
+(Issue #93).  See the constraint table in the Step 3 section above.
 
-Remaining future work (out of scope for Issue #93):
+Remaining future work:
 
 - **Cross-sport participant conflicts.** A person registered for both
   Basketball and Badminton must not have games at the same time.  Requires
   a participant → games mapping (from roster data), which is not yet in
   `schedule_input.json`.
-- **Church-requested blackout windows.** `earliest_slot` / `latest_slot`
-  fields are already in the game schema.  Wiring them up in the solver
-  is a one-liner once they are populated upstream.
+- **Pool play time windows.** `earliest_slot` / `latest_slot` fields are
+  present in pool game objects.  Wiring them up in the solver is a one-liner
+  once they are populated upstream.
 
 ---
 
@@ -296,4 +301,4 @@ The general workflow when a new scheduling rule is needed:
 | CP-SAT solver module | Issue #93 (done); `middleware/scheduler.py` |
 | Excel schedule output | Issue #94 (done); `church_teams_export.py` → `_write_schedule_output_report()` |
 | Venue resource template | `middleware/data/venue_input.xlsx` (gitignored; template at `venue_input_template.xlsx`) |
-| Schedule config constants | `middleware/config.py` — `SCHEDULE_SKETCH_*`, `COURT_ESTIMATE_*`, `GYM_RESOURCE_TYPE`, `POD_RESOURCE_TYPE_*` |
+| Schedule config constants | `middleware/config.py` — `SCHEDULE_SKETCH_*`, `COURT_ESTIMATE_*`, `GYM_RESOURCE_TYPE`, `POD_RESOURCE_TYPE_*`, `SCHEDULE_SOLVER_GYM_COURTS` |

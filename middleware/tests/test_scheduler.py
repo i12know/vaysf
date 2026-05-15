@@ -71,7 +71,7 @@ def test_build_resource_slots_multiple_resources():
 def test_load_schedule_input_valid(tmp_path):
     """load_schedule_input returns dict when all required keys are present."""
     from scheduler import load_schedule_input
-    data = {"games": [], "resources": [], "precedence": []}
+    data = {"games": [], "resources": []}
     path = tmp_path / "si.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     result = load_schedule_input(path)
@@ -83,8 +83,8 @@ def test_load_schedule_input_missing_key(tmp_path):
     """load_schedule_input raises ValueError when a required key is absent."""
     from scheduler import load_schedule_input
     path = tmp_path / "bad.json"
-    path.write_text(json.dumps({"games": [], "resources": []}), encoding="utf-8")
-    with pytest.raises(ValueError, match="precedence"):
+    path.write_text(json.dumps({"games": []}), encoding="utf-8")
+    with pytest.raises(ValueError, match="resources"):
         load_schedule_input(path)
 
 
@@ -99,11 +99,10 @@ def test_load_schedule_input_file_not_found(tmp_path):
 # solve() — requires ortools
 # ---------------------------------------------------------------------------
 
-def _minimal_schedule_input(games, resources, precedence=None):
+def _minimal_schedule_input(games, resources):
     return {
         "games": games,
         "resources": resources,
-        "precedence": precedence or [],
     }
 
 
@@ -186,29 +185,6 @@ def test_solve_court_type_routing():
     assert result["status"] == STATUS_OPTIMAL
     assert result["assignments"] == []
     assert "G1" in result["unscheduled"]
-
-
-def test_solve_stage_ordering():
-    """A Pool game must be assigned to an earlier slot than a Final game."""
-    pytest.importorskip("ortools")
-    from scheduler import solve, STATUS_OPTIMAL, _slot_sort_key
-    si = _minimal_schedule_input(
-        games=[
-            _gym_game("BBM-01", "BBM-P1-T1", "BBM-P1-T2", stage="Pool", pool_id="P1"),
-            _gym_game("BBM-Final", "WIN-BBM-Semi-1", "WIN-BBM-Semi-2", stage="Final", pool_id=""),
-        ],
-        resources=[_gym_resource("GYM-Sat-1-1", close_time="11:00")],  # 3 slots
-        precedence=[{
-            "rule": "All Pool before Final",
-            "event": "Basketball - Men Team",
-            "earlier_stage": "Pool",
-            "later_stage": "Final",
-        }],
-    )
-    result = solve(si, timeout_seconds=10.0)
-    assert result["status"] == STATUS_OPTIMAL
-    slots = {a["game_id"]: a["slot"] for a in result["assignments"]}
-    assert _slot_sort_key(slots["BBM-01"]) < _slot_sort_key(slots["BBM-Final"])
 
 
 def test_solve_min_rest_between_games():
@@ -513,72 +489,6 @@ def test_solve_partial_exit_code(tmp_path):
     assert "diagnostics" in pools["Badminton Court"]
 
 
-def test_solve_c8_earliest_slot_respected():
-    """A game with earliest_slot is not placed before that slot."""
-    pytest.importorskip("ortools")
-    from scheduler import solve, STATUS_OPTIMAL
-    # Two slots available: Sat-1-08:00 and Sat-1-09:00.
-    # earliest_slot = Sat-1-09:00 → must land on the second slot.
-    game = _gym_game("G1", "T1", "T2")
-    game["earliest_slot"] = "Sat-1-09:00"
-    si = _minimal_schedule_input(
-        games=[game],
-        resources=[_gym_resource("GYM-Sat-1-1", open_time="08:00", close_time="10:00")],
-    )
-    result = solve(si, timeout_seconds=10.0)
-    assert result["status"] == STATUS_OPTIMAL
-    assert result["assignments"][0]["slot"] == "Sat-1-09:00"
-
-
-def test_solve_c8_latest_slot_respected():
-    """A game with latest_slot is not placed after that slot."""
-    pytest.importorskip("ortools")
-    from scheduler import solve, STATUS_OPTIMAL
-    # Two slots available: Sat-1-08:00 and Sat-1-09:00.
-    # latest_slot = Sat-1-08:00 → must land on the first slot.
-    game = _gym_game("G1", "T1", "T2")
-    game["latest_slot"] = "Sat-1-08:00"
-    si = _minimal_schedule_input(
-        games=[game],
-        resources=[_gym_resource("GYM-Sat-1-1", open_time="08:00", close_time="10:00")],
-    )
-    result = solve(si, timeout_seconds=10.0)
-    assert result["status"] == STATUS_OPTIMAL
-    assert result["assignments"][0]["slot"] == "Sat-1-08:00"
-
-
-def test_solve_c8_window_too_tight_is_infeasible():
-    """A game with an inverted window (earliest > latest) is INFEASIBLE."""
-    pytest.importorskip("ortools")
-    from scheduler import solve, STATUS_INFEASIBLE
-    # Resource has two slots: 08:00 and 09:00.
-    # earliest_slot=09:00 (gslot >= 1) AND latest_slot=08:00 (gslot <= 0) → impossible.
-    game = _gym_game("G1", "T1", "T2")
-    game["earliest_slot"] = "Sat-1-09:00"
-    game["latest_slot"]   = "Sat-1-08:00"
-    si = _minimal_schedule_input(
-        games=[game],
-        resources=[_gym_resource("GYM-Sat-1-1", open_time="08:00", close_time="10:00")],
-    )
-    result = solve(si, timeout_seconds=10.0)
-    assert result["status"] == STATUS_INFEASIBLE
-
-
-def test_solve_c8_unknown_slot_label_is_ignored():
-    """A game with an earliest_slot label not in any resource slot is scheduled normally."""
-    pytest.importorskip("ortools")
-    from scheduler import solve, STATUS_OPTIMAL
-    game = _gym_game("G1", "T1", "T2")
-    game["earliest_slot"] = "Sun-2-14:00"   # label exists in no resource → ignored
-    si = _minimal_schedule_input(
-        games=[game],
-        resources=[_gym_resource("GYM-Sat-1-1", open_time="08:00", close_time="09:00")],
-    )
-    result = solve(si, timeout_seconds=10.0)
-    assert result["status"] == STATUS_OPTIMAL
-    assert len(result["assignments"]) == 1
-
-
 def test_solve_c6_min_rest_does_not_span_day_boundary():
     """A team that plays the last slot of one day and the first of the next must be OPTIMAL.
 
@@ -602,91 +512,45 @@ def test_solve_c6_min_rest_does_not_span_day_boundary():
     assert len(result["assignments"]) == 2
 
 
-# ---------------------------------------------------------------------------
-# C9 — finale sequence ordering
-# ---------------------------------------------------------------------------
-
-def _seq_rule(earlier_id, later_id):
-    return {
-        "rule":            f"Finale: {earlier_id} before {later_id}",
-        "earlier_game_id": earlier_id,
-        "later_game_id":   later_id,
-    }
-
-
-def test_solve_c9_sequence_ordering_respected():
-    """Three finals on the same resource are assigned in the declared order."""
+def test_solve_playoff_slots_passed_through():
+    """Playoff slots from schedule_input are merged into the solver output assignments."""
     pytest.importorskip("ortools")
     from scheduler import solve, STATUS_OPTIMAL
-
-    # Three single-court 3-slot window — solver must sequence them.
-    # Sequence rule: G1 < G2 < G3.
-    si = {
-        "games": [
-            _gym_game("G1", "T1", "T2", stage="Final"),
-            _gym_game("G2", "T3", "T4", stage="Final"),
-            _gym_game("G3", "T5", "T6", stage="Final"),
-        ],
-        "resources": [
-            _gym_resource("C1", open_time="14:00", close_time="17:00"),
-        ],
-        "precedence": [],
-        "sequence": [
-            _seq_rule("G1", "G2"),
-            _seq_rule("G2", "G3"),
-        ],
-    }
+    si = _minimal_schedule_input(
+        games=[_gym_game("G1", "T1", "T2")],
+        resources=[_gym_resource("GYM-Sat-1-1")],
+    )
+    si["playoff_slots"] = [
+        {"game_id": "BBM-Final", "event": "Basketball - Men Team", "stage": "Final",
+         "resource_id": "GYM-Sat-2-1", "slot": "Sat-2-14:00"},
+    ]
     result = solve(si, timeout_seconds=10.0)
     assert result["status"] == STATUS_OPTIMAL
-
-    slot_by_game = {a["game_id"]: a["slot"] for a in result["assignments"]}
-    assert slot_by_game["G1"] < slot_by_game["G2"]
-    assert slot_by_game["G2"] < slot_by_game["G3"]
-
-
-def test_solve_c9_sequence_infeasible_when_impossible():
-    """Circular sequence (G1 < G2 and G2 < G1) is INFEASIBLE."""
-    pytest.importorskip("ortools")
-    from scheduler import solve, STATUS_INFEASIBLE
-
-    si = {
-        "games": [
-            _gym_game("G1", "T1", "T2", stage="Final"),
-            _gym_game("G2", "T3", "T4", stage="Final"),
-        ],
-        "resources": [
-            _gym_resource("C1", open_time="14:00", close_time="16:00"),
-        ],
-        "precedence": [],
-        "sequence": [
-            _seq_rule("G1", "G2"),
-            _seq_rule("G2", "G1"),  # creates cycle → infeasible
-        ],
-    }
-    result = solve(si, timeout_seconds=10.0)
-    assert result["status"] == STATUS_INFEASIBLE
+    game_ids = {a["game_id"] for a in result["assignments"]}
+    assert "G1" in game_ids
+    assert "BBM-Final" in game_ids
+    final_asgn = next(a for a in result["assignments"] if a["game_id"] == "BBM-Final")
+    assert final_asgn["slot"] == "Sat-2-14:00"
+    assert final_asgn["stage"] == "Final"
 
 
-def test_solve_c9_cross_pool_rule_skipped_gracefully():
-    """A sequence rule whose game IDs span different pools does not crash."""
+def test_solve_playoff_slots_passed_through():
+    """playoff_slots from schedule_input are merged into solver output assignments."""
     pytest.importorskip("ortools")
     from scheduler import solve, STATUS_OPTIMAL
-
-    # G1 is a Gym Court game, G2 is a Badminton Court game.
-    # The sequence rule between them cannot be enforced (different pools) but
-    # must not raise an error — each pool schedules its own game freely.
-    si = {
-        "games": [
-            _gym_game("G1", "T1", "T2", stage="Final"),
-            _bad_game("G2"),
-        ],
-        "resources": [
-            _gym_resource("GYM-1", open_time="14:00", close_time="15:00"),
-            _bad_resource("BAD-1", close_time="15:00"),
-        ],
-        "precedence": [],
-        "sequence": [_seq_rule("G1", "G2")],
-    }
+    si = _minimal_schedule_input(
+        games=[_gym_game("G1", "T1", "T2")],
+        resources=[_gym_resource("GYM-Sat-1-1")],
+    )
+    si["playoff_slots"] = [
+        {"game_id": "BBM-Final", "event": "Basketball - Men Team", "stage": "Final",
+         "resource_id": "GYM-Sat-2-1", "slot": "Sat-2-14:00"},
+    ]
     result = solve(si, timeout_seconds=10.0)
     assert result["status"] == STATUS_OPTIMAL
-    assert len(result["assignments"]) == 2
+    game_ids = {a["game_id"] for a in result["assignments"]}
+    assert "G1" in game_ids
+    assert "BBM-Final" in game_ids
+    final_asgn = next(a for a in result["assignments"] if a["game_id"] == "BBM-Final")
+    assert final_asgn["slot"] == "Sat-2-14:00"
+    assert final_asgn["stage"] == "Final"

@@ -545,47 +545,6 @@ SCHEDULE_SKETCH_COLOR_HEADER      = "595959"   # dark grey scenario header
 # Change this constant (not the code) to switch between 3/4/5-court scenarios.
 SCHEDULE_SOLVER_GYM_COURTS = 4
 
-# Per-stage time-window constraints written into schedule_input.json.
-# Keys are (event_name, stage); values are (earliest_slot, latest_slot) using
-# slot-label format "Day-HH:MM" (must match a label the solver will see).
-# None for either bound means unconstrained on that side.
-# Pool/QF/Semi on Weekend 1 → leave unconstrained so the solver packs freely.
-# Finals on Weekend 2 → pin to the shared finale block so spectators can watch
-# Basketball, VB Men, VB Women, and Bible Challenge back-to-back on one court.
-GYM_SPORT_EVENTS = (
-    "Basketball - Men Team",
-    "Volleyball - Men Team",
-    "Volleyball - Women Team",
-)
-SCHEDULE_STAGE_WINDOWS: dict[tuple[str, str], tuple[str | None, str | None]] = {
-    # Pool and early rounds — Weekend 1 only (Sat-1 / Sun-1)
-    **{(ev, "Pool"):  ("Sat-1-08:00", "Sun-1-21:00") for ev in GYM_SPORT_EVENTS},
-    **{(ev, "QF"):    ("Sat-1-08:00", "Sun-1-21:00") for ev in GYM_SPORT_EVENTS},
-    **{(ev, "Semi"):  ("Sat-1-08:00", "Sun-1-21:00") for ev in GYM_SPORT_EVENTS},
-    # Finals — Weekend 2 afternoon finale block
-    **{(ev, "Final"): ("Sat-2-08:00", None)          for ev in GYM_SPORT_EVENTS},
-    **{(ev, "3rd"):   ("Sat-2-08:00", None)           for ev in GYM_SPORT_EVENTS},
-}
-
-# Finale sequence — ordered list of (event_name, stage) specifying the exact
-# back-to-back order for the closing ceremony block.  Consecutive pairs generate
-# C9 ordering constraints in the CP-SAT solver so the solver cannot swap them.
-#
-# Rules:
-#   • Same resource_type pairs (e.g. all three gym sports) are enforced by the
-#     solver directly — no extra config needed beyond this list.
-#   • Cross-resource-type pairs (e.g. a pod sport followed by a gym sport) are
-#     enforced via exact-slot pinning: set earliest_slot == latest_slot for the
-#     pod game in SCHEDULE_STAGE_WINDOWS so the solver for that pool is forced
-#     to a specific slot, then set the gym sport's earliest_slot to the next slot.
-#
-# Change the order here to change the finale order — no code changes required.
-SCHEDULE_FINAL_SEQUENCE: list[tuple[str, str]] = [
-    ("Volleyball - Women Team", "Final"),
-    ("Volleyball - Men Team",   "Final"),
-    ("Basketball - Men Team",   "Final"),
-]
-
 # Configuration class
 class Config:
     """Configuration settings for VAYSF middleware."""

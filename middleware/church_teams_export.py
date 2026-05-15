@@ -54,8 +54,6 @@ from config import (
     POD_FIT_COLOR_YELLOW,
     POD_FIT_COLOR_RED,
     POD_FIT_YELLOW_MAX,
-    SCHEDULE_STAGE_WINDOWS,
-    SCHEDULE_FINAL_SEQUENCE,
 )
 from validation.name_matcher import normalized_name as _norm_name
 from chmeetings.backend_connector import ChMeetingsConnector
@@ -1524,14 +1522,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
     def _build_gym_game_objects(
         self, roster_rows: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Return game placeholder dicts for gym sports (Basketball, VB Men, VB Women).
+        """Return pool-play game placeholder dicts for gym sports (Basketball, VB Men, VB Women).
 
         Pool games carry stable placeholder team IDs (e.g. BBM-P1-T1, BBM-P1-T2)
         and non-empty pool_id values so the solver can enforce team-overlap and
         min-rest constraints even before final church assignments are known.
 
-        Playoff games use seed/winner references (e.g. BBM-Seed-1, WIN-BBM-QF-1)
-        rather than null, documenting the bracket dependency for the solver.
+        Playoff games (QF/Semi/Final/3rd) are pre-assigned via the Playoff-Slots
+        tab in venue_input.xlsx and are not included here.
         """
         sport_defs = [
             (SPORT_TYPE["BASKETBALL"],       "BBM"),
@@ -1539,7 +1537,6 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW"),
         ]
         mpg = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
-        include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
         games: List[Dict[str, Any]] = []
 
         for event_name, prefix in sport_defs:
@@ -1549,15 +1546,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(
                 event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
             )
-            s = self._compute_court_slots(n_teams, mpg, pool_games_per_team=gpg)
-            early_ids, final_ids = self._make_playoff_ids(
-                prefix, s["playoff_teams"], include_third
-            )
 
             # Pool games — stable team IDs and non-empty pool_id
             pool_pairs = self._make_pool_game_pairs(prefix, n_teams, gpg)
             for pair_idx, (team_a_id, team_b_id, pool_id) in enumerate(pool_pairs, start=1):
-                _pool_window = SCHEDULE_STAGE_WINDOWS.get((event_name, "Pool"), (None, None))
                 games.append({
                     "game_id": f"{prefix}-{pair_idx:02d}",
                     "event": event_name,
@@ -1568,64 +1560,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "team_b_id": team_b_id,
                     "duration_minutes": mpg,
                     "resource_type": GYM_RESOURCE_TYPE,
-                    "earliest_slot": _pool_window[0],
-                    "latest_slot":   _pool_window[1],
-                })
-
-            # Early playoff games (QF, Semi) — seed/winner references
-            qf_count = 0
-            semi_count = 0
-            for i, gid in enumerate(early_ids, start=1):
-                stage = gid.split("-")[1]
-                if stage == "QF":
-                    qf_count += 1
-                    team_a_id = f"{prefix}-Seed-{qf_count}"
-                    team_b_id = f"{prefix}-Seed-{s['playoff_teams'] - qf_count + 1}"
-                else:  # Semi
-                    semi_count += 1
-                    if s["playoff_teams"] >= 8:
-                        team_a_id = f"WIN-{prefix}-QF-{(semi_count - 1) * 3 + 1}"
-                        team_b_id = f"WIN-{prefix}-QF-{(semi_count - 1) * 3 + 4}"
-                    else:
-                        team_a_id = f"{prefix}-Seed-{semi_count * 2 - 1}"
-                        team_b_id = f"{prefix}-Seed-{semi_count * 2}"
-                _early_window = SCHEDULE_STAGE_WINDOWS.get((event_name, stage), (None, None))
-                games.append({
-                    "game_id": gid,
-                    "event": event_name,
-                    "stage": stage,
-                    "pool_id": "",
-                    "round": i,
-                    "team_a_id": team_a_id,
-                    "team_b_id": team_b_id,
-                    "duration_minutes": mpg,
-                    "resource_type": GYM_RESOURCE_TYPE,
-                    "earliest_slot": _early_window[0],
-                    "latest_slot":   _early_window[1],
-                })
-
-            # Final games (Final and optional 3rd) — winner/loser references
-            for i, gid in enumerate(final_ids, start=1):
-                stage = gid.split("-")[1] if "-" in gid else "Final"
-                if stage == "Final":
-                    team_a_id = f"WIN-{prefix}-Semi-1"
-                    team_b_id = f"WIN-{prefix}-Semi-2"
-                else:  # 3rd place
-                    team_a_id = f"LOSE-{prefix}-Semi-1"
-                    team_b_id = f"LOSE-{prefix}-Semi-2"
-                _final_window = SCHEDULE_STAGE_WINDOWS.get((event_name, stage), (None, None))
-                games.append({
-                    "game_id": gid,
-                    "event": event_name,
-                    "stage": stage,
-                    "pool_id": "",
-                    "round": i,
-                    "team_a_id": team_a_id,
-                    "team_b_id": team_b_id,
-                    "duration_minutes": mpg,
-                    "resource_type": GYM_RESOURCE_TYPE,
-                    "earliest_slot": _final_window[0],
-                    "latest_slot":   _final_window[1],
+                    "earliest_slot": None,
+                    "latest_slot":   None,
                 })
 
         return games
@@ -1772,62 +1708,56 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         return rows
 
     @staticmethod
-    def _build_precedence_objects(
-        gym_games: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Return stage-ordering constraints: Pool → QF/Semi → Final → 3rd place."""
-        stage_pairs = [
-            ("Pool", "QF"),
-            ("Pool", "Semi"),
-            ("QF",   "Semi"),
-            ("Semi", "Final"),
-            ("Semi", "3rd"),
-            ("Final", "3rd"),
-        ]
-        rules: List[Dict[str, Any]] = []
-        events = sorted({g["event"] for g in gym_games})
-        for event in events:
-            stages_present = {g["stage"] for g in gym_games if g["event"] == event}
-            for earlier, later in stage_pairs:
-                if earlier in stages_present and later in stages_present:
-                    rules.append({
-                        "rule":          f"All {earlier} before {later}",
-                        "event":         event,
-                        "earlier_stage": earlier,
-                        "later_stage":   later,
-                    })
-        return rules
+    def _load_playoff_slots(venue_input_path: Path) -> List[Dict[str, Any]]:
+        """Load pre-assigned playoff game slots from the Playoff-Slots tab in venue_input.xlsx.
 
-    @staticmethod
-    def _build_sequence_objects(
-        all_games: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """Return C9 ordering constraints from SCHEDULE_FINAL_SEQUENCE.
-
-        Consecutive (event, stage) pairs in the config list are converted to
-        {earlier_game_id, later_game_id} rules.  Only pairs where both game IDs
-        exist in all_games are emitted; cross-resource-type pairs where one game
-        is absent from a given pool are silently skipped by the solver.
+        Returns an empty list (with a WARNING) if the file or tab is absent.
+        Expected columns: game_id, event, stage, resource_id, slot
+        Optional columns: team_a_id, team_b_id, duration_minutes
         """
-        game_id_by_event_stage: dict[tuple[str, str], list[str]] = {}
-        for g in all_games:
-            key = (g["event"], g["stage"])
-            game_id_by_event_stage.setdefault(key, []).append(g["game_id"])
+        if not venue_input_path.exists():
+            return []
+        try:
+            df = pd.read_excel(venue_input_path, sheet_name="Playoff-Slots", engine="openpyxl")
+        except Exception:
+            logger.warning(
+                "venue_input.xlsx is present but has no 'Playoff-Slots' tab — "
+                "playoff games will not appear in the schedule. "
+                "Add a 'Playoff-Slots' tab to include them."
+            )
+            return []
 
-        rules: List[Dict[str, Any]] = []
-        for i in range(len(SCHEDULE_FINAL_SEQUENCE) - 1):
-            earlier_key = SCHEDULE_FINAL_SEQUENCE[i]
-            later_key   = SCHEDULE_FINAL_SEQUENCE[i + 1]
-            earlier_ids = game_id_by_event_stage.get(earlier_key, [])
-            later_ids   = game_id_by_event_stage.get(later_key, [])
-            for e_id in earlier_ids:
-                for l_id in later_ids:
-                    rules.append({
-                        "rule":            f"Finale order: {earlier_key[0]} {earlier_key[1]} before {later_key[0]} {later_key[1]}",
-                        "earlier_game_id": e_id,
-                        "later_game_id":   l_id,
-                    })
-        return rules
+        required = {"game_id", "event", "stage", "resource_id", "slot"}
+        cols = {str(c).strip() for c in df.columns}
+        missing = required - cols
+        if missing:
+            logger.warning(
+                f"Playoff-Slots tab is missing required columns {sorted(missing)}; "
+                "playoff games will not appear in the schedule."
+            )
+            return []
+
+        slots: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            game_id = ChurchTeamsExporter._clean_excel_text(row.get("game_id"))
+            if not game_id:
+                continue
+            entry: Dict[str, Any] = {
+                "game_id":     game_id,
+                "event":       ChurchTeamsExporter._clean_excel_text(row.get("event", "")),
+                "stage":       ChurchTeamsExporter._clean_excel_text(row.get("stage", "")),
+                "resource_id": ChurchTeamsExporter._clean_excel_text(row.get("resource_id", "")),
+                "slot":        ChurchTeamsExporter._clean_excel_text(row.get("slot", "")),
+            }
+            for optional in ("team_a_id", "team_b_id", "duration_minutes"):
+                val = row.get(optional)
+                if val is not None and str(val).strip() not in ("", "nan"):
+                    entry[optional] = ChurchTeamsExporter._clean_excel_text(str(val)) if optional != "duration_minutes" else int(val)
+            if entry["resource_id"] and entry["slot"]:
+                slots.append(entry)
+            else:
+                logger.warning(f"Playoff-Slots row for {game_id!r} missing resource_id or slot; skipped.")
+        return slots
 
     def _build_schedule_input(
         self,
@@ -1838,7 +1768,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         """Assemble the full schedule_input package consumed by OR-Tools.
 
         Returns a dict with keys: generated_at, gym_court_scenario, game_count,
-        resource_count, games, resources, precedence.
+        resource_count, games, resources, playoff_slots.
 
         Gym resources are built from the explicit SCHEDULE_SOLVER_GYM_COURTS
         constant (config.py) so the solver knows exactly which court scenario
@@ -1852,8 +1782,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         pod_resources = self._load_venue_input_rows(venue_input_path)
         all_resources = gym_resources + pod_resources
 
-        precedence = self._build_precedence_objects(gym_games)
-        sequence   = self._build_sequence_objects(all_games)
+        playoff_slots = self._load_playoff_slots(venue_input_path)
 
         return {
             "generated_at":       datetime.now().isoformat(timespec="seconds"),
@@ -1862,13 +1791,12 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             "resource_count":     len(all_resources),
             "games":              all_games,
             "resources":          all_resources,
-            "precedence":         precedence,
-            "sequence":           sequence,
+            "playoff_slots":      playoff_slots,
         }
 
     @staticmethod
     def _write_schedule_input_tab(ws, schedule_input: Dict[str, Any]) -> None:
-        """Write Schedule-Input tab with Games, Resources, and Precedence sections."""
+        """Write Schedule-Input tab with Games, Resources, and Playoff-Slots sections."""
         from openpyxl.styles import PatternFill, Font, Alignment
         from openpyxl.utils import get_column_letter
 
@@ -1886,7 +1814,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             "resource_id", "resource_type", "label", "day",
             "open_time", "close_time", "slot_minutes",
         ]
-        precedence_cols = ["rule", "event", "earlier_stage", "later_stage"]
+        playoff_slot_cols = ["game_id", "event", "stage", "resource_id", "slot"]
 
         current_row = 1
 
@@ -1917,9 +1845,15 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 current_row += 1
             current_row += 1  # blank separator
 
-        _write_section("GAMES",      game_cols,      schedule_input["games"])
-        _write_section("RESOURCES",  resource_cols,  schedule_input["resources"])
-        _write_section("PRECEDENCE", precedence_cols, schedule_input["precedence"])
+        playoff_slots = schedule_input.get("playoff_slots", [])
+        playoff_note_rows = (
+            playoff_slots if playoff_slots
+            else [{"game_id": "No playoff slots loaded — add Playoff-Slots tab to venue_input.xlsx"}]
+        )
+
+        _write_section("GAMES",          game_cols,          schedule_input["games"])
+        _write_section("RESOURCES",      resource_cols,      schedule_input["resources"])
+        _write_section("PLAYOFF-SLOTS",  playoff_slot_cols,  playoff_note_rows)
 
         # Column widths
         col_widths = [20, 30, 10, 10, 8, 16, 16, 18, 22, 14, 12]
@@ -3035,7 +2969,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             gid  = a["game_id"]
             rid  = a["resource_id"]
             slot = a["slot"]
-            game = game_meta.get(gid, {})
+            # Fall back to the assignment dict itself for playoff games whose
+            # game_id is not in schedule_input games (they carry event/stage fields).
+            game = game_meta.get(gid, a)
             res  = res_meta.get(rid, {})
             time_part = slot.rsplit("-", maxsplit=1)[-1] if "-" in slot else slot
             rows.append({

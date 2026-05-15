@@ -64,7 +64,7 @@ def load_schedule_input(path: Path) -> dict[str, Any]:
     """Load schedule_input.json and validate required top-level keys."""
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
-    for key in ("games", "resources", "precedence"):
+    for key in ("games", "resources"):
         if key not in data:
             raise ValueError(f"schedule_input.json missing required key: {key!r}")
     return data
@@ -257,9 +257,8 @@ def _solve_one_pool(
     """
     from ortools.sat.python import cp_model  # import guard
 
-    games:      list[dict] = pool_input["games"]
-    resources:  list[dict] = pool_input["resources"]
-    precedence: list[dict] = pool_input.get("precedence", [])
+    games:     list[dict] = pool_input["games"]
+    resources: list[dict] = pool_input["resources"]
 
     res_by_id:   dict[str, dict]        = {r["resource_id"]: r for r in resources}
     res_slots:   dict[str, list[str]]   = build_resource_slots(resources)
@@ -358,30 +357,6 @@ def _solve_one_pool(
             label = res_slots[rid][t]
             model.Add(gv == slot_to_global[label]).OnlyEnforceIf(var)
 
-    # C5 — stage ordering: every earlier_stage game must precede every later_stage game
-    by_event_stage: dict[tuple[str, str], list[str]] = {}
-    for game in games:
-        key = (game["event"], game["stage"])
-        by_event_stage.setdefault(key, []).append(game["game_id"])
-
-    for rule in precedence:
-        event       = rule["event"]
-        earlier_gids = by_event_stage.get((event, rule["earlier_stage"]), [])
-        later_gids   = by_event_stage.get((event, rule["later_stage"]),   [])
-        for g_e in earlier_gids:
-            for g_l in later_gids:
-                if g_e in game_global_slot and g_l in game_global_slot:
-                    model.Add(game_global_slot[g_l] > game_global_slot[g_e])
-
-    # C9 — finale sequence: enforce exact ordering between named game IDs
-    # Rules where one or both game IDs are absent from this pool are silently skipped
-    # (cross-resource-type finale pairs live in separate pools; handle them via C8).
-    for rule in pool_input.get("sequence", []):
-        g_e = rule.get("earlier_game_id")
-        g_l = rule.get("later_game_id")
-        if g_e in game_global_slot and g_l in game_global_slot:
-            model.Add(game_global_slot[g_l] > game_global_slot[g_e])
-
     # C6 — minimum rest: no team plays in two adjacent global slots
     team_global_assignments: dict[str, dict[int, list[Any]]] = {}
     for gid, vd in game_vars.items():
@@ -405,26 +380,6 @@ def _solve_one_pool(
                 for v2 in next_vars:
                     # NOT (v1 AND v2) — at most one of adjacent-slot vars can be true
                     model.AddBoolOr([v1.Not(), v2.Not()])
-
-    # C8 — per-game time windows (earliest_slot / latest_slot from schedule_input.json)
-    for game in games:
-        gid = game["game_id"]
-        if gid not in game_global_slot:
-            continue
-        lo_label = game.get("earliest_slot")
-        hi_label = game.get("latest_slot")
-        if lo_label:
-            lo = slot_to_global.get(lo_label)
-            if lo is not None:
-                model.Add(game_global_slot[gid] >= lo)
-            else:
-                logger.warning(f"Game {gid!r}: earliest_slot {lo_label!r} not in this pool's slots; ignored")
-        if hi_label:
-            hi = slot_to_global.get(hi_label)
-            if hi is not None:
-                model.Add(game_global_slot[gid] <= hi)
-            else:
-                logger.warning(f"Game {gid!r}: latest_slot {hi_label!r} not in this pool's slots; ignored")
 
     # Objective — minimize the latest occupied global slot (pack games toward start)
     if game_global_slot:
@@ -509,11 +464,10 @@ def solve(
         INFEASIBLE — every pool failed (no assignments anywhere)
         UNKNOWN    — at least one pool timed out; none solved
     """
-    games:      list[dict] = schedule_input["games"]
-    resources:  list[dict] = schedule_input["resources"]
-    precedence: list[dict] = schedule_input.get("precedence", [])
+    games:     list[dict] = schedule_input["games"]
+    resources: list[dict] = schedule_input["resources"]
 
-    # Partition games and resources by resource_type
+    # Partition games and resources by resource_type for independent pool solves
     games_by_type:     dict[str, list[dict]] = {}
     for g in games:
         games_by_type.setdefault(g["resource_type"], []).append(g)
@@ -522,34 +476,11 @@ def solve(
     for r in resources:
         resources_by_type.setdefault(r["resource_type"], []).append(r)
 
-    # Route each precedence rule to its pool via event → resource_type
-    event_to_type: dict[str, str] = {g["event"]: g["resource_type"] for g in games}
-    precedence_by_type: dict[str, list[dict]] = {}
-    for rule in precedence:
-        rt = event_to_type.get(rule["event"])
-        if rt:
-            precedence_by_type.setdefault(rt, []).append(rule)
-
-    # Route each sequence rule to its pool via game_id → resource_type.
-    # Cross-pool rules (earlier and later in different pools) are sent to both
-    # pools; _solve_one_pool silently skips rules where one ID is absent.
-    game_id_to_type: dict[str, str] = {g["game_id"]: g["resource_type"] for g in games}
-    sequence: list[dict] = schedule_input.get("sequence", [])
-    sequence_by_type: dict[str, list[dict]] = {}
-    for rule in sequence:
-        types_touched: set[str] = set()
-        for key in ("earlier_game_id", "later_game_id"):
-            rt = game_id_to_type.get(rule.get(key, ""))
-            if rt:
-                types_touched.add(rt)
-        for rt in types_touched:
-            sequence_by_type.setdefault(rt, []).append(rule)
-
     if not games_by_type:
         return {
             "status":              STATUS_OPTIMAL,
             "solver_wall_seconds": 0.0,
-            "assignments":         [],
+            "assignments":         list(schedule_input.get("playoff_slots", [])),
             "unscheduled":         [],
             "pool_results":        [],
         }
@@ -561,10 +492,8 @@ def solve(
 
     for resource_type in sorted(games_by_type.keys()):
         pool_input = {
-            "games":      games_by_type[resource_type],
-            "resources":  resources_by_type.get(resource_type, []),
-            "precedence": precedence_by_type.get(resource_type, []),
-            "sequence":   sequence_by_type.get(resource_type, []),
+            "games":     games_by_type[resource_type],
+            "resources": resources_by_type.get(resource_type, []),
         }
         result = _solve_one_pool(pool_input, timeout_seconds)
         result["resource_type"] = resource_type
@@ -591,6 +520,20 @@ def solve(
         top_status = STATUS_UNKNOWN
     else:
         top_status = STATUS_INFEASIBLE
+
+    # Merge pre-assigned playoff slots from schedule_input into assignments.
+    playoff_slots: list[dict] = schedule_input.get("playoff_slots", [])
+    if playoff_slots:
+        for ps in playoff_slots:
+            if ps.get("resource_id") and ps.get("slot"):
+                all_assignments.append({
+                    "game_id":     ps["game_id"],
+                    "resource_id": ps["resource_id"],
+                    "slot":        ps["slot"],
+                    "event":       ps.get("event", ""),
+                    "stage":       ps.get("stage", ""),
+                })
+        logger.info(f"Merged {len(playoff_slots)} pre-assigned playoff slots into output.")
 
     logger.info(
         f"Solver (all pools): status={top_status}, "
