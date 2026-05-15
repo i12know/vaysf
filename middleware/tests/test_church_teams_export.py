@@ -1025,6 +1025,7 @@ def test_build_pod_divisions_rows_singles(mock_connectors):
     div = rows[0]
     assert div["division_id"] == "BAD-Men-Singles"
     assert div["sport_type"] == "Badminton"
+    assert div["resource_type"] == "Badminton Court"
     assert div["planning_entries"] == 3
     assert div["confirmed_entries"] == 2  # participant 2 has error
     assert div["provisional_entries"] == 1
@@ -1049,6 +1050,7 @@ def test_build_pod_divisions_rows_doubles(mock_connectors):
     assert len(rows) == 1
     div = rows[0]
     assert div["division_id"] == "TT-Men-Doubles"
+    assert div["resource_type"] == "Table Tennis Table"
     assert div["planning_entries"] == 2   # floor(4/2)
     assert div["confirmed_entries"] == 2  # no errors
     assert div["provisional_entries"] == 0
@@ -1772,6 +1774,8 @@ def test_build_schedule_input_gym_court_scenario(mock_connectors, tmp_path):
 
 def test_build_pod_game_objects_single_elimination(mock_connectors):
     """With 3 entries in a division, 2 game placeholders are generated."""
+    from config import POD_RESOURCE_EVENT_TYPE
+
     roster_rows = [
         {"Church Team": "RPC", "Participant ID (WP)": i,
          "sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Women",
@@ -1783,6 +1787,7 @@ def test_build_pod_game_objects_single_elimination(mock_connectors):
     assert len(games) == 2, f"Expected 2 games (3-1=2), got {len(games)}"
     assert all(g["game_id"].startswith("BAD-Women-Singles-") for g in games)
     assert all(g["stage"] == "R1" for g in games)
+    assert all(g["resource_type"] == POD_RESOURCE_EVENT_TYPE[SPORT_TYPE["BADMINTON"]] for g in games)
     assert games[0]["game_id"] == "BAD-Women-Singles-01"
 
 

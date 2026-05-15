@@ -1262,7 +1262,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 "sport_type": sport_type,
                 "sport_gender": sport_gender,
                 "sport_format": div["sport_format"],
-                "resource_type": "Court",
+                # Keep pod division rows aligned with venue_input.xlsx and the solver's
+                # exact C4 resource-type matching. Generic "Court" breaks all pod games.
+                "resource_type": POD_RESOURCE_EVENT_TYPE.get(sport_type, "Court"),
                 "minutes_per_game": mpg,
                 "planning_entries": planning,
                 "confirmed_entries": confirmed,
