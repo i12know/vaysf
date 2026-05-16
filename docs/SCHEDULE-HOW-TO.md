@@ -62,7 +62,7 @@ assign playoff timing — you control it exactly here.
 | `game_id` | `BBM-Final` | Unique; used in the schedule output |
 | `event` | `Basketball - Men Team` | Must match the event name exactly |
 | `stage` | `Final` | `QF`, `Semi`, `Final`, or `3rd` |
-| `resource_id` | `GYM-Sat-2-1` | Must match a resource_id from the Venue-Input rows |
+| `resource_id` | `GYM-Sat-2-1` | Must match a `resource_id` from the `resources` array in `schedule_input.json` (run `export-church-teams` first, then copy IDs from that file) |
 | `slot` | `Sat-2-14:00` | `Day-HH:MM` format |
 
 To lock in a finale order (e.g. VB Women → VB Men → Basketball back-to-back),
