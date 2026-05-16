@@ -40,6 +40,94 @@ rather than the Layer-2 booked inventory — Issues #102 (Stage A allocator) and
 
 ---
 
+## Moving Parts Map
+
+### Data flow by layer
+
+```
+LAYER 1 — STRATEGIC (pre-booking): estimate the minimum venue to book
+──────────────────────────────────────────────────────────────────────────────
+  ChMeetings + WordPress
+       │
+       │  export-church-teams  (run-me.bat includes this)
+       ▼
+  Church_Team_Status_ALL_*.xlsx          schedule_input.json  ◄─ venue_input.xlsx
+  ├─ Summary                             [BRIDGE: Layer 1 → 2]   (manual, booked
+  ├─ Contacts-Status                      currently built from    venue goes here)
+  ├─ Roster                               Layer-1 estimate;
+  ├─ Validation-Issues                    fixed by #102 + #103
+  └─ {Sport} tabs                                │
+       │                                         │  build-schedule-workbook
+       │  (human review / approvals)             ▼
+       │                               Schedule_Workbook_*.xlsx
+       │                               ├─ Venue-Estimator       ← demand estimate
+       │                               ├─ Court-Schedule-Sketch ← 3/4/5-court sketch
+       │                               ├─ Pod-Divisions         ← division planning
+       │                               ├─ Pod-Entries-Review    ← entry checklist
+       │                               ├─ Pod-Resource-Estimate ← capacity vs demand
+       │                               └─ Schedule-Input        ← JSON echo (bridge)
+       │
+       │  ── VENUE CONTRACT SIGNED ──────────────────────────────────────────
+       │
+LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
+──────────────────────────────────────────────────────────────────────────────
+  venue_input.xlsx
+       │
+       │  Stage A: gym mode allocator  [NOT YET BUILT — Issue #102]
+       │    Greedy priority allocation of gym time-ranges to sport modes.
+       │    Structural exclusivity: no gym block handed to two modes.
+       ▼
+  schedule_input.json  (now carrying real Layer-2 gym resources)
+       │
+       │  solve-schedule  (Stage B: CP-SAT solver — run-schedule.bat Step 1)
+       ▼
+  schedule_output.json
+       │
+       │  produce-schedule  (run-schedule.bat Step 2)
+       ▼
+  VAYSF_Schedule_*.xlsx
+  ├─ Schedule-by-Time   ← color-coded grid for floor coordinators
+  └─ Schedule-by-Sport  ← flat list with auto-filter for sport directors
+```
+
+### Source files (scheduling-related)
+
+| File | Role | Layer |
+|------|------|-------|
+| `main.py` | CLI entry — all commands | — |
+| `church_teams_export.py` | Live ChMeetings + WP export; delegates scheduling tabs to `schedule_workbook.py` | Layer 1 + bridge |
+| `schedule_workbook.py` | `ScheduleWorkbookBuilder` — all scheduling tabs, both workbooks, schedule output renderer | Layer 1 + bridge + Layer 2 output |
+| `scheduler.py` | CP-SAT solver (Stage B) | Layer 2 |
+| `config.py` | All configuration constants; `SCHEDULE_SKETCH_*` and `SCHEDULE_SOLVER_GYM_COURTS` are Layer-1 stand-ins | — |
+| `gym_allocator.py` | Stage A greedy mode allocator | **Not built** — Issue #102 |
+
+### Batch scripts (Windows operator shortcuts)
+
+| Script | Runs | Layer |
+|--------|------|-------|
+| `run-me.bat` | `sync --type full` → `sync --type validation` → `export-church-teams` | Non-scheduling + Layer 1 |
+| `run-schedule.bat` | `solve-schedule` → `produce-schedule` | Layer 2 |
+
+### Input files
+
+| File | Location | Role | Layer |
+|------|----------|------|-------|
+| `venue_input.xlsx` | `middleware/data/` (gitignored) | Booked venue: courts, times, gym modes, playoff slots | Layer 2 input |
+| `SportsFest_2026_Venue_Input_Template.xlsx` | `middleware/data/` (committed) | Operator template for `venue_input.xlsx` | — |
+
+### Generated artifacts
+
+| Artifact | Produced by | Consumed by | Layer |
+|----------|-------------|-------------|-------|
+| `Church_Team_Status_ALL_*.xlsx` | `export-church-teams` | Human review, approvals | Non-scheduling |
+| `Church_Team_Status_{CODE}.xlsx` | `export-church-teams` | Pastor / church coordinator | Non-scheduling |
+| `schedule_input.json` | `export-church-teams` | `solve-schedule`, `build-schedule-workbook` | Bridge (Layer 1 data today; Layer 2 after #103) |
+| `Schedule_Workbook_*.xlsx` | `build-schedule-workbook` | Coordinator planning / venue contract decision | **Layer 1** |
+| `schedule_output.json` | `solve-schedule` | `produce-schedule` | Layer 2 |
+| `VAYSF_Schedule_*.xlsx` | `produce-schedule` | Floor coordinators, sport directors | Layer 2 |
+
+---
+
 ## Four-Step Pipeline
 
 ```
