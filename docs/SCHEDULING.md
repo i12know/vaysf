@@ -127,6 +127,16 @@ Every **game object** (pool play only) looks like:
   `2` pool games.
 - `null` is never emitted; every game has non-null `team_a_id` and `team_b_id`.
 
+**4-team pool tiebreaker caveat:**
+The fixed 4-team format plays 4 games, not a full round robin (which would be
+`C(4,2) = 6`).  The matrix template is `[(0,1), (2,3), (0,2), (1,3)]`, so
+**T1 vs T4 and T2 vs T3 are never played**.  Every team still plays exactly
+2 games (the normalized `gpg=2` policy), but head-to-head results are not
+available for every pair.  This is intentional policy, not a bug — but if pool
+standings are tied, coordinators must use a tiebreaker that does not rely on
+head-to-head for all matchups (e.g. point differential, or a coin toss).
+Communicate this to coordinators **before** the tournament, not during.
+
 **`pool_id`:**
 - Non-empty string (`"P1"`, `"P2"`, …) for pool games.
 - Playoff games are not in `games` — they live in `playoff_slots`.
@@ -297,6 +307,61 @@ re-running `produce-schedule` (no solver re-run needed).
 
 ---
 
+## Offline Planning Workbook (`build-schedule-workbook`)
+
+The four-step pipeline above is the live runtime path.  Alongside it,
+`build-schedule-workbook` produces an **offline planning workbook** so
+coordinators can iterate on venue and pod planning without re-running a full
+live export against ChMeetings and WordPress.
+
+```bash
+python main.py build-schedule-workbook \
+    [--input-json  path/to/schedule_input.json] \
+    [--input-xlsx  path/to/Church_Team_Status_ALL_YYYY-MM-DD.xlsx] \
+    [--output      path/to/Schedule_Workbook.xlsx]
+```
+
+- **`--input-json`** — the `schedule_input.json` machine contract.  This is the
+  primary input.  When omitted, the path is resolved in priority order:
+  the sibling of `--input-xlsx`, then `EXPORT_DIR/schedule_input.json`, then
+  `DATA_DIR/schedule_input.json`.
+- **`--input-xlsx`** — optional `Church_Team_Status_ALL_*.xlsx` snapshot.  Its
+  `Roster` and `Validation-Issues` tabs are read back into the row dicts the
+  planning tabs need.  When omitted or missing, those tabs degrade to empty
+  lists with a `WARNING` — the workbook still builds.
+- **`--output`** — defaults to `EXPORT_DIR/Schedule_Workbook_YYYY-MM-DD.xlsx`.
+
+The workbook has six tabs: `Venue-Estimator`, `Pod-Divisions`,
+`Pod-Entries-Review`, `Court-Schedule-Sketch`, `Pod-Resource-Estimate`, and
+`Schedule-Input` (an echo of the JSON).  None of them consume solver output —
+they are pure planning artifacts built from the roster data and
+`schedule_input.json`.  When no `venue_input.xlsx` is supplied, the
+`Pod-Resource-Estimate` tab derives court availability directly from the
+`schedule_input.json` `resources` so an offline build stays self-consistent.
+
+**Two-stage workflow.** `export-church-teams` (Stage 1) owns the live
+ChMeetings/WordPress reads, the `Church_Team_Status_ALL.xlsx`, and the
+`schedule_input.json` machine contract.  `build-schedule-workbook` (Stage 2) is
+an offline, fast, repeatable consumer of those artifacts.  The scheduling logic
+lives in `middleware/schedule_workbook.py` (`ScheduleWorkbookBuilder`);
+`church_teams_export.py` delegates to it under a strict one-way dependency
+(`church_teams_export.py` → `schedule_workbook.py`, never the reverse).
+
+**Transition note (operator-facing).** During this transition the consolidated
+`Church_Team_Status_ALL.xlsx` produced by `export-church-teams` **still
+contains** the six scheduling tabs.  The same tabs are now also available
+standalone via `build-schedule-workbook`.  The tabs are intentionally
+duplicated for now so operators are not surprised; a later release may drop
+them from the ALL workbook once `build-schedule-workbook` is the established
+path.
+
+The solver-rendered workbook (`Schedule-by-Time` / `Schedule-by-Sport`) is a
+separate concern handled by `produce-schedule` — `build-schedule-workbook` does
+not take a `--schedule-output` argument because none of its six tabs render
+solver results.
+
+---
+
 ## OR-Tools POC — What Was Proven
 
 Issue #90 ran a throwaway CP-SAT proof-of-concept against Basketball Men
@@ -341,7 +406,7 @@ The general workflow when a new scheduling rule is needed:
 
 1. Decide whether the rule is a **data constraint** (representable in
    `schedule_input.json`) or a **solver constraint** (pure CP-SAT logic).
-2. If data: update `_build_schedule_input()` in `church_teams_export.py`
+2. If data: update `_build_schedule_input()` in `schedule_workbook.py`
    to emit the new field, and update the schema notes above.
 3. Add the CP-SAT constraint in the solver module (Issue #93).
 4. Write or update a test that exercises the new constraint.
@@ -353,9 +418,11 @@ The general workflow when a new scheduling rule is needed:
 
 | Item | Location |
 |------|----------|
-| Schedule-Input implementation | Issue #87; `church_teams_export.py` → `_build_schedule_input()` |
+| Schedule-Input implementation | Issue #87; `schedule_workbook.py` → `_build_schedule_input()` |
+| Scheduling workbook module | Issue #98 (done); `middleware/schedule_workbook.py` → `ScheduleWorkbookBuilder` |
+| Offline planning workbook command | Issue #98 (done); `main.py` → `build-schedule-workbook` |
 | OR-Tools POC | Issue #90; `middleware/scratch/ortools_poc.py` + `ortools_poc_report.md` |
 | CP-SAT solver module | Issue #93 (done); `middleware/scheduler.py` |
-| Excel schedule output | Issue #94 (done); `church_teams_export.py` → `_write_schedule_output_report()` |
+| Excel schedule output | Issue #94 (done); `schedule_workbook.py` → `_write_schedule_output_report()` |
 | Venue resource template | `middleware/data/venue_input.xlsx` (gitignored; template at `venue_input_template.xlsx`) |
 | Schedule config constants | `middleware/config.py` — `SCHEDULE_SKETCH_*`, `COURT_ESTIMATE_*`, `GYM_RESOURCE_TYPE`, `POD_RESOURCE_TYPE_*`, `SCHEDULE_SOLVER_GYM_COURTS` |
