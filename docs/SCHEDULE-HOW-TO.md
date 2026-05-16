@@ -62,11 +62,35 @@ assign playoff timing — you control it exactly here.
 | `game_id` | `BBM-Final` | Unique; used in the schedule output |
 | `event` | `Basketball - Men Team` | Must match the event name exactly |
 | `stage` | `Final` | `QF`, `Semi`, `Final`, or `3rd` |
-| `resource_id` | `GYM-Sat-2-1` | Must match a `resource_id` from the `resources` array in `schedule_input.json` (run `export-church-teams` first, then copy IDs from that file) |
+| `resource_id` | `GYM-Sat-2-1` | Must match a generated resource ID — see **Finding resource IDs** below |
 | `slot` | `Sat-2-14:00` | `Day-HH:MM` format |
 
 To lock in a finale order (e.g. VB Women → VB Men → Basketball back-to-back),
 put those rows in that order with consecutive slot values.
+
+### Finding resource IDs
+
+Resource IDs are auto-generated from your `Venue-Input` rows.  The easiest way to
+look them up is in **Excel, not JSON**:
+
+1. Run `export-church-teams` (Step 3 below).
+2. Open `Church_Team_Status_ALL_*.xlsx` and go to the **`Schedule-Input`** tab.
+3. The `Resources` section of that tab lists every court and table with its
+   `resource_id` in a readable table.  Copy IDs from there into `Playoff-Slots`.
+
+If you want to predict the IDs without running the export first, they follow
+these patterns:
+
+| Resource type | ID pattern | Example |
+|---------------|-----------|---------|
+| Gym Court (Basketball / Volleyball) | `GYM-{day}-{n}` | `GYM-Sat-1-1`, `GYM-Sat-2-3` |
+| Badminton Court | `BAD-{n}` | `BAD-1`, `BAD-2` |
+| Pickleball Court | `PIC-{n}` | `PIC-1` |
+| Table Tennis Table | `TAB-{n}` | `TAB-1` |
+| Tennis Court | `TEN-{n}` | `TEN-1` |
+
+Day labels for gym courts: `Sat-1`, `Sat-2`, `Sun-1`, `Sun-2`.
+`{n}` is sequential across all rows of the same resource type in `Venue-Input`.
 
 ---
 
