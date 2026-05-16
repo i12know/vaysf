@@ -1543,6 +1543,12 @@ class ScheduleWorkbookBuilder:
             return 0.0
         if isinstance(val, _dt.time):
             return val.hour + val.minute / 60.0
+        if isinstance(val, str) and ":" in val:
+            try:
+                hour_str, minute_str = val.split(":", 1)
+                return int(hour_str) + int(minute_str) / 60.0
+            except ValueError:
+                return 0.0
         try:
             return float(val)
         except (TypeError, ValueError):
@@ -1587,6 +1593,32 @@ class ScheduleWorkbookBuilder:
         logger.debug(f"Loaded venue input: {totals}")
         return totals
 
+    @staticmethod
+    def _load_available_slots_from_schedule_input(
+        schedule_input: Dict[str, Any],
+    ) -> Dict[str, int]:
+        """Summarize total available slots per resource_type from schedule_input."""
+        totals: Dict[str, int] = {}
+        for res in schedule_input.get("resources", []):
+            resource_type = ScheduleWorkbookBuilder._clean_excel_text(
+                res.get("resource_type")
+            )
+            if not resource_type:
+                continue
+            open_time = ScheduleWorkbookBuilder._clean_excel_text(res.get("open_time"))
+            close_time = ScheduleWorkbookBuilder._clean_excel_text(res.get("close_time"))
+            slot_min = int(res.get("slot_minutes", 0) or 0)
+            if not open_time or not close_time or slot_min <= 0:
+                continue
+            start = ScheduleWorkbookBuilder._parse_hour(open_time)
+            close = ScheduleWorkbookBuilder._parse_hour(close_time)
+            if close < start:
+                continue
+            available = int(((close - start) * 60 / slot_min))
+            totals[resource_type] = totals.get(resource_type, 0) + max(available, 0)
+        logger.debug(f"Derived availability from schedule_input resources: {totals}")
+        return totals
+
     def _build_pod_resource_rows(
         self,
         roster_rows: List[Dict[str, Any]],
@@ -1629,6 +1661,7 @@ class ScheduleWorkbookBuilder:
         ws,
         pod_rows: List[Dict[str, Any]],
         available_by_resource: Dict[str, int],
+        availability_source_label: str = VENUE_INPUT_FILENAME,
     ) -> None:
         """Write Pod-Resource-Estimate tab content with colour-coded Fit Status."""
         from openpyxl.styles import PatternFill, Font, Alignment
@@ -1657,6 +1690,8 @@ class ScheduleWorkbookBuilder:
                 "No venue input loaded — "
                 f"create {VENUE_INPUT_FILENAME} from the template and re-run the export"
             )
+            if availability_source_label != VENUE_INPUT_FILENAME:
+                notice = f"No availability data loaded from {availability_source_label}."
             ws.cell(row=2, column=1, value=notice)
             for c_idx, col in enumerate(cols, start=1):
                 row_cell = ws.cell(row=2, column=c_idx)
@@ -1688,11 +1723,19 @@ class ScheduleWorkbookBuilder:
         ws.cell(
             row=note_row, column=1,
             value=(
-                f"Venue data loaded from {VENUE_INPUT_FILENAME}. "
+                f"Available slots loaded from {availability_source_label}. "
                 "Required = entries − 1 (single elimination). "
                 f"Green ≥ 0 | Yellow short 1–{POD_FIT_YELLOW_MAX} | Red short {POD_FIT_YELLOW_MAX + 1}+."
             ),
         )
+        if availability_source_label != VENUE_INPUT_FILENAME:
+            ws.cell(
+                row=note_row + 1,
+                column=1,
+                value=(
+                    f"Offline build: available slots derived from {availability_source_label}."
+                ),
+            )
         logger.debug(f"Pod-Resource-Estimate tab: {len(pod_rows)} rows.")
 
     # ── produce-schedule renderer ────────────────────────────────────────────
@@ -2129,11 +2172,13 @@ class ScheduleWorkbookBuilder:
         roster_rows: List[Dict[str, Any]],
         validation_rows: List[Dict[str, Any]],
         schedule_input: Dict[str, Any],
-        venue_input_path: Path,
+        venue_input_path: Optional[Path],
     ) -> None:
         """Write the Schedule_Workbook xlsx with all scheduling tabs.
         Called by build-schedule-workbook command (Step 3).
         For the solver-rendered two-tab workbook, use write_schedule_output_workbook().
+        When venue_input_path is None, derive resource availability from the
+        schedule_input resources so offline builds stay self-consistent.
         """
         # Build workbook with pandas ExcelWriter for the DataFrame-based tabs,
         # then attach the openpyxl-native tabs using writer.book.
@@ -2191,10 +2236,22 @@ class ScheduleWorkbookBuilder:
             self._write_court_schedule_sketch(sketch_ws, roster_rows)
 
             # Pod-Resource-Estimate tab (openpyxl native)
-            available_by_resource = self._load_venue_input(venue_input_path)
+            if venue_input_path is None:
+                available_by_resource = self._load_available_slots_from_schedule_input(
+                    schedule_input
+                )
+                availability_source_label = "schedule_input.json resources"
+            else:
+                available_by_resource = self._load_venue_input(venue_input_path)
+                availability_source_label = VENUE_INPUT_FILENAME
             pod_res_rows = self._build_pod_resource_rows(roster_rows, available_by_resource)
             pod_ws = writer.book.create_sheet(title="Pod-Resource-Estimate")
-            self._write_pod_resource_estimate(pod_ws, pod_res_rows, available_by_resource)
+            self._write_pod_resource_estimate(
+                pod_ws,
+                pod_res_rows,
+                available_by_resource,
+                availability_source_label=availability_source_label,
+            )
 
             # Schedule-Input tab (openpyxl native — echo of the JSON)
             si_ws = writer.book.create_sheet(title="Schedule-Input")

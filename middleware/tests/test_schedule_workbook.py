@@ -211,3 +211,99 @@ def test_read_roster_validation_rows_missing_tab_degrades(tmp_path):
     )
     assert roster_rows == []
     assert validation_rows == []
+
+
+def test_load_available_slots_from_schedule_input_counts_slots():
+    schedule_input = {
+        "resources": [
+            {
+                "resource_id": "PCK-1",
+                "resource_type": "Pickleball Court",
+                "label": "Court-1",
+                "day": "Day-1",
+                "open_time": "09:00",
+                "close_time": "10:00",
+                "slot_minutes": 30,
+            },
+            {
+                "resource_id": "PCK-2",
+                "resource_type": "Pickleball Court",
+                "label": "Court-2",
+                "day": "Day-1",
+                "open_time": "09:00",
+                "close_time": "09:30",
+                "slot_minutes": 30,
+            },
+        ]
+    }
+
+    totals = ScheduleWorkbookBuilder._load_available_slots_from_schedule_input(
+        schedule_input
+    )
+
+    assert totals["Pickleball Court"] == 3
+
+
+def test_write_schedule_workbook_uses_schedule_input_resources_offline(tmp_path):
+    builder = ScheduleWorkbookBuilder()
+    roster_rows = [
+        {
+            "Church Team": "RPC",
+            "sport_type": SPORT_TYPE["PICKLEBALL"],
+            "sport_gender": "Mixed",
+            "sport_format": "Singles",
+            "Participant ID (WP)": 1,
+            "First Name": "Alex",
+            "Last Name": "Tran",
+        }
+    ]
+    schedule_input = {
+        "generated_at": "2026-05-16T00:00:00",
+        "gym_court_scenario": 4,
+        "game_count": 0,
+        "resource_count": 1,
+        "games": [],
+        "resources": [
+            {
+                "resource_id": "PCK-1",
+                "resource_type": "Pickleball Court",
+                "label": "Court-1",
+                "day": "Day-1",
+                "open_time": "09:00",
+                "close_time": "10:00",
+                "slot_minutes": 30,
+                "exclusive_group": "",
+            }
+        ],
+        "playoff_slots": [],
+        "gym_modes": {},
+    }
+    workbook_path = tmp_path / "offline_schedule_workbook.xlsx"
+
+    builder.write_schedule_workbook(
+        workbook_path,
+        roster_rows,
+        [],
+        schedule_input,
+        venue_input_path=None,
+    )
+
+    wb = load_workbook(workbook_path)
+    ws = wb["Pod-Resource-Estimate"]
+
+    found_row = None
+    for row in range(2, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == SPORT_TYPE["PICKLEBALL"]:
+            found_row = row
+            break
+
+    assert found_row is not None
+    assert ws.cell(row=found_row, column=5).value == 2
+    all_values = [
+        ws.cell(row=r, column=1).value
+        for r in range(1, ws.max_row + 1)
+        if ws.cell(row=r, column=1).value is not None
+    ]
+    assert any(
+        "schedule_input.json resources" in str(value) for value in all_values
+    )

@@ -202,7 +202,7 @@ def parse_args() -> argparse.Namespace:
     build_workbook_parser.add_argument(
         "--input-json",
         default=None,
-        help="Path to schedule_input.json (default: DATA_DIR/schedule_input.json)",
+        help="Path to schedule_input.json (default: sibling of --input-xlsx, else EXPORT_DIR/schedule_input.json, else DATA_DIR/schedule_input.json)",
     )
     build_workbook_parser.add_argument(
         "--input-xlsx",
@@ -247,6 +247,31 @@ def parse_args() -> argparse.Namespace:
     )
 
     return parser.parse_args()
+
+
+def _resolve_build_schedule_input_path(
+    input_json: Optional[str],
+    input_xlsx: Optional[str],
+) -> Path:
+    """Resolve the schedule_input.json path for build-schedule-workbook.
+
+    Prefer the explicit CLI arg, then the sibling of an explicitly provided ALL
+    workbook, then the normal export directory, and finally DATA_DIR as a
+    backward-compatible fallback.
+    """
+    if input_json:
+        return Path(input_json)
+
+    if input_xlsx:
+        sibling = Path(input_xlsx).with_name("schedule_input.json")
+        if sibling.exists():
+            return sibling
+
+    export_candidate = Path(EXPORT_DIR) / "schedule_input.json"
+    if export_candidate.exists():
+        return export_candidate
+
+    return DATA_DIR / "schedule_input.json"
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str] = None,
@@ -845,8 +870,10 @@ def main() -> None:
             success = True
     elif args.command == "build-schedule-workbook":
         from schedule_workbook import ScheduleWorkbookBuilder
-        from config import VENUE_INPUT_FILENAME
-        si_path = Path(args.input_json) if args.input_json else DATA_DIR / "schedule_input.json"
+        si_path = _resolve_build_schedule_input_path(
+            args.input_json,
+            args.input_xlsx,
+        )
         if args.output:
             out_path = Path(args.output)
         else:
@@ -862,10 +889,13 @@ def main() -> None:
             roster_rows, validation_rows = builder.read_roster_validation_rows(
                 Path(args.input_xlsx) if args.input_xlsx else None
             )
-            venue_input_path = DATA_DIR / VENUE_INPUT_FILENAME
             out_path.parent.mkdir(parents=True, exist_ok=True)
             builder.write_schedule_workbook(
-                out_path, roster_rows, validation_rows, schedule_input, venue_input_path
+                out_path,
+                roster_rows,
+                validation_rows,
+                schedule_input,
+                venue_input_path=None,
             )
             logger.info(f"Schedule workbook written to: {out_path.resolve()}")
             success = True

@@ -106,10 +106,14 @@ def test_parse_args_build_schedule_workbook_defaults(monkeypatch):
 
 
 def test_main_build_schedule_workbook_writes_xlsx(monkeypatch, tmp_path):
-    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(main, "EXPORT_DIR", tmp_path)
+    data_dir = tmp_path / "data"
+    export_dir = tmp_path / "export"
+    data_dir.mkdir()
+    export_dir.mkdir()
+    monkeypatch.setattr(main, "DATA_DIR", data_dir)
+    monkeypatch.setattr(main, "EXPORT_DIR", export_dir)
 
-    schedule_input_path = tmp_path / "schedule_input.json"
+    schedule_input_path = export_dir / "schedule_input.json"
     schedule_input_path.write_text(
         json.dumps(_minimal_schedule_input()), encoding="utf-8"
     )
@@ -133,10 +137,43 @@ def test_main_build_schedule_workbook_writes_xlsx(monkeypatch, tmp_path):
 
     _run_main_expect_exit(0)
 
-    out_path = tmp_path / "Schedule_Workbook_2026-05-15.xlsx"
+    out_path = export_dir / "Schedule_Workbook_2026-05-15.xlsx"
     assert out_path.exists()
     wb = load_workbook(out_path)
     assert "Schedule-Input" in wb.sheetnames
+
+
+def test_main_build_schedule_workbook_prefers_input_xlsx_sibling_json(monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    export_dir = tmp_path / "export"
+    custom_dir = tmp_path / "custom"
+    data_dir.mkdir()
+    export_dir.mkdir()
+    custom_dir.mkdir()
+    monkeypatch.setattr(main, "DATA_DIR", data_dir)
+    monkeypatch.setattr(main, "EXPORT_DIR", export_dir)
+
+    workbook_path = custom_dir / "Church_Team_Status_ALL_2026-05-15.xlsx"
+    wb = Workbook()
+    wb.save(workbook_path)
+
+    sibling_json = custom_dir / "schedule_input.json"
+    sibling_json.write_text(json.dumps(_minimal_schedule_input()), encoding="utf-8")
+
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="build-schedule-workbook",
+            input_json=None,
+            input_xlsx=str(workbook_path),
+            output=str(custom_dir / "Schedule_Workbook.xlsx"),
+        ),
+    )
+
+    _run_main_expect_exit(0)
+
+    assert (custom_dir / "Schedule_Workbook.xlsx").exists()
 
 
 def test_main_build_schedule_workbook_missing_input_fails(monkeypatch, tmp_path):
