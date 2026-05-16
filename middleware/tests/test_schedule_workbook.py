@@ -1,5 +1,6 @@
 import json
 
+import pandas as pd
 from openpyxl import load_workbook
 
 from church_teams_export import ChurchTeamsExporter
@@ -147,3 +148,66 @@ def test_write_schedule_output_workbook_creates_schedule_tabs(tmp_path):
 
     wb = load_workbook(workbook_path)
     assert wb.sheetnames == ["Schedule-by-Time", "Schedule-by-Sport"]
+
+
+def test_read_roster_validation_rows_missing_path_degrades():
+    """A missing ALL workbook should yield empty lists, not raise."""
+    roster_rows, validation_rows = ScheduleWorkbookBuilder.read_roster_validation_rows(None)
+    assert roster_rows == []
+    assert validation_rows == []
+
+
+def test_read_roster_validation_rows_parses_tabs(tmp_path):
+    """Roster and Validation-Issues tabs round-trip into builder-shaped dicts."""
+    xlsx_path = tmp_path / "Church_Team_Status_ALL.xlsx"
+    roster_df = pd.DataFrame(
+        [
+            {
+                "Church Team": "RPC",
+                "sport_type": SPORT_TYPE["BASKETBALL"],
+                "sport_gender": "Men",
+                "sport_format": "Team",
+                "Participant ID (WP)": 1,
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "partner_name": None,
+            }
+        ]
+    )
+    validation_df = pd.DataFrame(
+        [
+            {
+                "Church Team": "RPC",
+                "Severity": "ERROR",
+                "Status": "open",
+                "Participant ID (WP)": 1,
+                "sport_type": SPORT_TYPE["BASKETBALL"],
+            }
+        ]
+    )
+    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+        roster_df.to_excel(writer, sheet_name="Roster", index=False)
+        validation_df.to_excel(writer, sheet_name="Validation-Issues", index=False)
+
+    roster_rows, validation_rows = ScheduleWorkbookBuilder.read_roster_validation_rows(
+        xlsx_path
+    )
+
+    assert len(roster_rows) == 1
+    assert roster_rows[0]["Church Team"] == "RPC"
+    # NaN cells normalize to None so `str(v or "")` collapses blanks cleanly.
+    assert roster_rows[0]["partner_name"] is None
+    assert len(validation_rows) == 1
+    assert validation_rows[0]["Severity"] == "ERROR"
+
+
+def test_read_roster_validation_rows_missing_tab_degrades(tmp_path):
+    """A workbook without the expected tabs degrades to empty lists."""
+    xlsx_path = tmp_path / "no_tabs.xlsx"
+    pd.DataFrame([{"x": 1}]).to_excel(xlsx_path, sheet_name="Summary", index=False)
+
+    roster_rows, validation_rows = ScheduleWorkbookBuilder.read_roster_validation_rows(
+        xlsx_path
+    )
+    assert roster_rows == []
+    assert validation_rows == []

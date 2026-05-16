@@ -96,6 +96,66 @@ def test_parse_args_produce_schedule_aliases(monkeypatch):
     assert args.output == "schedule.xlsx"
 
 
+def test_parse_args_build_schedule_workbook_defaults(monkeypatch):
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "build-schedule-workbook"])
+    args = main.parse_args()
+    assert args.command == "build-schedule-workbook"
+    assert args.input_json is None
+    assert args.input_xlsx is None
+    assert args.output is None
+
+
+def test_main_build_schedule_workbook_writes_xlsx(monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main, "EXPORT_DIR", tmp_path)
+
+    schedule_input_path = tmp_path / "schedule_input.json"
+    schedule_input_path.write_text(
+        json.dumps(_minimal_schedule_input()), encoding="utf-8"
+    )
+
+    class FakeDate(dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 5, 15)
+
+    monkeypatch.setattr(main.datetime, "date", FakeDate)
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="build-schedule-workbook",
+            input_json=None,
+            input_xlsx=None,
+            output=None,
+        ),
+    )
+
+    _run_main_expect_exit(0)
+
+    out_path = tmp_path / "Schedule_Workbook_2026-05-15.xlsx"
+    assert out_path.exists()
+    wb = load_workbook(out_path)
+    assert "Schedule-Input" in wb.sheetnames
+
+
+def test_main_build_schedule_workbook_missing_input_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main, "EXPORT_DIR", tmp_path)
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="build-schedule-workbook",
+            input_json=str(tmp_path / "does_not_exist.json"),
+            input_xlsx=None,
+            output=None,
+        ),
+    )
+
+    _run_main_expect_exit(1)
+
+
 def test_main_solve_schedule_uses_default_paths(mocker, monkeypatch, tmp_path):
     monkeypatch.setattr(main, "DATA_DIR", tmp_path)
     mock_run = mocker.patch("scheduler.run_solve_schedule", return_value=7)

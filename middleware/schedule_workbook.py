@@ -2055,6 +2055,53 @@ class ScheduleWorkbookBuilder:
         wb.save(filepath)
         logger.info(f"Schedule output report written to: {filepath}")
 
+    # ── ALL-workbook readers (build-schedule-workbook input) ─────────────────
+
+    @staticmethod
+    def _read_xlsx_sheet_rows(xlsx_path: Path, sheet_name: str) -> List[Dict[str, Any]]:
+        """Read one sheet of an exported workbook into a list of row dicts.
+
+        NaN cells are normalized to None so the scheduling builders' common
+        `str(row.get(col) or "")` idiom collapses blanks to empty strings
+        (a bare NaN float is truthy and would otherwise stringify to 'nan').
+        Returns an empty list with a WARNING when the sheet is absent.
+        """
+        try:
+            df = pd.read_excel(xlsx_path, sheet_name=sheet_name, engine="openpyxl")
+        except Exception as e:
+            logger.warning(f"Could not read '{sheet_name}' tab from {xlsx_path}: {e}")
+            return []
+        # astype(object) first: assigning None to a float64 column silently
+        # reverts to NaN, so the column must be object-typed before the mask.
+        df = df.astype(object).where(pd.notna(df), None)
+        rows = df.to_dict("records")
+        logger.debug(f"Read {len(rows)} rows from '{sheet_name}' tab of {xlsx_path}")
+        return rows
+
+    @staticmethod
+    def read_roster_validation_rows(
+        xlsx_path: Optional[Path],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Parse the Roster and Validation-Issues tabs of an exported ALL workbook.
+
+        Returns (roster_rows, validation_rows) in the list-of-dicts shape the
+        scheduling builders expect.  A missing path or missing tabs degrade
+        gracefully to empty lists with a WARNING — build-schedule-workbook still
+        produces the Schedule-Input tab (echo of the JSON) without roster data.
+        """
+        if not xlsx_path or not Path(xlsx_path).exists():
+            logger.warning(
+                f"ALL workbook not found at {xlsx_path!r}; "
+                "scheduling tabs that need roster data will be empty."
+            )
+            return [], []
+        xlsx_path = Path(xlsx_path)
+        roster_rows = ScheduleWorkbookBuilder._read_xlsx_sheet_rows(xlsx_path, "Roster")
+        validation_rows = ScheduleWorkbookBuilder._read_xlsx_sheet_rows(
+            xlsx_path, "Validation-Issues"
+        )
+        return roster_rows, validation_rows
+
     # ── Public entry points ──────────────────────────────────────────────────
 
     def write_schedule_input_json(

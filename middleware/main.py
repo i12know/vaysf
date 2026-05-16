@@ -194,6 +194,27 @@ def parse_args() -> argparse.Namespace:
         help="Output path for xlsx (default: EXPORT_DIR/VAYSF_Schedule_YYYY-MM-DD.xlsx)",
     )
 
+    # Build-schedule-workbook command
+    build_workbook_parser = subparsers.add_parser(
+        "build-schedule-workbook",
+        help="Build the offline schedule planning workbook from schedule_input.json",
+    )
+    build_workbook_parser.add_argument(
+        "--input-json",
+        default=None,
+        help="Path to schedule_input.json (default: DATA_DIR/schedule_input.json)",
+    )
+    build_workbook_parser.add_argument(
+        "--input-xlsx",
+        default=None,
+        help="Path to an exported Church_Team_Status_ALL workbook for Roster/Validation context (optional)",
+    )
+    build_workbook_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output path for xlsx (default: EXPORT_DIR/Schedule_Workbook_YYYY-MM-DD.xlsx)",
+    )
+
     # Generate-venue-template command
     venue_template_parser = subparsers.add_parser(
         "generate-venue-template",
@@ -821,6 +842,32 @@ def main() -> None:
                 out_path, so_data, si_data
             )
             logger.info(f"Schedule Excel written to: {out_path.resolve()}")
+            success = True
+    elif args.command == "build-schedule-workbook":
+        from schedule_workbook import ScheduleWorkbookBuilder
+        from config import VENUE_INPUT_FILENAME
+        si_path = Path(args.input_json) if args.input_json else DATA_DIR / "schedule_input.json"
+        if args.output:
+            out_path = Path(args.output)
+        else:
+            today = datetime.date.today().strftime("%Y-%m-%d")
+            out_path = Path(EXPORT_DIR) / f"Schedule_Workbook_{today}.xlsx"
+        try:
+            schedule_input = json.loads(si_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            logger.error(f"build-schedule-workbook: schedule_input.json not found at {si_path}")
+            success = False
+        else:
+            builder = ScheduleWorkbookBuilder()
+            roster_rows, validation_rows = builder.read_roster_validation_rows(
+                Path(args.input_xlsx) if args.input_xlsx else None
+            )
+            venue_input_path = DATA_DIR / VENUE_INPUT_FILENAME
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            builder.write_schedule_workbook(
+                out_path, roster_rows, validation_rows, schedule_input, venue_input_path
+            )
+            logger.info(f"Schedule workbook written to: {out_path.resolve()}")
             success = True
     elif args.command == "generate-venue-template":
         out = Path(args.output) if args.output else None
