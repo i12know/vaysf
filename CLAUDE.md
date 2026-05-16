@@ -52,7 +52,10 @@ vaysf/
 ├── middleware/                      # Python, all middleware code lives here
 │   ├── .env.template                # committed; real .env is gitignored
 │   ├── requirements.txt
-│   ├── main.py                      # CLI entry: sync, sync-churches, export-*
+│   ├── main.py                      # CLI entry: sync, sync-churches, export-*, *-schedule
+│   ├── church_teams_export.py       # live ChMeetings/WP export; delegates scheduling
+│   ├── schedule_workbook.py         # ScheduleWorkbookBuilder: scheduling tabs + workbooks
+│   ├── scheduler.py                 # OR-Tools CP-SAT pool-play solver
 │   ├── tests/                       # pytest; mock by default, LIVE_TEST=true for real API
 │   └── ...
 ├── plugins/                         # WordPress plugin (PHP)

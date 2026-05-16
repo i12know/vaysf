@@ -6,6 +6,7 @@ import pytest
 from openpyxl import Workbook, load_workbook
 
 import main
+from schedule_workbook import ScheduleWorkbookBuilder
 
 
 def _run_main_expect_exit(expected_code: int) -> None:
@@ -95,6 +96,103 @@ def test_parse_args_produce_schedule_aliases(monkeypatch):
     assert args.output == "schedule.xlsx"
 
 
+def test_parse_args_build_schedule_workbook_defaults(monkeypatch):
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "build-schedule-workbook"])
+    args = main.parse_args()
+    assert args.command == "build-schedule-workbook"
+    assert args.input_json is None
+    assert args.input_xlsx is None
+    assert args.output is None
+
+
+def test_main_build_schedule_workbook_writes_xlsx(monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    export_dir = tmp_path / "export"
+    data_dir.mkdir()
+    export_dir.mkdir()
+    monkeypatch.setattr(main, "DATA_DIR", data_dir)
+    monkeypatch.setattr(main, "EXPORT_DIR", export_dir)
+
+    schedule_input_path = export_dir / "schedule_input.json"
+    schedule_input_path.write_text(
+        json.dumps(_minimal_schedule_input()), encoding="utf-8"
+    )
+
+    class FakeDate(dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 5, 15)
+
+    monkeypatch.setattr(main.datetime, "date", FakeDate)
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="build-schedule-workbook",
+            input_json=None,
+            input_xlsx=None,
+            output=None,
+        ),
+    )
+
+    _run_main_expect_exit(0)
+
+    out_path = export_dir / "Schedule_Workbook_2026-05-15.xlsx"
+    assert out_path.exists()
+    wb = load_workbook(out_path)
+    assert "Schedule-Input" in wb.sheetnames
+
+
+def test_main_build_schedule_workbook_prefers_input_xlsx_sibling_json(monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    export_dir = tmp_path / "export"
+    custom_dir = tmp_path / "custom"
+    data_dir.mkdir()
+    export_dir.mkdir()
+    custom_dir.mkdir()
+    monkeypatch.setattr(main, "DATA_DIR", data_dir)
+    monkeypatch.setattr(main, "EXPORT_DIR", export_dir)
+
+    workbook_path = custom_dir / "Church_Team_Status_ALL_2026-05-15.xlsx"
+    wb = Workbook()
+    wb.save(workbook_path)
+
+    sibling_json = custom_dir / "schedule_input.json"
+    sibling_json.write_text(json.dumps(_minimal_schedule_input()), encoding="utf-8")
+
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="build-schedule-workbook",
+            input_json=None,
+            input_xlsx=str(workbook_path),
+            output=str(custom_dir / "Schedule_Workbook.xlsx"),
+        ),
+    )
+
+    _run_main_expect_exit(0)
+
+    assert (custom_dir / "Schedule_Workbook.xlsx").exists()
+
+
+def test_main_build_schedule_workbook_missing_input_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main, "EXPORT_DIR", tmp_path)
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="build-schedule-workbook",
+            input_json=str(tmp_path / "does_not_exist.json"),
+            input_xlsx=None,
+            output=None,
+        ),
+    )
+
+    _run_main_expect_exit(1)
+
+
 def test_main_solve_schedule_uses_default_paths(mocker, monkeypatch, tmp_path):
     monkeypatch.setattr(main, "DATA_DIR", tmp_path)
     mock_run = mocker.patch("scheduler.run_solve_schedule", return_value=7)
@@ -141,7 +239,10 @@ def test_main_produce_schedule_uses_default_paths(mocker, monkeypatch, tmp_path)
             return cls(2026, 5, 15)
 
     monkeypatch.setattr(main.datetime, "date", FakeDate)
-    mock_write = mocker.patch.object(main.ChurchTeamsExporter, "_write_schedule_output_report")
+    mock_write = mocker.patch.object(
+        ScheduleWorkbookBuilder,
+        "write_schedule_output_workbook",
+    )
     monkeypatch.setattr(
         main,
         "parse_args",

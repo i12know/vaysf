@@ -26,6 +26,16 @@
   - Added regression test `test_solve_c6_min_rest_does_not_span_day_boundary`
 
 ### New Features
+- Split the scheduling workbook pipeline out of `church_teams_export.py` into a dedicated module — closes [#98](https://github.com/i12know/vaysf/issues/98)
+  - New `middleware/schedule_workbook.py` with a `ScheduleWorkbookBuilder` class that owns all scheduling logic: `schedule_input.json` builders, pool planning, the six planning tabs, and the `produce-schedule` renderer
+  - `church_teams_export.py` delegates the moved methods to `ScheduleWorkbookBuilder` under a strict one-way dependency (`church_teams_export.py` → `schedule_workbook.py`, never the reverse); `export-church-teams` and `produce-schedule` behavior is unchanged
+  - New `python main.py build-schedule-workbook [--input-json …] [--input-xlsx …] [--output …]` command builds the offline planning workbook (`Schedule_Workbook_YYYY-MM-DD.xlsx`) without re-running a live export
+  - `--input-json` resolves in priority order when omitted: sibling of `--input-xlsx`, then `EXPORT_DIR/schedule_input.json`, then `DATA_DIR/schedule_input.json`
+  - New `read_roster_validation_rows()` / `_read_xlsx_sheet_rows()` parse the `Roster` and `Validation-Issues` tabs of an `ALL` workbook back into builder row dicts; missing files or tabs degrade to empty lists with a `WARNING`
+  - When no `venue_input.xlsx` is supplied, the `Pod-Resource-Estimate` tab derives court availability from the `schedule_input.json` `resources` so offline builds stay self-consistent
+  - Transition behavior: `Church_Team_Status_ALL.xlsx` still contains the six scheduling tabs; they are intentionally duplicated with the standalone workbook for now
+  - Pure scheduling tests migrated from `test_church_teams_export.py` to `test_schedule_workbook.py`; `_write_excel_report` integration tests stay; new tests cover `build-schedule-workbook` and the xlsx-tab readers
+  - `docs/SCHEDULING.md` documents the two-stage workflow and the 4-team pool tiebreaker caveat (the fixed 4-team format never plays T1 vs T4 or T2 vs T3)
 - Added gym-mode venue modeling to `venue_input.xlsx` for gyms that can be configured one way or another but not both at once (e.g. 1 Basketball Court **or** 2 Volleyball Courts per time block)
   - New `Exclusive Venue Group` column in the `Venue-Input` tab: rows sharing a group value compete for the same physical gym; `_load_venue_input_rows()` attaches the value to each resource object as `exclusive_group` (empty string when blank)
   - New `Gym-Modes` tab: one row per gym with `Gym Name` and per-mode capacity columns (`Basketball Courts`, `Volleyball Courts`, `Badminton Courts`, `Pickleball Courts`, `Soccer Fields`)
