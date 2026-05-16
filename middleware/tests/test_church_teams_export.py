@@ -118,20 +118,20 @@ def test_resend_logs_existing_approval_metadata(mock_connectors, mocker):
 
     fake_sync_manager = MagicMock()
     fake_sync_manager.churches_cache = {
-        "WSD": {
-            "church_code": "WSD",
-            "church_id": 9,
-            "pastor_email": "cuongmanhnguyen@hotmail.com",
+        "TST": {
+            "church_code": "TST",
+            "church_id": 99,
+            "pastor_email": "pastor@example.com",
         }
     }
     fake_sync_manager.wordpress_connector.get_approvals.return_value = [
         {
             "approval_id": "76",
-            "participant_id": "350",
-            "church_id": "9",
+            "participant_id": "999",
+            "church_id": "99",
             "approval_status": "pending",
             "token_expiry": "2026-06-09 20:58:02",
-            "pastor_email": "cuongmanhnguyen@hotmail.com",
+            "pastor_email": "pastor@example.com",
             "created_at": "2026-05-11 03:58:03",
         }
     ]
@@ -142,12 +142,12 @@ def test_resend_logs_existing_approval_metadata(mock_connectors, mocker):
 
     exporter = ChurchTeamsExporter()
     participant_contact = {
-        "Participant ID (WP)": "350",
-        "First Name": "Dora",
-        "Last Name": "Phan",
-        "Church Team": "WSD",
-        "ChMeetings ID": "3630125",
-        "Email": "doraphan2009@gmail.com",
+        "Participant ID (WP)": "999",
+        "First Name": "Test",
+        "Last Name": "Participant",
+        "Church Team": "TST",
+        "ChMeetings ID": "1111111",
+        "Email": "participant@example.com",
         "Is_Member_ChM": "Yes",
         "Photo URL (WP)": "https://example.com/photo.jpg",
     }
@@ -156,7 +156,7 @@ def test_resend_logs_existing_approval_metadata(mock_connectors, mocker):
 
     assert success is True
     assert any(
-        "Existing approval record before resend for Dora Phan" in call.args[0]
+        "Existing approval record before resend for Test Participant" in call.args[0]
         and "created_at=2026-05-11 03:58:03" in call.args[0]
         for call in info_logger.call_args_list
     )
@@ -166,7 +166,7 @@ def test_generate_reports_infers_target_church_for_targeted_resend(mock_connecto
     chm_connector, wp_connector = mock_connectors
     chm_connector.authenticate.return_value = True
     wp_connector.get_participants.return_value = [
-        {"participant_id": 350, "chmeetings_id": "3630125", "church_code": "WSD"}
+        {"participant_id": 999, "chmeetings_id": "1111111", "church_code": "TST"}
     ]
 
     exporter = ChurchTeamsExporter()
@@ -177,12 +177,12 @@ def test_generate_reports_infers_target_church_for_targeted_resend(mock_connecto
         output_dir=tmp_path,
         force_resend_pending=True,
         dry_run=True,
-        target_resend_chm_id="3630125",
+        target_resend_chm_id="1111111",
     )
 
     assert success is True
-    wp_connector.get_participants.assert_called_once_with({"chmeetings_id": "3630125"})
-    fetch_chm.assert_called_once_with("WSD")
+    wp_connector.get_participants.assert_called_once_with({"chmeetings_id": "1111111"})
+    fetch_chm.assert_called_once_with("TST")
 
 
 def test_generate_reports_surfaces_open_validation_issues(mock_connectors, mocker, tmp_path):
