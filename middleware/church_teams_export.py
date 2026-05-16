@@ -714,6 +714,33 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             logger.error("ChMeetings authentication failed. Cannot generate reports.")
             return False
 
+        if (
+            target_resend_chm_id
+            and not target_church_code
+            and (force_resend_pending or force_resend_validated1 or force_resend_validated2)
+        ):
+            wp_participants = self.wp_connector.get_participants(
+                {"chmeetings_id": str(target_resend_chm_id).strip()}
+            )
+            if wp_participants:
+                inferred_church_code = str(wp_participants[0].get("church_code", "")).strip().upper()
+                if inferred_church_code:
+                    target_church_code = inferred_church_code
+                    logger.info(
+                        f"Inferred target church '{target_church_code}' for resend ChMeetings ID "
+                        f"{target_resend_chm_id}. Limiting report generation to that church."
+                    )
+                else:
+                    logger.warning(
+                        f"Target resend ChMeetings ID {target_resend_chm_id} has no church_code in WordPress. "
+                        "Falling back to all churches."
+                    )
+            else:
+                logger.warning(
+                    f"Could not find WordPress participant for resend ChMeetings ID {target_resend_chm_id}. "
+                    "Falling back to all churches."
+                )
+
         deadline_date = datetime.strptime(REGISTRATION_DEADLINE, "%Y-%m-%d").date()
         today = datetime.now().date()
         if today >= deadline_date:
@@ -3104,6 +3131,17 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             if not pastor_email:
                 logger.error(f"No pastor email for church {church_code}")
                 return False
+
+            existing_approvals = sync_manager.wordpress_connector.get_approvals(
+                params={"participant_id": wp_participant_id}
+            )
+            existing_approval = next(
+                (
+                    approval for approval in existing_approvals
+                    if str(approval.get("church_id")) == str(church.get("church_id"))
+                ),
+                None,
+            )
             
             # Generate new token and expiry
             from uuid import uuid4
@@ -3155,6 +3193,16 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             )
             
             if success:
+                if existing_approval:
+                    logger.info(
+                        "Existing approval record before resend for "
+                        f"{participant_name} (WP ID: {wp_participant_id}): "
+                        f"approval_id={existing_approval.get('approval_id')}, "
+                        f"created_at={existing_approval.get('created_at', 'N/A')}, "
+                        f"status={existing_approval.get('approval_status', 'N/A')}, "
+                        f"token_expiry={existing_approval.get('token_expiry', 'N/A')}, "
+                        f"pastor_email={existing_approval.get('pastor_email', 'N/A')}"
+                    )
                 logger.info(f"Successfully resent approval email for {participant_name} (ID: {wp_participant_id})")
                 return True
             else:

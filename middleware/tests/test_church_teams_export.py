@@ -113,6 +113,78 @@ def test_handle_force_resend_filters_to_one_chm_id(mock_connectors, mocker):
     assert resend_count == 1
 
 
+def test_resend_logs_existing_approval_metadata(mock_connectors, mocker):
+    _, wp_connector = mock_connectors
+
+    fake_sync_manager = MagicMock()
+    fake_sync_manager.churches_cache = {
+        "WSD": {
+            "church_code": "WSD",
+            "church_id": 9,
+            "pastor_email": "cuongmanhnguyen@hotmail.com",
+        }
+    }
+    fake_sync_manager.wordpress_connector.get_approvals.return_value = [
+        {
+            "approval_id": "76",
+            "participant_id": "350",
+            "church_id": "9",
+            "approval_status": "pending",
+            "token_expiry": "2026-06-09 20:58:02",
+            "pastor_email": "cuongmanhnguyen@hotmail.com",
+            "created_at": "2026-05-11 03:58:03",
+        }
+    ]
+    fake_sync_manager.wordpress_connector.create_approval.return_value = {"approval_id": 76}
+    fake_sync_manager.send_pastor_approval_email.return_value = True
+
+    info_logger = mocker.patch("church_teams_export.logger.info")
+
+    exporter = ChurchTeamsExporter()
+    participant_contact = {
+        "Participant ID (WP)": "350",
+        "First Name": "Dora",
+        "Last Name": "Phan",
+        "Church Team": "WSD",
+        "ChMeetings ID": "3630125",
+        "Email": "doraphan2009@gmail.com",
+        "Is_Member_ChM": "Yes",
+        "Photo URL (WP)": "https://example.com/photo.jpg",
+    }
+
+    success = exporter._resend_approval_for_participant(fake_sync_manager, participant_contact)
+
+    assert success is True
+    assert any(
+        "Existing approval record before resend for Dora Phan" in call.args[0]
+        and "created_at=2026-05-11 03:58:03" in call.args[0]
+        for call in info_logger.call_args_list
+    )
+
+
+def test_generate_reports_infers_target_church_for_targeted_resend(mock_connectors, mocker, tmp_path):
+    chm_connector, wp_connector = mock_connectors
+    chm_connector.authenticate.return_value = True
+    wp_connector.get_participants.return_value = [
+        {"participant_id": 350, "chmeetings_id": "3630125", "church_code": "WSD"}
+    ]
+
+    exporter = ChurchTeamsExporter()
+    fetch_chm = mocker.patch.object(exporter, "_fetch_chm_church_team_data", return_value={})
+
+    success = exporter.generate_reports(
+        target_church_code=None,
+        output_dir=tmp_path,
+        force_resend_pending=True,
+        dry_run=True,
+        target_resend_chm_id="3630125",
+    )
+
+    assert success is True
+    wp_connector.get_participants.assert_called_once_with({"chmeetings_id": "3630125"})
+    fetch_chm.assert_called_once_with("WSD")
+
+
 def test_generate_reports_surfaces_open_validation_issues(mock_connectors, mocker, tmp_path):
     chm_connector, wp_connector = mock_connectors
     chm_connector.authenticate.return_value = True
