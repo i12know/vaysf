@@ -6,6 +6,7 @@ import pytest
 from openpyxl import Workbook, load_workbook
 
 import main
+from schedule_workbook import ScheduleWorkbookBuilder
 
 
 def _run_main_expect_exit(expected_code: int) -> None:
@@ -141,7 +142,10 @@ def test_main_produce_schedule_uses_default_paths(mocker, monkeypatch, tmp_path)
             return cls(2026, 5, 15)
 
     monkeypatch.setattr(main.datetime, "date", FakeDate)
-    mock_write = mocker.patch.object(main.ChurchTeamsExporter, "_write_schedule_output_report")
+    mock_write = mocker.patch.object(
+        ScheduleWorkbookBuilder,
+        "write_schedule_output_workbook",
+    )
     monkeypatch.setattr(
         main,
         "parse_args",

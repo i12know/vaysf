@@ -801,6 +801,7 @@ def main() -> None:
         exit_code = run_solve_schedule(input_path, output_path)
         sys.exit(exit_code)
     elif args.command == "produce-schedule":
+        from schedule_workbook import ScheduleWorkbookBuilder
         so_path = Path(args.schedule_output) if args.schedule_output else DATA_DIR / "schedule_output.json"
         si_path = Path(args.schedule_input)  if args.schedule_input  else DATA_DIR / "schedule_input.json"
         if args.output:
@@ -816,7 +817,9 @@ def main() -> None:
             success = False
         else:
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            ChurchTeamsExporter._write_schedule_output_report(out_path, so_data, si_data)
+            ScheduleWorkbookBuilder.write_schedule_output_workbook(
+                out_path, so_data, si_data
+            )
             logger.info(f"Schedule Excel written to: {out_path.resolve()}")
             success = True
     elif args.command == "generate-venue-template":

@@ -58,6 +58,7 @@ from config import (
 from validation.name_matcher import normalized_name as _norm_name
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
+from schedule_workbook import ScheduleWorkbookBuilder
 from validation.models import RulesManager
 from math import ceil
 
@@ -3538,3 +3539,55 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
 # end of the ChurchTeamsExporter class
 # end of the middleware/church_teams_export.py file
+
+
+# Keep ChurchTeamsExporter's long-standing scheduling method surface stable while
+# making ScheduleWorkbookBuilder the single authoritative implementation.
+_SCHEDULE_WORKBOOK_METHOD_NAMES = (
+    "_decompose_event_name",
+    "_get_min_team_size",
+    "_count_estimating_teams",
+    "_get_playoff_teams",
+    "_compute_court_slots",
+    "_count_racquet_entries",
+    "_pod_format_class",
+    "_make_division_id",
+    "_build_pod_error_lookup",
+    "_build_pod_divisions_rows",
+    "_build_pod_entries_review_rows",
+    "_build_venue_capacity_rows",
+    "_build_gym_game_objects",
+    "_build_pod_game_objects",
+    "_build_gym_resource_objects",
+    "_clean_excel_text",
+    "_float_from_excel",
+    "_load_venue_input_rows",
+    "_load_playoff_slots",
+    "_load_gym_modes",
+    "_build_schedule_input",
+    "_write_schedule_input_tab",
+    "_build_scenario_schedule",
+    "_two_game_pool_sizes",
+    "_summarize_pool_policy",
+    "_make_legacy_pool_game_pairs",
+    "_make_pool_game_pairs",
+    "_make_playoff_ids",
+    "_write_court_schedule_sketch",
+    "_parse_hour",
+    "_load_venue_input",
+    "_build_pod_resource_rows",
+    "_write_pod_resource_estimate",
+    "_warn_if_schedules_mismatched",
+    "_build_schedule_output_flat_rows",
+    "_write_schedule_output_report",
+    "write_schedule_input_json",
+    "write_schedule_workbook",
+    "write_schedule_output_workbook",
+)
+
+for _method_name in _SCHEDULE_WORKBOOK_METHOD_NAMES:
+    setattr(
+        ChurchTeamsExporter,
+        _method_name,
+        ScheduleWorkbookBuilder.__dict__[_method_name],
+    )

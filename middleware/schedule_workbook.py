@@ -2083,19 +2083,11 @@ class ScheduleWorkbookBuilder:
         validation_rows: List[Dict[str, Any]],
         schedule_input: Dict[str, Any],
         venue_input_path: Path,
-        schedule_output: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Write the Schedule_Workbook xlsx with all scheduling tabs.
         Called by build-schedule-workbook command (Step 3).
+        For the solver-rendered two-tab workbook, use write_schedule_output_workbook().
         """
-        from openpyxl import Workbook
-
-        # Schedule-by-Time + Schedule-by-Sport (only if schedule_output provided)
-        # _write_schedule_output_report writes its own standalone file.
-        if schedule_output:
-            self._write_schedule_output_report(output_path, schedule_output, schedule_input)
-            return
-
         # Build workbook with pandas ExcelWriter for the DataFrame-based tabs,
         # then attach the openpyxl-native tabs using writer.book.
         venue_rows = self._build_venue_capacity_rows(roster_rows)
@@ -2169,7 +2161,7 @@ class ScheduleWorkbookBuilder:
         schedule_output: Dict[str, Any],
         schedule_input: Dict[str, Any],
     ) -> None:
-        """Write Schedule-by-Time and Schedule-by-Sport workbook from solver output."""
+        """Write the standalone Schedule-by-Time / Schedule-by-Sport workbook."""
         ScheduleWorkbookBuilder._write_schedule_output_report(
             Path(output_path), schedule_output, schedule_input
         )
