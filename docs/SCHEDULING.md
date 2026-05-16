@@ -6,6 +6,40 @@ and Claude sessions do not need to reverse-engineer the design from code.
 
 ---
 
+## Strategic vs Tactical: Layer 1 and Layer 2
+
+VAY Sports Fest scheduling spans two layers, divided by the moment the venue
+contract is signed.
+
+**Layer 1 — strategic (pre-booking).** Before any gym is contracted, the
+question is *estimation*: what is the minimum venue capacity we need to book?
+The output informs the venue contract negotiation. This layer is **not yet
+built** — `SCHEDULE_SOLVER_GYM_COURTS` and `SCHEDULE_SKETCH_N_COURTS` in
+`config.py` are crude scenario stand-ins for it, and the `Venue-Estimator` tab
+covers part of the demand estimate. A dedicated gym-capacity estimator is
+future work.
+
+**Layer 2 — tactical (post-booking).** The venue contract is signed; the
+question becomes *maximization*: how do we get the most out of the courts and
+hours already paid for? Layer 2 reads the real booked venue from
+`venue_input.xlsx` and runs in two stages:
+
+- **Stage A — gym mode allocation.** Each gym can be configured in one of
+  several mutually-exclusive modes per time block (e.g. 1 basketball court
+  *or* 2 volleyball courts). Stage A decides each gym's mode per time range —
+  greedily, most-populous-sport-first. Inputs: the `Gym-Modes` and
+  `Venue-Input` tabs plus per-sport demand. See Issue #102.
+- **Stage B — per-sport game scheduling.** The CP-SAT solver (`scheduler.py`)
+  packs each sport's games into the courts Stage A allocated, one sport at a
+  time.
+
+The four-step pipeline below is the Layer-2 runtime path. Today the scheduler
+still builds gym courts from the Layer-1 estimate (`SCHEDULE_SOLVER_GYM_COURTS`)
+rather than the Layer-2 booked inventory — Issues #102 (Stage A allocator) and
+#103 (integration) close that gap.
+
+---
+
 ## Four-Step Pipeline
 
 ```
