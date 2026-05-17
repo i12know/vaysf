@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### New Features
+- Added greedy gym mode allocator (`middleware/gym_allocator.py`) — closes [#102](https://github.com/i12know/vaysf/issues/102)
+  - New module implementing Layer-2, Stage A of the scheduling pipeline
+  - `allocate(demand, gym_modes, blocks)` — greedy priority allocator: ranks sport modes by court-hours demand (most-needed first), claims gym time-ranges until demand is met, prefers the gym with most courts for each mode, and breaks ties by switch penalty (avoids mode flips)
+  - `extract_gym_blocks(venue_rows)` — collapses expanded per-court venue rows into unique `GymBlock` objects keyed on `(exclusive_group, day, open_time, close_time, slot_minutes)`
+  - `aggregate_demand_by_mode(venue_capacity_rows)` — sums `Estimated Court Hours` per mode; Volleyball Men + Women aggregate under `"Volleyball Court"`, Pickleball + Pickleball 35+ under `"Pickleball Court"`; Table Tennis and Tennis are excluded (dedicated pod courts)
+  - `EVENT_TO_MODE` maps all gym-sport event names to their Gym-Modes resource type
+  - `AllocationResult` reports `decisions`, `mode_supply`, `mode_demand`, `mode_shortfall`, and `switch_count`
+  - Structural exclusivity guaranteed — no block is ever handed to two modes
+  - Graceful on demand > capacity: `mode_shortfall` carries the per-mode gap, no crash
+  - 32 unit tests in `tests/test_gym_allocator.py` covering: block extraction, demand aggregation, demand-fits, demand-exceeds-capacity, priority ordering, structural exclusivity, switch minimization, and preferred-gym selection
+
 ### Removed
 - Dropped 6 scheduling tabs (`Venue-Estimator`, `Pod-Divisions`, `Pod-Entries-Review`, `Court-Schedule-Sketch`, `Pod-Resource-Estimate`, `Schedule-Input`) from `Church_Team_Status_ALL_*.xlsx` — closes [#101](https://github.com/i12know/vaysf/issues/101)
   - `export-church-teams` still writes `schedule_input.json` alongside the ALL workbook for `solve-schedule` and `build-schedule-workbook`
