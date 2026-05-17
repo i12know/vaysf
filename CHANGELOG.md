@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Removed
+- Dropped 6 scheduling tabs (`Venue-Estimator`, `Pod-Divisions`, `Pod-Entries-Review`, `Court-Schedule-Sketch`, `Pod-Resource-Estimate`, `Schedule-Input`) from `Church_Team_Status_ALL_*.xlsx` — closes [#101](https://github.com/i12know/vaysf/issues/101)
+  - `export-church-teams` still writes `schedule_input.json` alongside the ALL workbook for `solve-schedule` and `build-schedule-workbook`
+  - All 6 tabs remain available via `python main.py build-schedule-workbook` → `Schedule_Workbook_*.xlsx`
+  - `docs/SCHEDULING.md` and `docs/SCHEDULE-HOW-TO.md` updated: transition note removed; Step 1 description and resource-ID lookup instructions updated to point operators to `build-schedule-workbook`
+
 ### Breaking Changes / Refactor
 - Solver now handles **pool play only**; playoffs managed via Playoff-Slots tab in `venue_input.xlsx`
   - Gym sport playoff games (QF/Semi/Final/3rd) removed from `schedule_input.json` `games` array — `_build_gym_game_objects()` now emits pool-play games only

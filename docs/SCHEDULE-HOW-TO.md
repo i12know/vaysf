@@ -73,8 +73,8 @@ put those rows in that order with consecutive slot values.
 Resource IDs are auto-generated from your `Venue-Input` rows.  The easiest way to
 look them up is in **Excel, not JSON**:
 
-1. Run `export-church-teams` (Step 3 below).
-2. Open `Church_Team_Status_ALL_*.xlsx` and go to the **`Schedule-Input`** tab.
+1. Run `export-church-teams` (Step 3 below), then `build-schedule-workbook`.
+2. Open `Schedule_Workbook_*.xlsx` and go to the **`Schedule-Input`** tab.
 3. The `Resources` section of that tab lists every court and table with its
    `resource_id` in a readable table.  Copy IDs from there into `Playoff-Slots`.
 
@@ -115,12 +115,13 @@ cd middleware
 python main.py export-church-teams
 ```
 
-Because `venue_input.xlsx` is present, this also writes a **Schedule-Input** tab in
-the output workbook and a `schedule_input.json` alongside it.  That JSON file is the
-machine contract the solver reads in the next step.
+Because `venue_input.xlsx` is present, this also writes `schedule_input.json`
+alongside the xlsx.  That JSON file is the machine contract the solver reads in
+the next step.
 
-**Check the output:** open `Church_Team_Status_ALL_*.xlsx` and look at the
-`Schedule-Input` tab to verify game counts and resource rows look right before solving.
+**Check the output:** run `build-schedule-workbook` (see the optional step below)
+and open `Schedule_Workbook_*.xlsx` → `Schedule-Input` tab to verify game counts
+and resource rows look right before solving.
 
 ### Optional — offline planning workbook
 

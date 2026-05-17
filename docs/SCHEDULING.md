@@ -95,7 +95,7 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 | File | Role | Layer |
 |------|------|-------|
 | `main.py` | CLI entry — all commands | — |
-| `church_teams_export.py` | Live ChMeetings + WP export; delegates scheduling tabs to `schedule_workbook.py` | Layer 1 + bridge |
+| `church_teams_export.py` | Live ChMeetings + WP export; writes `schedule_input.json`; delegates scheduling tab rendering to `schedule_workbook.py` | Layer 1 + bridge |
 | `schedule_workbook.py` | `ScheduleWorkbookBuilder` — all scheduling tabs, both workbooks, schedule output renderer | Layer 1 + bridge + Layer 2 output |
 | `scheduler.py` | CP-SAT solver (Stage B) | Layer 2 |
 | `config.py` | All configuration constants; `SCHEDULE_SKETCH_*` and `SCHEDULE_SOLVER_GYM_COURTS` are Layer-1 stand-ins | — |
@@ -133,8 +133,8 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 ```
 Step 1                  Step 2                  Step 3                  Step 4
 export-church-teams  →  schedule_input.json  →  solve-schedule       →  produce-schedule
-                        + Schedule-Input tab    schedule_output.json    VAYSF_Schedule_*.xlsx
-                        (Issue #87, done)       (Issue #93, done)       (Issue #94, done)
+                        (Issue #87, done)       schedule_output.json    VAYSF_Schedule_*.xlsx
+                                                (Issue #93, done)       (Issue #94, done)
 ```
 
 ### Step 1 — Build scheduling inputs (`export-church-teams`)
@@ -144,9 +144,8 @@ python main.py export-church-teams
 ```
 
 Produces the consolidated `Church_Team_Status_ALL.xlsx` in `EXPORT_DIR`.
-When `middleware/data/venue_input.xlsx` is present, the workbook also gets a
-**Schedule-Input** tab and a companion **`schedule_input.json`** (written
-alongside the xlsx) containing:
+When `middleware/data/venue_input.xlsx` is present, also writes
+**`schedule_input.json`** alongside the xlsx containing:
 
 - **`games`** — one object per pool-play match placeholder for gym sports
   (Basketball, VB Men, VB Women); pod sports (single-elimination) are also
@@ -468,14 +467,6 @@ an offline, fast, repeatable consumer of those artifacts.  The scheduling logic
 lives in `middleware/schedule_workbook.py` (`ScheduleWorkbookBuilder`);
 `church_teams_export.py` delegates to it under a strict one-way dependency
 (`church_teams_export.py` → `schedule_workbook.py`, never the reverse).
-
-**Transition note (operator-facing).** During this transition the consolidated
-`Church_Team_Status_ALL.xlsx` produced by `export-church-teams` **still
-contains** the six scheduling tabs.  The same tabs are now also available
-standalone via `build-schedule-workbook`.  The tabs are intentionally
-duplicated for now so operators are not surprised; a later release may drop
-them from the ALL workbook once `build-schedule-workbook` is the established
-path.
 
 The solver-rendered workbook (`Schedule-by-Time` / `Schedule-by-Sport`) is a
 separate concern handled by `produce-schedule` — `build-schedule-workbook` does
