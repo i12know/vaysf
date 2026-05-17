@@ -94,8 +94,9 @@ class AllocationDecision:
     day: str
     open_time: str
     close_time: str
-    mode: str    # e.g. "Basketball Court", "Volleyball Court"
-    courts: int  # courts the gym yields under this mode
+    mode: str         # e.g. "Basketball Court", "Volleyball Court"
+    courts: int       # courts the gym yields under this mode
+    slot_minutes: int = 60  # inherited from the GymBlock
 
 
 @dataclass
@@ -234,6 +235,7 @@ def allocate(
                     close_time=block.close_time,
                     mode=mode,
                     courts=courts,
+                    slot_minutes=block.slot_minutes,
                 ))
                 mode_supply[mode] += ch
                 remaining -= ch

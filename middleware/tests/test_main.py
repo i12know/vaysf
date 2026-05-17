@@ -31,7 +31,7 @@ def _minimal_schedule_input() -> dict:
                 "team_a_id": "BBM-P1-T1",
                 "team_b_id": "BBM-P1-T2",
                 "duration_minutes": 60,
-                "resource_type": "Gym Court",
+                "resource_type": "Basketball Court",
                 "earliest_slot": None,
                 "latest_slot": None,
             },
@@ -44,7 +44,7 @@ def _minimal_schedule_input() -> dict:
                 "team_a_id": "BBM-P1-T3",
                 "team_b_id": "BBM-P1-T4",
                 "duration_minutes": 60,
-                "resource_type": "Gym Court",
+                "resource_type": "Basketball Court",
                 "earliest_slot": None,
                 "latest_slot": None,
             },
@@ -52,7 +52,7 @@ def _minimal_schedule_input() -> dict:
         "resources": [
             {
                 "resource_id": "GYM-Sat-1-1",
-                "resource_type": "Gym Court",
+                "resource_type": "Basketball Court",
                 "label": "Court-1",
                 "day": "Sat-1",
                 "open_time": "08:00",

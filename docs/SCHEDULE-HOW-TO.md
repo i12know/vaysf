@@ -30,13 +30,13 @@ One row per physical court or table resource.  Required columns:
 
 | Column | Example | Notes |
 |--------|---------|-------|
-| Sport / Resource Type | `Gym Court` | Must match a `POD_RESOURCE_TYPE_*` or `GYM_RESOURCE_TYPE` constant in `config.py` |
-| Day | `Sat-1` | `Sat-1`, `Sat-2`, or `Sun` |
-| Open Time | `08:00` | 24-hour format |
-| Close Time | `21:00` | Last slot starts before this time |
+| Resource Type | `Basketball Court` | Must match a `GYM_RESOURCE_TYPE_*` or `POD_RESOURCE_TYPE_*` constant in `config.py` |
+| Day | `Sat-1` | One of: `Sat-1`, `Sun-1`, `Sat-2`, `Sun-2` |
+| Start Time | `8` | First game start hour (decimal, 24h) |
+| Last Start Time | `20` | Last game start hour (decimal, 24h) |
 | Slot Minutes | `60` | Game duration for this resource |
-| Quantity | `4` | Number of identical courts on this day |
-| Exclusive Venue Group | `Main Gym` | Fill this in when one physical gym can be configured as BB courts **or** VB courts but not both simultaneously.  Tag every row for the same gym with the same label.  Leave blank for standalone courts. |
+| Quantity | `4` | Number of identical courts/tables on this day/time |
+| Exclusive Venue Group | `Main Gym` | Tag all rows for the same physical gym with the same label.  Leave blank for standalone courts. |
 
 ### `Gym-Modes` tab
 
@@ -83,14 +83,14 @@ these patterns:
 
 | Resource type | ID pattern | Example |
 |---------------|-----------|---------|
-| Gym Court (Basketball / Volleyball) | `GYM-{day}-{n}` | `GYM-Sat-1-1`, `GYM-Sat-2-3` |
-| Badminton Court | `BAD-{n}` | `BAD-1`, `BAD-2` |
-| Pickleball Court | `PIC-{n}` | `PIC-1` |
-| Table Tennis Table | `TAB-{n}` | `TAB-1` |
-| Tennis Court | `TEN-{n}` | `TEN-1` |
+| Basketball / Volleyball (gym) | `GYM-{day}-{n}` | `GYM-Sat-1-1`, `GYM-Sat-2-3` |
+| Badminton Court | `BAD-{day}-{n}` | `BAD-Sun-1-1`, `BAD-Sun-1-2` |
+| Pickleball Court | `PIC-{day}-{n}` | `PIC-Sun-1-1` |
+| Table Tennis Table | `TAB-{day}-{n}` | `TAB-Sun-2-1` |
+| Tennis Court | `TEN-{day}-{n}` | `TEN-Sun-1-1` |
 
-Day labels for gym courts: `Sat-1`, `Sat-2`, `Sun-1`, `Sun-2`.
-`{n}` is sequential across all rows of the same resource type in `Venue-Input`.
+Day labels: `Sat-1`, `Sun-1`, `Sat-2`, `Sun-2`.
+`{n}` resets to 1 for each `(resource_type, day)` pair — courts on different days are numbered independently.
 
 ---
 

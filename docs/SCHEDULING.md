@@ -33,10 +33,11 @@ hours already paid for? Layer 2 reads the real booked venue from
   packs each sport's games into the courts Stage A allocated, one sport at a
   time.
 
-The four-step pipeline below is the Layer-2 runtime path. Today the scheduler
-still builds gym courts from the Layer-1 estimate (`SCHEDULE_SOLVER_GYM_COURTS`)
-rather than the Layer-2 booked inventory — Issues #102 (Stage A allocator) and
-#103 (integration) close that gap.
+The four-step pipeline below is the Layer-2 runtime path.  When
+`venue_input.xlsx` is present with a `Gym-Modes` tab, `export-church-teams`
+runs the Stage-A allocator and writes real Layer-2 gym resources into
+`schedule_input.json`.  When the file is absent, the pipeline falls back to
+the `SCHEDULE_SOLVER_GYM_COURTS` estimate (Issues #102 and #103, done).
 
 ---
 
@@ -73,11 +74,11 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 ──────────────────────────────────────────────────────────────────────────────
   venue_input.xlsx
        │
-       │  Stage A: gym mode allocator  [NOT YET BUILT — Issue #102]
+       │  Stage A: gym mode allocator  (Issue #102, done — gym_allocator.py)
        │    Greedy priority allocation of gym time-ranges to sport modes.
        │    Structural exclusivity: no gym block handed to two modes.
        ▼
-  schedule_input.json  (now carrying real Layer-2 gym resources)
+  schedule_input.json  (real Layer-2 gym resources when venue_input.xlsx present)
        │
        │  solve-schedule  (Stage B: CP-SAT solver — run-schedule.bat Step 1)
        ▼
@@ -99,7 +100,7 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 | `schedule_workbook.py` | `ScheduleWorkbookBuilder` — all scheduling tabs, both workbooks, schedule output renderer | Layer 1 + bridge + Layer 2 output |
 | `scheduler.py` | CP-SAT solver (Stage B) | Layer 2 |
 | `config.py` | All configuration constants; `SCHEDULE_SKETCH_*` and `SCHEDULE_SOLVER_GYM_COURTS` are Layer-1 stand-ins | — |
-| `gym_allocator.py` | Stage A greedy mode allocator | **Not built** — Issue #102 |
+| `gym_allocator.py` | Stage A greedy mode allocator | Layer 2 (Issue #102, done) |
 
 ### Batch scripts (Windows operator shortcuts)
 
@@ -121,7 +122,7 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 |----------|-------------|-------------|-------|
 | `Church_Team_Status_ALL_*.xlsx` | `export-church-teams` | Human review, approvals | Non-scheduling |
 | `Church_Team_Status_{CODE}.xlsx` | `export-church-teams` | Pastor / church coordinator | Non-scheduling |
-| `schedule_input.json` | `export-church-teams` | `solve-schedule`, `build-schedule-workbook` | Bridge (Layer 1 data today; Layer 2 after #103) |
+| `schedule_input.json` | `export-church-teams` | `solve-schedule`, `build-schedule-workbook` | Bridge (Layer 2 gym resources when `venue_input.xlsx` present; Layer-1 fallback otherwise) |
 | `Schedule_Workbook_*.xlsx` | `build-schedule-workbook` | Coordinator planning / venue contract decision | **Layer 1** |
 | `schedule_output.json` | `solve-schedule` | `produce-schedule` | Layer 2 |
 | `VAYSF_Schedule_*.xlsx` | `produce-schedule` | Floor coordinators, sport directors | Layer 2 |
@@ -160,6 +161,12 @@ When `middleware/data/venue_input.xlsx` is present, also writes
 - **`gym_modes`** — per-gym mode capacities loaded from the **Gym-Modes**
   tab of `venue_input.xlsx` (see below).  If the tab is absent, a `WARNING`
   is logged and `gym_modes` is an empty dict — the pipeline does not crash.
+- **`gym_allocation`** — output of the Stage-A greedy allocator.  When
+  `venue_input.xlsx` contains both gym blocks (rows with `Exclusive Venue
+  Group`) and a `Gym-Modes` tab, this records which mode each gym block was
+  assigned, the demand/supply/shortfall per mode, and the mode-switch count.
+  When the allocator is not run, `{"source": "fallback", "gym_court_scenario": N}`
+  is written instead.
 
 **`Exclusive Venue Group` column** (`venue_input.xlsx` → `Venue-Input` tab):
 
@@ -205,11 +212,12 @@ To specify the exact finale order (e.g. VB Women → VB Men → Basketball back-
 simply put those games in that row order with consecutive `slot` values.  No solver
 constraints are needed — the timetable is the authority.
 
-Key constants that shape the output live in `config.py`:
+Key constants in `config.py`:
 `SCHEDULE_SKETCH_SATURDAY_START`, `SCHEDULE_SKETCH_SATURDAY_LAST_GAME`,
 `SCHEDULE_SKETCH_SUNDAY_START`, `SCHEDULE_SKETCH_SUNDAY_LAST_GAME`,
-`COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME`, `GYM_RESOURCE_TYPE`,
-`SCHEDULE_SOLVER_GYM_COURTS` (change to switch between 3/4/5-court scenarios).
+`COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME`,
+`GYM_RESOURCE_TYPE_BASKETBALL`, `GYM_RESOURCE_TYPE_VOLLEYBALL`,
+`SCHEDULE_SOLVER_GYM_COURTS` (fallback court count when venue_input.xlsx absent).
 
 ### Step 2 — `schedule_input.json` schema (hardened by Issue #96)
 
@@ -230,7 +238,7 @@ Every **game object** (pool play only) looks like:
   "team_a_id":        "BBM-P1-T1",
   "team_b_id":        "BBM-P1-T2",
   "duration_minutes": 60,
-  "resource_type":    "Gym Court",
+  "resource_type":    "Basketball Court",
   "earliest_slot":    null,
   "latest_slot":      null
 }
@@ -267,7 +275,7 @@ Every **resource object** looks like:
 ```json
 {
   "resource_id":     "GYM-Sat-1-1",
-  "resource_type":   "Gym Court",
+  "resource_type":   "Basketball Court",
   "label":           "Court-1",
   "day":             "Sat-1",
   "open_time":       "08:00",
@@ -319,9 +327,9 @@ Field notes:
   solver knows which court pool to draw from (C4 — court-type routing).
 - `earliest_slot` / `latest_slot` are present in pool game objects but
   always `null` — they are reserved for future use.
-- Gym sports (Basketball, Volleyball Men, Volleyball Women) use
-  `GYM_RESOURCE_TYPE = "Gym Court"`. Pod sports each have their own
-  `POD_RESOURCE_TYPE_*` constant.
+- Basketball games use `GYM_RESOURCE_TYPE_BASKETBALL = "Basketball Court"`;
+  Volleyball Men and Women use `GYM_RESOURCE_TYPE_VOLLEYBALL = "Volleyball Court"`.
+  Pod sports each have their own `POD_RESOURCE_TYPE_*` constant.
 
 ### Step 3 — CP-SAT solver (`solve-schedule`) — Issue #93 (done)
 
@@ -452,9 +460,11 @@ python main.py build-schedule-workbook \
   lists with a `WARNING` — the workbook still builds.
 - **`--output`** — defaults to `EXPORT_DIR/Schedule_Workbook_YYYY-MM-DD.xlsx`.
 
-The workbook has six tabs: `Venue-Estimator`, `Pod-Divisions`,
-`Pod-Entries-Review`, `Court-Schedule-Sketch`, `Pod-Resource-Estimate`, and
-`Schedule-Input` (an echo of the JSON).  None of them consume solver output —
+The workbook has seven tabs: `Venue-Estimator`, `Pod-Divisions`,
+`Pod-Entries-Review`, `Court-Schedule-Sketch`, `Pod-Resource-Estimate`,
+`Schedule-Input` (an echo of the JSON), and `Gym-Allocation` (a summary of the
+Stage-A allocator output, or a note when the allocator was not run).
+None of them consume solver output —
 they are pure planning artifacts built from the roster data and
 `schedule_input.json`.  When no `venue_input.xlsx` is supplied, the
 `Pod-Resource-Estimate` tab derives court availability directly from the

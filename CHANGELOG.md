@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### New Features
+- Wired the Layer-2 Stage-A gym mode allocator into the live scheduling pipeline — closes [#103](https://github.com/i12know/vaysf/issues/103)
+  - `_build_schedule_input()` now runs the greedy allocator (Stage A) when `venue_input.xlsx` is present with a `Gym-Modes` tab and gym blocks with `Exclusive Venue Group` set; falls back to the `SCHEDULE_SOLVER_GYM_COURTS` constant when not
+  - New `_build_gym_resources_from_allocator(decisions)`: converts `AllocationDecision` objects into `schedule_input.json` resources with day-aware IDs (`GYM-{day}-{n}`), `exclusive_group` set to the gym name, and the allocator-assigned `resource_type`
+  - `_load_venue_input_rows()` now reads the `Day` column (if present) and uses day-aware resource IDs: `BAD-Sat-1-1`, `PIC-Sun-1-1`, etc.  Falls back to `"Day-1"` when the column is absent.  Counter is keyed by `(resource_type, day)` so courts on different days are numbered independently
+  - `GYM_RESOURCE_TYPE` (`"Gym Court"`) split into `GYM_RESOURCE_TYPE_BASKETBALL = "Basketball Court"` and `GYM_RESOURCE_TYPE_VOLLEYBALL = "Volleyball Court"` in `config.py`; `_build_gym_game_objects()` assigns these specific types per sport
+  - `_build_gym_resource_objects()` signature changed from `(n_courts)` to `(n_basketball, n_volleyball)` for the fallback path; basketball courts numbered first within each session
+  - `AllocationDecision` dataclass gains `slot_minutes: int = 60` field (populated from the source `GymBlock`)
+  - New `Gym-Allocation` tab added as 7th tab in `Schedule_Workbook_*.xlsx`; shows allocation decisions, mode demand vs supply, and shortfall table (or a fallback note when the allocator did not run)
+  - `gym_allocation` key added to `schedule_input.json`; carries full allocator output or `{"source": "fallback", ...}` when the constant-based fallback was used
+  - `generate_venue_template()` regenerated: new `Day` and `Exclusive Venue Group` columns in `Venue-Input`; new `Gym-Modes` and `Playoff-Slots` sheets with example rows; `SportsFest_2026_Venue_Input_Template.xlsx` updated accordingly
+  - `docs/SCHEDULING.md`, `docs/SCHEDULE-HOW-TO.md`, and `CHANGELOG.md` updated
+
 - Added greedy gym mode allocator (`middleware/gym_allocator.py`) — closes [#102](https://github.com/i12know/vaysf/issues/102)
   - New module implementing Layer-2, Stage A of the scheduling pipeline
   - `allocate(demand, gym_modes, blocks)` — greedy priority allocator: ranks sport modes by court-hours demand (most-needed first), claims gym time-ranges until demand is met, prefers the gym with most courts for each mode, and breaks ties by switch penalty (avoids mode flips)
