@@ -90,7 +90,7 @@ these patterns:
 | Tennis Court | `TEN-{day}-{n}` | `TEN-Sun-1-1` |
 
 Day labels: `Sat-1`, `Sun-1`, `Sat-2`, `Sun-2`.
-`{n}` resets to 1 for each `(resource_type, day)` pair — courts on different days are numbered independently.
+`{n}` resets to 1 for each `day` — basketball and volleyball share the same day-local counter, and courts on different days are numbered independently.
 
 ---
 

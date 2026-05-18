@@ -193,6 +193,19 @@ def test_main_build_schedule_workbook_missing_input_fails(monkeypatch, tmp_path)
     _run_main_expect_exit(1)
 
 
+def test_generate_venue_template_example_dates_match_day_labels(tmp_path):
+    out_path = tmp_path / "venue_template.xlsx"
+
+    assert main.generate_venue_template(out_path) is True
+
+    wb = load_workbook(out_path)
+    ws = wb["Venue-Input"]
+    assert ws["E2"].value == "Sat-1"
+    assert ws["F2"].value == "2026-07-18"
+    assert ws["E4"].value == "Sun-1"
+    assert ws["F4"].value == "2026-07-19"
+
+
 def test_main_solve_schedule_uses_default_paths(mocker, monkeypatch, tmp_path):
     monkeypatch.setattr(main, "DATA_DIR", tmp_path)
     mock_run = mocker.patch("scheduler.run_solve_schedule", return_value=7)

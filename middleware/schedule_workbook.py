@@ -586,7 +586,9 @@ class ScheduleWorkbookBuilder:
     # ── Schedule-Input JSON builders ─────────────────────────────────────────
 
     def _build_gym_game_objects(
-        self, roster_rows: List[Dict[str, Any]]
+        self,
+        roster_rows: List[Dict[str, Any]],
+        allow_placeholder_fallback: bool = True,
     ) -> List[Dict[str, Any]]:
         """Return pool-play game placeholder dicts for gym sports (Basketball, VB Men, VB Women).
 
@@ -596,6 +598,11 @@ class ScheduleWorkbookBuilder:
 
         Playoff games (QF/Semi/Final/3rd) are pre-assigned via the Playoff-Slots
         tab in venue_input.xlsx and are not included here.
+
+        When allow_placeholder_fallback is True, sports with fewer than two
+        estimating teams fall back to the legacy 8-team planning scaffold so
+        offline sketching still works without venue data. When False, those
+        sports are omitted from the solver input entirely.
         """
         sport_defs = [
             (SPORT_TYPE["BASKETBALL"],       "BBM", GYM_RESOURCE_TYPE_BASKETBALL),
@@ -608,7 +615,12 @@ class ScheduleWorkbookBuilder:
         for event_name, prefix, resource_type in sport_defs:
             min_sz = self._get_min_team_size(event_name)
             counts = self._count_estimating_teams(roster_rows, event_name, min_sz)
-            n_teams = counts["n_estimating"] if counts["n_estimating"] >= 2 else 8
+            if counts["n_estimating"] >= 2:
+                n_teams = counts["n_estimating"]
+            elif allow_placeholder_fallback:
+                n_teams = 8
+            else:
+                continue
             gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(
                 event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
             )
@@ -968,26 +980,47 @@ class ScheduleWorkbookBuilder:
         When venue_input.xlsx is present with a Gym-Modes tab, the Layer-2
         Stage-A greedy allocator runs and produces real gym resources keyed to
         the booked venue.  Otherwise falls back to the SCHEDULE_SOLVER_GYM_COURTS
-        constant split evenly between basketball and volleyball.
+        constant split evenly between basketball and volleyball when no explicit
+        venue rows exist. If venue rows exist but the allocator cannot run, the
+        explicit Venue-Input rows are used directly.
         """
         from gym_allocator import (
             aggregate_demand_by_mode, extract_gym_blocks, allocate,
         )
-        gym_games = self._build_gym_game_objects(roster_rows)
-        pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
-        all_games = gym_games + pod_games
-
         gym_modes = self._load_gym_modes(venue_input_path)
         venue_rows = self._load_venue_input_rows(venue_input_path)
         gym_blocks = extract_gym_blocks(venue_rows)
-        pod_resources = [r for r in venue_rows if not r.get("exclusive_group")]
+        explicit_gym_resource_types = {
+            GYM_RESOURCE_TYPE_BASKETBALL,
+            GYM_RESOURCE_TYPE_VOLLEYBALL,
+        }
+        has_explicit_gym_rows = any(
+            resource.get("resource_type") in explicit_gym_resource_types
+            for resource in venue_rows
+        )
+        gym_resource_strategy = (
+            "allocator"
+            if gym_blocks and gym_modes
+            else "direct_venue_input"
+            if has_explicit_gym_rows
+            else "fallback"
+        )
+
+        gym_games = self._build_gym_game_objects(
+            roster_rows,
+            allow_placeholder_fallback=(gym_resource_strategy == "fallback"),
+        )
+        pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
+        all_games = gym_games + pod_games
 
         gym_allocation: Optional[Dict[str, Any]] = None
-        if gym_blocks and gym_modes:
+        if gym_resource_strategy == "allocator":
             venue_capacity_rows = self._build_venue_capacity_rows(roster_rows)
             demand = aggregate_demand_by_mode(venue_capacity_rows)
             alloc_result = allocate(demand, gym_modes, gym_blocks)
             gym_resources = self._build_gym_resources_from_allocator(alloc_result.decisions)
+            direct_resources = [r for r in venue_rows if not r.get("exclusive_group")]
+            all_resources = gym_resources + direct_resources
             gym_allocation = {
                 "source":        "allocator",
                 "decisions":     [
@@ -1011,17 +1044,35 @@ class ScheduleWorkbookBuilder:
                 f"Gym allocation (Stage A): {len(alloc_result.decisions)} blocks assigned, "
                 f"{alloc_result.switch_count} mode switches"
             )
+        elif gym_resource_strategy == "direct_venue_input":
+            all_resources = venue_rows
+            if gym_blocks and not gym_modes:
+                reason = "grouped_rows_without_gym_modes"
+                logger.warning(
+                    "Gym allocation skipped: Venue-Input contains Exclusive Venue Group rows "
+                    "but no Gym-Modes tab. Using Venue-Input rows directly; mutual exclusivity "
+                    "is not enforced in this mode."
+                )
+            elif gym_modes and not gym_blocks:
+                reason = "gym_modes_without_grouped_rows"
+                logger.info(
+                    "Gym allocation skipped: Gym-Modes tab is present but no Exclusive Venue "
+                    "Group rows were found. Using Venue-Input rows directly."
+                )
+            else:
+                reason = "explicit_venue_rows_without_allocator"
+            gym_allocation = {"source": "direct_venue_input", "reason": reason}
         else:
             n_bb = SCHEDULE_SOLVER_GYM_COURTS // 2
             n_vb = SCHEDULE_SOLVER_GYM_COURTS - n_bb
             gym_resources = self._build_gym_resource_objects(n_bb, n_vb)
+            all_resources = gym_resources + venue_rows
             gym_allocation = {"source": "fallback", "gym_court_scenario": SCHEDULE_SOLVER_GYM_COURTS}
             logger.info(
                 f"Gym allocation: fallback mode — {n_bb} basketball + {n_vb} volleyball courts "
                 f"per session (SCHEDULE_SOLVER_GYM_COURTS={SCHEDULE_SOLVER_GYM_COURTS})"
             )
 
-        all_resources = gym_resources + pod_resources
         playoff_slots = self._load_playoff_slots(venue_input_path)
 
         return {
@@ -1143,16 +1194,33 @@ class ScheduleWorkbookBuilder:
                 ws.cell(row=cur_row[0], column=c_idx, value=data.get(col))
             cur_row[0] += 1
 
-        if not gym_allocation or gym_allocation.get("source") == "fallback":
-            ws.cell(
-                row=1, column=1,
-                value=(
+        source = gym_allocation.get("source") if gym_allocation else None
+        if not gym_allocation or source in ("fallback", "direct_venue_input"):
+            if not gym_allocation:
+                message = "Gym allocation data not available."
+            elif source == "fallback":
+                message = (
                     "Gym allocation not run — no Gym-Modes tab or no venue blocks with "
                     "Exclusive Venue Group found in venue_input.xlsx.  "
                     f"Fallback: {gym_allocation.get('gym_court_scenario', '?')} courts per session "
                     "(SCHEDULE_SOLVER_GYM_COURTS)."
-                    if gym_allocation else "Gym allocation data not available."
-                ),
+                )
+            elif gym_allocation.get("reason") == "grouped_rows_without_gym_modes":
+                message = (
+                    "Gym allocation not run — Venue-Input contains Exclusive Venue Group rows "
+                    "but no Gym-Modes tab. Using Venue-Input rows directly, so mutual exclusivity "
+                    "is not enforced."
+                )
+            elif gym_allocation.get("reason") == "gym_modes_without_grouped_rows":
+                message = (
+                    "Gym allocation not run — Gym-Modes tab is present but no Exclusive Venue "
+                    "Group rows were found. Using Venue-Input rows directly."
+                )
+            else:
+                message = "Gym allocation not run — using Venue-Input rows directly."
+            ws.cell(
+                row=1, column=1,
+                value=message,
             )
             ws.column_dimensions["A"].width = 80
             return

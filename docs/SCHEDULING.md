@@ -150,7 +150,9 @@ When `middleware/data/venue_input.xlsx` is present, also writes
 
 - **`games`** — one object per pool-play match placeholder for gym sports
   (Basketball, VB Men, VB Women); pod sports (single-elimination) are also
-  included here for solver assignment.
+  included here for solver assignment. When explicit venue rows exist, gym
+  sports with fewer than two estimating teams are omitted instead of using the
+  legacy 8-team planning scaffold.
 - **`resources`** — one object per physical court or table, expanded from
   `venue_input.xlsx` quantities, each annotated with day, time window, and
   `exclusive_group` (see below).
@@ -165,8 +167,10 @@ When `middleware/data/venue_input.xlsx` is present, also writes
   `venue_input.xlsx` contains both gym blocks (rows with `Exclusive Venue
   Group`) and a `Gym-Modes` tab, this records which mode each gym block was
   assigned, the demand/supply/shortfall per mode, and the mode-switch count.
-  When the allocator is not run, `{"source": "fallback", "gym_court_scenario": N}`
-  is written instead.
+  When the allocator is not run and no venue rows exist, `{"source": "fallback",
+  "gym_court_scenario": N}` is written instead. When venue rows do exist but
+  allocator inputs are incomplete, the Venue-Input rows are used directly and
+  `gym_allocation.source` is `direct_venue_input`.
 
 **`Exclusive Venue Group` column** (`venue_input.xlsx` → `Venue-Input` tab):
 
@@ -249,6 +253,9 @@ Every **game object** (pool play only) looks like:
   The same placeholder ID is reused across every game that team plays, so
   the solver can enforce team-overlap (C3) and min-rest (C6) constraints
   even before final church assignments are known.
+- The legacy 8-team placeholder scaffold is used only when schedule input is
+  being built without explicit venue rows. With a real `venue_input.xlsx`,
+  gym sports need at least two estimating teams to appear in `games`.
 - Team sports currently use a deterministic normalized pool format for
   planning: `2` teams -> direct match, `3` -> 3-team round robin,
   `4` -> fixed 4-match matrix, `5` -> fixed 5-match cycle, `6+` -> a

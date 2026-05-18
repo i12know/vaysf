@@ -650,10 +650,10 @@ def generate_venue_template(output_path: Optional[Path] = None) -> bool:
 
     # Example rows: (pod, venue, resource_type, qty, day, date, start_hr, last_hr, slot_min, excl_group, contact, cost, notes)
     examples = [
-        ("Main Gym",             "Church Main Gym",  GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sat-1", "2026-07-19", 8,  20, 60, "Main Gym", "TBD", "TBD", "BB or VB — set Gym-Modes"),
-        ("Main Gym",             "Church Main Gym",  GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1", "2026-07-19", 8,  20, 60, "Main Gym", "TBD", "TBD", "BB or VB — set Gym-Modes"),
-        ("North OC Tennis Pod",  "City Park",        POD_RESOURCE_TYPE_TENNIS,     4, "Sun-1", "2026-07-20", 13, 18, 60, "",         "TBD", "TBD", "Staff verified usable"),
-        ("Pickleball Pod A",     "Community Center", POD_RESOURCE_TYPE_PICKLEBALL, 6, "Sun-1", "2026-07-20", 13, 18, 45, "",         "TBD", "TBD", "Includes 35+"),
+        ("Main Gym",             "Church Main Gym",  GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sat-1", "2026-07-18", 8,  20, 60, "Main Gym", "TBD", "TBD", "BB or VB — set Gym-Modes"),
+        ("Main Gym",             "Church Main Gym",  GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1", "2026-07-18", 8,  20, 60, "Main Gym", "TBD", "TBD", "BB or VB — set Gym-Modes"),
+        ("North OC Tennis Pod",  "City Park",        POD_RESOURCE_TYPE_TENNIS,     4, "Sun-1", "2026-07-19", 13, 18, 60, "",         "TBD", "TBD", "Staff verified usable"),
+        ("Pickleball Pod A",     "Community Center", POD_RESOURCE_TYPE_PICKLEBALL, 6, "Sun-1", "2026-07-19", 13, 18, 45, "",         "TBD", "TBD", "Includes 35+"),
         ("Indoor Table Pod",     "Church Hall",      POD_RESOURCE_TYPE_TABLE_TENNIS, 6, "Sun-2", "2026-07-26", 18, 21, 30, "",       "TBD", "TBD", "Includes 35+"),
         ("Badminton Pod",        "School Gym",       POD_RESOURCE_TYPE_BADMINTON,  4, "Sun-2", "2026-07-26", 18, 21, 45, "",         "TBD", "TBD", "Staff verified usable"),
     ]

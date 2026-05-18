@@ -310,13 +310,15 @@ def test_allocate_empty_blocks_returns_full_shortfall():
 # allocate — priority ordering
 # ---------------------------------------------------------------------------
 
-def test_allocate_priority_high_demand_mode_gets_first_pick():
-    """The mode with the highest demand claims the best gym block first."""
+def test_allocate_priority_uses_supply_pressure_not_raw_demand():
+    """A tighter-supply mode can claim the earlier block even with lower raw demand."""
     # Main Gym: 2 Volleyball courts vs 1 Basketball court.
     # Morning block (4 h): Volleyball → 2×4=8 ch, Basketball → 1×4=4 ch.
     # Afternoon block (4 h): same capacities.
-    # Volleyball demand (6 ch) < 8 ch → one morning block is enough.
-    # Basketball demand (4 ch) = 4 ch → gets the afternoon block.
+    # Volleyball demand (6 ch) has ample total supply (16 ch).
+    # Basketball demand (4 ch) exactly matches one block of supply (8 ch total),
+    # so the scarcity-aware allocator takes Basketball first and leaves Volleyball
+    # the later block.
     demand = {"Volleyball Court": 6.0, "Basketball Court": 4.0}
     gym_modes = {"Main Gym": {"Basketball Court": 1, "Volleyball Court": 2}}
     blocks = [
@@ -330,10 +332,8 @@ def test_allocate_priority_high_demand_mode_gets_first_pick():
     bb_decisions = [d for d in result.decisions if d.mode == "Basketball Court"]
     assert len(vb_decisions) >= 1
     assert len(bb_decisions) >= 1
-    # Volleyball (higher demand, first priority) claims the morning block.
-    assert vb_decisions[0].open_time == "08:00"
-    # Basketball gets the afternoon block (morning is taken).
-    assert bb_decisions[0].open_time == "12:00"
+    assert bb_decisions[0].open_time == "08:00"
+    assert vb_decisions[0].open_time == "12:00"
 
 
 def test_allocate_priority_order_by_demand_descending():
@@ -361,6 +361,24 @@ def test_allocate_priority_order_by_demand_descending():
     # Volleyball and Badminton have full shortfall.
     assert result.mode_shortfall["Volleyball Court"] == pytest.approx(5.0)
     assert result.mode_shortfall["Badminton Court"] == pytest.approx(2.0)
+
+
+def test_allocate_prioritizes_scarcer_mode_and_preserves_flexible_gym():
+    """A single-gym mode should claim the flexible gym before a multi-gym mode does."""
+    demand = {"Basketball Court": 4.0, "Volleyball Court": 4.0}
+    gym_modes = {
+        "Gym A": {"Basketball Court": 2, "Volleyball Court": 1},
+        "Gym B": {"Basketball Court": 1},
+    }
+    blocks = [_block("Gym A"), _block("Gym B")]
+
+    result = allocate(demand, gym_modes, blocks)
+
+    assert result.mode_shortfall["Basketball Court"] == pytest.approx(0.0)
+    assert result.mode_shortfall["Volleyball Court"] == pytest.approx(0.0)
+    assigned = {(d.gym_name, d.mode) for d in result.decisions}
+    assert ("Gym A", "Volleyball Court") in assigned
+    assert ("Gym B", "Basketball Court") in assigned
 
 
 # ---------------------------------------------------------------------------

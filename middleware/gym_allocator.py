@@ -7,15 +7,14 @@ both).  This module decides which mode each gym block gets, structurally
 enforcing the exclusivity that the CP-SAT solver (Stage B) cannot handle
 across independent per-sport models.
 
-Algorithm — greedy priority
----------------------------
-1. Rank sport modes by demand (court-hours needed), most-needed first.
+Algorithm — scarcity-aware greedy priority
+-----------------------------------------
+1. Rank sport modes by scarcity first:
+   fewer eligible gyms / blocks first, then higher demand pressure.
 2. For each mode in priority order:
    a. Find eligible gyms (non-zero capacity for this mode).
-   b. Sort gyms by courts-per-block DESC; break ties by switch penalty
-      (prefer gyms whose last allocated block already carries this mode, or
-      fresh gyms with no allocation yet, over gyms that would require a
-      mode flip).
+   b. Sort gyms by specialization first (preserve flexible gyms for modes
+      that need them), then switch penalty, then courts-per-block DESC.
    c. Within each gym, claim contiguous unallocated blocks (earliest first)
       until demand is satisfied.
 3. After all allocations, count total mode switches (consecutive blocks in the
@@ -185,8 +184,29 @@ def allocate(
     Returns an AllocationResult.  Never raises on demand/capacity mismatch —
     the shortfall field captures the gap instead.
     """
-    # Sort modes by demand descending; alphabetical tie-break for stability.
-    sorted_modes = sorted(demand, key=lambda m: (-demand[m], m))
+    def _mode_priority(mode: str) -> tuple[float, float, float, float, str]:
+        eligible_blocks = [
+            block for block in blocks
+            if gym_modes.get(block.gym_name, {}).get(mode, 0) > 0
+        ]
+        eligible_gyms = {
+            block.gym_name for block in eligible_blocks
+        }
+        total_supply = sum(
+            _court_hours(block, gym_modes[block.gym_name][mode])
+            for block in eligible_blocks
+        )
+        pressure = float("inf") if total_supply <= 0 else demand[mode] / total_supply
+        return (
+            len(eligible_gyms),
+            len(eligible_blocks),
+            -pressure,
+            -demand[mode],
+            mode,
+        )
+
+    # Scarcer modes go first so flexible gyms remain available for them.
+    sorted_modes = sorted(demand, key=_mode_priority)
 
     available: set = set(blocks)
     decisions: List[AllocationDecision] = []
@@ -198,17 +218,19 @@ def allocate(
             continue
 
         # Eligible gyms for this mode sorted by:
-        #   1. courts DESC  (cover demand in fewest blocks)
-        #   2. switch_penalty ASC  (prefer gyms that won't flip mode)
-        #   3. gym name  (stable tie-break)
+        #   1. specialization ASC (use single-purpose gyms before flexible ones)
+        #   2. switch_penalty ASC (prefer gyms that won't flip mode)
+        #   3. courts DESC (cover remaining demand in fewer blocks)
+        #   4. gym name (stable tie-break)
         eligible = [
             (g, gym_modes[g].get(mode, 0))
             for g in gym_modes
             if gym_modes[g].get(mode, 0) > 0
         ]
         eligible.sort(key=lambda x: (
-            -x[1],
+            _active_mode_count(x[0], gym_modes),
             _switch_penalty(x[0], mode, decisions),
+            -x[1],
             x[0],
         ))
 
@@ -281,6 +303,11 @@ def _switch_penalty(gym_name: str, mode: str, decisions: List[AllocationDecision
     """Return 1 if assigning mode to this gym would create a switch, else 0."""
     last = _last_mode_in_gym(gym_name, decisions)
     return 0 if (last is None or last == mode) else 1
+
+
+def _active_mode_count(gym_name: str, gym_modes: Dict[str, Dict[str, int]]) -> int:
+    """Count how many sport modes this gym can host with non-zero capacity."""
+    return sum(1 for courts in gym_modes.get(gym_name, {}).values() if courts > 0)
 
 
 def _count_switches(decisions: List[AllocationDecision]) -> int:
