@@ -43,7 +43,7 @@ DEFAULT_SPORTS_FEST_DATE = "2026-07-18"
 ATHLETE_FEE_STANDARD = 30          # athlete with a primary or secondary sport (early registration)
 ATHLETE_FEE_OTHER_EVENTS_ONLY = 20  # athlete registered only under Other Events (no deadline increase)
 ATHLETE_FEE_LATE = 60              # athlete with primary or secondary sport (after deadline)
-REGISTRATION_DEADLINE = "2026-05-16"  # ISO date; on/after this date, late fee applies
+REGISTRATION_DEADLINE = "2026-05-16"  # ISO date; last day for early-bird rate (inclusive); late fee starts the following day
 
 # Ensure directories exist with error handling
 for directory in [LOG_DIR, DATA_DIR, TEMP_DIR, EXPORT_DIR]:

@@ -743,6 +743,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         deadline_date = datetime.strptime(REGISTRATION_DEADLINE, "%Y-%m-%d").date()
         today = datetime.now().date()
+        # Use > (not >=) so the deadline date itself is the last early-bird day;
+        # late fee applies starting the day after (e.g. deadline 2026-05-16 → late from 2026-05-17).
         if today > deadline_date:
             fee_tier = f"LATE (${ATHLETE_FEE_LATE}, past deadline {REGISTRATION_DEADLINE})"
         else:
@@ -892,6 +894,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                             if not _primary and not _secondary and _other:
                                 athlete_fee = ATHLETE_FEE_OTHER_EVENTS_ONLY
+                            # Use > (not >=) so the deadline date itself is the last early-bird day;
+                            # late fee applies starting the day after (e.g. deadline 2026-05-16 → late from 2026-05-17).
                             elif created_date > deadline_date:
                                 athlete_fee = ATHLETE_FEE_LATE
                             else:
