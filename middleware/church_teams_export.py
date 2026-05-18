@@ -743,7 +743,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
         deadline_date = datetime.strptime(REGISTRATION_DEADLINE, "%Y-%m-%d").date()
         today = datetime.now().date()
-        if today >= deadline_date:
+        if today > deadline_date:
             fee_tier = f"LATE (${ATHLETE_FEE_LATE}, past deadline {REGISTRATION_DEADLINE})"
         else:
             fee_tier = f"STANDARD (${ATHLETE_FEE_STANDARD} early-bird, deadline {REGISTRATION_DEADLINE})"
@@ -892,7 +892,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                             if not _primary and not _secondary and _other:
                                 athlete_fee = ATHLETE_FEE_OTHER_EVENTS_ONLY
-                            elif created_date >= deadline_date:
+                            elif created_date > deadline_date:
                                 athlete_fee = ATHLETE_FEE_LATE
                             else:
                                 athlete_fee = ATHLETE_FEE_STANDARD
