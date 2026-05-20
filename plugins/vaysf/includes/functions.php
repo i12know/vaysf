@@ -758,13 +758,10 @@ function vaysf_resend_approval_email($approval) {
         $notification_message .= '<p>Thank you for registering for Sports Fest!</p>';
         
         // Send to participant with CC to church rep
-        $notification_headers = array(
-            'Content-Type: text/html; charset=UTF-8',
-            'From: Sports Fest <' . $from_email . '>',
-            'Cc: ' . $church_rep_email
-        );
-        
-        wp_mail($participant['email'], $notification_subject, $notification_message, $notification_headers);
+        vaysf_send_email($participant['email'], $notification_subject, $notification_message, array(
+            'from' => $from_email,
+            'cc'   => $church_rep_email,
+        ));
     }
     
     return $pastor_result;
