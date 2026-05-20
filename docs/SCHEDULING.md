@@ -140,6 +140,56 @@ export-church-teams  →  schedule_input.json  →  solve-schedule       →  pr
                                                 (Issue #93, done)       (Issue #94, done)
 ```
 
+## Implementation roadmap
+
+The scheduling expansion is being delivered in three major phases so the team
+can keep the big-picture plan visible while iterating on this season:
+
+### Phase 1 - Core team-sport conflict engine
+
+Scope:
+- Basketball - Men Team
+- Volleyball - Men Team
+- Volleyball - Women Team
+- Bible Challenge - Mixed Team
+- Soccer - Coed Exhibition (optional / config-driven)
+
+Status as of May 20, 2026:
+- Partially complete
+- Implemented:
+  - editable `Pool-Assignment` workflow for BB / VBM / VBW
+  - persisted seeded pool draw via `pool_assignments.json`
+  - Layer 2 shared-athlete conflict edges for BB / VBM / VBW
+  - conflict-aware Gym Core solve with primary-vs-secondary weighting
+  - `Conflict-Audit` output in `VAYSF_Schedule_*.xlsx`
+- Next slice:
+  - extend the same conflict-aware workflow to Bible Challenge
+  - add Soccer in an optional way so the design stays flexible if Soccer does
+    not return next season
+
+### Phase 2 - Racquet conflict engine
+
+Scope:
+- Badminton
+- Pickleball
+- Pickleball 35+
+- Table Tennis
+- Table Tennis 35+
+- Tennis
+
+Goal:
+- model doubles first, then singles, while preserving the same primary-sport
+  protection rules and cross-sport conflict reduction priorities
+
+### Phase 3 - Audit, overrides, and operator polish
+
+Scope:
+- richer conflict audit / explanation output
+- operator override loops
+- workbook readability and reporting polish
+- final review of scheduling heuristics that are helpful but not required for
+  correctness, such as conflict-aware tie-breaking inside `assign-pools`
+
 ### Step 1 — Build scheduling inputs (`export-church-teams`)
 
 ```bash
@@ -271,19 +321,20 @@ Every **game object** (pool play only) looks like:
   `2` pool games.
 - `null` is never emitted; every game has non-null `team_a_id` and `team_b_id`.
 
-**Proposed future team seeding / pool-assignment policy (not implemented yet):**
+**Current team seeding / pool-assignment policy:**
 - Each real team may carry an integer `seed`.
 - `seed = 0`, blank, or missing means **unseeded** and should participate in a
   random draw.
 - `seed > 0` means **ranked**; lower numbers are placed earlier in the draw.
-- Pool assignment should be done in two layers:
-  1. **Fairness first** â€” sort all non-zero seeds ascending, randomly shuffle
-     the unseeded teams once, append the shuffled unseeded teams after the
-     ranked teams, then assign that ordered list into the normalized pool
-     structure using a snake / serpentine draw.
-  2. **Conflict reduction second** â€” once a protected sport's pool assignment
-     is frozen, later sports may use equal-seed / unseeded placement freedom to
-     reduce cross-sport conflict risk, but must not violate the seed order.
+- The current `assign-pools` workflow applies the fairness layer now:
+  1. sort all non-zero seeds ascending
+  2. randomly shuffle the unseeded teams once
+  3. append the shuffled unseeded teams after the ranked teams
+  4. assign that ordered list into the normalized pool structure using a snake
+     / serpentine draw
+- Future enhancement:
+  - add conflict-aware tie-breaking within equal-seed or unseeded buckets,
+    while still preserving the seed order and the fair serpentine structure
 
 **Example: 13 teams, 4 pools, only seeds 1 / 2 / 3**
 - Pool sizes follow the normalized planning structure: `3, 3, 3, 4`.
@@ -300,7 +351,9 @@ Every **game object** (pool play only) looks like:
   - `P3`: `3, R3, R8`
   - `P4`: `R1, R2, R9, R10`
 
-**Proposed future primary-sport conflict priority (not implemented yet):**
+**Current primary-sport conflict priority:**
+- In Layer 2 today, BB / VBM / VBW shared-athlete edges already use this policy
+  in the conflict-aware Gym Core solver.
 - Cross-sport conflict handling should start **as soon as one sport's pool
   assignment is frozen**, not only at final timetable rendering.
 - Each athlete's **primary sport** should be treated as the protected
@@ -315,6 +368,10 @@ Every **game object** (pool play only) looks like:
   - allow conflict pressure to fall on the athlete's non-primary sport
 - This means pool assignment fairness remains the first-order rule, while
   cross-sport conflict reduction becomes a bounded second-order optimization.
+- Future enhancement:
+  - use the same primary-sport policy earlier during pool assignment for later
+    sports such as Bible Challenge and optional Soccer, not only during the
+    final timetable solve
 
 **4-team pool tiebreaker caveat:**
 The fixed 4-team format plays 4 games, not a full round robin (which would be
