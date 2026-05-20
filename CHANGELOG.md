@@ -3,6 +3,36 @@
 ## Unreleased
 
 ### New Features
+- Improved final `Schedule-by-Time` readability for mixed-venue gym schedules
+  - `venue_input.xlsx` rows now derive logical day labels from the `Date` column when `Day` is absent, so direct venue rows no longer collapse across multiple actual dates into one fake `Day-1`
+  - Direct venue resources now carry `venue_name` through to `schedule_input.json`
+  - `produce-schedule` now renders one continuous day section per Gym Core sport and uses venue-qualified court headers such as `Orange Gym Court-1` and `HS Big Gym Court-3` for more consistent operator-facing output
+
+- Added an editable `Pool-Assignment` tab and `assign-pools` command for Layer-1 team seeding
+  - `build-schedule-workbook` now writes a `Pool-Assignment` tab for BB / VBM / VBW with one row per eligible team grouping, editable `Seed` cells, computed draw position, and computed pool placement
+  - New `python main.py assign-pools --workbook ...` command re-reads the edited workbook, recomputes the serpentine draw, writes the refreshed tab back, and persists the editable state in `pool_assignments.json`
+  - Rebuilt workbooks now reload the prior seed state from `pool_assignments.json`, so operator edits survive future `build-schedule-workbook` runs
+
+- Wired Pool-Assignment seeding into Layer 2 and added shared-athlete conflict audit output
+  - `export-church-teams` now reads `pool_assignments.json` beside the export artifacts and writes seeded core gym teams into `schedule_input.json` for Basketball / VB Men / VB Women instead of leaving Layer-2 on raw placeholder slots
+  - `schedule_input.json` now carries `team_conflicts` edges so the solver can see shared-athlete overlap between those seeded core gym teams
+  - `scheduler.py` now solves the core gym sports as one conflict-aware `Gym Core` pool while still routing Basketball only to basketball courts and Volleyball only to volleyball courts
+  - The solver objective now minimizes same-slot shared-athlete conflicts before finish time / volleyball net-switch tie-breaks, with heavier penalty when the overlap touches an athlete's declared primary sport
+  - `schedule_output.json` now includes `conflict_audit_summary` and `conflict_audit`
+  - `produce-schedule` now renders a third `Conflict-Audit` tab in `VAYSF_Schedule_*.xlsx`
+
+- Added participant self-healing when primary sport is blank but secondary sport is populated
+  - Participant sync now promotes the secondary sport into the primary slot before roster sync and validation when the form data is internally inconsistent
+  - The original secondary slot is cleared after promotion so the athlete is not double-counted across primary/secondary paths
+  - A warning-level `primary_sport_self_healed` validation issue is synced to WordPress so staff can still audit the correction
+
+- Added a `Summary` tab to `Schedule_Workbook_*.xlsx`
+  - `build-schedule-workbook` now writes an operator-facing first tab that explains the Layer 1 / Layer 2 workflow, the main commands to rerun while iterating, and where to find the full scheduling HOW-TO docs
+
+- Improved Layer-2 volleyball scheduling to reduce same-court net-height changes
+  - `scheduler.py` now keeps the existing earliest-finish objective as primary, but adds a secondary tie-breaker for `Volleyball Court` pools that minimizes adjacent same-court `Volleyball - Men Team` ↔ `Volleyball - Women Team` switches when multiple equally-early solutions exist
+  - Added solver coverage proving the tie-breaker prefers same-court volleyball blocks without weakening feasibility or the pack-early behavior
+
 - Added a consent-404 investigation workflow for stale ChMeetings IDs found during `check-consent`
   - New `python main.py investigate-consent-404s [--log-file ...] [--output ...]` command reads consent-run log warnings, loads current WordPress and ChMeetings data, and classifies each stale ID as likely re-registered, likely deleted, or manual-review-needed
   - New `middleware/run-consent-404-investigation.bat` helper for one-click reruns on the middleware machine

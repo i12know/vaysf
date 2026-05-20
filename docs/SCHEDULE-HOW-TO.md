@@ -131,9 +131,14 @@ Before solving you can iterate on venue layout without hitting the live APIs:
 python main.py build-schedule-workbook
 ```
 
-This produces a 6-tab planning Excel (`Venue-Estimator`, `Pod-Divisions`,
-`Court-Schedule-Sketch`, etc.) so coordinators can verify court counts and time
-estimates.
+This produces an 8-tab planning Excel (`Summary`, `Venue-Estimator`,
+`Pod-Divisions`, `Court-Schedule-Sketch`, etc.) so coordinators can verify
+court counts and time estimates.
+
+Open the new `Summary` tab first. It explains:
+- what this workbook is for in Layer 1
+- which commands to rerun while iterating on `venue_input.xlsx`
+- when to switch over to `run-schedule.bat` for the final Layer 2 timetable
 
 ---
 

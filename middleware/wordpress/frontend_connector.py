@@ -9,7 +9,34 @@ from config import (Config, SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, ME
                    is_racquet_sport)
 import datetime  # Add this if not already imported
 from typing import Dict, List, Optional, Any
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import (
+    retry, stop_after_attempt, wait_exponential, retry_if_exception, retry_if_exception_type,
+)
+
+# Retry policy shared by transient-safe read methods.
+_WP_TRANSIENT_HTTP_STATUS_CODES = {408, 425, 429, 502, 503, 504}
+
+
+def _is_retryable_wp_read_exception(exc: BaseException) -> bool:
+    """Return True only for transient WordPress read failures."""
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+        return True
+    if isinstance(exc, requests.HTTPError):
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+        return status_code in _WP_TRANSIENT_HTTP_STATUS_CODES
+    return False
+
+
+_WP_READ_RETRY = dict(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception(_is_retryable_wp_read_exception),
+    before_sleep=lambda rs: logger.warning(
+        f"WordPress {rs.fn.__name__}() attempt {rs.attempt_number} failed "
+        f"({rs.outcome.exception()}); retrying in {rs.next_action.sleep:.1f}s"
+    ),
+)
 
 class WordPressAPIError(Exception):
     """Exception raised for WordPress API errors."""
@@ -118,6 +145,7 @@ class WordPressConnector:
             logger.error(f"Failed to update church with code {church_code}: {str(e)}")
             return None
     
+    @retry(**_WP_READ_RETRY)
     def get_church_by_code(self, church_code: str) -> Optional[Dict[str, Any]]:
         """Get a specific church by its church_code from WordPress."""
         try:
@@ -133,6 +161,8 @@ class WordPressConnector:
             return response.json()
         except requests.RequestException as e:
             logger.error(f"Failed to get church with code {church_code}: {str(e)}")
+            if _is_retryable_wp_read_exception(e):
+                raise  # Let retry handle transient failures.
             return None
         
 ##    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(requests.RequestException))
@@ -194,7 +224,7 @@ class WordPressConnector:
 ##            raise  # Let retry handle it
 
     ## Newer code:
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(requests.RequestException))
+    @retry(**_WP_READ_RETRY)
     def get_participants(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Get participants from WordPress."""
         params = params or {}
@@ -224,7 +254,9 @@ class WordPressConnector:
             
         except requests.RequestException as e:
             logger.error(f"Failed to get participants: {str(e)}")
-            raise  # Let retry handle it
+            if _is_retryable_wp_read_exception(e):
+                raise  # Let retry handle transient failures.
+            return []
 
     def create_participant(self, participant_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a participant record in WordPress."""
@@ -262,6 +294,7 @@ class WordPressConnector:
             logger.error(f"Failed to update participant {participant_id}: {str(e)}")
             return None
 
+    @retry(**_WP_READ_RETRY)
     def get_rosters(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Get rosters from WordPress."""
         try:
@@ -275,6 +308,8 @@ class WordPressConnector:
         except requests.RequestException as e:
             self.last_get_rosters_status = "failed"
             logger.error(f"Failed to get rosters: {str(e)}")
+            if _is_retryable_wp_read_exception(e):
+                raise  # Let retry handle transient failures.
             return []
             
     def get_roster(self, roster_id: int) -> Optional[Dict[str, Any]]:

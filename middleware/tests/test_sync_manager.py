@@ -529,6 +529,60 @@ def test_post_deadline_override_allows_scoped_racquet_sport(sync_manager, mocker
     assert len(cutoff_issues) == 1
     assert cutoff_issues[0]["sport"] == "Pickleball"
 
+
+def test_missing_primary_sport_is_self_healed_from_secondary(sync_manager):
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    participant = {
+        "chmeetings_id": "heal-primary-1",
+        "primary_sport": "",
+        "primary_format": "",
+        "primary_partner": "",
+        "secondary_sport": SPORT_TYPE["BASKETBALL"],
+        "secondary_format": "",
+        "secondary_partner": "",
+    }
+
+    effective_participant, heal_issues = participant_syncer._self_heal_missing_primary_sport(
+        participant
+    )
+
+    assert effective_participant["primary_sport"] == SPORT_TYPE["BASKETBALL"]
+    assert effective_participant["secondary_sport"] == SPORT_UNSELECTED
+    assert len(heal_issues) == 1
+    assert heal_issues[0]["type"] == "primary_sport_self_healed"
+    assert heal_issues[0]["severity"] == VALIDATION_SEVERITY["WARNING"]
+
+
+def test_existing_primary_sport_is_not_changed_by_self_heal(sync_manager):
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    participant = {
+        "chmeetings_id": "heal-primary-2",
+        "primary_sport": SPORT_TYPE["BIBLE_CHALLENGE"],
+        "primary_format": "",
+        "primary_partner": "",
+        "secondary_sport": SPORT_TYPE["BASKETBALL"],
+        "secondary_format": "",
+        "secondary_partner": "",
+    }
+
+    effective_participant, heal_issues = participant_syncer._self_heal_missing_primary_sport(
+        participant
+    )
+
+    assert effective_participant["primary_sport"] == SPORT_TYPE["BIBLE_CHALLENGE"]
+    assert effective_participant["secondary_sport"] == SPORT_TYPE["BASKETBALL"]
+    assert heal_issues == []
+
 def test_sync_participants(sync_manager, mocker, mock_chmeetings_data):
     """Test participant sync to sf_participants and sf_rosters with role filtering and proper validation issue tracking."""
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"

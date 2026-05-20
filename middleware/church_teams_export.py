@@ -2,6 +2,7 @@
 # Version 1.3.0
 import json
 import pandas as pd
+import requests
 from pathlib import Path
 from loguru import logger
 from typing import Optional, List, Dict, Any, Tuple
@@ -58,6 +59,7 @@ from config import (
 from validation.name_matcher import normalized_name as _norm_name
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
+from tenacity import RetryError
 from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 from schedule_workbook import ScheduleWorkbookBuilder
 from validation.models import RulesManager
@@ -764,6 +766,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         all_rosters_data: List[Dict[str, Any]] = []
         all_validation_data: List[Dict[str, Any]] = []
         summary_data_list: List[Dict[str, Any]] = []
+        _wp_church_fetch_failures = 0
+        _wp_participant_fetch_failures = 0
+        _wp_roster_fetch_failures = 0
 
         churches_to_process_codes = [target_church_code.upper()] if target_church_code else sorted(list(chm_data_by_church.keys()))
 
@@ -785,7 +790,20 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             total_pending_participants_wp = 0
             total_with_open_errors_wp = 0
             total_athlete_fees = 0
-            church_wp = self.wp_connector.get_church_by_code(church_code_iter)
+            try:
+                church_wp = self.wp_connector.get_church_by_code(church_code_iter)
+            except RetryError as exc:
+                _wp_church_fetch_failures += 1
+                logger.error(
+                    f"WP church fetch failed for church code {church_code_iter} after all retries: {exc}"
+                )
+                church_wp = None
+            except requests.RequestException as exc:
+                _wp_church_fetch_failures += 1
+                logger.error(
+                    f"WP church fetch failed for church code {church_code_iter}: {exc}"
+                )
+                church_wp = None
             church_wp_id = church_wp.get("church_id") if church_wp else None
             open_validation_issues = self._fetch_open_validation_issues(church_wp_id)
             participant_error_lookup: Dict[str, List[Dict[str, Any]]] = {}
@@ -816,7 +834,20 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 wp_created_at_str = ""
 
                 if is_participant_chm:
-                    wp_participants = self.wp_connector.get_participants({"chmeetings_id": chm_id})
+                    try:
+                        wp_participants = self.wp_connector.get_participants({"chmeetings_id": chm_id})
+                    except RetryError as exc:
+                        _wp_participant_fetch_failures += 1
+                        logger.error(
+                            f"WP participant fetch failed for CHM ID {chm_id} after all retries: {exc}"
+                        )
+                        wp_participants = []
+                    except requests.RequestException as exc:
+                        _wp_participant_fetch_failures += 1
+                        logger.error(
+                            f"WP participant fetch failed for CHM ID {chm_id}: {exc}"
+                        )
+                        wp_participants = []
                     if wp_participants:
                         wp_participant = wp_participants[0]
                         wp_participant_id_val = wp_participant.get("participant_id", 0)
@@ -844,7 +875,22 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                 "Last Name": chm_person["Last Name"],
                                 "Approval_Status (WP)": approval_status_val,
                             }
-                            wp_rosters = self.wp_connector.get_rosters({"participant_id": wp_participant_id_val})
+                            try:
+                                wp_rosters = self.wp_connector.get_rosters({"participant_id": wp_participant_id_val})
+                            except RetryError as exc:
+                                _wp_roster_fetch_failures += 1
+                                logger.error(
+                                    f"WP roster fetch failed for participant {wp_participant_id_val} "
+                                    f"(CHM ID {chm_id}) after all retries: {exc}"
+                                )
+                                wp_rosters = []
+                            except requests.RequestException as exc:
+                                _wp_roster_fetch_failures += 1
+                                logger.error(
+                                    f"WP roster fetch failed for participant {wp_participant_id_val} "
+                                    f"(CHM ID {chm_id}): {exc}"
+                                )
+                                wp_rosters = []
                             for roster_entry in wp_rosters:
                                 matching_team_issues = [
                                     issue for issue in team_validation_issues
@@ -864,6 +910,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                     "Age (at Event)": self._calculate_age(chm_person["Birthdate"]),
                                     "Mobile Phone": chm_person["Mobile Phone"],
                                     "Email": chm_person["Email"],
+                                    "participant_primary_sport": chm_person.get("ChM_Primary_Sport", ""),
+                                    "participant_secondary_sport": chm_person.get("ChM_Secondary_Sport", ""),
                                     "sport_type": roster_entry.get("sport_type"),
                                     "sport_gender": roster_entry.get("sport_gender"),
                                     "sport_format": roster_entry.get("sport_format"),
@@ -1056,6 +1104,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             )
             logger.info(f"Force resend completed. Total emails {'would be sent' if dry_run else 'sent'}: {resend_count}")
         
+        if _wp_church_fetch_failures or _wp_participant_fetch_failures or _wp_roster_fetch_failures:
+            logger.warning(
+                f"Export finished with transient WordPress fetch failures: "
+                f"{_wp_church_fetch_failures} church fetch(es), "
+                f"{_wp_participant_fetch_failures} participant fetch(es), and "
+                f"{_wp_roster_fetch_failures} roster fetch(es) exhausted all retries. "
+                "Output may be incomplete — re-run export to recover missing rows."
+            )
         logger.info("Report generation process finished.")
         return True
 
@@ -2824,14 +2880,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 # Scheduling tabs live in Schedule_Workbook_*.xlsx (build-schedule-workbook).
                 if include_venue_capacity:
                     venue_input_path = DATA_DIR / VENUE_INPUT_FILENAME
-                    schedule_input = self._build_schedule_input(
-                        roster_rows, validation_rows, venue_input_path
+                    schedule_input = self.write_schedule_input_json(
+                        roster_rows,
+                        validation_rows,
+                        venue_input_path,
+                        filepath.parent / "schedule_input.json",
+                        pool_assignment_path=filepath.parent / "pool_assignments.json",
                     )
                     json_path = filepath.parent / "schedule_input.json"
-                    json_path.write_text(
-                        json.dumps(schedule_input, indent=2, default=str),
-                        encoding="utf-8",
-                    )
                     logger.info(
                         f"schedule_input.json: {schedule_input['game_count']} games, "
                         f"{schedule_input['resource_count']} resources → {json_path}"
@@ -3557,7 +3613,26 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_build_pod_divisions_rows",
     "_build_pod_entries_review_rows",
     "_build_venue_capacity_rows",
+    "_pool_assignments_sidecar_path",
+    "_normalize_pool_seed",
+    "_positive_int_or_none",
+    "_pool_assignment_event_prefix",
+    "_event_sort_index",
+    "_load_pool_assignment_state",
+    "_write_pool_assignment_state",
+    "_build_pool_assignment_base_rows",
+    "_default_random_draw_orders",
+    "_serpentine_pool_slots",
+    "_pool_sizes_for_assignment",
+    "_apply_pool_assignments_to_rows",
+    "_build_pool_assignment_rows",
+    "_normalize_primary_sport_name",
+    "_solver_team_id",
+    "_pool_assignment_placeholder_map",
+    "_build_core_gym_team_lookup",
     "_build_gym_game_objects",
+    "_build_assigned_gym_game_objects",
+    "_build_gym_team_conflicts",
     "_build_pod_game_objects",
     "_build_gym_resource_objects",
     "_build_gym_resources_from_allocator",
@@ -3592,4 +3667,16 @@ for _method_name in _SCHEDULE_WORKBOOK_METHOD_NAMES:
         ChurchTeamsExporter,
         _method_name,
         ScheduleWorkbookBuilder.__dict__[_method_name],
+    )
+
+for _attr_name in (
+    "_GYM_CORE_SOLVER_POOL",
+    "_POOL_ASSIGNMENT_COLUMNS",
+    "_POOL_ASSIGNMENT_EVENT_DEFS",
+    "_POOL_ASSIGNMENT_HEADER_NOTES",
+):
+    setattr(
+        ChurchTeamsExporter,
+        _attr_name,
+        getattr(ScheduleWorkbookBuilder, _attr_name),
     )

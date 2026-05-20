@@ -204,6 +204,60 @@ class ParticipantSyncer:
             for sport in str(participant.get("other_events", "") or "").split(",")
         )
 
+    @staticmethod
+    def _sport_is_selected(value: Any) -> bool:
+        """Return True when a sport field contains a real selection."""
+        sport_value = str(value or "").strip()
+        return bool(sport_value) and sport_value != SPORT_UNSELECTED
+
+    def _self_heal_missing_primary_sport(
+        self,
+        participant: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], List[Dict[str, str]]]:
+        """Promote secondary sport into primary when primary is blank.
+
+        This keeps downstream scheduling priority logic coherent when the form
+        data is in an inconsistent state (for example, the user removed the
+        primary sport but left a secondary sport populated).
+        """
+        effective_participant = dict(participant)
+        if self._sport_is_selected(effective_participant.get("primary_sport")):
+            return effective_participant, []
+        if not self._sport_is_selected(effective_participant.get("secondary_sport")):
+            return effective_participant, []
+
+        promoted_sport = str(effective_participant.get("secondary_sport") or "").strip()
+        promoted_format = str(effective_participant.get("secondary_format") or "").strip()
+        promoted_partner = str(effective_participant.get("secondary_partner") or "").strip()
+        chm_id = str(effective_participant.get("chmeetings_id", "unknown") or "unknown").strip()
+
+        effective_participant["primary_sport"] = promoted_sport
+        effective_participant["primary_format"] = promoted_format
+        effective_participant["primary_partner"] = promoted_partner
+        effective_participant["secondary_sport"] = SPORT_UNSELECTED
+        effective_participant["secondary_format"] = ""
+        effective_participant["secondary_partner"] = ""
+
+        logger.warning(
+            f"[VAY SM] Self-healed missing primary sport for chm_id={chm_id}: "
+            f"promoted secondary sport '{promoted_sport}' into primary."
+        )
+
+        issues = [{
+            "type": "primary_sport_self_healed",
+            "description": (
+                "Primary sport was blank while secondary sport was populated. "
+                f"Middleware promoted '{promoted_sport}' into the primary sport slot "
+                "so scheduling and primary-sport protection remain coherent."
+            ),
+            "rule_code": "PRIMARY_SPORT_SELF_HEAL",
+            "rule_level": RULE_LEVEL["INDIVIDUAL"],
+            "severity": VALIDATION_SEVERITY["WARNING"],
+            "sport": promoted_sport,
+            "sport_format": promoted_format or None,
+        }]
+        return effective_participant, issues
+
     def _apply_new_registration_racquet_cutoff(
         self,
         participant: Dict[str, Any],
@@ -643,8 +697,11 @@ class ParticipantSyncer:
                 mapped["membership_claim_at_approval"] = int(frozen_raw)
         # --- End membership-flip defence ---
 
+        participant_payload, self_heal_issues = self._self_heal_missing_primary_sport(
+            mapped
+        )
         participant_payload, cutoff_issues = self._apply_new_registration_racquet_cutoff(
-            mapped,
+            participant_payload,
             existing_wp_participant=participant_in_wp,
         )
         participant_payload["approval_status"] = current_wp_status
@@ -658,7 +715,7 @@ class ParticipantSyncer:
                 )
             
             is_valid, validation_issues_list = self.validate_participant(participant_payload)
-            validation_issues_list = cutoff_issues + validation_issues_list
+            validation_issues_list = self_heal_issues + cutoff_issues + validation_issues_list
             is_valid = not any(
                 issue.get("severity") == VALIDATION_SEVERITY["ERROR"]
                 for issue in validation_issues_list
@@ -686,7 +743,7 @@ class ParticipantSyncer:
                     f"Issues: {validation_issues_list}"
                 )
         else:
-            validation_issues_list = cutoff_issues
+            validation_issues_list = self_heal_issues + cutoff_issues
         
         if chm_id == target_chm_id_for_debug:
             logger.debug(

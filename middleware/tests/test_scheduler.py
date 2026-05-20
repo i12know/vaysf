@@ -64,6 +64,32 @@ def test_build_resource_slots_multiple_resources():
     assert slots["B"] == ["Sun-1-13:00", "Sun-1-14:00"]
 
 
+def test_slot_day_key_ignores_optional_suffix():
+    """Slot-day extraction should survive future label suffixes."""
+    from scheduler import _slot_day_key, _slot_sort_key
+
+    assert _slot_day_key("Sat-1-08:00-AM") == "Sat-1"
+    assert _slot_sort_key("Sat-1-08:00-AM") == (0, 8 * 60)
+
+
+def test_normalize_conflict_edge_counts_derives_secondary_only():
+    """Missing secondary_only_count should derive from shared minus primary."""
+    from scheduler import _normalize_conflict_edge_counts
+
+    counts = _normalize_conflict_edge_counts(
+        {
+            "shared_count": 3,
+            "primary_overlap_count": 2,
+        }
+    )
+
+    assert counts == {
+        "primary": 2,
+        "secondary": 1,
+        "shared_count": 3,
+    }
+
+
 # ---------------------------------------------------------------------------
 # load_schedule_input
 # ---------------------------------------------------------------------------
@@ -121,6 +147,54 @@ def _gym_game(game_id, team_a, team_b, stage="Pool", pool_id="P1"):
         "team_a_id": team_a, "team_b_id": team_b,
         "duration_minutes": 60, "resource_type": "Gym Court",
         "earliest_slot": None, "latest_slot": None,
+    }
+
+
+def _volleyball_resource(resource_id, day="Sat-1", open_time="08:00", close_time="10:00"):
+    return {
+        "resource_id": resource_id, "resource_type": "Volleyball Court",
+        "label": resource_id, "day": day,
+        "open_time": open_time, "close_time": close_time, "slot_minutes": 60,
+    }
+
+
+def _volleyball_game(game_id, event, team_a, team_b, stage="Pool", pool_id="P1"):
+    return {
+        "game_id": game_id, "event": event,
+        "stage": stage, "pool_id": pool_id, "round": 1,
+        "team_a_id": team_a, "team_b_id": team_b,
+        "duration_minutes": 60, "resource_type": "Volleyball Court",
+        "earliest_slot": None, "latest_slot": None,
+    }
+
+
+def _core_gym_resource(resource_id, resource_type):
+    return {
+        "resource_id": resource_id,
+        "resource_type": resource_type,
+        "solver_pool": "Gym Core",
+        "label": resource_id,
+        "day": "Sat-1",
+        "open_time": "08:00",
+        "close_time": "10:00",
+        "slot_minutes": 60,
+    }
+
+
+def _core_gym_game(game_id, event, team_a, team_b, resource_type):
+    return {
+        "game_id": game_id,
+        "event": event,
+        "stage": "Pool",
+        "pool_id": "P1",
+        "round": 1,
+        "team_a_id": team_a,
+        "team_b_id": team_b,
+        "duration_minutes": 60,
+        "resource_type": resource_type,
+        "solver_pool": "Gym Core",
+        "earliest_slot": None,
+        "latest_slot": None,
     }
 
 
@@ -237,6 +311,236 @@ def test_solve_empty_input():
     assert result["status"] == STATUS_OPTIMAL
     assert result["assignments"] == []
     assert result["unscheduled"] == []
+
+
+def test_solve_volleyball_prefers_same_court_gender_blocks():
+    """When finish time is tied, volleyball courts should avoid Men/Women flips."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = _minimal_schedule_input(
+        games=[
+            _volleyball_game("VBM-1", "Volleyball - Men Team", "VBM-T1", "VBM-T2"),
+            _volleyball_game("VBM-2", "Volleyball - Men Team", "VBM-T3", "VBM-T4"),
+            _volleyball_game("VBW-1", "Volleyball - Women Team", "VBW-T1", "VBW-T2"),
+            _volleyball_game("VBW-2", "Volleyball - Women Team", "VBW-T3", "VBW-T4"),
+        ],
+        resources=[
+            _volleyball_resource("VB-1"),
+            _volleyball_resource("VB-2"),
+        ],
+    )
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    assert result["unscheduled"] == []
+    volleyball_pool = next(
+        pr for pr in result["pool_results"] if pr["resource_type"] == "Volleyball Court"
+    )
+    assert volleyball_pool["volleyball_adjacent_switches"] == 0
+
+    event_by_game = {game["game_id"]: game["event"] for game in si["games"]}
+    per_resource: dict[str, list[tuple[str, str]]] = {}
+    for assignment in result["assignments"]:
+        per_resource.setdefault(assignment["resource_id"], []).append(
+            (assignment["slot"], event_by_game[assignment["game_id"]])
+        )
+
+    for resource_id, slots in per_resource.items():
+        slots.sort()
+        if len(slots) < 2:
+            continue
+        categories = ["Men" if "Men" in event else "Women" for _, event in slots]
+        assert len(set(categories)) == 1, (
+            f"{resource_id} should keep the same volleyball category across adjacent slots, "
+            f"but got {slots}"
+        )
+
+
+def test_solve_core_gym_pool_avoids_cross_sport_same_slot_conflict():
+    """Core gym games sharing athletes should be staggered when enough slots exist."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = {
+        "games": [
+            _core_gym_game(
+                "BBM-01",
+                "Basketball - Men Team",
+                "BBM::OCB",
+                "BBM::ANH",
+                "Basketball Court",
+            ),
+            _core_gym_game(
+                "VBM-01",
+                "Volleyball - Men Team",
+                "VBM::OCB",
+                "VBM::RPC",
+                "Volleyball Court",
+            ),
+        ],
+        "resources": [
+            _core_gym_resource("BB-1", "Basketball Court"),
+            _core_gym_resource("VB-1", "Volleyball Court"),
+        ],
+        "team_conflicts": [
+            {
+                "team_a_id": "BBM::OCB",
+                "team_a_label": "OCB",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "VBM::OCB",
+                "team_b_label": "OCB",
+                "event_b": "Volleyball - Men Team",
+                "shared_count": 2,
+                "primary_overlap_count": 2,
+                "secondary_only_count": 0,
+                "shared_participant_names": ["An", "Binh"],
+            }
+        ],
+    }
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    slots = {a["game_id"]: a["slot"] for a in result["assignments"]}
+    assert slots["BBM-01"] != slots["VBM-01"]
+    gym_pool = next(pr for pr in result["pool_results"] if pr["resource_type"] == "Gym Core")
+    assert gym_pool["cross_sport_same_slot_conflicts"] == 0
+    assert result["conflict_audit_summary"]["separated_edges"] == 1
+    assert result["conflict_audit"][0]["status"] == "SeparatedInSchedule"
+
+
+def test_solve_core_gym_pool_reports_unavoidable_cross_sport_conflict():
+    """When only one shared slot exists, the conflict audit should show the overlap."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = {
+        "games": [
+            _core_gym_game(
+                "BBM-01",
+                "Basketball - Men Team",
+                "BBM::OCB",
+                "BBM::ANH",
+                "Basketball Court",
+            ),
+            _core_gym_game(
+                "VBM-01",
+                "Volleyball - Men Team",
+                "VBM::OCB",
+                "VBM::RPC",
+                "Volleyball Court",
+            ),
+        ],
+        "resources": [
+            {
+                **_core_gym_resource("BB-1", "Basketball Court"),
+                "close_time": "09:00",
+            },
+            {
+                **_core_gym_resource("VB-1", "Volleyball Court"),
+                "close_time": "09:00",
+            },
+        ],
+        "team_conflicts": [
+            {
+                "team_a_id": "BBM::OCB",
+                "team_a_label": "OCB",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "VBM::OCB",
+                "team_b_label": "OCB",
+                "event_b": "Volleyball - Men Team",
+                "shared_count": 1,
+                "primary_overlap_count": 1,
+                "secondary_only_count": 0,
+                "shared_participant_names": ["An"],
+            }
+        ],
+    }
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    gym_pool = next(pr for pr in result["pool_results"] if pr["resource_type"] == "Gym Core")
+    assert gym_pool["cross_sport_same_slot_conflicts"] == 1
+    assert result["conflict_audit_summary"]["overlapping_edges"] == 1
+    assert result["conflict_audit"][0]["status"] == "ConflictRemains"
+    assert "BBM-01" in result["conflict_audit"][0]["overlap_game_pairs"]
+
+
+def test_solve_core_gym_pool_prioritizes_primary_conflicts_over_secondary():
+    """When one overlap is unavoidable, protect the primary-sport edge first."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = {
+        "games": [
+            _core_gym_game(
+                "BBM-01",
+                "Basketball - Men Team",
+                "BBM::OCB",
+                "BBM::RPC",
+                "Basketball Court",
+            ),
+            _core_gym_game(
+                "VBM-01",
+                "Volleyball - Men Team",
+                "VBM::OCB",
+                "VBM::ANH",
+                "Volleyball Court",
+            ),
+            _core_gym_game(
+                "VBM-02",
+                "Volleyball - Men Team",
+                "VBM::TLC",
+                "VBM::GAC",
+                "Volleyball Court",
+            ),
+        ],
+        "resources": [
+            {
+                **_core_gym_resource("BB-1", "Basketball Court"),
+                "close_time": "09:00",
+            },
+            {
+                **_core_gym_resource("VB-1", "Volleyball Court"),
+                "close_time": "10:00",
+            },
+        ],
+        "team_conflicts": [
+            {
+                "team_a_id": "BBM::OCB",
+                "team_a_label": "OCB",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "VBM::OCB",
+                "team_b_label": "OCB",
+                "event_b": "Volleyball - Men Team",
+                "shared_count": 1,
+                "primary_overlap_count": 1,
+            },
+            {
+                "team_a_id": "BBM::OCB",
+                "team_a_label": "OCB",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "VBM::TLC",
+                "team_b_label": "TLC",
+                "event_b": "Volleyball - Men Team",
+                "shared_count": 1,
+                "primary_overlap_count": 0,
+            },
+        ],
+    }
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    slots = {a["game_id"]: a["slot"] for a in result["assignments"]}
+    assert slots["BBM-01"] == "Sat-1-08:00"
+    assert slots["VBM-01"] == "Sat-1-09:00"
+    assert slots["VBM-02"] == "Sat-1-08:00"
+    assert result["conflict_audit_summary"]["remaining_primary_overlap_penalty"] == 0
+    assert result["conflict_audit_summary"]["remaining_secondary_overlap_penalty"] == 1
 
 
 def test_build_infeasibility_diagnostics_reports_slot_shortage():

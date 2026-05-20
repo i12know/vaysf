@@ -61,6 +61,7 @@ LAYER 1 — STRATEGIC (pre-booking): estimate the minimum venue to book
        │                                         │  build-schedule-workbook
        │  (human review / approvals)             ▼
        │                               Schedule_Workbook_*.xlsx
+       │                               ├─ Summary               ← operator guide
        │                               ├─ Venue-Estimator       ← demand estimate
        │                               ├─ Court-Schedule-Sketch ← 3/4/5-court sketch
        │                               ├─ Pod-Divisions         ← division planning
@@ -88,7 +89,8 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
        ▼
   VAYSF_Schedule_*.xlsx
   ├─ Schedule-by-Time   ← color-coded grid for floor coordinators
-  └─ Schedule-by-Sport  ← flat list with auto-filter for sport directors
+  ├─ Schedule-by-Sport  ← flat list with auto-filter for sport directors
+  └─ Conflict-Audit     ← verify shared-athlete conflicts were avoided or remain
 ```
 
 ### Source files (scheduling-related)
@@ -122,10 +124,10 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 |----------|-------------|-------------|-------|
 | `Church_Team_Status_ALL_*.xlsx` | `export-church-teams` | Human review, approvals | Non-scheduling |
 | `Church_Team_Status_{CODE}.xlsx` | `export-church-teams` | Pastor / church coordinator | Non-scheduling |
-| `schedule_input.json` | `export-church-teams` | `solve-schedule`, `build-schedule-workbook` | Bridge (Layer 2 gym resources when `venue_input.xlsx` present; Layer-1 fallback otherwise) |
+| `schedule_input.json` | `export-church-teams` | `solve-schedule`, `build-schedule-workbook` | Bridge (includes Layer-2 gym resources, seeded pool assignments, and shared-athlete conflict edges when available) |
 | `Schedule_Workbook_*.xlsx` | `build-schedule-workbook` | Coordinator planning / venue contract decision | **Layer 1** |
 | `schedule_output.json` | `solve-schedule` | `produce-schedule` | Layer 2 |
-| `VAYSF_Schedule_*.xlsx` | `produce-schedule` | Floor coordinators, sport directors | Layer 2 |
+| `VAYSF_Schedule_*.xlsx` | `produce-schedule` | Floor coordinators, sport directors | Layer 2 (`Schedule-by-Time`, `Schedule-by-Sport`, `Conflict-Audit`) |
 
 ---
 
@@ -138,6 +140,56 @@ export-church-teams  →  schedule_input.json  →  solve-schedule       →  pr
                                                 (Issue #93, done)       (Issue #94, done)
 ```
 
+## Implementation roadmap
+
+The scheduling expansion is being delivered in three major phases so the team
+can keep the big-picture plan visible while iterating on this season:
+
+### Phase 1 - Core team-sport conflict engine
+
+Scope:
+- Basketball - Men Team
+- Volleyball - Men Team
+- Volleyball - Women Team
+- Bible Challenge - Mixed Team
+- Soccer - Coed Exhibition (optional / config-driven)
+
+Status as of May 20, 2026:
+- Partially complete
+- Implemented:
+  - editable `Pool-Assignment` workflow for BB / VBM / VBW
+  - persisted seeded pool draw via `pool_assignments.json`
+  - Layer 2 shared-athlete conflict edges for BB / VBM / VBW
+  - conflict-aware Gym Core solve with primary-vs-secondary weighting
+  - `Conflict-Audit` output in `VAYSF_Schedule_*.xlsx`
+- Next slice:
+  - extend the same conflict-aware workflow to Bible Challenge
+  - add Soccer in an optional way so the design stays flexible if Soccer does
+    not return next season
+
+### Phase 2 - Racquet conflict engine
+
+Scope:
+- Badminton
+- Pickleball
+- Pickleball 35+
+- Table Tennis
+- Table Tennis 35+
+- Tennis
+
+Goal:
+- model doubles first, then singles, while preserving the same primary-sport
+  protection rules and cross-sport conflict reduction priorities
+
+### Phase 3 - Audit, overrides, and operator polish
+
+Scope:
+- richer conflict audit / explanation output
+- operator override loops
+- workbook readability and reporting polish
+- final review of scheduling heuristics that are helpful but not required for
+  correctness, such as conflict-aware tie-breaking inside `assign-pools`
+
 ### Step 1 — Build scheduling inputs (`export-church-teams`)
 
 ```bash
@@ -148,9 +200,11 @@ Produces the consolidated `Church_Team_Status_ALL.xlsx` in `EXPORT_DIR`.
 When `middleware/data/venue_input.xlsx` is present, also writes
 **`schedule_input.json`** alongside the xlsx containing:
 
-- **`games`** — one object per pool-play match placeholder for gym sports
-  (Basketball, VB Men, VB Women); pod sports (single-elimination) are also
-  included here for solver assignment. When explicit venue rows exist, gym
+- **`games`** — one object per pool-play match for the gym sports
+  (Basketball, VB Men, VB Women) plus pod sports (single-elimination). When a
+  `pool_assignments.json` sidecar is present beside the export artifacts, the
+  gym games use the real seeded team draw from the `Pool-Assignment` workflow
+  instead of raw `BBM-P1-T1` placeholders. When explicit venue rows exist, gym
   sports with fewer than two estimating teams are omitted instead of using the
   legacy 8-team planning scaffold.
 - **`resources`** — one object per physical court or table, expanded from
@@ -171,6 +225,10 @@ When `middleware/data/venue_input.xlsx` is present, also writes
   "gym_court_scenario": N}` is written instead. When venue rows do exist but
   allocator inputs are incomplete, the Venue-Input rows are used directly and
   `gym_allocation.source` is `direct_venue_input`.
+- **`team_conflicts`** — shared-athlete edges between the seeded core gym teams.
+  These let Layer 2 solve Basketball / VB Men / VB Women together as one
+  conflict-aware gym cluster while still routing Basketball only to Basketball
+  courts and Volleyball only to Volleyball courts.
 
 **`Exclusive Venue Group` column** (`venue_input.xlsx` → `Venue-Input` tab):
 
@@ -262,6 +320,58 @@ Every **game object** (pool play only) looks like:
   composition of 3-team and 4-team pools that keeps every team at exactly
   `2` pool games.
 - `null` is never emitted; every game has non-null `team_a_id` and `team_b_id`.
+
+**Current team seeding / pool-assignment policy:**
+- Each real team may carry an integer `seed`.
+- `seed = 0`, blank, or missing means **unseeded** and should participate in a
+  random draw.
+- `seed > 0` means **ranked**; lower numbers are placed earlier in the draw.
+- The current `assign-pools` workflow applies the fairness layer now:
+  1. sort all non-zero seeds ascending
+  2. randomly shuffle the unseeded teams once
+  3. append the shuffled unseeded teams after the ranked teams
+  4. assign that ordered list into the normalized pool structure using a snake
+     / serpentine draw
+- Future enhancement:
+  - add conflict-aware tie-breaking within equal-seed or unseeded buckets,
+    while still preserving the seed order and the fair serpentine structure
+
+**Example: 13 teams, 4 pools, only seeds 1 / 2 / 3**
+- Pool sizes follow the normalized planning structure: `3, 3, 3, 4`.
+- Ordered draw list: `1, 2, 3, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10`
+  where `R1..R10` are the unseeded teams after one random shuffle.
+- Serpentine placement:
+  - Row 1: `P1=1`, `P2=2`, `P3=3`, `P4=R1`
+  - Row 2: `P4=R2`, `P3=R3`, `P2=R4`, `P1=R5`
+  - Row 3: `P1=R6`, `P2=R7`, `P3=R8`, `P4=R9`
+  - Row 4: `P4=R10`
+- Final pools:
+  - `P1`: `1, R5, R6`
+  - `P2`: `2, R4, R7`
+  - `P3`: `3, R3, R8`
+  - `P4`: `R1, R2, R9, R10`
+
+**Current primary-sport conflict priority:**
+- In Layer 2 today, BB / VBM / VBW shared-athlete edges already use this policy
+  in the conflict-aware Gym Core solver.
+- Cross-sport conflict handling should start **as soon as one sport's pool
+  assignment is frozen**, not only at final timetable rendering.
+- Each athlete's **primary sport** should be treated as the protected
+  commitment.
+- The first sport assigned is **not** automatically protected for every
+  dual-sport athlete; protection follows the athlete's own primary-sport
+  designation.
+- When assigning a later sport (for example Men Volleyball after Basketball is
+  frozen), the system should try to minimize conflicts for athletes who appear
+  in both sports, but if there is a breaking point:
+  - protect the athlete's primary sport placement first
+  - allow conflict pressure to fall on the athlete's non-primary sport
+- This means pool assignment fairness remains the first-order rule, while
+  cross-sport conflict reduction becomes a bounded second-order optimization.
+- Future enhancement:
+  - use the same primary-sport policy earlier during pool assignment for later
+    sports such as Bible Challenge and optional Soccer, not only during the
+    final timetable solve
 
 **4-team pool tiebreaker caveat:**
 The fixed 4-team format plays 4 games, not a full round robin (which would be
@@ -361,6 +471,11 @@ games.
 
 Configurable timeout via `SCHEDULE_SOLVER_TIMEOUT` env var (default: 30 s).
 
+The primary solver objective is still "finish as early as possible." For
+`Volleyball Court` pools, the solver now adds a secondary tie-breaker that
+prefers same-court Men's/Women's volleyball blocks when multiple equally-early
+solutions exist, reducing net-height adjustments for coordinators.
+
 **Pool decomposition:** games are partitioned by `resource_type` and solved in
 independent CP-SAT models. A capacity shortage in one pool (e.g. Badminton Court)
 does not cascade into an INFEASIBLE result for other pools (e.g. Gym Courts).
@@ -418,6 +533,12 @@ When one day mixes resources with different time windows or slot lengths
 uniform day/resource/window group so pod assignments are not collapsed into one
 misaligned `Day-1` grid.
 
+For the shared **Gym Core** pool, the renderer instead merges same-day
+Basketball / Volleyball resources into one continuous section per sport and
+uses venue-qualified court headers such as `Orange Gym Court-1` or
+`HS Big Gym Court-3` so floor coordinators can tell mixed venues apart at a
+glance.
+
 The JSON file stays in `DATA_DIR` as the machine-readable backup.
 
 **Constraints implemented in `scheduler.py`:**
@@ -467,15 +588,30 @@ python main.py build-schedule-workbook \
   lists with a `WARNING` — the workbook still builds.
 - **`--output`** — defaults to `EXPORT_DIR/Schedule_Workbook_YYYY-MM-DD.xlsx`.
 
-The workbook has seven tabs: `Venue-Estimator`, `Pod-Divisions`,
-`Pod-Entries-Review`, `Court-Schedule-Sketch`, `Pod-Resource-Estimate`,
-`Schedule-Input` (an echo of the JSON), and `Gym-Allocation` (a summary of the
-Stage-A allocator output, or a note when the allocator was not run).
+The workbook has nine tabs: `Summary`, `Venue-Estimator`, `Pool-Assignment`,
+`Pod-Divisions`, `Pod-Entries-Review`, `Court-Schedule-Sketch`,
+`Pod-Resource-Estimate`, `Schedule-Input` (an echo of the JSON), and
+`Gym-Allocation` (a summary of the Stage-A allocator output, or a note when the
+allocator was not run).
 None of them consume solver output —
 they are pure planning artifacts built from the roster data and
 `schedule_input.json`.  When no `venue_input.xlsx` is supplied, the
 `Pod-Resource-Estimate` tab derives court availability directly from the
 `schedule_input.json` `resources` so an offline build stays self-consistent.
+
+The `Pool-Assignment` tab is the editable Layer-1 seeding workspace for the
+core gym sports. Operators can review the inferred team rows, set `Seed`
+values, and rerun:
+
+```bash
+python main.py assign-pools --workbook path/to/Schedule_Workbook_YYYY-MM-DD.xlsx
+```
+
+The command refreshes pool placement in the workbook and persists the editable
+state in `pool_assignments.json` beside the workbook so later rebuilds can
+reload the same seed inputs. A later `export-church-teams` run in that same
+folder reads the sidecar back into `schedule_input.json`, so Layer 2 scheduling
+and the conflict audit use the same pool draw you reviewed in Excel.
 
 **Two-stage workflow.** `export-church-teams` (Stage 1) owns the live
 ChMeetings/WordPress reads, the `Church_Team_Status_ALL.xlsx`, and the
@@ -485,9 +621,10 @@ lives in `middleware/schedule_workbook.py` (`ScheduleWorkbookBuilder`);
 `church_teams_export.py` delegates to it under a strict one-way dependency
 (`church_teams_export.py` → `schedule_workbook.py`, never the reverse).
 
-The solver-rendered workbook (`Schedule-by-Time` / `Schedule-by-Sport`) is a
+The solver-rendered workbook (`Schedule-by-Time` / `Schedule-by-Sport` /
+`Conflict-Audit`) is a
 separate concern handled by `produce-schedule` — `build-schedule-workbook` does
-not take a `--schedule-output` argument because none of its six tabs render
+not take a `--schedule-output` argument because none of its nine tabs render
 solver results.
 
 ---

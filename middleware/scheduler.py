@@ -26,6 +26,9 @@ Constraints implemented (per pool):
   C7  Multi-slot games — a game whose duration > slot_minutes blocks consecutive slots.
 
 Objective (per pool): minimize the index of the latest occupied global slot.
+For Volleyball Court pools, a secondary tie-breaker minimizes adjacent
+same-court Men/Women switches so net-height changes are reduced when multiple
+equally-early schedules exist.
 
 Out of scope (future work):
   - Cross-sport participant conflicts (a person in both Basketball and Badminton).
@@ -36,6 +39,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -86,9 +90,53 @@ def _slot_sort_key(label: str) -> tuple[int, int]:
     Label format: '{day}-{HH:MM}', e.g. 'Sat-1-08:00' or 'Day-1-09:30'.
     Unknown day labels are placed after known weekends (order 99).
     """
-    day, time = label.rsplit("-", maxsplit=1)
+    day, time = _parse_slot_label(label)
     h, m = time.split(":")
     return (_DAY_ORDER.get(day, 99), int(h) * 60 + int(m))
+
+
+_SLOT_LABEL_RE = re.compile(r"^(?P<day>.+)-(?P<time>\d{2}:\d{2})(?:-.+)?$")
+
+
+def _parse_slot_label(label: str) -> tuple[str, str]:
+    """Return (day_key, HH:MM) from a slot label.
+
+    The parser accepts the current '{day}-{HH:MM}' labels and future variants
+    that may append a suffix after the time, such as 'Sat-1-08:00-AM'.
+    """
+    match = _SLOT_LABEL_RE.match(str(label or "").strip())
+    if match:
+        return match.group("day"), match.group("time")
+    return str(label).rsplit("-", maxsplit=1)
+
+
+def _slot_day_key(label: str) -> str:
+    """Return the day portion of a slot label."""
+    return _parse_slot_label(label)[0]
+
+
+def _normalize_conflict_edge_counts(edge: dict[str, Any]) -> dict[str, int]:
+    """Normalize primary/secondary/shared counts from one conflict edge.
+
+    Hand-edited inputs may omit `secondary_only_count` and provide only
+    `shared_count` plus `primary_overlap_count`. In that case, derive the
+    secondary-only count as `shared_count - primary_overlap_count`.
+    """
+    primary = max(int(edge.get("primary_overlap_count") or 0), 0)
+    shared = edge.get("shared_count")
+    shared_count = max(int(shared or 0), 0)
+    secondary_only = edge.get("secondary_only_count")
+    if secondary_only is None:
+        secondary = max(shared_count - primary, 0)
+    else:
+        secondary = max(int(secondary_only or 0), 0)
+    if shared is None:
+        shared_count = primary + secondary
+    return {
+        "primary": primary,
+        "secondary": secondary,
+        "shared_count": shared_count,
+    }
 
 
 def build_resource_slots(resources: list[dict]) -> dict[str, list[str]]:
@@ -110,6 +158,111 @@ def build_resource_slots(resources: list[dict]) -> dict[str, list[str]]:
             t += slot_min
         result[res["resource_id"]] = slots
     return result
+
+
+def _solver_pool_key(item: dict[str, Any]) -> str:
+    """Return the logical solver pool key for one game/resource row."""
+    return str(item.get("solver_pool") or item.get("resource_type") or "")
+
+
+def build_conflict_audit(
+    schedule_input: dict[str, Any],
+    assignments: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Summarize whether cross-sport shared-athlete edges were separated."""
+    team_conflicts = schedule_input.get("team_conflicts", []) or []
+    if not team_conflicts:
+        return {
+            "total_edges": 0,
+            "separated_edges": 0,
+            "overlapping_edges": 0,
+            "incomplete_edges": 0,
+            "remaining_primary_overlap_penalty": 0,
+            "remaining_secondary_overlap_penalty": 0,
+        }, []
+
+    game_meta = {game["game_id"]: game for game in schedule_input.get("games", [])}
+    games_by_team: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for assignment in assignments:
+        game = game_meta.get(assignment.get("game_id"), {})
+        entry = {
+            "game_id": assignment.get("game_id"),
+            "event": game.get("event", ""),
+            "slot": assignment.get("slot", ""),
+            "resource_id": assignment.get("resource_id", ""),
+        }
+        for team_id in (game.get("team_a_id"), game.get("team_b_id")):
+            if team_id:
+                games_by_team[str(team_id)].append(entry)
+
+    rows: list[dict[str, Any]] = []
+    separated_edges = 0
+    overlapping_edges = 0
+    incomplete_edges = 0
+    remaining_primary_overlap_penalty = 0
+    remaining_secondary_overlap_penalty = 0
+
+    for edge in team_conflicts:
+        counts = _normalize_conflict_edge_counts(edge)
+        team_a_id = str(edge.get("team_a_id") or "").strip()
+        team_b_id = str(edge.get("team_b_id") or "").strip()
+        team_a_games = games_by_team.get(team_a_id, [])
+        team_b_games = games_by_team.get(team_b_id, [])
+        overlap_pairs: list[str] = []
+        for game_a in team_a_games:
+            for game_b in team_b_games:
+                if game_a["slot"] and game_a["slot"] == game_b["slot"]:
+                    overlap_pairs.append(
+                        f"{game_a['game_id']} vs {game_b['game_id']} @ {game_a['slot']}"
+                    )
+
+        if not team_a_games or not team_b_games:
+            status = "IncompleteSchedule"
+            incomplete_edges += 1
+        elif overlap_pairs:
+            status = "ConflictRemains"
+            overlapping_edges += 1
+            remaining_primary_overlap_penalty += counts["primary"]
+            remaining_secondary_overlap_penalty += counts["secondary"]
+        else:
+            status = "SeparatedInSchedule"
+            separated_edges += 1
+
+        rows.append({
+            "team_a_label": str(edge.get("team_a_label") or team_a_id),
+            "event_a": str(edge.get("event_a") or ""),
+            "team_b_label": str(edge.get("team_b_label") or team_b_id),
+            "event_b": str(edge.get("event_b") or ""),
+            "shared_count": counts["shared_count"],
+            "primary_overlap_count": counts["primary"],
+            "secondary_only_count": counts["secondary"],
+            "status": status,
+            "overlap_count": len(overlap_pairs),
+            "scheduled_team_a_games": len(team_a_games),
+            "scheduled_team_b_games": len(team_b_games),
+            "shared_participant_names": ", ".join(edge.get("shared_participant_names") or []),
+            "overlap_game_pairs": " | ".join(overlap_pairs),
+        })
+
+    summary = {
+        "total_edges": len(rows),
+        "separated_edges": separated_edges,
+        "overlapping_edges": overlapping_edges,
+        "incomplete_edges": incomplete_edges,
+        "remaining_primary_overlap_penalty": remaining_primary_overlap_penalty,
+        "remaining_secondary_overlap_penalty": remaining_secondary_overlap_penalty,
+    }
+    return summary, rows
+
+
+def _volleyball_category_for_event(event_name: str) -> str | None:
+    """Return 'men' / 'women' for volleyball team events, else None."""
+    normalized = str(event_name or "").strip().casefold()
+    if normalized == "volleyball - men team":
+        return "men"
+    if normalized == "volleyball - women team":
+        return "women"
+    return None
 
 
 def validate_playoff_slots(
@@ -370,7 +523,7 @@ def _solve_one_pool(
     slot_to_global = {lbl: i for i, lbl in enumerate(sorted_labels)}
     # Map global slot index → day prefix (e.g. "Sat-1") for C6 day-boundary guard
     global_to_day: dict[int, str] = {
-        i: lbl.rsplit("-", maxsplit=1)[0]
+        i: _slot_day_key(lbl)
         for i, lbl in enumerate(sorted_labels)
     }
     n_global       = len(sorted_labels)
@@ -480,12 +633,181 @@ def _solve_one_pool(
                     # NOT (v1 AND v2) — at most one of adjacent-slot vars can be true
                     model.AddBoolOr([v1.Not(), v2.Not()])
 
+    team_conflicts = pool_input.get("team_conflicts", []) or []
+    game_pair_conflicts: list[dict[str, Any]] = []
+    if team_conflicts:
+        edge_weights: dict[frozenset[str], dict[str, Any]] = {}
+        for edge in team_conflicts:
+            team_a_id = str(edge.get("team_a_id") or "").strip()
+            team_b_id = str(edge.get("team_b_id") or "").strip()
+            if not team_a_id or not team_b_id:
+                continue
+            edge_weights[frozenset((team_a_id, team_b_id))] = _normalize_conflict_edge_counts(edge)
+
+        ordered_game_ids = [g["game_id"] for g in games]
+        for idx, gid_a in enumerate(ordered_game_ids):
+            teams_a = [
+                t
+                for t in (
+                    game_meta[gid_a].get("team_a_id"),
+                    game_meta[gid_a].get("team_b_id"),
+                )
+                if t
+            ]
+            for gid_b in ordered_game_ids[idx + 1:]:
+                teams_b = [
+                    t
+                    for t in (
+                        game_meta[gid_b].get("team_a_id"),
+                        game_meta[gid_b].get("team_b_id"),
+                    )
+                    if t
+                ]
+                primary_weight = 0
+                secondary_weight = 0
+                shared_weight = 0
+                for team_a_id in teams_a:
+                    for team_b_id in teams_b:
+                        edge = edge_weights.get(frozenset((team_a_id, team_b_id)))
+                        if edge is None:
+                            continue
+                        primary_weight += int(edge["primary"])
+                        secondary_weight += int(edge["secondary"])
+                        shared_weight += int(edge["shared_count"])
+                if not (primary_weight or secondary_weight or shared_weight):
+                    continue
+                game_pair_conflicts.append({
+                    "game_a_id": gid_a,
+                    "game_b_id": gid_b,
+                    "primary_weight": primary_weight,
+                    "secondary_weight": secondary_weight,
+                    "shared_weight": shared_weight,
+                })
+
+    game_slot_occ: dict[tuple[str, str], Any] = {}
+    if game_pair_conflicts:
+        conflicted_game_ids = {
+            pair["game_a_id"] for pair in game_pair_conflicts
+        } | {
+            pair["game_b_id"] for pair in game_pair_conflicts
+        }
+        game_slot_sources: dict[tuple[str, str], list[Any]] = {}
+        for gid, vd in game_vars.items():
+            if gid not in conflicted_game_ids:
+                continue
+            duration = game_meta[gid]["duration_minutes"]
+            for (rid, t), var in vd.items():
+                slots = res_slots[rid]
+                slot_min = res_by_id[rid]["slot_minutes"]
+                n_slots = max(1, math.ceil(duration / slot_min))
+                for s in range(t, t + n_slots):
+                    slot_label = slots[s]
+                    game_slot_sources.setdefault((gid, slot_label), []).append(var)
+
+        for (gid, slot_label), source_vars in game_slot_sources.items():
+            occ_var = model.NewBoolVar(f"gocc_{gid}_{slot_label.replace(':', '')}")
+            model.Add(sum(source_vars) == occ_var)
+            game_slot_occ[(gid, slot_label)] = occ_var
+
     # Objective — minimize the latest occupied global slot (pack games toward start)
     if game_global_slot:
         latest = model.NewIntVar(0, max(n_global - 1, 0), "latest_slot")
         for gv in game_global_slot.values():
             model.Add(latest >= gv)
-        model.Minimize(latest)
+        primary_conflict_terms: list[Any] = []
+        secondary_conflict_terms: list[Any] = []
+        conflict_overlap_vars: list[dict[str, Any]] = []
+
+        for pair_idx, pair in enumerate(game_pair_conflicts):
+            gid_a = pair["game_a_id"]
+            gid_b = pair["game_b_id"]
+            for slot_label in sorted_labels:
+                occ_a = game_slot_occ.get((gid_a, slot_label))
+                occ_b = game_slot_occ.get((gid_b, slot_label))
+                if occ_a is None or occ_b is None:
+                    continue
+                overlap_var = model.NewBoolVar(
+                    f"xconf_{pair_idx}_{slot_label.replace(':', '')}"
+                )
+                model.Add(overlap_var <= occ_a)
+                model.Add(overlap_var <= occ_b)
+                model.Add(overlap_var >= occ_a + occ_b - 1)
+                if pair["primary_weight"]:
+                    primary_conflict_terms.append(pair["primary_weight"] * overlap_var)
+                if pair["secondary_weight"]:
+                    secondary_conflict_terms.append(pair["secondary_weight"] * overlap_var)
+                conflict_overlap_vars.append({
+                    "game_a_id": gid_a,
+                    "game_b_id": gid_b,
+                    "slot": slot_label,
+                    "var": overlap_var,
+                    "primary_weight": pair["primary_weight"],
+                    "secondary_weight": pair["secondary_weight"],
+                    "shared_weight": pair["shared_weight"],
+                })
+        volleyball_switch_vars: list[Any] = []
+        volleyball_slot_vars: dict[tuple[str, int, str], list[Any]] = {}
+
+        for gid, vd in game_vars.items():
+            category = _volleyball_category_for_event(game_meta[gid].get("event"))
+            if category is None:
+                continue
+            duration = game_meta[gid]["duration_minutes"]
+            for (rid, t), var in vd.items():
+                slot_min = res_by_id[rid]["slot_minutes"]
+                n_slots  = max(1, math.ceil(duration / slot_min))
+                for s in range(t, t + n_slots):
+                    volleyball_slot_vars.setdefault((rid, s, category), []).append(var)
+
+        volleyball_occ_vars: dict[tuple[str, int, str], Any] = {}
+        for (rid, s, category), source_vars in volleyball_slot_vars.items():
+            occ_var = model.NewBoolVar(f"vbocc_{rid}_{s}_{category}")
+            model.Add(sum(source_vars) == occ_var)
+            volleyball_occ_vars[(rid, s, category)] = occ_var
+
+        for rid, slots in res_slots.items():
+            for s in range(len(slots) - 1):
+                current_label = slots[s]
+                next_label = slots[s + 1]
+                if _slot_day_key(current_label) != _slot_day_key(next_label):
+                    continue
+
+                men_current = volleyball_occ_vars.get((rid, s, "men"))
+                women_current = volleyball_occ_vars.get((rid, s, "women"))
+                men_next = volleyball_occ_vars.get((rid, s + 1, "men"))
+                women_next = volleyball_occ_vars.get((rid, s + 1, "women"))
+
+                if men_current is not None and women_next is not None:
+                    men_to_women = model.NewBoolVar(f"vbswitch_mw_{rid}_{s}")
+                    model.Add(men_to_women <= men_current)
+                    model.Add(men_to_women <= women_next)
+                    model.Add(men_to_women >= men_current + women_next - 1)
+                    volleyball_switch_vars.append(men_to_women)
+
+                if women_current is not None and men_next is not None:
+                    women_to_men = model.NewBoolVar(f"vbswitch_wm_{rid}_{s}")
+                    model.Add(women_to_men <= women_current)
+                    model.Add(women_to_men <= men_next)
+                    model.Add(women_to_men >= women_current + men_next - 1)
+                    volleyball_switch_vars.append(women_to_men)
+
+        secondary_penalty_max = sum(max(entry["secondary_weight"], 0) for entry in conflict_overlap_vars)
+        latest_max = max(n_global - 1, 0)
+        vb_switch_max = len(volleyball_switch_vars)
+
+        latest_weight = vb_switch_max + 1
+        secondary_weight = latest_max * latest_weight + vb_switch_max + 1
+        primary_weight = secondary_penalty_max * secondary_weight + latest_max * latest_weight + vb_switch_max + 1
+
+        objective_terms: list[Any] = []
+        if primary_conflict_terms:
+            objective_terms.append(sum(primary_conflict_terms) * primary_weight)
+        if secondary_conflict_terms:
+            objective_terms.append(sum(secondary_conflict_terms) * secondary_weight)
+        objective_terms.append(latest * latest_weight)
+        if volleyball_switch_vars:
+            objective_terms.append(sum(volleyball_switch_vars))
+        model.Minimize(sum(objective_terms))
 
     # Solve
     solver = cp_model.CpSolver()
@@ -536,6 +858,35 @@ def _solve_one_pool(
         "assignments":         assignments,
         "unscheduled":         unscheduled,
     }
+    if game_global_slot:
+        result["latest_slot_index"] = (
+            int(solver.Value(latest))
+            if status in (STATUS_OPTIMAL, STATUS_FEASIBLE)
+            else None
+        )
+    if "volleyball_switch_vars" in locals():
+        result["volleyball_adjacent_switches"] = (
+            int(sum(solver.Value(var) for var in volleyball_switch_vars))
+            if status in (STATUS_OPTIMAL, STATUS_FEASIBLE)
+            else None
+        )
+    if "conflict_overlap_vars" in locals():
+        if status in (STATUS_OPTIMAL, STATUS_FEASIBLE):
+            active_overlaps = [
+                entry for entry in conflict_overlap_vars
+                if solver.Value(entry["var"])
+            ]
+            result["cross_sport_same_slot_conflicts"] = len(active_overlaps)
+            result["cross_sport_primary_penalty"] = sum(
+                int(entry["primary_weight"]) for entry in active_overlaps
+            )
+            result["cross_sport_secondary_penalty"] = sum(
+                int(entry["secondary_weight"]) for entry in active_overlaps
+            )
+        else:
+            result["cross_sport_same_slot_conflicts"] = None
+            result["cross_sport_primary_penalty"] = None
+            result["cross_sport_secondary_penalty"] = None
     if status not in (STATUS_OPTIMAL, STATUS_FEASIBLE):
         result["diagnostics"] = build_infeasibility_diagnostics(pool_input)
 
@@ -578,22 +929,60 @@ def solve(
         resources,
     )
 
-    # Partition games and resources by resource_type for independent pool solves
-    games_by_type:     dict[str, list[dict]] = {}
-    for g in games:
-        games_by_type.setdefault(g["resource_type"], []).append(g)
+    # Partition games/resources by logical solver pool. Most pools still line up
+    # 1:1 with resource_type; the core gym sports may opt into a shared pool via
+    # schedule_input["solver_pool"] so cross-sport conflicts can be optimized
+    # together without mixing their actual court types.
+    games_by_pool: dict[str, list[dict]] = {}
+    for game in games:
+        games_by_pool.setdefault(_solver_pool_key(game), []).append(game)
 
-    resources_by_type: dict[str, list[dict]] = {}
-    for r in resources:
-        resources_by_type.setdefault(r["resource_type"], []).append(r)
+    resources_by_pool: dict[str, list[dict]] = {}
+    for resource in resources:
+        resources_by_pool.setdefault(_solver_pool_key(resource), []).append(resource)
 
-    if not games_by_type:
+    resource_pool_by_id = {
+        resource["resource_id"]: _solver_pool_key(resource)
+        for resource in resources
+    }
+    blocked_slots_by_pool: dict[str, dict[str, set[str]]] = defaultdict(dict)
+    for resource_type, blocked_by_resource in blocked_slots_by_type.items():
+        for resource_id, slots in blocked_by_resource.items():
+            pool_key = resource_pool_by_id.get(resource_id, resource_type)
+            blocked_slots_by_pool.setdefault(pool_key, {})[resource_id] = set(slots)
+
+    team_conflicts = schedule_input.get("team_conflicts", []) or []
+    team_conflicts_by_pool: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    if team_conflicts:
+        game_pool_by_team: dict[str, str] = {}
+        for pool_key, pool_games in games_by_pool.items():
+            for game in pool_games:
+                for team_id in (game.get("team_a_id"), game.get("team_b_id")):
+                    if team_id:
+                        game_pool_by_team[str(team_id)] = pool_key
+        for edge in team_conflicts:
+            team_a_id = str(edge.get("team_a_id") or "").strip()
+            team_b_id = str(edge.get("team_b_id") or "").strip()
+            pool_key = game_pool_by_team.get(team_a_id)
+            if pool_key and pool_key == game_pool_by_team.get(team_b_id):
+                team_conflicts_by_pool[pool_key].append(edge)
+
+    if not games_by_pool:
         return {
             "status":              STATUS_OPTIMAL,
             "solver_wall_seconds": 0.0,
             "assignments":         list(playoff_slots),
             "unscheduled":         [],
             "pool_results":        [],
+            "conflict_audit_summary": {
+                "total_edges": 0,
+                "separated_edges": 0,
+                "overlapping_edges": 0,
+                "incomplete_edges": 0,
+                "remaining_primary_overlap_penalty": 0,
+                "remaining_secondary_overlap_penalty": 0,
+            },
+            "conflict_audit": [],
         }
 
     pool_results:       list[dict[str, Any]] = []
@@ -601,22 +990,33 @@ def solve(
     all_unscheduled:    list[str]            = []
     total_wall_seconds: float                = 0.0
 
-    for resource_type in sorted(games_by_type.keys()):
+    for pool_key in sorted(games_by_pool.keys()):
         pool_input = {
-            "games":         games_by_type[resource_type],
-            "resources":     resources_by_type.get(resource_type, []),
-            "blocked_slots": blocked_slots_by_type.get(resource_type, {}),
+            "games":         games_by_pool[pool_key],
+            "resources":     resources_by_pool.get(pool_key, []),
+            "blocked_slots": blocked_slots_by_pool.get(pool_key, {}),
+            "team_conflicts": team_conflicts_by_pool.get(pool_key, []),
         }
         result = _solve_one_pool(pool_input, timeout_seconds)
-        result["resource_type"] = resource_type
+        result["resource_type"] = pool_key
         pool_results.append(result)
         all_assignments.extend(result["assignments"])
         all_unscheduled.extend(result["unscheduled"])
         total_wall_seconds += result["solver_wall_seconds"]
+        extra_metrics = ""
+        if result.get("volleyball_adjacent_switches") is not None:
+            extra_metrics = (
+                f", volleyball_adjacent_switches={result['volleyball_adjacent_switches']}"
+            )
+        if result.get("cross_sport_same_slot_conflicts") is not None:
+            extra_metrics += (
+                f", cross_sport_same_slot_conflicts={result['cross_sport_same_slot_conflicts']}"
+            )
         logger.info(
-            f"Pool {resource_type!r}: status={result['status']}, "
+            f"Pool {pool_key!r}: status={result['status']}, "
             f"assigned={len(result['assignments'])}, "
             f"unscheduled={len(result['unscheduled'])}"
+            f"{extra_metrics}"
         )
 
     # Aggregate status across pools
@@ -641,6 +1041,11 @@ def solve(
 
     ensure_unique_assignment_slots(all_assignments)
 
+    conflict_audit_summary, conflict_audit = build_conflict_audit(
+        schedule_input,
+        all_assignments,
+    )
+
     logger.info(
         f"Solver (all pools): status={top_status}, "
         f"wall_time={total_wall_seconds:.3f}s, "
@@ -654,6 +1059,8 @@ def solve(
         "assignments":         all_assignments,
         "unscheduled":         all_unscheduled,
         "pool_results":        pool_results,
+        "conflict_audit_summary": conflict_audit_summary,
+        "conflict_audit":      conflict_audit,
     }
 
 
