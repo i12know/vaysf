@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### New Features
+- Improved final `Schedule-by-Time` readability for mixed-venue gym schedules
+  - `venue_input.xlsx` rows now derive logical day labels from the `Date` column when `Day` is absent, so direct venue rows no longer collapse across multiple actual dates into one fake `Day-1`
+  - Direct venue resources now carry `venue_name` through to `schedule_input.json`
+  - `produce-schedule` now renders one continuous day section per Gym Core sport and uses venue-qualified court headers such as `Orange Gym Court-1` and `HS Big Gym Court-3` for more consistent operator-facing output
+
 - Added an editable `Pool-Assignment` tab and `assign-pools` command for Layer-1 team seeding
   - `build-schedule-workbook` now writes a `Pool-Assignment` tab for BB / VBM / VBW with one row per eligible team grouping, editable `Seed` cells, computed draw position, and computed pool placement
   - New `python main.py assign-pools --workbook ...` command re-reads the edited workbook, recomputes the serpentine draw, writes the refreshed tab back, and persists the editable state in `pool_assignments.json`

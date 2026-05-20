@@ -1381,7 +1381,8 @@ def test_build_schedule_input_legacy_venue_rows_do_not_add_fallback_gyms(tmp_pat
     assert si["resource_count"] == 1
     assert {g["resource_type"] for g in si["games"]} == {GYM_RESOURCE_TYPE_BASKETBALL}
     assert [r["resource_type"] for r in si["resources"]] == [GYM_RESOURCE_TYPE_BASKETBALL]
-    assert si["resources"][0]["day"] == "Day-1"
+    assert si["resources"][0]["day"] == "Sat-1"
+    assert si["resources"][0]["venue_name"] == "Church Main Gym"
 
 
 def test_build_schedule_input_grouped_rows_without_gym_modes_use_direct_resources(tmp_path):
@@ -1544,6 +1545,7 @@ def test_load_venue_input_rows_expands_quantity(tmp_path):
     assert result[0]["label"] == "Court-1"
     assert result[1]["label"] == "Court-2"
     assert result[0]["open_time"] == "09:00"
+    assert result[0]["day"] == "Day-1"
 
 
 def test_load_venue_input_rows_table_label(tmp_path):
@@ -1628,6 +1630,7 @@ def test_load_venue_input_rows_reads_exclusive_group(tmp_path):
     result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert len(result) == 2
     assert all(r["exclusive_group"] == "Midsize Gym" for r in result)
+    assert all(r["venue_name"] == "Midsize Gym" for r in result)
 
 
 def test_load_venue_input_rows_blank_exclusive_group(tmp_path):
@@ -1648,6 +1651,31 @@ def test_load_venue_input_rows_blank_exclusive_group(tmp_path):
 
     result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert result[0]["exclusive_group"] == ""
+    assert result[0]["venue_name"] == "Chapman"
+
+
+def test_load_venue_input_rows_derives_day_labels_from_date_column(tmp_path):
+    """Date-only venue rows should map to logical Sat-*/Sun-* labels."""
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Basketball Pod", "HS Small Gym", "Basketball Court", 1,
+         "2026-07-18", 8, 16, 60, None, None, None, None],
+        ["Basketball Pod", "HS Small Gym", "Basketball Court", 1,
+         "2026-07-19", 12, 20, 60, None, None, None, None],
+        ["Basketball Pod", "HS Small Gym", "Basketball Court", 1,
+         "2026-07-25", 8, 17, 60, None, None, None, None],
+        ["Basketball Pod", "HS Small Gym", "Basketball Court", 1,
+         "2026-07-26", 12, 17, 60, None, None, None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows)
+
+    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    assert [r["day"] for r in result] == ["Sat-1", "Sun-1", "Sat-2", "Sun-2"]
 
 
 def test_load_gym_modes_missing_file(tmp_path):
@@ -1809,6 +1837,18 @@ def test_build_assigned_gym_game_objects_fallback_counts_team_order_units():
         game for game in games if game["event"] == SPORT_TYPE["BASKETBALL"]
     ]
     assert len(basketball_games) == 4
+
+
+def test_classmethod_schedule_helpers_do_not_instantiate_exporter_subclass():
+    class CountingBuilder(ScheduleWorkbookBuilder):
+        init_calls = 0
+
+        def __init__(self):
+            type(self).init_calls += 1
+            super().__init__()
+
+    CountingBuilder._build_core_gym_team_lookup([])
+    assert CountingBuilder.init_calls == 0
 
 
 def test_build_schedule_output_flat_rows_count():
@@ -2101,3 +2141,101 @@ def test_write_schedule_output_report_groups_mixed_pod_windows(tmp_path):
     assert "18:00" in string_values
     assert any("PCK-01" in v for v in string_values)
     assert any("TT-01" in v for v in string_values)
+
+
+def test_write_schedule_output_report_merges_gym_core_day_sections(tmp_path):
+    """Gym Core resources for one day/resource_type render as one continuous section."""
+    import openpyxl
+
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "VBM-01", "event": "Volleyball - Men Team",
+                "stage": "Pool", "pool_id": "P1", "round": 1,
+                "team_a_id": "VBM::RPC", "team_b_id": "VBM::SDC",
+                "duration_minutes": 60, "resource_type": "Volleyball Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+            {
+                "game_id": "VBM-02", "event": "Volleyball - Men Team",
+                "stage": "Pool", "pool_id": "P1", "round": 2,
+                "team_a_id": "VBM::FVC", "team_b_id": "VBM::ORN",
+                "duration_minutes": 60, "resource_type": "Volleyball Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+            {
+                "game_id": "VBW-01", "event": "Volleyball - Women Team",
+                "stage": "Pool", "pool_id": "P1", "round": 1,
+                "team_a_id": "VBW::RPC", "team_b_id": "VBW::PCC",
+                "duration_minutes": 60, "resource_type": "Volleyball Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+        ],
+        "resources": [
+            {
+                "resource_id": "GYM-Day-1-1", "resource_type": "Volleyball Court",
+                "label": "Court-1", "day": "Day-1", "open_time": "08:00",
+                "close_time": "18:00", "slot_minutes": 60,
+                "solver_pool": ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL,
+                "exclusive_group": "HS Big Gym",
+            },
+            {
+                "resource_id": "GYM-Day-1-4", "resource_type": "Volleyball Court",
+                "label": "Court-1", "day": "Day-1", "open_time": "12:00",
+                "close_time": "21:00", "slot_minutes": 60,
+                "solver_pool": ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL,
+                "exclusive_group": "HS Big Gym",
+            },
+            {
+                "resource_id": "GYM-Day-1-6", "resource_type": "Volleyball Court",
+                "label": "Court-3", "day": "Day-1", "open_time": "12:00",
+                "close_time": "21:00", "slot_minutes": 60,
+                "solver_pool": ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL,
+                "exclusive_group": "HS Big Gym",
+            },
+            {
+                "resource_id": "VOL-Day-1-1", "resource_type": "Volleyball Court",
+                "label": "Court-2", "day": "Day-1", "open_time": "10:00",
+                "close_time": "13:00", "slot_minutes": 60,
+                "solver_pool": ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL,
+                "venue_name": "Orange Gym",
+                "exclusive_group": "",
+            },
+        ],
+        "precedence": [],
+    }
+    schedule_output = {
+        "solved_at": "2026-05-20T14:07:19",
+        "status": "OPTIMAL",
+        "solver_wall_seconds": 0.1,
+        "assignments": [
+            {"game_id": "VBM-01", "resource_id": "GYM-Day-1-1", "slot": "Day-1-08:00"},
+            {"game_id": "VBW-01", "resource_id": "VOL-Day-1-1", "slot": "Day-1-10:00"},
+            {"game_id": "VBM-02", "resource_id": "GYM-Day-1-4", "slot": "Day-1-14:00"},
+        ],
+        "unscheduled": [],
+        "pool_results": [],
+    }
+    out = tmp_path / "sched.xlsx"
+    ScheduleWorkbookBuilder._write_schedule_output_report(out, schedule_output, schedule_input)
+    ws = openpyxl.load_workbook(out)["Schedule-by-Time"]
+
+    all_values = [
+        ws.cell(row=r, column=c).value
+        for r in range(1, ws.max_row + 1)
+        for c in range(1, ws.max_column + 1)
+    ]
+    string_values = [str(v) for v in all_values if v is not None]
+
+    volleyball_sections = [v for v in string_values if "Volleyball Court" in v]
+    assert len(volleyball_sections) == 1
+    assert "08:00-21:00" in volleyball_sections[0]
+    assert "08:00" in string_values
+    assert "20:00" in string_values
+    assert any("HS Big Gym Court-1 [08:00-18:00]" in v for v in string_values)
+    assert any("HS Big Gym Court-1 [12:00-21:00]" in v for v in string_values)
+    assert any("HS Big Gym Court-3" in v for v in string_values)
+    assert any("Orange Gym Court-2" in v for v in string_values)
+    assert any("VBM-01" in v for v in string_values)
+    assert any("VBM-02" in v for v in string_values)
+    assert any("VBW-01" in v for v in string_values)

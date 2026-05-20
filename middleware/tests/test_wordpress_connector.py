@@ -303,8 +303,43 @@ def test_get_participants_raises_retry_error_after_exhausted_attempts(wp_connect
         wp_connector.get_participants({"chmeetings_id": "123"})
 
 
+def test_get_church_by_code_retries_on_transient_disconnect(wp_connector, mocker):
+    """get_church_by_code() retries on ConnectionError and returns data on recovery."""
+    mocker.patch("time.sleep")
+
+    good_response = mocker.Mock()
+    good_response.status_code = 200
+    good_response.json.return_value = {"church_id": 15, "church_code": "GLA"}
+    good_response.raise_for_status = mocker.Mock()
+
+    mock_get = mocker.patch.object(
+        wp_connector.session,
+        "get",
+        side_effect=[_connection_error(), good_response],
+    )
+
+    result = wp_connector.get_church_by_code("GLA")
+
+    assert result == {"church_id": 15, "church_code": "GLA"}
+    assert mock_get.call_count == 2
+
+
+def test_get_church_by_code_raises_retry_error_after_exhausted_attempts(wp_connector, mocker):
+    """get_church_by_code() raises RetryError when all transient attempts fail."""
+    mocker.patch("time.sleep")
+
+    mocker.patch.object(
+        wp_connector.session,
+        "get",
+        side_effect=_connection_error(),
+    )
+
+    with pytest.raises(RetryError):
+        wp_connector.get_church_by_code("GLA")
+
+
 def test_get_rosters_does_not_retry_non_transient_errors(wp_connector, mocker):
-    """Non-transient HTTP errors (500) exhaust all 3 retry attempts."""
+    """Non-transient HTTP errors should fail immediately without retry."""
     mocker.patch("time.sleep")
 
     bad_response = mocker.Mock()
@@ -317,7 +352,7 @@ def test_get_rosters_does_not_retry_non_transient_errors(wp_connector, mocker):
         wp_connector.session, "get", return_value=bad_response
     )
 
-    with pytest.raises(RetryError):
-        wp_connector.get_rosters()
+    result = wp_connector.get_rosters()
 
-    assert mock_get.call_count == 3
+    assert result == []
+    assert mock_get.call_count == 1

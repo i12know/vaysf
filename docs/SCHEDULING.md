@@ -476,6 +476,12 @@ When one day mixes resources with different time windows or slot lengths
 uniform day/resource/window group so pod assignments are not collapsed into one
 misaligned `Day-1` grid.
 
+For the shared **Gym Core** pool, the renderer instead merges same-day
+Basketball / Volleyball resources into one continuous section per sport and
+uses venue-qualified court headers such as `Orange Gym Court-1` or
+`HS Big Gym Court-3` so floor coordinators can tell mixed venues apart at a
+glance.
+
 The JSON file stays in `DATA_DIR` as the machine-readable backup.
 
 **Constraints implemented in `scheduler.py`:**

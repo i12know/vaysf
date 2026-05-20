@@ -2,6 +2,7 @@
 # Version 1.3.0
 import json
 import pandas as pd
+import requests
 from pathlib import Path
 from loguru import logger
 from typing import Optional, List, Dict, Any, Tuple
@@ -765,6 +766,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         all_rosters_data: List[Dict[str, Any]] = []
         all_validation_data: List[Dict[str, Any]] = []
         summary_data_list: List[Dict[str, Any]] = []
+        _wp_church_fetch_failures = 0
         _wp_participant_fetch_failures = 0
         _wp_roster_fetch_failures = 0
 
@@ -788,7 +790,20 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             total_pending_participants_wp = 0
             total_with_open_errors_wp = 0
             total_athlete_fees = 0
-            church_wp = self.wp_connector.get_church_by_code(church_code_iter)
+            try:
+                church_wp = self.wp_connector.get_church_by_code(church_code_iter)
+            except RetryError as exc:
+                _wp_church_fetch_failures += 1
+                logger.error(
+                    f"WP church fetch failed for church code {church_code_iter} after all retries: {exc}"
+                )
+                church_wp = None
+            except requests.RequestException as exc:
+                _wp_church_fetch_failures += 1
+                logger.error(
+                    f"WP church fetch failed for church code {church_code_iter}: {exc}"
+                )
+                church_wp = None
             church_wp_id = church_wp.get("church_id") if church_wp else None
             open_validation_issues = self._fetch_open_validation_issues(church_wp_id)
             participant_error_lookup: Dict[str, List[Dict[str, Any]]] = {}
@@ -827,6 +842,12 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                             f"WP participant fetch failed for CHM ID {chm_id} after all retries: {exc}"
                         )
                         wp_participants = []
+                    except requests.RequestException as exc:
+                        _wp_participant_fetch_failures += 1
+                        logger.error(
+                            f"WP participant fetch failed for CHM ID {chm_id}: {exc}"
+                        )
+                        wp_participants = []
                     if wp_participants:
                         wp_participant = wp_participants[0]
                         wp_participant_id_val = wp_participant.get("participant_id", 0)
@@ -861,6 +882,13 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                 logger.error(
                                     f"WP roster fetch failed for participant {wp_participant_id_val} "
                                     f"(CHM ID {chm_id}) after all retries: {exc}"
+                                )
+                                wp_rosters = []
+                            except requests.RequestException as exc:
+                                _wp_roster_fetch_failures += 1
+                                logger.error(
+                                    f"WP roster fetch failed for participant {wp_participant_id_val} "
+                                    f"(CHM ID {chm_id}): {exc}"
                                 )
                                 wp_rosters = []
                             for roster_entry in wp_rosters:
@@ -1076,10 +1104,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             )
             logger.info(f"Force resend completed. Total emails {'would be sent' if dry_run else 'sent'}: {resend_count}")
         
-        if _wp_participant_fetch_failures or _wp_roster_fetch_failures:
+        if _wp_church_fetch_failures or _wp_participant_fetch_failures or _wp_roster_fetch_failures:
             logger.warning(
                 f"Export finished with transient WordPress fetch failures: "
-                f"{_wp_participant_fetch_failures} participant fetch(es) and "
+                f"{_wp_church_fetch_failures} church fetch(es), "
+                f"{_wp_participant_fetch_failures} participant fetch(es), and "
                 f"{_wp_roster_fetch_failures} roster fetch(es) exhausted all retries. "
                 "Output may be incomplete — re-run export to recover missing rows."
             )

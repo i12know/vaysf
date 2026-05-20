@@ -63,9 +63,12 @@ class ScheduleWorkbookBuilder:
     It is instantiated without arguments and used by export-church-teams
     (via ChurchTeamsExporter) and the standalone build-schedule-workbook command.
 
-    The _rules_manager_cache attribute is set lazily by _get_min_team_size;
-    __init__ intentionally does not touch it.
+    The class-level _rules_manager_cache attribute is set lazily by
+    _get_min_team_size; __init__ intentionally does not touch it.
     """
+
+    _rules_manager_cache: Optional[RulesManager] = None
+    _rules_manager_cache_failed: bool = False
 
     def __init__(self) -> None:
         pass
@@ -446,17 +449,21 @@ class ScheduleWorkbookBuilder:
         sport_format = "Singles" if "SINGLES" in suffix else "Team"
         return sport_type, gender, sport_format
 
-    def _get_min_team_size(self, event_name: str) -> int:
+    @classmethod
+    def _get_min_team_size(cls, event_name: str) -> int:
         """Look up minimum team size from the validation ruleset; fall back
         to COURT_ESTIMATE_MIN_TEAM_SIZE if the JSON rule is absent."""
-        if not hasattr(self, "_rules_manager_cache"):
+        rules_manager_cache = getattr(cls, "_rules_manager_cache", None)
+        rules_manager_cache_failed = bool(getattr(cls, "_rules_manager_cache_failed", False))
+        if rules_manager_cache is None and not rules_manager_cache_failed:
             try:
-                self._rules_manager_cache = RulesManager(collection="SUMMER_2026")
+                setattr(cls, "_rules_manager_cache", RulesManager(collection="SUMMER_2026"))
             except Exception as e:
                 logger.warning(f"Could not load validation rules for venue estimate: {e}")
-                self._rules_manager_cache = None
-        if self._rules_manager_cache is not None:
-            for rule in self._rules_manager_cache.get_rules_for_sport(event_name):
+                setattr(cls, "_rules_manager_cache_failed", True)
+        rules_manager = getattr(cls, "_rules_manager_cache", None)
+        if rules_manager is not None:
+            for rule in rules_manager.get_rules_for_sport(event_name):
                 if rule.get("rule_type") == "team_size" and rule.get("category") == "min":
                     try:
                         return int(rule.get("value"))
@@ -464,7 +471,8 @@ class ScheduleWorkbookBuilder:
                         pass
         return int(COURT_ESTIMATE_MIN_TEAM_SIZE.get(event_name, 0))
 
-    def _count_estimating_teams(self, roster_rows: List[Dict[str, Any]],
+    @classmethod
+    def _count_estimating_teams(cls, roster_rows: List[Dict[str, Any]],
                                  event_name: str, min_team_size: int) -> Dict[str, Any]:
         """Return estimating/potential team counts and the qualifying team ids.
 
@@ -477,7 +485,7 @@ class ScheduleWorkbookBuilder:
         """
         if min_team_size <= 0:
             return {"n_estimating": 0, "n_potential": 0, "team_codes": ""}
-        target_type, target_gender, _ = self._decompose_event_name(event_name)
+        target_type, target_gender, _ = cls._decompose_event_name(event_name)
         counts_by_team: Dict[Tuple[str, str], int] = {}
         for r in roster_rows:
             r_type = str(r.get("sport_type") or "").strip()
@@ -1389,7 +1397,7 @@ class ScheduleWorkbookBuilder:
         team_lookup: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
         for event_name, _prefix in cls._POOL_ASSIGNMENT_EVENT_DEFS:
-            min_team_size = cls._get_min_team_size(cls(), event_name)
+            min_team_size = cls._get_min_team_size(event_name)
             target_type, target_gender, _target_format = cls._decompose_event_name(event_name)
             provisional: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
@@ -1541,8 +1549,8 @@ class ScheduleWorkbookBuilder:
         placeholder_map_by_event = cls._pool_assignment_placeholder_map(pool_assignment_rows)
 
         for event_name, prefix, resource_type in sport_defs:
-            min_team_size = cls._get_min_team_size(cls(), event_name)
-            counts = cls()._count_estimating_teams(roster_rows, event_name, min_team_size)
+            min_team_size = cls._get_min_team_size(event_name)
+            counts = cls._count_estimating_teams(roster_rows, event_name, min_team_size)
             slot_map = placeholder_map_by_event.get(event_name, {})
             if slot_map:
                 n_teams = len(slot_map)
@@ -1556,7 +1564,7 @@ class ScheduleWorkbookBuilder:
             gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(
                 event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
             )
-            pool_pairs = cls()._make_pool_game_pairs(prefix, n_teams, gpg)
+            pool_pairs = cls._make_pool_game_pairs(prefix, n_teams, gpg)
             for pair_idx, (team_a_id, team_b_id, pool_id) in enumerate(pool_pairs, start=1):
                 team_a_meta = slot_map.get(team_a_id)
                 team_b_meta = slot_map.get(team_b_id)
@@ -1786,7 +1794,56 @@ class ScheduleWorkbookBuilder:
             return default
 
     @staticmethod
-    def _load_venue_input_rows(venue_input_path: Path) -> List[Dict[str, Any]]:
+    def _coerce_excel_date(val) -> Optional[datetime]:
+        """Convert an Excel date-like cell to datetime, or None when unavailable."""
+        if pd.isna(val) or val in (None, ""):
+            return None
+        if isinstance(val, datetime):
+            return val
+        try:
+            parsed = pd.to_datetime(val)
+        except Exception:
+            return None
+        if pd.isna(parsed):
+            return None
+        return parsed.to_pydatetime()
+
+    @classmethod
+    def _derive_day_labels_from_dates(cls, values: List[Any]) -> Dict[str, str]:
+        """Map unique venue dates to logical labels such as Sat-1 / Sun-1."""
+        unique_dates: List[datetime] = []
+        seen_keys: set[str] = set()
+        for value in values:
+            parsed = cls._coerce_excel_date(value)
+            if not parsed:
+                continue
+            key = parsed.date().isoformat()
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            unique_dates.append(parsed)
+
+        unique_dates.sort()
+        labels: Dict[str, str] = {}
+        sat_idx = 0
+        sun_idx = 0
+        other_idx = 0
+        for dt_value in unique_dates:
+            weekday = dt_value.weekday()
+            if weekday == 5:
+                sat_idx += 1
+                label = f"Sat-{sat_idx}"
+            elif weekday == 6:
+                sun_idx += 1
+                label = f"Sun-{sun_idx}"
+            else:
+                other_idx += 1
+                label = f"Day-{other_idx}"
+            labels[dt_value.date().isoformat()] = label
+        return labels
+
+    @classmethod
+    def _load_venue_input_rows(cls, venue_input_path: Path) -> List[Dict[str, Any]]:
         """Expand venue_input.xlsx into per-resource objects for schedule_input.json.
 
         Each row with Quantity=N emits N resource objects labelled Court-1…N or
@@ -1806,26 +1863,39 @@ class ScheduleWorkbookBuilder:
         # Counter keyed by (resource_type, day) for day-aware resource IDs.
         resource_counts: Dict[tuple, int] = {}
         has_day_col = "Day" in df.columns
+        date_day_map = (
+            ScheduleWorkbookBuilder._derive_day_labels_from_dates(df["Date"].tolist())
+            if "Date" in df.columns else {}
+        )
 
         for _, row in df.iterrows():
-            resource_type = ScheduleWorkbookBuilder._clean_excel_text(row.get("Resource Type"))
+            resource_type = cls._clean_excel_text(row.get("Resource Type"))
             if not resource_type:
                 continue
+            venue_name = cls._clean_excel_text(row.get("Venue Name"))
             # Exclusive Venue Group: rows sharing a group value compete for the
             # same physical gym (only one mode active per time block). Optional
             # column — blank means the resource stands alone.
-            exclusive_group = ScheduleWorkbookBuilder._clean_excel_text(
+            exclusive_group = cls._clean_excel_text(
                 row.get("Exclusive Venue Group")
             )
-            # Day column: use value from sheet when present, fall back to "Day-1".
+            # Day column: use explicit value when present; otherwise derive from Date.
             if has_day_col:
-                day = ScheduleWorkbookBuilder._clean_excel_text(row.get("Day")) or "Day-1"
+                day = cls._clean_excel_text(row.get("Day"))
             else:
+                day = ""
+            if not day:
+                parsed_date = ScheduleWorkbookBuilder._coerce_excel_date(row.get("Date"))
+                day = (
+                    date_day_map.get(parsed_date.date().isoformat(), "")
+                    if parsed_date else ""
+                )
+            if not day:
                 day = "Day-1"
-            qty = max(1, int(ScheduleWorkbookBuilder._float_from_excel(row.get("Quantity"), 1)))
-            slot_min = max(1, int(ScheduleWorkbookBuilder._float_from_excel(row.get("Slot Minutes"), 60)))
-            start = ScheduleWorkbookBuilder._parse_hour(row.get("Start Time"))
-            last_start = ScheduleWorkbookBuilder._parse_hour(row.get("Last Start Time"))
+            qty = max(1, int(cls._float_from_excel(row.get("Quantity"), 1)))
+            slot_min = max(1, int(cls._float_from_excel(row.get("Slot Minutes"), 60)))
+            start = cls._parse_hour(row.get("Start Time"))
+            last_start = cls._parse_hour(row.get("Last Start Time"))
             open_time = f"{int(start):02d}:{int(round((start % 1) * 60)):02d}"
             close_decimal = last_start + slot_min / 60.0
             close_time = f"{int(close_decimal):02d}:{int(round((close_decimal % 1) * 60)):02d}"
@@ -1847,6 +1917,7 @@ class ScheduleWorkbookBuilder:
                     "open_time":       open_time,
                     "close_time":      close_time,
                     "slot_minutes":    slot_min,
+                    "venue_name":      venue_name,
                     "exclusive_group": exclusive_group,
                 })
             resource_counts[count_key] = rc
@@ -3632,13 +3703,116 @@ class ScheduleWorkbookBuilder:
             return h * 60 + m
 
         def _resource_group_key(res: Dict[str, Any]) -> Tuple[str, str, str, str, int]:
+            solver_pool = str(res.get("solver_pool") or "").strip()
+            day = str(res.get("day", ""))
+            resource_type = str(res.get("resource_type", ""))
+            slot_minutes = int(res.get("slot_minutes", 0) or 0)
+            if solver_pool == ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL:
+                # Render one continuous operator-facing section per Day/resource_type
+                # for the shared gym solver pool, even when the allocator produced
+                # multiple overlapping time windows for the same sport.
+                return (day, resource_type, "", "", slot_minutes)
             return (
-                str(res.get("day", "")),
-                str(res.get("resource_type", "")),
+                day,
+                resource_type,
                 str(res.get("open_time", "")),
                 str(res.get("close_time", "")),
-                int(res.get("slot_minutes", 0) or 0),
+                slot_minutes,
             )
+
+        def _group_open_close(day_res: List[Dict[str, Any]]) -> Tuple[str, str]:
+            open_times = [
+                str(res.get("open_time", "")).strip()
+                for res in day_res
+                if str(res.get("open_time", "")).strip()
+            ]
+            close_times = [
+                str(res.get("close_time", "")).strip()
+                for res in day_res
+                if str(res.get("close_time", "")).strip()
+            ]
+            merged_open = min(open_times, key=_time_sort_key) if open_times else ""
+            merged_close = max(close_times, key=_time_sort_key) if close_times else ""
+            return merged_open, merged_close
+
+        def _group_slot_times(day_res: List[Dict[str, Any]]) -> List[str]:
+            return sorted(
+                {
+                    t_str
+                    for res in day_res
+                    for t_str in _slot_times(res)
+                },
+                key=_time_sort_key,
+            )
+
+        def _resource_header_labels(day_res: List[Dict[str, Any]]) -> Dict[str, str]:
+            labels_by_resource: Dict[str, str] = {}
+            base_labels: Dict[str, str] = {}
+            for res in day_res:
+                resource_id = str(res.get("resource_id", "")).strip()
+                base_label = str(res.get("label") or resource_id).strip() or resource_id
+                solver_pool = str(res.get("solver_pool") or "").strip()
+                venue_name = (
+                    str(res.get("exclusive_group") or "").strip()
+                    or str(res.get("venue_name") or "").strip()
+                )
+                base_labels[resource_id] = base_label
+                if (
+                    venue_name
+                    and solver_pool == ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL
+                ):
+                    labels_by_resource[resource_id] = f"{venue_name} {base_label}"
+                else:
+                    labels_by_resource[resource_id] = base_label
+
+            def _counts() -> Dict[str, int]:
+                counts: Dict[str, int] = {}
+                for resource_id, label in labels_by_resource.items():
+                    counts[label] = counts.get(label, 0) + 1
+                return counts
+
+            duplicate_labels = {
+                label for label, count in _counts().items() if count > 1
+            }
+            if duplicate_labels:
+                for res in day_res:
+                    resource_id = str(res.get("resource_id", "")).strip()
+                    if labels_by_resource.get(resource_id) not in duplicate_labels:
+                        continue
+                    venue_name = str(res.get("venue_name") or "").strip()
+                    if venue_name:
+                        labels_by_resource[resource_id] = (
+                            f"{venue_name} {base_labels[resource_id]}"
+                        )
+
+            duplicate_labels = {
+                label for label, count in _counts().items() if count > 1
+            }
+            if duplicate_labels:
+                for res in day_res:
+                    resource_id = str(res.get("resource_id", "")).strip()
+                    if labels_by_resource.get(resource_id) not in duplicate_labels:
+                        continue
+                    open_time = str(res.get("open_time") or "").strip()
+                    close_time = str(res.get("close_time") or "").strip()
+                    window = f"{open_time}-{close_time}" if open_time and close_time else resource_id
+                    labels_by_resource[resource_id] = (
+                        f"{labels_by_resource[resource_id]} [{window}]"
+                    )
+
+            duplicate_labels = {
+                label for label, count in _counts().items() if count > 1
+            }
+            if duplicate_labels:
+                for res in day_res:
+                    resource_id = str(res.get("resource_id", "")).strip()
+                    if labels_by_resource.get(resource_id) not in duplicate_labels:
+                        continue
+                    labels_by_resource[resource_id] = (
+                        f"{labels_by_resource[resource_id]} ({resource_id})"
+                    )
+
+            return labels_by_resource
 
         # Group resources by uniform day/window/resource pool so pod schedules with
         # mixed slot lengths do not get collapsed into one broken "Day-1" grid.
@@ -3664,9 +3838,14 @@ class ScheduleWorkbookBuilder:
         max_resources = max((len(v) for v in resource_groups.values()), default=4)
         n_cols        = 1 + max_resources
 
-        def _section_label(group_key: Tuple[str, str, str, str, int]) -> str:
+        def _section_label(
+            group_key: Tuple[str, str, str, str, int],
+            day_res: List[Dict[str, Any]],
+        ) -> str:
             day, resource_type, open_time, close_time, slot_minutes = group_key
             day_label = _DAY_DISPLAY.get(day, day)
+            if not open_time or not close_time:
+                open_time, close_time = _group_open_close(day_res)
             if (
                 day in _DAY_DISPLAY
                 and resource_type in (GYM_RESOURCE_TYPE, GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL)
@@ -3693,16 +3872,25 @@ class ScheduleWorkbookBuilder:
 
         cur_row = 3
         for group_key in sorted_group_keys:
-            day_res = sorted(resource_groups[group_key], key=lambda r: r["resource_id"])
+            day_res = sorted(
+                resource_groups[group_key],
+                key=lambda r: (
+                    _time_sort_key(str(r.get("open_time") or "00:00")),
+                    str(r.get("exclusive_group") or ""),
+                    str(r.get("label") or ""),
+                    r["resource_id"],
+                ),
+            )
             if not day_res:
                 continue
+            header_labels = _resource_header_labels(day_res)
 
             # Section header (grey, merged)
             ws1.merge_cells(
                 start_row=cur_row, start_column=1,
                 end_row=cur_row, end_column=n_cols,
             )
-            c = ws1.cell(row=cur_row, column=1, value=_section_label(group_key))
+            c = ws1.cell(row=cur_row, column=1, value=_section_label(group_key, day_res))
             c.fill, c.font, c.alignment = sec_fill, bold_font, center
             cur_row += 1
 
@@ -3711,13 +3899,20 @@ class ScheduleWorkbookBuilder:
             ws1.cell(row=cur_row, column=1).fill = sec_fill
             ws1.cell(row=cur_row, column=1).alignment = center
             for ci, res in enumerate(day_res, start=2):
-                c = ws1.cell(row=cur_row, column=ci, value=res["label"])
+                c = ws1.cell(
+                    row=cur_row,
+                    column=ci,
+                    value=header_labels.get(
+                        str(res.get("resource_id") or "").strip(),
+                        res.get("label"),
+                    ),
+                )
                 c.fill, c.font, c.alignment = sec_fill, bold_font, center
             cur_row += 1
 
             day = group_key[0]
-            # Data rows — one per time slot in this uniform resource group
-            for t_str in _slot_times(day_res[0]):
+            # Data rows — one per unioned time slot in this resource group.
+            for t_str in _group_slot_times(day_res):
                 slot_label = f"{day}-{t_str}"
                 ws1.cell(row=cur_row, column=1, value=t_str).alignment = center
                 for ci, res in enumerate(day_res, start=2):
