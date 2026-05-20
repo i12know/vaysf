@@ -9,7 +9,20 @@ from config import (Config, SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, ME
                    is_racquet_sport)
 import datetime  # Add this if not already imported
 from typing import Dict, List, Optional, Any
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import (
+    retry, stop_after_attempt, wait_exponential, retry_if_exception_type, RetryError,
+)
+
+# Retry policy shared by transient-safe read methods.
+_WP_READ_RETRY = dict(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(requests.RequestException),
+    before_sleep=lambda rs: logger.warning(
+        f"WordPress {rs.fn.__name__}() attempt {rs.attempt_number} failed "
+        f"({rs.outcome.exception()}); retrying in {rs.next_action.sleep:.1f}s"
+    ),
+)
 
 class WordPressAPIError(Exception):
     """Exception raised for WordPress API errors."""
@@ -194,7 +207,7 @@ class WordPressConnector:
 ##            raise  # Let retry handle it
 
     ## Newer code:
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type(requests.RequestException))
+    @retry(**_WP_READ_RETRY)
     def get_participants(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Get participants from WordPress."""
         params = params or {}
@@ -262,6 +275,7 @@ class WordPressConnector:
             logger.error(f"Failed to update participant {participant_id}: {str(e)}")
             return None
 
+    @retry(**_WP_READ_RETRY)
     def get_rosters(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Get rosters from WordPress."""
         try:
@@ -275,7 +289,7 @@ class WordPressConnector:
         except requests.RequestException as e:
             self.last_get_rosters_status = "failed"
             logger.error(f"Failed to get rosters: {str(e)}")
-            return []
+            raise  # Let retry handle it
             
     def get_roster(self, roster_id: int) -> Optional[Dict[str, Any]]:
         """Get a specific roster by ID from WordPress."""

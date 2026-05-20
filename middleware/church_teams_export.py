@@ -58,6 +58,7 @@ from config import (
 from validation.name_matcher import normalized_name as _norm_name
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
+from tenacity import RetryError
 from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 from schedule_workbook import ScheduleWorkbookBuilder
 from validation.models import RulesManager
@@ -764,6 +765,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         all_rosters_data: List[Dict[str, Any]] = []
         all_validation_data: List[Dict[str, Any]] = []
         summary_data_list: List[Dict[str, Any]] = []
+        _wp_participant_fetch_failures = 0
+        _wp_roster_fetch_failures = 0
 
         churches_to_process_codes = [target_church_code.upper()] if target_church_code else sorted(list(chm_data_by_church.keys()))
 
@@ -816,7 +819,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 wp_created_at_str = ""
 
                 if is_participant_chm:
-                    wp_participants = self.wp_connector.get_participants({"chmeetings_id": chm_id})
+                    try:
+                        wp_participants = self.wp_connector.get_participants({"chmeetings_id": chm_id})
+                    except RetryError as exc:
+                        _wp_participant_fetch_failures += 1
+                        logger.error(
+                            f"WP participant fetch failed for CHM ID {chm_id} after all retries: {exc}"
+                        )
+                        wp_participants = []
                     if wp_participants:
                         wp_participant = wp_participants[0]
                         wp_participant_id_val = wp_participant.get("participant_id", 0)
@@ -844,7 +854,15 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                 "Last Name": chm_person["Last Name"],
                                 "Approval_Status (WP)": approval_status_val,
                             }
-                            wp_rosters = self.wp_connector.get_rosters({"participant_id": wp_participant_id_val})
+                            try:
+                                wp_rosters = self.wp_connector.get_rosters({"participant_id": wp_participant_id_val})
+                            except RetryError as exc:
+                                _wp_roster_fetch_failures += 1
+                                logger.error(
+                                    f"WP roster fetch failed for participant {wp_participant_id_val} "
+                                    f"(CHM ID {chm_id}) after all retries: {exc}"
+                                )
+                                wp_rosters = []
                             for roster_entry in wp_rosters:
                                 matching_team_issues = [
                                     issue for issue in team_validation_issues
@@ -1058,6 +1076,13 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             )
             logger.info(f"Force resend completed. Total emails {'would be sent' if dry_run else 'sent'}: {resend_count}")
         
+        if _wp_participant_fetch_failures or _wp_roster_fetch_failures:
+            logger.warning(
+                f"Export finished with transient WordPress fetch failures: "
+                f"{_wp_participant_fetch_failures} participant fetch(es) and "
+                f"{_wp_roster_fetch_failures} roster fetch(es) exhausted all retries. "
+                "Output may be incomplete — re-run export to recover missing rows."
+            )
         logger.info("Report generation process finished.")
         return True
 
