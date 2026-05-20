@@ -140,7 +140,8 @@ class ScheduleWorkbookBuilder:
             "Computed slot within the assigned pool, such as T1 or T3."
         ),
         "Assignment Basis": (
-            "Computed explanation for the row placement: Seeded, RandomDraw, or WaitingForMoreTeams."
+            "Computed explanation for the row placement: Seeded, SeededDuplicate, "
+            "RandomDraw, or WaitingForMoreTeams."
         ),
         "Notes": (
             "Operator notes. Safe to edit."
@@ -207,8 +208,8 @@ class ScheduleWorkbookBuilder:
             "that meet minimum team size; racquet sports count singles plus complete doubles pairs."
         ),
         "Teams": (
-            "Comma-separated church codes currently qualifying as full teams. Usually blank for "
-            "racquet sports because they are planned by entries instead of church teams."
+            "Comma-separated qualifying team identifiers. Usually these are church codes, but "
+            "explicit A/B team splits appear as church code plus team order, such as RPC-A."
         ),
         "Target Pool Games/Team": (
             "Configured planning target for pool games per team."
@@ -465,19 +466,19 @@ class ScheduleWorkbookBuilder:
 
     def _count_estimating_teams(self, roster_rows: List[Dict[str, Any]],
                                  event_name: str, min_team_size: int) -> Dict[str, Any]:
-        """Return estimating/potential team counts and the qualifying church codes.
+        """Return estimating/potential team counts and the qualifying team ids.
 
         Approval-agnostic — every roster entry counts.
 
         Returns a dict with:
-          n_estimating  – churches with >= min_team_size entries (ready to compete)
-          n_potential   – churches with >= 1 but < min_team_size entries (still forming)
-          team_codes    – sorted, comma-separated list of estimating church codes
+          n_estimating  – teams with >= min_team_size entries (ready to compete)
+          n_potential   – teams with >= 1 but < min_team_size entries (still forming)
+          team_codes    – sorted, comma-separated list of estimating team ids
         """
         if min_team_size <= 0:
             return {"n_estimating": 0, "n_potential": 0, "team_codes": ""}
         target_type, target_gender, _ = self._decompose_event_name(event_name)
-        counts_by_church: Dict[str, int] = {}
+        counts_by_team: Dict[Tuple[str, str], int] = {}
         for r in roster_rows:
             r_type = str(r.get("sport_type") or "").strip()
             r_gender = str(r.get("sport_gender") or "").strip()
@@ -489,15 +490,25 @@ class ScheduleWorkbookBuilder:
                 continue
             if target_gender and r_gender.casefold() != target_gender.casefold():
                 continue
-            church = str(r.get("Church Team") or "").strip()
+            church = str(r.get("Church Team") or "").strip().upper()
             if not church:
                 continue
-            counts_by_church[church] = counts_by_church.get(church, 0) + 1
-        estimating = sorted(c for c, n in counts_by_church.items() if n >= min_team_size)
-        partial = [c for c, n in counts_by_church.items() if 0 < n < min_team_size]
+            team_order = str(r.get("team_order") or "").strip().upper()
+            team_key = (church, team_order)
+            counts_by_team[team_key] = counts_by_team.get(team_key, 0) + 1
+        estimating = sorted(
+            church if not team_order else f"{church}-{team_order}"
+            for (church, team_order), n in counts_by_team.items()
+            if n >= min_team_size
+        )
+        partial = [
+            (church, team_order)
+            for (church, team_order), n in counts_by_team.items()
+            if 0 < n < min_team_size
+        ]
         return {
             "n_estimating": len(estimating),
-            "n_potential": len(estimating) + len(partial),  # all churches with >= 1 entry
+            "n_potential": len(estimating) + len(partial),  # all team units with >= 1 entry
             "team_codes": ", ".join(estimating),
         }
 
@@ -1211,6 +1222,32 @@ class ScheduleWorkbookBuilder:
             if not event_rows:
                 continue
 
+            duplicate_seed_values = {
+                seed
+                for seed in {
+                    row.get("Seed")
+                    for row in event_rows
+                    if row.get("Seed") is not None
+                }
+                if sum(1 for row in event_rows if row.get("Seed") == seed) > 1
+            }
+            if duplicate_seed_values:
+                duplicates = ", ".join(
+                    f"{seed}: "
+                    + "/".join(
+                        sorted(
+                            str(row.get("Team ID") or "").strip()
+                            for row in event_rows
+                            if row.get("Seed") == seed
+                        )
+                    )
+                    for seed in sorted(duplicate_seed_values)
+                )
+                logger.warning(
+                    f"Pool-Assignment duplicate seeds detected for event '{event_name}': "
+                    f"{duplicates}"
+                )
+
             existing_draw_orders = {
                 row["Team ID"]: row["Random Draw Order"]
                 for row in event_rows
@@ -1269,7 +1306,9 @@ class ScheduleWorkbookBuilder:
                     row["Pool ID"] = ""
                     row["Pool Slot"] = ""
                     row["Assignment Basis"] = (
-                        "Seeded" if row.get("Seed") is not None else "RandomDraw"
+                        "SeededDuplicate"
+                        if row.get("Seed") in duplicate_seed_values
+                        else ("Seeded" if row.get("Seed") is not None else "RandomDraw")
                     )
                 output_rows.extend(ordered_rows)
                 continue
@@ -1279,7 +1318,9 @@ class ScheduleWorkbookBuilder:
                 row["Pool ID"] = slot[0]
                 row["Pool Slot"] = slot[1]
                 row["Assignment Basis"] = (
-                    "Seeded" if row.get("Seed") is not None else "RandomDraw"
+                    "SeededDuplicate"
+                    if row.get("Seed") in duplicate_seed_values
+                    else ("Seeded" if row.get("Seed") is not None else "RandomDraw")
                 )
 
             output_rows.extend(ordered_rows)

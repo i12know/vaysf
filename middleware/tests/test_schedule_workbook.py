@@ -378,6 +378,52 @@ def test_refresh_pool_assignments_persists_seed_edits_and_recomputes_draw(tmp_pa
     assert anh_row["Draw Position"] == 2
 
 
+def test_refresh_pool_assignments_flags_duplicate_seeds(tmp_path):
+    builder = ScheduleWorkbookBuilder()
+    roster_rows = _make_gym_roster(n_churches=4)
+    schedule_input = builder.write_schedule_input_json(
+        roster_rows,
+        [],
+        tmp_path / "missing.xlsx",
+        tmp_path / "schedule_input.json",
+    )
+    workbook_path = tmp_path / "schedule_workbook.xlsx"
+    sidecar_path = tmp_path / "pool_assignments.json"
+
+    builder.write_schedule_workbook(
+        workbook_path,
+        roster_rows,
+        [],
+        schedule_input,
+        tmp_path / "missing.xlsx",
+        pool_assignment_path=sidecar_path,
+    )
+
+    wb = load_workbook(workbook_path)
+    ws = wb["Pool-Assignment"]
+    headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+    seed_col = headers.index("Seed") + 1
+    team_id_col = headers.index("Team ID") + 1
+    for row_idx in range(2, ws.max_row + 1):
+        team_id = ws.cell(row=row_idx, column=team_id_col).value
+        if team_id in {"RPC", "ANH"}:
+            ws.cell(row=row_idx, column=seed_col, value=1)
+    wb.save(workbook_path)
+
+    builder.refresh_pool_assignments(
+        workbook_path,
+        sidecar_path=sidecar_path,
+    )
+
+    refreshed_rows = _sheet_rows(load_workbook(workbook_path)["Pool-Assignment"])
+    duplicate_rows = [
+        row for row in refreshed_rows
+        if row["Event"] == SPORT_TYPE["BASKETBALL"] and row["Team ID"] in {"RPC", "ANH"}
+    ]
+    assert len(duplicate_rows) == 2
+    assert {row["Assignment Basis"] for row in duplicate_rows} == {"SeededDuplicate"}
+
+
 def test_write_schedule_output_workbook_creates_schedule_tabs(tmp_path):
     """The output-workbook entry point should produce the two renderer tabs."""
     schedule_output, schedule_input = _make_schedule_pair()
@@ -710,6 +756,49 @@ def test_count_estimating_teams_soccer_full_label():
     assert result["n_estimating"] == 1      # only RPC has >= 4
     assert result["n_potential"] == 2       # RPC + TLC both have >= 1
     assert result["team_codes"] == "RPC"
+
+
+def test_count_estimating_teams_respects_explicit_team_order():
+    """Explicit A/B team splits should count as separate estimating teams."""
+    builder = ScheduleWorkbookBuilder()
+
+    roster_rows = (
+        [
+            {
+                "Church Team": "RPC",
+                "team_order": "A",
+                "sport_type": "Basketball",
+                "sport_gender": "Men",
+            }
+            for _ in range(5)
+        ]
+        + [
+            {
+                "Church Team": "RPC",
+                "team_order": "B",
+                "sport_type": "Basketball",
+                "sport_gender": "Men",
+            }
+            for _ in range(5)
+        ]
+        + [
+            {
+                "Church Team": "OCB",
+                "team_order": "A",
+                "sport_type": "Basketball",
+                "sport_gender": "Men",
+            }
+            for _ in range(5)
+        ]
+    )
+
+    result = builder._count_estimating_teams(
+        roster_rows, "Basketball - Men Team", min_team_size=5
+    )
+
+    assert result["n_estimating"] == 3
+    assert result["n_potential"] == 3
+    assert result["team_codes"] == "OCB-A, RPC-A, RPC-B"
 
 
 def test_count_racquet_entries():
@@ -1692,6 +1781,34 @@ def test_build_schedule_input_uses_pool_assignments_for_core_gym_games(tmp_path)
         }
         for edge in si["team_conflicts"]
     )
+
+
+def test_build_assigned_gym_game_objects_fallback_counts_team_order_units():
+    roster_rows = []
+    for church_code in ("RPC", "OCB"):
+        for team_order in ("A", "B"):
+            for participant_id in range(5):
+                roster_rows.append(
+                    {
+                        "Church Team": church_code,
+                        "team_order": team_order,
+                        "sport_type": SPORT_TYPE["BASKETBALL"],
+                        "sport_gender": "Men",
+                        "sport_format": "Team",
+                        "Participant ID (WP)": f"{church_code}-{team_order}-{participant_id}",
+                    }
+                )
+
+    games = ScheduleWorkbookBuilder._build_assigned_gym_game_objects(
+        roster_rows,
+        [],
+        allow_placeholder_fallback=False,
+    )
+
+    basketball_games = [
+        game for game in games if game["event"] == SPORT_TYPE["BASKETBALL"]
+    ]
+    assert len(basketball_games) == 4
 
 
 def test_build_schedule_output_flat_rows_count():

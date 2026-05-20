@@ -64,6 +64,32 @@ def test_build_resource_slots_multiple_resources():
     assert slots["B"] == ["Sun-1-13:00", "Sun-1-14:00"]
 
 
+def test_slot_day_key_ignores_optional_suffix():
+    """Slot-day extraction should survive future label suffixes."""
+    from scheduler import _slot_day_key, _slot_sort_key
+
+    assert _slot_day_key("Sat-1-08:00-AM") == "Sat-1"
+    assert _slot_sort_key("Sat-1-08:00-AM") == (0, 8 * 60)
+
+
+def test_normalize_conflict_edge_counts_derives_secondary_only():
+    """Missing secondary_only_count should derive from shared minus primary."""
+    from scheduler import _normalize_conflict_edge_counts
+
+    counts = _normalize_conflict_edge_counts(
+        {
+            "shared_count": 3,
+            "primary_overlap_count": 2,
+        }
+    )
+
+    assert counts == {
+        "primary": 2,
+        "secondary": 1,
+        "shared_count": 3,
+    }
+
+
 # ---------------------------------------------------------------------------
 # load_schedule_input
 # ---------------------------------------------------------------------------
@@ -441,6 +467,80 @@ def test_solve_core_gym_pool_reports_unavoidable_cross_sport_conflict():
     assert result["conflict_audit_summary"]["overlapping_edges"] == 1
     assert result["conflict_audit"][0]["status"] == "ConflictRemains"
     assert "BBM-01" in result["conflict_audit"][0]["overlap_game_pairs"]
+
+
+def test_solve_core_gym_pool_prioritizes_primary_conflicts_over_secondary():
+    """When one overlap is unavoidable, protect the primary-sport edge first."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = {
+        "games": [
+            _core_gym_game(
+                "BBM-01",
+                "Basketball - Men Team",
+                "BBM::OCB",
+                "BBM::RPC",
+                "Basketball Court",
+            ),
+            _core_gym_game(
+                "VBM-01",
+                "Volleyball - Men Team",
+                "VBM::OCB",
+                "VBM::ANH",
+                "Volleyball Court",
+            ),
+            _core_gym_game(
+                "VBM-02",
+                "Volleyball - Men Team",
+                "VBM::TLC",
+                "VBM::GAC",
+                "Volleyball Court",
+            ),
+        ],
+        "resources": [
+            {
+                **_core_gym_resource("BB-1", "Basketball Court"),
+                "close_time": "09:00",
+            },
+            {
+                **_core_gym_resource("VB-1", "Volleyball Court"),
+                "close_time": "10:00",
+            },
+        ],
+        "team_conflicts": [
+            {
+                "team_a_id": "BBM::OCB",
+                "team_a_label": "OCB",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "VBM::OCB",
+                "team_b_label": "OCB",
+                "event_b": "Volleyball - Men Team",
+                "shared_count": 1,
+                "primary_overlap_count": 1,
+            },
+            {
+                "team_a_id": "BBM::OCB",
+                "team_a_label": "OCB",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "VBM::TLC",
+                "team_b_label": "TLC",
+                "event_b": "Volleyball - Men Team",
+                "shared_count": 1,
+                "primary_overlap_count": 0,
+            },
+        ],
+    }
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    slots = {a["game_id"]: a["slot"] for a in result["assignments"]}
+    assert slots["BBM-01"] == "Sat-1-08:00"
+    assert slots["VBM-01"] == "Sat-1-09:00"
+    assert slots["VBM-02"] == "Sat-1-08:00"
+    assert result["conflict_audit_summary"]["remaining_primary_overlap_penalty"] == 0
+    assert result["conflict_audit_summary"]["remaining_secondary_overlap_penalty"] == 1
 
 
 def test_build_infeasibility_diagnostics_reports_slot_shortage():

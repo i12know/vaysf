@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,9 +90,53 @@ def _slot_sort_key(label: str) -> tuple[int, int]:
     Label format: '{day}-{HH:MM}', e.g. 'Sat-1-08:00' or 'Day-1-09:30'.
     Unknown day labels are placed after known weekends (order 99).
     """
-    day, time = label.rsplit("-", maxsplit=1)
+    day, time = _parse_slot_label(label)
     h, m = time.split(":")
     return (_DAY_ORDER.get(day, 99), int(h) * 60 + int(m))
+
+
+_SLOT_LABEL_RE = re.compile(r"^(?P<day>.+)-(?P<time>\d{2}:\d{2})(?:-.+)?$")
+
+
+def _parse_slot_label(label: str) -> tuple[str, str]:
+    """Return (day_key, HH:MM) from a slot label.
+
+    The parser accepts the current '{day}-{HH:MM}' labels and future variants
+    that may append a suffix after the time, such as 'Sat-1-08:00-AM'.
+    """
+    match = _SLOT_LABEL_RE.match(str(label or "").strip())
+    if match:
+        return match.group("day"), match.group("time")
+    return str(label).rsplit("-", maxsplit=1)
+
+
+def _slot_day_key(label: str) -> str:
+    """Return the day portion of a slot label."""
+    return _parse_slot_label(label)[0]
+
+
+def _normalize_conflict_edge_counts(edge: dict[str, Any]) -> dict[str, int]:
+    """Normalize primary/secondary/shared counts from one conflict edge.
+
+    Hand-edited inputs may omit `secondary_only_count` and provide only
+    `shared_count` plus `primary_overlap_count`. In that case, derive the
+    secondary-only count as `shared_count - primary_overlap_count`.
+    """
+    primary = max(int(edge.get("primary_overlap_count") or 0), 0)
+    shared = edge.get("shared_count")
+    shared_count = max(int(shared or 0), 0)
+    secondary_only = edge.get("secondary_only_count")
+    if secondary_only is None:
+        secondary = max(shared_count - primary, 0)
+    else:
+        secondary = max(int(secondary_only or 0), 0)
+    if shared is None:
+        shared_count = primary + secondary
+    return {
+        "primary": primary,
+        "secondary": secondary,
+        "shared_count": shared_count,
+    }
 
 
 def build_resource_slots(resources: list[dict]) -> dict[str, list[str]]:
@@ -158,6 +203,7 @@ def build_conflict_audit(
     remaining_secondary_overlap_penalty = 0
 
     for edge in team_conflicts:
+        counts = _normalize_conflict_edge_counts(edge)
         team_a_id = str(edge.get("team_a_id") or "").strip()
         team_b_id = str(edge.get("team_b_id") or "").strip()
         team_a_games = games_by_team.get(team_a_id, [])
@@ -176,8 +222,8 @@ def build_conflict_audit(
         elif overlap_pairs:
             status = "ConflictRemains"
             overlapping_edges += 1
-            remaining_primary_overlap_penalty += int(edge.get("primary_overlap_count") or 0)
-            remaining_secondary_overlap_penalty += int(edge.get("secondary_only_count") or 0)
+            remaining_primary_overlap_penalty += counts["primary"]
+            remaining_secondary_overlap_penalty += counts["secondary"]
         else:
             status = "SeparatedInSchedule"
             separated_edges += 1
@@ -187,9 +233,9 @@ def build_conflict_audit(
             "event_a": str(edge.get("event_a") or ""),
             "team_b_label": str(edge.get("team_b_label") or team_b_id),
             "event_b": str(edge.get("event_b") or ""),
-            "shared_count": int(edge.get("shared_count") or 0),
-            "primary_overlap_count": int(edge.get("primary_overlap_count") or 0),
-            "secondary_only_count": int(edge.get("secondary_only_count") or 0),
+            "shared_count": counts["shared_count"],
+            "primary_overlap_count": counts["primary"],
+            "secondary_only_count": counts["secondary"],
             "status": status,
             "overlap_count": len(overlap_pairs),
             "scheduled_team_a_games": len(team_a_games),
@@ -477,7 +523,7 @@ def _solve_one_pool(
     slot_to_global = {lbl: i for i, lbl in enumerate(sorted_labels)}
     # Map global slot index → day prefix (e.g. "Sat-1") for C6 day-boundary guard
     global_to_day: dict[int, str] = {
-        i: lbl.rsplit("-", maxsplit=1)[0]
+        i: _slot_day_key(lbl)
         for i, lbl in enumerate(sorted_labels)
     }
     n_global       = len(sorted_labels)
@@ -535,7 +581,6 @@ def _solve_one_pool(
 
     # C3 — no team plays two games in the same time slot
     team_slot_vars: dict[tuple[str, str], list[Any]] = {}
-    game_slot_sources: dict[tuple[str, str], list[Any]] = {}
     for gid, vd in game_vars.items():
         game     = game_meta[gid]
         teams    = [t for t in (game.get("team_a_id"), game.get("team_b_id")) if t]
@@ -546,19 +591,12 @@ def _solve_one_pool(
             n_slots  = max(1, math.ceil(duration / slot_min))
             for s in range(t, t + n_slots):
                 slot_label = slots[s]
-                game_slot_sources.setdefault((gid, slot_label), []).append(var)
                 for team in teams:
                     team_slot_vars.setdefault((team, slot_label), []).append(var)
 
     for (team, slot_label), var_list in team_slot_vars.items():
         if len(var_list) > 1:
             model.AddAtMostOne(var_list)
-
-    game_slot_occ: dict[tuple[str, str], Any] = {}
-    for (gid, slot_label), source_vars in game_slot_sources.items():
-        occ_var = model.NewBoolVar(f"gocc_{gid}_{slot_label.replace(':', '')}")
-        model.Add(sum(source_vars) == occ_var)
-        game_slot_occ[(gid, slot_label)] = occ_var
 
     # Global slot IntVar per game (enables C5 and C6)
     game_global_slot: dict[str, Any] = {}
@@ -604,15 +642,7 @@ def _solve_one_pool(
             team_b_id = str(edge.get("team_b_id") or "").strip()
             if not team_a_id or not team_b_id:
                 continue
-            edge_weights[frozenset((team_a_id, team_b_id))] = {
-                "primary": int(edge.get("primary_overlap_count") or 0),
-                "secondary": int(
-                    edge.get("secondary_only_count")
-                    if edge.get("secondary_only_count") is not None
-                    else edge.get("shared_count") or 0
-                ),
-                "shared_count": int(edge.get("shared_count") or 0),
-            }
+            edge_weights[frozenset((team_a_id, team_b_id))] = _normalize_conflict_edge_counts(edge)
 
         ordered_game_ids = [g["game_id"] for g in games]
         for idx, gid_a in enumerate(ordered_game_ids):
@@ -653,6 +683,31 @@ def _solve_one_pool(
                     "secondary_weight": secondary_weight,
                     "shared_weight": shared_weight,
                 })
+
+    game_slot_occ: dict[tuple[str, str], Any] = {}
+    if game_pair_conflicts:
+        conflicted_game_ids = {
+            pair["game_a_id"] for pair in game_pair_conflicts
+        } | {
+            pair["game_b_id"] for pair in game_pair_conflicts
+        }
+        game_slot_sources: dict[tuple[str, str], list[Any]] = {}
+        for gid, vd in game_vars.items():
+            if gid not in conflicted_game_ids:
+                continue
+            duration = game_meta[gid]["duration_minutes"]
+            for (rid, t), var in vd.items():
+                slots = res_slots[rid]
+                slot_min = res_by_id[rid]["slot_minutes"]
+                n_slots = max(1, math.ceil(duration / slot_min))
+                for s in range(t, t + n_slots):
+                    slot_label = slots[s]
+                    game_slot_sources.setdefault((gid, slot_label), []).append(var)
+
+        for (gid, slot_label), source_vars in game_slot_sources.items():
+            occ_var = model.NewBoolVar(f"gocc_{gid}_{slot_label.replace(':', '')}")
+            model.Add(sum(source_vars) == occ_var)
+            game_slot_occ[(gid, slot_label)] = occ_var
 
     # Objective — minimize the latest occupied global slot (pack games toward start)
     if game_global_slot:
@@ -714,7 +769,7 @@ def _solve_one_pool(
             for s in range(len(slots) - 1):
                 current_label = slots[s]
                 next_label = slots[s + 1]
-                if current_label.rsplit("-", maxsplit=1)[0] != next_label.rsplit("-", maxsplit=1)[0]:
+                if _slot_day_key(current_label) != _slot_day_key(next_label):
                     continue
 
                 men_current = volleyball_occ_vars.get((rid, s, "men"))
