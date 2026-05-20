@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### New Features
+- Added a consent-404 investigation workflow for stale ChMeetings IDs found during `check-consent`
+  - New `python main.py investigate-consent-404s [--log-file ...] [--output ...]` command reads consent-run log warnings, loads current WordPress and ChMeetings data, and classifies each stale ID as likely re-registered, likely deleted, or manual-review-needed
+  - New `middleware/run-consent-404-investigation.bat` helper for one-click reruns on the middleware machine
+  - Writes `data/consent_404_investigation.xlsx` with `Cases` and `Candidates` sheets so staff can audit replacement IDs and match evidence
+
+- Added middleware late-racquet overrides and aligned cutoff timing with season registration dates
+  - New `middleware/data/late_racquet_overrides.json` allowlist plus `Config.LATE_RACQUET_OVERRIDES_FILE` for pastor-approved / scheduler-approved exception handling on the middleware side
+  - Late racquet enforcement now uses the participant's effective season registration date: existing WordPress `sf_participants.created_at` when present, otherwise the current sync date on first create
+  - WordPress `created_at` timestamps are now interpreted in `WORDPRESS_CREATED_AT_TIMEZONE` (default `UTC`) and converted into `BUSINESS_TIMEZONE` (default `America/Los_Angeles`) before late-racquet or athlete-fee date comparisons
+  - Overrides are keyed by `chmeetings_id`, can be scoped to specific racquet sports, and can carry optional `approved_by` / `reason` metadata for operator context
+  - Re-syncs now stay blocked for post-deadline racquet athletes until an override is added, closing the previous "brand-new only" loophole
+  - Added sync tests covering first-sync late pruning, pre-deadline re-sync allowance, post-deadline re-sync blocking, and scoped override behavior
+
 - Wired the Layer-2 Stage-A gym mode allocator into the live scheduling pipeline — closes [#103](https://github.com/i12know/vaysf/issues/103)
   - `_build_schedule_input()` now runs the greedy allocator (Stage A) when `venue_input.xlsx` is present with a `Gym-Modes` tab and gym blocks with `Exclusive Venue Group` set; falls back to the `SCHEDULE_SOLVER_GYM_COURTS` constant when not
   - New `_build_gym_resources_from_allocator(decisions)`: converts `AllocationDecision` objects into `schedule_input.json` resources with day-aware IDs (`GYM-{day}-{n}`), `exclusive_group` set to the gym name, and the allocator-assigned `resource_type`

@@ -58,6 +58,7 @@ from config import (
 from validation.name_matcher import normalized_name as _norm_name
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
+from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 from schedule_workbook import ScheduleWorkbookBuilder
 from validation.models import RulesManager
 from math import ceil
@@ -742,7 +743,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 )
 
         deadline_date = datetime.strptime(REGISTRATION_DEADLINE, "%Y-%m-%d").date()
-        today = datetime.now().date()
+        today = current_business_date()
         # Use > (not >=) so the deadline date itself is the last early-bird day;
         # late fee applies starting the day after (e.g. deadline 2026-05-16 -> late from 2026-05-17).
         if today > deadline_date:
@@ -888,7 +889,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                     if wp_created_at_str:
                         try:
-                            created_date = datetime.strptime(wp_created_at_str.split()[0], "%Y-%m-%d").date()
+                            created_date = parse_wordpress_created_at_to_business_date(
+                                wp_created_at_str
+                            )
+                            if created_date is None:
+                                raise ValueError("Could not parse WordPress created_at into business date")
                             registration_date_str = created_date.strftime("%Y-%m-%d")
                             deadline_date = datetime.strptime(REGISTRATION_DEADLINE, "%Y-%m-%d").date()
 

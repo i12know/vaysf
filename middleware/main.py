@@ -246,6 +246,19 @@ def parse_args() -> argparse.Namespace:
         help="Limit the run to a single church code such as RPC",
     )
 
+    investigate_consent_parser = subparsers.add_parser(
+        "investigate-consent-404s",
+        help="Investigate consent rows whose stored ChMeetings IDs now return 404",
+    )
+    investigate_consent_parser.add_argument(
+        "--log-file",
+        help="Path to a sportsfest_YYYYMMDD.log file (default: newest file in middleware/logs)",
+    )
+    investigate_consent_parser.add_argument(
+        "--output",
+        help="Output xlsx path (default: data/consent_404_investigation.xlsx)",
+    )
+
     return parser.parse_args()
 
 
@@ -1014,6 +1027,16 @@ def main() -> None:
                     church_code=args.church_code,
                 )
                 success = summary["api_error"] == 0
+    elif args.command == "investigate-consent-404s":
+        from sync.consent_404_investigator import Consent404Investigator
+
+        with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+            investigator = Consent404Investigator(chm_conn, wp_conn)
+            summary = investigator.run(
+                log_file=args.log_file,
+                output_file=args.output,
+            )
+            success = summary["api_error"] == 0
     else:
         logger.error(f"Unknown command: {args.command}")
         success = False

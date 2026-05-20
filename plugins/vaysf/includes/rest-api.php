@@ -275,14 +275,11 @@ public function send_email($request) {
     $to = sanitize_email($params['to']);
     $subject = sanitize_text_field($params['subject']);
     $message = wp_kses_post($params['message']);
-    $headers = array('Content-Type: text/html; charset=UTF-8');
-    if (!empty($params['from'])) {
-        $from_email = sanitize_email($params['from']);
-        $headers[] = 'From: ' . $from_email;
-    } else {
-        $from_email = get_option('vaysf_email_from', get_option('admin_email'));
-        $headers[] = 'From: Sports Fest <' . $from_email . '>';
-    }
+    $email_args = array(
+        'from' => isset($params['from']) ? $params['from'] : '',
+        'cc'   => isset($params['cc']) ? $params['cc'] : array(),
+        'bcc'  => isset($params['bcc']) ? $params['bcc'] : array(),
+    );
 
     // Add debug logging
     add_filter('wp_mail_failed', function($wp_error) {
@@ -290,7 +287,7 @@ public function send_email($request) {
         return $wp_error;
     });
 
-    $sent = wp_mail($to, $subject, $message, $headers);
+    $sent = vaysf_send_email($to, $subject, $message, $email_args);
 
     if (!$sent) {
         global $phpmailer;
@@ -299,19 +296,12 @@ public function send_email($request) {
         return new WP_Error('email_failed', __('Failed to send email.', 'vaysf') . " Details: $error_info", array('status' => 500));
     }
 
-    if (get_option('vaysf_log_emails', false)) {
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'sf_email_log';
-        $wpdb->insert($table_name, array(
-            'to_email' => $to,
-            'subject' => $subject,
-            'message' => $message,
-            'sent_at' => current_time('mysql'),
-            'status' => 'sent'
-        ));
-    }
-
-    return rest_ensure_response(array('success' => true, 'message' => __('Email sent successfully.', 'vaysf')));
+    return rest_ensure_response(array(
+        'success' => true,
+        'message' => __('Email sent successfully.', 'vaysf'),
+        'cc_count' => count(vaysf_normalize_email_list($email_args['cc'])),
+        'bcc_count' => count(vaysf_normalize_email_list($email_args['bcc'])),
+    ));
 }
 
 	/**

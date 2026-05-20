@@ -4,6 +4,7 @@ import os
 import json
 import pandas as pd
 import pytest
+import datetime
 from sync.manager import SyncManager
 from sync.participants import ParticipantSyncer  # Import for validation
 from loguru import logger
@@ -229,6 +230,305 @@ def test_validate_participant(sync_manager, mocker):
     assert any(i["type"] == "missing_photo" for i in issues), "Expected missing photo warning"
     assert any(i["type"] == "missing_consent" for i in issues), "Expected missing consent warning"
 
+def test_new_late_racquet_registration_is_removed_but_allowed_events_remain(sync_manager, mocker, tmp_path):
+    override_path = tmp_path / "late_racquet_overrides.json"
+    override_path.write_text("{}", encoding="utf-8")
+    mocker.patch.object(Config, "LATE_RACQUET_OVERRIDES_FILE", override_path)
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache
+    )
+    mocker.patch.object(
+        ParticipantSyncer,
+        "_current_local_date",
+        return_value=datetime.date(2026, 5, 17),
+    )
+
+    participant = {
+        "chmeetings_id": "late-racquet-team",
+        "first_name": "Late",
+        "last_name": "Registrant",
+        "gender": "Male",
+        "birthdate": "2000-01-01",
+        "primary_sport": "Table Tennis",
+        "primary_format": "Men Single",
+        "primary_partner": "",
+        "secondary_sport": SPORT_TYPE["BASKETBALL"],
+        "secondary_format": "",
+        "secondary_partner": "",
+        "other_events": "Tug-of-war",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    effective_participant, cutoff_issues = participant_syncer._apply_new_registration_racquet_cutoff(
+        participant,
+    )
+
+    assert effective_participant["primary_sport"] == SPORT_UNSELECTED
+    assert effective_participant["primary_format"] == ""
+    assert effective_participant["secondary_sport"] == SPORT_TYPE["BASKETBALL"]
+    assert effective_participant["other_events"] == "Tug-of-war"
+    assert len(cutoff_issues) == 1
+    assert cutoff_issues[0]["type"] == "late_racquet_registration"
+    assert cutoff_issues[0]["sport"] == "Table Tennis"
+    assert cutoff_issues[0]["severity"] == VALIDATION_SEVERITY["WARNING"]
+
+    is_valid, issues = participant_syncer.validate_participant(effective_participant)
+    assert is_valid, f"Allowed activities should remain valid after racquet pruning: {issues}"
+
+def test_new_late_racquet_only_registration_becomes_blocking(sync_manager, mocker, tmp_path):
+    override_path = tmp_path / "late_racquet_overrides.json"
+    override_path.write_text("{}", encoding="utf-8")
+    mocker.patch.object(Config, "LATE_RACQUET_OVERRIDES_FILE", override_path)
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache
+    )
+    mocker.patch.object(
+        ParticipantSyncer,
+        "_current_local_date",
+        return_value=datetime.date(2026, 5, 17),
+    )
+
+    participant = {
+        "chmeetings_id": "late-racquet-only",
+        "first_name": "Late",
+        "last_name": "OnlyRacquet",
+        "gender": "Male",
+        "birthdate": "2000-01-01",
+        "primary_sport": "Pickleball",
+        "primary_format": "Men Single",
+        "primary_partner": "",
+        "secondary_sport": SPORT_UNSELECTED,
+        "secondary_format": "",
+        "secondary_partner": "",
+        "other_events": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    effective_participant, cutoff_issues = participant_syncer._apply_new_registration_racquet_cutoff(
+        participant,
+    )
+
+    assert effective_participant["primary_sport"] == SPORT_UNSELECTED
+    assert cutoff_issues, "Expected a cutoff issue for late racquet-only registration"
+    assert all(
+        issue["severity"] == VALIDATION_SEVERITY["ERROR"]
+        for issue in cutoff_issues
+    )
+    assert any(
+        "No accepted team sports or other events remain" in issue["description"]
+        for issue in cutoff_issues
+    )
+
+def test_pre_deadline_wp_created_at_keeps_racquet_selection_after_deadline(sync_manager, mocker, tmp_path):
+    override_path = tmp_path / "late_racquet_overrides.json"
+    override_path.write_text("{}", encoding="utf-8")
+    mocker.patch.object(Config, "LATE_RACQUET_OVERRIDES_FILE", override_path)
+    mocker.patch.object(Config, "WORDPRESS_CREATED_AT_TIMEZONE", "UTC")
+    mocker.patch.object(Config, "BUSINESS_TIMEZONE", "America/Los_Angeles")
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache
+    )
+    mocker.patch.object(
+        ParticipantSyncer,
+        "_current_local_date",
+        return_value=datetime.date(2026, 5, 20),
+    )
+
+    participant = {
+        "chmeetings_id": "pre-deadline-racquet",
+        "first_name": "Early",
+        "last_name": "Registrant",
+        "gender": "Male",
+        "birthdate": "2000-01-01",
+        "primary_sport": "Badminton",
+        "primary_format": "Men Double",
+        "primary_partner": "Partner A",
+        "secondary_sport": SPORT_UNSELECTED,
+        "secondary_format": "",
+        "secondary_partner": "",
+        "other_events": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    effective_participant, cutoff_issues = participant_syncer._apply_new_registration_racquet_cutoff(
+        participant,
+        existing_wp_participant={"created_at": "2026-05-10 08:00:00"},
+    )
+
+    assert effective_participant["primary_sport"] == "Badminton"
+    assert effective_participant["primary_format"] == "Men Double"
+    assert cutoff_issues == []
+
+
+def test_wp_created_at_utc_boundary_converts_to_pre_deadline_local_date(
+    sync_manager, mocker, tmp_path
+):
+    override_path = tmp_path / "late_racquet_overrides.json"
+    override_path.write_text("{}", encoding="utf-8")
+    mocker.patch.object(Config, "LATE_RACQUET_OVERRIDES_FILE", override_path)
+    mocker.patch.object(Config, "WORDPRESS_CREATED_AT_TIMEZONE", "UTC")
+    mocker.patch.object(Config, "BUSINESS_TIMEZONE", "America/Los_Angeles")
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache
+    )
+    mocker.patch.object(
+        ParticipantSyncer,
+        "_current_local_date",
+        return_value=datetime.date(2026, 5, 20),
+    )
+
+    participant = {
+        "chmeetings_id": "utc-boundary-racquet",
+        "first_name": "Boundary",
+        "last_name": "Registrant",
+        "gender": "Male",
+        "birthdate": "2000-01-01",
+        "primary_sport": "Badminton",
+        "primary_format": "Men Double",
+        "primary_partner": "Partner Z",
+        "secondary_sport": SPORT_UNSELECTED,
+        "secondary_format": "",
+        "secondary_partner": "",
+        "other_events": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    effective_participant, cutoff_issues = participant_syncer._apply_new_registration_racquet_cutoff(
+        participant,
+        existing_wp_participant={"created_at": "2026-05-17 06:59:59"},
+    )
+
+    assert effective_participant["primary_sport"] == "Badminton"
+    assert effective_participant["primary_format"] == "Men Double"
+    assert cutoff_issues == []
+
+def test_post_deadline_wp_created_at_stays_blocked_without_override(sync_manager, mocker, tmp_path):
+    override_path = tmp_path / "late_racquet_overrides.json"
+    override_path.write_text("{}", encoding="utf-8")
+    mocker.patch.object(Config, "LATE_RACQUET_OVERRIDES_FILE", override_path)
+    mocker.patch.object(Config, "WORDPRESS_CREATED_AT_TIMEZONE", "UTC")
+    mocker.patch.object(Config, "BUSINESS_TIMEZONE", "America/Los_Angeles")
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache
+    )
+    mocker.patch.object(
+        ParticipantSyncer,
+        "_current_local_date",
+        return_value=datetime.date(2026, 5, 20),
+    )
+
+    participant = {
+        "chmeetings_id": "post-deadline-racquet",
+        "first_name": "Late",
+        "last_name": "Resync",
+        "gender": "Male",
+        "birthdate": "2000-01-01",
+        "primary_sport": "Badminton",
+        "primary_format": "Men Double",
+        "primary_partner": "Partner B",
+        "secondary_sport": SPORT_TYPE["BASKETBALL"],
+        "secondary_format": "",
+        "secondary_partner": "",
+        "other_events": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    effective_participant, cutoff_issues = participant_syncer._apply_new_registration_racquet_cutoff(
+        participant,
+        existing_wp_participant={"created_at": "2026-05-18 09:30:00"},
+    )
+
+    assert effective_participant["primary_sport"] == SPORT_UNSELECTED
+    assert effective_participant["secondary_sport"] == SPORT_TYPE["BASKETBALL"]
+    assert len(cutoff_issues) == 1
+    assert cutoff_issues[0]["sport"] == "Badminton"
+    assert "2026-05-18" in cutoff_issues[0]["description"]
+    assert cutoff_issues[0]["severity"] == VALIDATION_SEVERITY["WARNING"]
+
+def test_post_deadline_override_allows_scoped_racquet_sport(sync_manager, mocker, tmp_path):
+    override_path = tmp_path / "late_racquet_overrides.json"
+    override_path.write_text(
+        json.dumps(
+            {
+                "late-override-athlete": {
+                    "enabled": True,
+                    "sports": ["Badminton"],
+                    "approved_by": "Bumble / A. Loc",
+                    "reason": "Late men's doubles exception",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    mocker.patch.object(Config, "LATE_RACQUET_OVERRIDES_FILE", override_path)
+    mocker.patch.object(Config, "WORDPRESS_CREATED_AT_TIMEZONE", "UTC")
+    mocker.patch.object(Config, "BUSINESS_TIMEZONE", "America/Los_Angeles")
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache
+    )
+    mocker.patch.object(
+        ParticipantSyncer,
+        "_current_local_date",
+        return_value=datetime.date(2026, 5, 20),
+    )
+
+    participant = {
+        "chmeetings_id": "late-override-athlete",
+        "first_name": "Override",
+        "last_name": "Allowed",
+        "gender": "Male",
+        "birthdate": "2000-01-01",
+        "primary_sport": "Badminton",
+        "primary_format": "Men Double",
+        "primary_partner": "Partner C",
+        "secondary_sport": "Pickleball",
+        "secondary_format": "Men Single",
+        "secondary_partner": "",
+        "other_events": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    effective_participant, cutoff_issues = participant_syncer._apply_new_registration_racquet_cutoff(
+        participant,
+        existing_wp_participant={"created_at": "2026-05-18 09:30:00"},
+    )
+
+    assert effective_participant["primary_sport"] == "Badminton"
+    assert effective_participant["primary_format"] == "Men Double"
+    assert effective_participant["secondary_sport"] == SPORT_UNSELECTED
+    assert len(cutoff_issues) == 1
+    assert cutoff_issues[0]["sport"] == "Pickleball"
+
 def test_sync_participants(sync_manager, mocker, mock_chmeetings_data):
     """Test participant sync to sf_participants and sf_rosters with role filtering and proper validation issue tracking."""
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
@@ -244,6 +544,11 @@ def test_sync_participants(sync_manager, mocker, mock_chmeetings_data):
     # Patch config values
     mocker.patch("sync.participants.Config.TEAM_PREFIX", "Team")
     mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2026-07-18")
+    mocker.patch.object(
+        ParticipantSyncer,
+        "_current_local_date",
+        return_value=datetime.date(2026, 5, 16),
+    )
 
     if not live_test:
         # Mock ChMeetings responses

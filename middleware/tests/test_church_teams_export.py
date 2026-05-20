@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from church_teams_export import ChurchTeamsExporter, CHM_FIELDS, MEMBERSHIP_QUESTION
-from config import SPORT_TYPE
+from config import Config, SPORT_TYPE
 
 
 @pytest.fixture()
@@ -399,6 +399,64 @@ def test_generate_reports_filters_stale_individual_validation_issues(mock_connec
     assert len(validation_rows) == 1
     assert validation_rows[0]["Participant ID (WP)"] == 42
     assert validation_rows[0]["Issue Type"] == "missing_photo"
+
+
+def test_generate_reports_converts_wp_created_at_to_business_date_for_fee_logic(
+    mock_connectors, mocker, tmp_path
+):
+    chm_connector, wp_connector = mock_connectors
+    chm_connector.authenticate.return_value = True
+    mocker.patch.object(Config, "WORDPRESS_CREATED_AT_TIMEZONE", "UTC")
+    mocker.patch.object(Config, "BUSINESS_TIMEZONE", "America/Los_Angeles")
+
+    exporter = ChurchTeamsExporter()
+    exporter.latest_chm_update_by_church = {"RPC": "2026-05-08 10:00:00"}
+    mocker.patch.object(
+        exporter,
+        "_fetch_chm_church_team_data",
+        return_value={
+            "RPC": [
+                {
+                    "Church Team": "RPC",
+                    "ChMeetings ID": "101",
+                    "First Name": "Alice",
+                    "Last Name": "Nguyen",
+                    "Gender": "Female",
+                    "Birthdate": "2000-01-02",
+                    "Mobile Phone": "555-0101",
+                    "Email": "alice@test.com",
+                    "Is_Member_ChM": True,
+                    "ChM_Roles": "Athlete",
+                    "ChM_Primary_Sport": "Badminton",
+                    "ChM_Secondary_Sport": "",
+                    "ChM_Other_Events": "",
+                    "ChM_Completion_Checklist": "",
+                    "Update_on_ChM": "2026-05-08 10:00:00",
+                }
+            ]
+        },
+    )
+
+    wp_connector.get_church_by_code.return_value = {"church_id": 1, "church_code": "RPC"}
+    wp_connector.get_participants.return_value = [
+        {
+            "participant_id": 42,
+            "approval_status": "pending",
+            "photo_url": "https://example.com/photo.jpg",
+            "created_at": "2026-05-17 06:59:59",
+        }
+    ]
+    wp_connector.get_validation_issues.return_value = []
+    wp_connector.get_rosters.return_value = []
+
+    write_report = mocker.patch.object(exporter, "_write_excel_report")
+
+    result = exporter.generate_reports("RPC", tmp_path)
+
+    assert result is True
+    _, _, contacts_rows, _, _ = write_report.call_args.args
+    assert contacts_rows[0]["Registration Date (WP)"] == "2026-05-16"
+    assert contacts_rows[0]["Athlete Fee"] == 30
 
 
 def test_write_excel_report_adds_validation_issues_tab(mock_connectors, tmp_path):
