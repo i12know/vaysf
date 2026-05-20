@@ -281,13 +281,16 @@ public function send_email($request) {
         'bcc'  => isset($params['bcc']) ? $params['bcc'] : array(),
     );
 
-    // Add debug logging
-    add_filter('wp_mail_failed', function($wp_error) {
+    // Capture mail failures; use a variable so remove_filter() can clean up after use.
+    $mail_fail_handler = function($wp_error) {
         error_log('WP Mail Failed: ' . print_r($wp_error, true));
         return $wp_error;
-    });
+    };
+    add_filter('wp_mail_failed', $mail_fail_handler);
 
     $sent = vaysf_send_email($to, $subject, $message, $email_args);
+
+    remove_filter('wp_mail_failed', $mail_fail_handler);
 
     if (!$sent) {
         global $phpmailer;
