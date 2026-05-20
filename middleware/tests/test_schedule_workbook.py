@@ -8,6 +8,26 @@ from config import SPORT_TYPE
 from schedule_workbook import ScheduleWorkbookBuilder
 
 
+def _find_row_by_first_cell(ws, value: str) -> int:
+    for row in range(1, ws.max_row + 1):
+        if ws.cell(row=row, column=1).value == value:
+            return row
+    raise AssertionError(f"Could not find row starting with {value!r}")
+
+
+def _sheet_rows(ws) -> list[dict]:
+    headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+    rows = []
+    for row_idx in range(2, ws.max_row + 1):
+        row = {
+            headers[col_idx - 1]: ws.cell(row=row_idx, column=col_idx).value
+            for col_idx in range(1, ws.max_column + 1)
+        }
+        if any(value not in (None, "") for value in row.values()):
+            rows.append(row)
+    return rows
+
+
 def _make_gym_roster(n_churches: int = 8) -> list[dict]:
     """Return minimal Basketball-Men roster rows for n_churches churches."""
     codes = ["RPC", "ANH", "FVC", "GAC", "NSD", "TLC", "GLA", "ORN"][:n_churches]
@@ -37,6 +57,8 @@ def _make_schedule_pair() -> tuple[dict, dict]:
                 "round": 1,
                 "team_a_id": "BBM-P1-T1",
                 "team_b_id": "BBM-P1-T2",
+                "team_a_label": "OCB",
+                "team_b_label": "RPC",
                 "duration_minutes": 60,
                 "resource_type": "Gym Court",
                 "earliest_slot": None,
@@ -65,6 +87,31 @@ def _make_schedule_pair() -> tuple[dict, dict]:
             {"game_id": "BBM-01", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-08:00"}
         ],
         "unscheduled": [],
+        "conflict_audit_summary": {
+            "total_edges": 1,
+            "separated_edges": 1,
+            "overlapping_edges": 0,
+            "incomplete_edges": 0,
+            "remaining_primary_overlap_penalty": 0,
+            "remaining_secondary_overlap_penalty": 0,
+        },
+        "conflict_audit": [
+            {
+                "team_a_label": "OCB",
+                "event_a": "Basketball - Men Team",
+                "team_b_label": "OCB",
+                "event_b": "Volleyball - Men Team",
+                "shared_count": 2,
+                "primary_overlap_count": 2,
+                "secondary_only_count": 0,
+                "status": "SeparatedInSchedule",
+                "overlap_count": 0,
+                "scheduled_team_a_games": 1,
+                "scheduled_team_b_games": 1,
+                "shared_participant_names": "An, Binh",
+                "overlap_game_pairs": "",
+            }
+        ],
     }
     return schedule_output, schedule_input
 
@@ -106,7 +153,7 @@ def test_write_schedule_input_json_writes_file(tmp_path):
 
 
 def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
-    """The planning workbook entry point should always create the seven schedule tabs."""
+    """The planning workbook entry point should always create the operator + planning tabs."""
     builder = ScheduleWorkbookBuilder()
     roster_rows = _make_gym_roster()
     schedule_input = builder.write_schedule_input_json(
@@ -115,6 +162,30 @@ def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
         tmp_path / "missing.xlsx",
         tmp_path / "schedule_input.json",
     )
+    schedule_input["gym_modes"] = {
+        "Main Gym": {
+            "Basketball Court": 2,
+            "Volleyball Court": 1,
+        }
+    }
+    schedule_input["gym_allocation"] = {
+        "source": "allocator",
+        "switch_count": 1,
+        "decisions": [
+            {
+                "gym_name": "Main Gym",
+                "day": "Sat-1",
+                "open_time": "08:00",
+                "close_time": "12:00",
+                "mode": "Basketball Court",
+                "courts": 2,
+                "slot_minutes": 60,
+            }
+        ],
+        "mode_demand": {"Basketball Court": 4},
+        "mode_supply": {"Basketball Court": 4},
+        "mode_shortfall": {"Basketball Court": 0},
+    }
     workbook_path = tmp_path / "schedule_workbook.xlsx"
 
     builder.write_schedule_workbook(
@@ -127,7 +198,9 @@ def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
 
     wb = load_workbook(workbook_path)
     assert wb.sheetnames == [
+        "Summary",
         "Venue-Estimator",
+        "Pool-Assignment",
         "Pod-Divisions",
         "Pod-Entries-Review",
         "Court-Schedule-Sketch",
@@ -135,6 +208,174 @@ def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
         "Schedule-Input",
         "Gym-Allocation",
     ]
+    summary_ws = wb["Summary"]
+    assert summary_ws["A1"].value == "VAY Sports Fest — Schedule Workbook Guide"
+    assert "Layer 1 planning aid" in str(summary_ws["B4"].value)
+    summary_text = "".join(
+        str(summary_ws.cell(row=row, column=2).value or "")
+        for row in range(1, summary_ws.max_row + 1)
+    )
+    assert "Church_Team_Status_ALL" in summary_text
+    assert "run-schedule.bat" in summary_text
+    assert "assign-pools" in summary_text
+    venue_ws = wb["Venue-Estimator"]
+    assert venue_ws["A1"].comment is not None
+    assert "Canonical event name" in venue_ws["A1"].comment.text
+    pool_ws = wb["Pool-Assignment"]
+    assert pool_ws["A1"].comment is not None
+    assert "Canonical team-sport event" in pool_ws["A1"].comment.text
+    assert pool_ws["I1"].comment is not None
+    assert "Leave blank or enter 0" in pool_ws["I1"].comment.text
+    pod_ws = wb["Pod-Divisions"]
+    assert pod_ws["A1"].comment is not None
+    assert "Canonical division label" in pod_ws["A1"].comment.text
+    assert pod_ws["K1"].comment is not None
+    assert "Ready = clean to plan" in pod_ws["K1"].comment.text
+    entry_ws = wb["Pod-Entries-Review"]
+    assert entry_ws["A1"].comment is not None
+    assert "Unique row ID" in entry_ws["A1"].comment.text
+    sketch_ws = wb["Court-Schedule-Sketch"]
+    assert sketch_ws["A4"].comment is not None
+    assert "Start time for the slot" in sketch_ws["A4"].comment.text
+    resource_ws = wb["Pod-Resource-Estimate"]
+    assert resource_ws["A1"].comment is not None
+    assert "Racquet event" in resource_ws["A1"].comment.text
+    schedule_input_ws = wb["Schedule-Input"]
+    games_header_row = _find_row_by_first_cell(schedule_input_ws, "GAMES") + 1
+    resources_header_row = _find_row_by_first_cell(schedule_input_ws, "RESOURCES") + 1
+    playoff_header_row = _find_row_by_first_cell(schedule_input_ws, "PLAYOFF-SLOTS") + 1
+    assert schedule_input_ws.cell(row=games_header_row, column=1).comment is not None
+    assert (
+        "Unique placeholder game ID"
+        in schedule_input_ws.cell(row=games_header_row, column=1).comment.text
+    )
+    assert schedule_input_ws.cell(row=resources_header_row, column=1).comment is not None
+    assert (
+        "Exact solver resource ID"
+        in schedule_input_ws.cell(row=resources_header_row, column=1).comment.text
+    )
+    assert schedule_input_ws.cell(row=playoff_header_row, column=1).comment is not None
+    assert (
+        "Exact playoff game ID"
+        in schedule_input_ws.cell(row=playoff_header_row, column=1).comment.text
+    )
+    gym_ws = wb["Gym-Allocation"]
+    assert gym_ws["A4"].comment is not None
+    assert "Exclusive Venue Group / gym block name" in gym_ws["A4"].comment.text
+    assert gym_ws["A8"].comment is not None
+    assert "Sport mode or resource mode" in gym_ws["A8"].comment.text
+
+
+def test_write_schedule_workbook_loads_pool_assignment_sidecar(tmp_path):
+    builder = ScheduleWorkbookBuilder()
+    roster_rows = _make_gym_roster()
+    schedule_input = builder.write_schedule_input_json(
+        roster_rows,
+        [],
+        tmp_path / "missing.xlsx",
+        tmp_path / "schedule_input.json",
+    )
+    sidecar_path = tmp_path / "pool_assignments.json"
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "rows": [
+                    {
+                        "event": SPORT_TYPE["BASKETBALL"],
+                        "team_id": "RPC",
+                        "seed": 1,
+                        "random_draw_order": 4,
+                        "notes": "Returning champion",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    workbook_path = tmp_path / "schedule_workbook.xlsx"
+
+    builder.write_schedule_workbook(
+        workbook_path,
+        roster_rows,
+        [],
+        schedule_input,
+        tmp_path / "missing.xlsx",
+        pool_assignment_path=sidecar_path,
+    )
+
+    ws = load_workbook(workbook_path)["Pool-Assignment"]
+    rpc_row = next(
+        row for row in _sheet_rows(ws)
+        if row["Event"] == SPORT_TYPE["BASKETBALL"] and row["Team ID"] == "RPC"
+    )
+    assert rpc_row["Seed"] == 1
+    assert rpc_row["Notes"] == "Returning champion"
+    assert rpc_row["Pool ID"] is not None
+    assert rpc_row["Pool Slot"] is not None
+
+
+def test_refresh_pool_assignments_persists_seed_edits_and_recomputes_draw(tmp_path):
+    builder = ScheduleWorkbookBuilder()
+    roster_rows = _make_gym_roster(n_churches=4)
+    schedule_input = builder.write_schedule_input_json(
+        roster_rows,
+        [],
+        tmp_path / "missing.xlsx",
+        tmp_path / "schedule_input.json",
+    )
+    workbook_path = tmp_path / "schedule_workbook.xlsx"
+    sidecar_path = tmp_path / "pool_assignments.json"
+
+    builder.write_schedule_workbook(
+        workbook_path,
+        roster_rows,
+        [],
+        schedule_input,
+        tmp_path / "missing.xlsx",
+        pool_assignment_path=sidecar_path,
+    )
+
+    wb = load_workbook(workbook_path)
+    ws = wb["Pool-Assignment"]
+    headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+    seed_col = headers.index("Seed") + 1
+    notes_col = headers.index("Notes") + 1
+    team_id_col = headers.index("Team ID") + 1
+    for row_idx in range(2, ws.max_row + 1):
+        team_id = ws.cell(row=row_idx, column=team_id_col).value
+        if team_id == "RPC":
+            ws.cell(row=row_idx, column=seed_col, value=1)
+            ws.cell(row=row_idx, column=notes_col, value="Top seed")
+        elif team_id == "ANH":
+            ws.cell(row=row_idx, column=seed_col, value=2)
+    wb.save(workbook_path)
+
+    builder.refresh_pool_assignments(
+        workbook_path,
+        sidecar_path=sidecar_path,
+    )
+
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    saved_rpc = next(
+        row for row in payload["rows"]
+        if row["event"] == SPORT_TYPE["BASKETBALL"] and row["team_id"] == "RPC"
+    )
+    assert saved_rpc["seed"] == 1
+    assert saved_rpc["notes"] == "Top seed"
+
+    refreshed_ws = load_workbook(workbook_path)["Pool-Assignment"]
+    refreshed_rows = _sheet_rows(refreshed_ws)
+    rpc_row = next(
+        row for row in refreshed_rows
+        if row["Event"] == SPORT_TYPE["BASKETBALL"] and row["Team ID"] == "RPC"
+    )
+    anh_row = next(
+        row for row in refreshed_rows
+        if row["Event"] == SPORT_TYPE["BASKETBALL"] and row["Team ID"] == "ANH"
+    )
+    assert rpc_row["Draw Position"] == 1
+    assert anh_row["Draw Position"] == 2
 
 
 def test_write_schedule_output_workbook_creates_schedule_tabs(tmp_path):
@@ -149,7 +390,7 @@ def test_write_schedule_output_workbook_creates_schedule_tabs(tmp_path):
     )
 
     wb = load_workbook(workbook_path)
-    assert wb.sheetnames == ["Schedule-by-Time", "Schedule-by-Sport"]
+    assert wb.sheetnames == ["Schedule-by-Time", "Schedule-by-Sport", "Conflict-Audit"]
 
 
 def test_read_roster_validation_rows_missing_path_degrades():
@@ -1393,11 +1634,64 @@ def test_build_schedule_input_keys(tmp_path):
     assert set(si.keys()) == {
         "generated_at", "gym_court_scenario", "game_count", "resource_count",
         "games", "resources", "playoff_slots", "gym_modes", "gym_allocation",
+        "team_conflicts",
     }
     assert si["game_count"] == len(si["games"])
     assert si["resource_count"] == len(si["resources"])
     assert si["game_count"] > 0
     assert si["resource_count"] > 0  # at least gym resources
+
+
+def test_build_schedule_input_uses_pool_assignments_for_core_gym_games(tmp_path):
+    """Layer 2 schedule input should replace gym placeholders with assigned real teams."""
+    builder = ScheduleWorkbookBuilder()
+    roster_rows = []
+    for participant_id in range(1, 11):
+        roster_rows.append({
+            "Church Team": "OCB",
+            "sport_type": SPORT_TYPE["BASKETBALL"],
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "Participant ID (WP)": participant_id,
+            "participant_primary_sport": SPORT_TYPE["BASKETBALL"],
+        })
+        roster_rows.append({
+            "Church Team": "RPC",
+            "sport_type": SPORT_TYPE["BASKETBALL"],
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "Participant ID (WP)": participant_id + 100,
+            "participant_primary_sport": SPORT_TYPE["BASKETBALL"],
+        })
+        roster_rows.append({
+            "Church Team": "OCB",
+            "sport_type": SPORT_TYPE["VOLLEYBALL_MEN"],
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "Participant ID (WP)": participant_id,
+            "participant_primary_sport": SPORT_TYPE["BASKETBALL"],
+        })
+        roster_rows.append({
+            "Church Team": "ANH",
+            "sport_type": SPORT_TYPE["VOLLEYBALL_MEN"],
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "Participant ID (WP)": participant_id + 200,
+            "participant_primary_sport": SPORT_TYPE["VOLLEYBALL_MEN"],
+        })
+
+    si = builder._build_schedule_input(roster_rows, [], tmp_path / "missing.xlsx")
+
+    bb_game = next(game for game in si["games"] if game["event"] == SPORT_TYPE["BASKETBALL"])
+    assert bb_game["team_a_id"].startswith("BBM::") or bb_game["team_b_id"].startswith("BBM::")
+    assert bb_game["solver_pool"] == "Gym Core"
+    assert any(
+        {"BBM::", "VBM::"} == {
+            edge["team_a_id"].split("::")[0] + "::",
+            edge["team_b_id"].split("::")[0] + "::",
+        }
+        for edge in si["team_conflicts"]
+    )
 
 
 def test_build_schedule_output_flat_rows_count():
@@ -1560,7 +1854,7 @@ def test_warn_if_schedules_mismatched_detects_orphan():
 
 
 def test_write_schedule_output_report_creates_file(tmp_path):
-    """_write_schedule_output_report writes an xlsx with both expected tabs."""
+    """_write_schedule_output_report writes an xlsx with all expected tabs."""
     import openpyxl
     so, si = _make_render_schedule_pair()
     out = tmp_path / "sched.xlsx"
@@ -1569,6 +1863,7 @@ def test_write_schedule_output_report_creates_file(tmp_path):
     wb = openpyxl.load_workbook(out)
     assert "Schedule-by-Time" in wb.sheetnames
     assert "Schedule-by-Sport" in wb.sheetnames
+    assert "Conflict-Audit" in wb.sheetnames
 
 
 def test_write_schedule_output_report_tab1_has_data(tmp_path):
@@ -1597,6 +1892,20 @@ def test_write_schedule_output_report_tab2_flat_list(tmp_path):
     assert ws.cell(row=1, column=1).value == "game_id"
     assert ws.cell(row=2, column=1).value == "BBM-01"    # Pool comes first
     assert ws.cell(row=3, column=1).value == "BBM-Final"
+
+
+def test_write_schedule_output_report_tab3_conflict_audit(tmp_path):
+    """Conflict-Audit tab should render audit rows and summary content."""
+    import openpyxl
+    so, si = _make_schedule_pair()
+    out = tmp_path / "sched.xlsx"
+    ScheduleWorkbookBuilder._write_schedule_output_report(out, so, si)
+    ws = openpyxl.load_workbook(out)["Conflict-Audit"]
+    assert ws.cell(row=1, column=1).value == "Cross-Sport Conflict Audit"
+    assert "Separated" in str(ws.cell(row=3, column=2).value)
+    assert ws.cell(row=6, column=1).value == "team_a_label"
+    assert ws.cell(row=7, column=1).value == "OCB"
+    assert ws.cell(row=7, column=8).value == "SeparatedInSchedule"
 
 
 def test_write_schedule_output_report_unscheduled_section(tmp_path):

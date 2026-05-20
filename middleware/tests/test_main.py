@@ -103,6 +103,20 @@ def test_parse_args_build_schedule_workbook_defaults(monkeypatch):
     assert args.input_json is None
     assert args.input_xlsx is None
     assert args.output is None
+    assert args.pool_assignments is None
+
+
+def test_parse_args_assign_pools_defaults(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        ["main.py", "assign-pools", "--workbook", "Schedule_Workbook.xlsx"],
+    )
+    args = main.parse_args()
+    assert args.command == "assign-pools"
+    assert args.workbook == "Schedule_Workbook.xlsx"
+    assert args.output is None
+    assert args.pool_assignments is None
 
 
 def test_main_build_schedule_workbook_writes_xlsx(monkeypatch, tmp_path):
@@ -132,6 +146,7 @@ def test_main_build_schedule_workbook_writes_xlsx(monkeypatch, tmp_path):
             input_json=None,
             input_xlsx=None,
             output=None,
+            pool_assignments=None,
         ),
     )
 
@@ -141,6 +156,64 @@ def test_main_build_schedule_workbook_writes_xlsx(monkeypatch, tmp_path):
     assert out_path.exists()
     wb = load_workbook(out_path)
     assert "Schedule-Input" in wb.sheetnames
+
+
+def test_main_build_schedule_workbook_auto_detects_latest_all_workbook(monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    export_dir = tmp_path / "export"
+    data_dir.mkdir()
+    export_dir.mkdir()
+    monkeypatch.setattr(main, "DATA_DIR", data_dir)
+    monkeypatch.setattr(main, "EXPORT_DIR", export_dir)
+
+    schedule_input_path = export_dir / "schedule_input.json"
+    schedule_input_path.write_text(
+        json.dumps(_minimal_schedule_input()), encoding="utf-8"
+    )
+
+    workbook_path = export_dir / "Church_Team_Status_ALL_2026-05-15.xlsx"
+    wb = Workbook()
+    roster_ws = wb.active
+    roster_ws.title = "Roster"
+    roster_headers = [
+        "Church Team", "sport_type", "sport_gender", "sport_format",
+        "Participant ID (WP)", "First Name", "Last Name", "partner_name",
+    ]
+    roster_ws.append(roster_headers)
+    for idx in range(1, 6):
+        roster_ws.append(
+            ["RPC", "Basketball", "Men", "Team", idx, f"P{idx}", "Nguyen", None]
+        )
+    validation_ws = wb.create_sheet("Validation-Issues")
+    validation_ws.append(["Status", "Severity", "Participant ID (WP)", "sport_type"])
+    wb.save(workbook_path)
+
+    class FakeDate(dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 5, 15)
+
+    monkeypatch.setattr(main.datetime, "date", FakeDate)
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="build-schedule-workbook",
+            input_json=None,
+            input_xlsx=None,
+            output=None,
+            pool_assignments=None,
+        ),
+    )
+
+    _run_main_expect_exit(0)
+
+    out_path = export_dir / "Schedule_Workbook_2026-05-15.xlsx"
+    assert out_path.exists()
+    venue_ws = load_workbook(out_path)["Venue-Estimator"]
+    assert venue_ws["B2"].value == 1
+    assert venue_ws["C2"].value == 1
+    assert venue_ws["D2"].value == "RPC"
 
 
 def test_main_build_schedule_workbook_prefers_input_xlsx_sibling_json(monkeypatch, tmp_path):
@@ -168,6 +241,7 @@ def test_main_build_schedule_workbook_prefers_input_xlsx_sibling_json(monkeypatc
             input_json=None,
             input_xlsx=str(workbook_path),
             output=str(custom_dir / "Schedule_Workbook.xlsx"),
+            pool_assignments=None,
         ),
     )
 
@@ -187,10 +261,56 @@ def test_main_build_schedule_workbook_missing_input_fails(monkeypatch, tmp_path)
             input_json=str(tmp_path / "does_not_exist.json"),
             input_xlsx=None,
             output=None,
+            pool_assignments=None,
         ),
     )
 
     _run_main_expect_exit(1)
+
+
+def test_main_assign_pools_writes_sidecar(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "Schedule_Workbook.xlsx"
+    schedule_input_path = tmp_path / "schedule_input.json"
+    builder = ScheduleWorkbookBuilder()
+    roster_rows = []
+    for code in ("RPC", "ANH", "TLC", "FVC"):
+        for idx in range(5):
+            roster_rows.append(
+                {
+                    "Church Team": code,
+                    "sport_type": "Basketball",
+                    "sport_gender": "Men",
+                    "sport_format": "Team",
+                    "Participant ID (WP)": idx + 1,
+                }
+            )
+    schedule_input_path.write_text(
+        json.dumps(_minimal_schedule_input()),
+        encoding="utf-8",
+    )
+    builder.write_schedule_workbook(
+        workbook_path,
+        roster_rows,
+        [],
+        json.loads(schedule_input_path.read_text(encoding="utf-8")),
+        tmp_path / "missing.xlsx",
+        pool_assignment_path=tmp_path / "pool_assignments.json",
+    )
+
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="assign-pools",
+            workbook=str(workbook_path),
+            output=None,
+            pool_assignments=None,
+        ),
+    )
+
+    _run_main_expect_exit(0)
+
+    assert (tmp_path / "pool_assignments.json").exists()
 
 
 def test_generate_venue_template_example_dates_match_day_labels(tmp_path):
@@ -360,6 +480,7 @@ def test_schedule_pipeline_export_solve_produce_local(mocker, monkeypatch, tmp_p
     wb = load_workbook(workbook_path)
     assert "Schedule-by-Time" in wb.sheetnames
     assert "Schedule-by-Sport" in wb.sheetnames
+    assert "Conflict-Audit" in wb.sheetnames
 
     schedule_output = json.loads(schedule_output_path.read_text(encoding="utf-8"))
     assert schedule_output["status"] == "OPTIMAL"

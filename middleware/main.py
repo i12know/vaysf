@@ -207,12 +207,37 @@ def parse_args() -> argparse.Namespace:
     build_workbook_parser.add_argument(
         "--input-xlsx",
         default=None,
-        help="Path to an exported Church_Team_Status_ALL workbook for Roster/Validation context (optional)",
+        help="Path to an exported Church_Team_Status_ALL workbook for Roster/Validation context (optional; defaults to the newest matching workbook beside schedule_input.json or in EXPORT_DIR)",
     )
     build_workbook_parser.add_argument(
         "--output",
         default=None,
         help="Output path for xlsx (default: EXPORT_DIR/Schedule_Workbook_YYYY-MM-DD.xlsx)",
+    )
+    build_workbook_parser.add_argument(
+        "--pool-assignments",
+        default=None,
+        help="Optional path to the persisted pool_assignments.json sidecar (default: pool_assignments.json beside the workbook output)",
+    )
+
+    assign_pools_parser = subparsers.add_parser(
+        "assign-pools",
+        help="Recompute Pool-Assignment placements from an edited Schedule_Workbook workbook",
+    )
+    assign_pools_parser.add_argument(
+        "--workbook",
+        required=True,
+        help="Path to Schedule_Workbook_*.xlsx containing the editable Pool-Assignment tab",
+    )
+    assign_pools_parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional output workbook path (default: update the input workbook in place)",
+    )
+    assign_pools_parser.add_argument(
+        "--pool-assignments",
+        default=None,
+        help="Optional path to the persisted pool_assignments.json sidecar (default: pool_assignments.json beside the output workbook)",
     )
 
     # Generate-venue-template command
@@ -285,6 +310,56 @@ def _resolve_build_schedule_input_path(
         return export_candidate
 
     return DATA_DIR / "schedule_input.json"
+
+
+def _find_latest_all_workbook(directory: Path) -> Optional[Path]:
+    """Return the newest Church_Team_Status_ALL workbook in a directory, if any."""
+    candidates = [
+        path for path in Path(directory).glob("Church_Team_Status_ALL*.xlsx")
+        if path.is_file()
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _resolve_build_schedule_context_xlsx(
+    input_xlsx: Optional[str],
+    schedule_input_path: Path,
+) -> Optional[Path]:
+    """Resolve the ALL workbook used for roster/validation planning context.
+
+    Prefer an explicit CLI arg. Otherwise, auto-detect the newest
+    Church_Team_Status_ALL workbook beside the chosen schedule_input.json, then
+    fall back to the newest one in EXPORT_DIR.
+    """
+    if input_xlsx:
+        return Path(input_xlsx)
+
+    sibling_candidate = _find_latest_all_workbook(schedule_input_path.parent)
+    if sibling_candidate:
+        return sibling_candidate
+
+    export_dir = Path(EXPORT_DIR)
+    if export_dir != schedule_input_path.parent:
+        export_candidate = _find_latest_all_workbook(export_dir)
+        if export_candidate:
+            return export_candidate
+
+    return None
+
+
+def _resolve_pool_assignments_sidecar_path(
+    explicit_path: Optional[str],
+    workbook_or_output_path: Path,
+) -> Path:
+    """Resolve the pool_assignments.json sidecar path for workbook workflows."""
+    if explicit_path:
+        return Path(explicit_path)
+    from schedule_workbook import ScheduleWorkbookBuilder
+    return ScheduleWorkbookBuilder._pool_assignments_sidecar_path(
+        Path(workbook_or_output_path).parent
+    )
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str] = None,
@@ -963,18 +1038,57 @@ def main() -> None:
             success = False
         else:
             builder = ScheduleWorkbookBuilder()
+            context_xlsx = _resolve_build_schedule_context_xlsx(
+                args.input_xlsx,
+                si_path,
+            )
+            if context_xlsx:
+                logger.info(
+                    f"build-schedule-workbook: using roster context workbook {context_xlsx}"
+                )
+            else:
+                logger.warning(
+                    "build-schedule-workbook: no Church_Team_Status_ALL workbook found; "
+                    "Venue-Estimator / pod planning tabs will be empty until one is available."
+                )
             roster_rows, validation_rows = builder.read_roster_validation_rows(
-                Path(args.input_xlsx) if args.input_xlsx else None
+                context_xlsx
             )
             out_path.parent.mkdir(parents=True, exist_ok=True)
+            pool_assignments_path = _resolve_pool_assignments_sidecar_path(
+                args.pool_assignments,
+                out_path,
+            )
             builder.write_schedule_workbook(
                 out_path,
                 roster_rows,
                 validation_rows,
                 schedule_input,
                 venue_input_path=None,
+                pool_assignment_path=pool_assignments_path,
             )
             logger.info(f"Schedule workbook written to: {out_path.resolve()}")
+            success = True
+    elif args.command == "assign-pools":
+        from schedule_workbook import ScheduleWorkbookBuilder
+
+        workbook_path = Path(args.workbook)
+        output_path = Path(args.output) if args.output else workbook_path
+        pool_assignments_path = _resolve_pool_assignments_sidecar_path(
+            args.pool_assignments,
+            output_path,
+        )
+        if not workbook_path.exists():
+            logger.error(f"assign-pools: workbook not found at {workbook_path}")
+            success = False
+        else:
+            builder = ScheduleWorkbookBuilder()
+            builder.refresh_pool_assignments(
+                workbook_path,
+                output_path=output_path,
+                sidecar_path=pool_assignments_path,
+            )
+            logger.info(f"Pool assignments refreshed in: {output_path.resolve()}")
             success = True
     elif args.command == "generate-venue-template":
         out = Path(args.output) if args.output else None

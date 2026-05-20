@@ -11,12 +11,14 @@ from pathlib import Path
 from loguru import logger
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
-from collections import deque
+from collections import defaultdict, deque
+import random
 import re
 from math import ceil
 
 from config import (
     SPORT_TYPE,
+    SPORT_FORMAT,
     RACQUET_SPORTS,
     is_racquet_sport,
     COURT_ESTIMATE_EVENTS,
@@ -67,6 +69,358 @@ class ScheduleWorkbookBuilder:
 
     def __init__(self) -> None:
         pass
+
+    _GYM_CORE_SOLVER_POOL = "Gym Core"
+
+    _POOL_ASSIGNMENT_COLUMNS: List[str] = [
+        "Event",
+        "Church Team",
+        "Team Order",
+        "Team ID",
+        "Team Label",
+        "Team Source",
+        "Roster Count",
+        "Min Team Size",
+        "Seed",
+        "Random Draw Order",
+        "Draw Position",
+        "Pool ID",
+        "Pool Slot",
+        "Assignment Basis",
+        "Notes",
+    ]
+    _POOL_ASSIGNMENT_EVENT_DEFS: List[Tuple[str, str]] = [
+        (SPORT_TYPE["BASKETBALL"], "BBM"),
+        (SPORT_TYPE["VOLLEYBALL_MEN"], "VBM"),
+        (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW"),
+    ]
+    _POOL_ASSIGNMENT_HEADER_NOTES: Dict[str, str] = {
+        "Event": (
+            "Canonical team-sport event this row belongs to. Version 1 focuses on the "
+            "core gym sports used for pool seeding."
+        ),
+        "Church Team": (
+            "Church code contributing this team row, such as RPC or TLC."
+        ),
+        "Team Order": (
+            "Explicit team order when roster rows already carry one, such as A or B. "
+            "Blank means the row currently represents the church-level team grouping."
+        ),
+        "Team ID": (
+            "Stable team identifier used by the planning workbook. Usually the church code, "
+            "or church code plus team order when team_order is available."
+        ),
+        "Team Label": (
+            "Human-readable team label for operators. Usually matches Team ID in this first version."
+        ),
+        "Team Source": (
+            "How this row was derived. ChurchLevel means one team row per church. "
+            "ExplicitTeamOrder means the roster already carries a team_order value."
+        ),
+        "Roster Count": (
+            "Number of participant roster rows currently contributing to this team row."
+        ),
+        "Min Team Size": (
+            "Minimum roster size from the validation rules used to decide whether this team is eligible."
+        ),
+        "Seed": (
+            "Operator-editable. Leave blank or enter 0 for an unseeded random draw. "
+            "Enter 1, 2, 3... for ranked teams placed first in ascending order."
+        ),
+        "Random Draw Order": (
+            "Stable random-draw order used for unseeded teams. Normally not edited by hand."
+        ),
+        "Draw Position": (
+            "Computed overall placement order after seeded teams are sorted first and unseeded teams follow."
+        ),
+        "Pool ID": (
+            "Computed assigned pool, such as P1 or P2."
+        ),
+        "Pool Slot": (
+            "Computed slot within the assigned pool, such as T1 or T3."
+        ),
+        "Assignment Basis": (
+            "Computed explanation for the row placement: Seeded, RandomDraw, or WaitingForMoreTeams."
+        ),
+        "Notes": (
+            "Operator notes. Safe to edit."
+        ),
+    }
+
+    _POD_DIVISION_HEADER_NOTES: Dict[str, str] = {
+        "division_id": (
+            "Canonical division label used across the planning tabs. "
+            "Built from sport + gender + format, for example BAD-Men-Doubles."
+        ),
+        "sport_type": (
+            "Base sport name for this division, such as Badminton, Pickleball, "
+            "Table Tennis, or Tennis."
+        ),
+        "sport_gender": (
+            "Gender bucket for the division: Men, Women, or Mixed."
+        ),
+        "sport_format": (
+            "Division format used for planning: Singles, Doubles, or an anomaly placeholder "
+            "when the roster data does not fit a normal pod division."
+        ),
+        "resource_type": (
+            "Exact court or table resource type this division needs in the venue plan and solver. "
+            "This must line up with the resource names used in venue_input.xlsx and schedule_input.json."
+        ),
+        "minutes_per_game": (
+            "Planning duration per game in minutes for this division."
+        ),
+        "planning_entries": (
+            "Total entries the planner can currently schedule for this division. "
+            "For doubles, this counts pairs, not individual people."
+        ),
+        "confirmed_entries": (
+            "Entries currently considered ready for planning after open ERROR-level validation issues "
+            "are excluded. For doubles, this also counts pairs, not people."
+        ),
+        "provisional_entries": (
+            "Entries that appear to exist mathematically but still need cleanup before they are fully "
+            "confirmed, such as unresolved validation issues."
+        ),
+        "anomaly_count": (
+            "Roster rows that did not fit a normal Singles or Doubles planning entry and therefore "
+            "need manual review."
+        ),
+        "division_status": (
+            "Planner readiness flag. Ready = clean to plan, Partial = some entries still need review, "
+            "AnomalyOnly = only anomaly rows exist, Empty = no entries found."
+        ),
+        "notes": (
+            "Operator notes column for manual comments or follow-up reminders."
+        ),
+    }
+    _VENUE_ESTIMATOR_HEADER_NOTES: Dict[str, str] = {
+        "Event": (
+            "Canonical event name used for the venue estimate."
+        ),
+        "Potential Teams/Entries": (
+            "All current registrations for this event, including partial team signups or "
+            "incomplete doubles pairs."
+        ),
+        "Estimating Teams/Entries": (
+            "Entries currently counted for court estimation. Team sports count only churches "
+            "that meet minimum team size; racquet sports count singles plus complete doubles pairs."
+        ),
+        "Teams": (
+            "Comma-separated church codes currently qualifying as full teams. Usually blank for "
+            "racquet sports because they are planned by entries instead of church teams."
+        ),
+        "Target Pool Games/Team": (
+            "Configured planning target for pool games per team."
+        ),
+        "Actual Pool Games/Team": (
+            "Actual average pool games per team after the current pool-normalization logic is "
+            "applied. May differ slightly from the target."
+        ),
+        "Pool Composition": (
+            "Pool sizes used by the current planning policy, such as 4 + 3 + 3."
+        ),
+        "BYE Slots": (
+            "Implicit bye slots created by the current pool layout. Most relevant when 5-team pools "
+            "are used under the 2-game planning policy."
+        ),
+        "Minutes Per Game": (
+            "Planning duration in minutes for one game in this event."
+        ),
+        "Pool Slots": (
+            "Total pool-stage game slots needed for this event."
+        ),
+        "Playoff Teams": (
+            "Number of teams assumed to advance from pools into the playoff bracket."
+        ),
+        "Playoff Slots": (
+            "Bracket game slots required, excluding any third-place game."
+        ),
+        "Third Place?": (
+            "Whether the estimate assumes a third-place game for this event."
+        ),
+        "Third Place Slots": (
+            "Additional slots reserved for a third-place game when enabled."
+        ),
+        "Total Court Slots": (
+            "Total planned slots for this event: pool + playoff + third-place."
+        ),
+        "Estimated Court Hours": (
+            "Approximate court-hours required for this event based on total slots and minutes per game."
+        ),
+    }
+    _POD_ENTRY_HEADER_NOTES: Dict[str, str] = {
+        "entry_id": (
+            "Unique row ID for this review entry within the workbook."
+        ),
+        "division_id": (
+            "Canonical pod division label that this entry belongs to, such as BAD-Men-Doubles."
+        ),
+        "entry_type": (
+            "Planner classification for the entry: Singles, DoublesPair, UnresolvedDoubles, or Anomaly."
+        ),
+        "participant_1_name": (
+            "Primary participant name for the entry."
+        ),
+        "participant_2_name": (
+            "Second participant name for a confirmed doubles pair. Blank for singles, unresolved, or anomaly rows."
+        ),
+        "source_participant_ids": (
+            "Underlying participant IDs that produced this planning entry. Usually WordPress participant IDs, "
+            "with ChMeetings IDs as fallback if needed."
+        ),
+        "church_team": (
+            "Church code or codes contributing to this entry."
+        ),
+        "partner_status": (
+            "Partner-matching result. Examples: N/A, Confirmed, MissingPartner, PartnerNotFound, or NonReciprocal."
+        ),
+        "review_status": (
+            "Operator readiness flag. OK means clean enough for planning; NeedsReview means the entry still needs manual attention."
+        ),
+        "notes": (
+            "Reason the entry needs review, plus room for operator notes."
+        ),
+    }
+    _POD_RESOURCE_HEADER_NOTES: Dict[str, str] = {
+        "Event": (
+            "Racquet event being evaluated for pod-resource fit."
+        ),
+        "Resource Type": (
+            "Exact court or table type that this event requires."
+        ),
+        "Entries / Teams": (
+            "Planning entries counted for this event. Doubles count as complete pairs, not individual people."
+        ),
+        "Required Slots": (
+            "Approximate match slots required under the current single-elimination assumption: entries minus one."
+        ),
+        "Available Slots": (
+            "Slots currently available for this resource type from venue_input.xlsx or the derived schedule-input resources."
+        ),
+        "Surplus / Shortage": (
+            "Available slots minus required slots. Negative values mean the venue is short."
+        ),
+        "Fit Status": (
+            "Traffic-light summary. Green = enough slots, Yellow = small shortage, Red = larger shortage, "
+            "No venue data = availability could not be loaded."
+        ),
+    }
+    _SCHEDULE_INPUT_GAME_HEADER_NOTES: Dict[str, str] = {
+        "game_id": (
+            "Unique placeholder game ID used by the solver and by playoff-slot pinning."
+        ),
+        "event": (
+            "Canonical event name for the game."
+        ),
+        "stage": (
+            "Tournament stage, such as Pool, QF, Semi, Final, or 3rd."
+        ),
+        "pool_id": (
+            "Pool label for pool-stage games. Blank for non-pool games."
+        ),
+        "round": (
+            "Round number within the stage when applicable."
+        ),
+        "team_a_id": (
+            "Placeholder team slot or team ID for side A."
+        ),
+        "team_b_id": (
+            "Placeholder team slot or team ID for side B."
+        ),
+        "duration_minutes": (
+            "Game duration in minutes used by the solver."
+        ),
+        "resource_type": (
+            "Exact resource type this game must be assigned to."
+        ),
+        "earliest_slot": (
+            "Optional earliest allowed slot constraint for this game."
+        ),
+        "latest_slot": (
+            "Optional latest allowed slot constraint for this game."
+        ),
+    }
+    _SCHEDULE_INPUT_RESOURCE_HEADER_NOTES: Dict[str, str] = {
+        "resource_id": (
+            "Exact solver resource ID. This is the value to copy into Playoff-Slots when pinning games."
+        ),
+        "resource_type": (
+            "Resource category offered by this row, such as Basketball Court or Badminton Court."
+        ),
+        "label": (
+            "Human-readable label for the resource, usually what operators will recognize on-site."
+        ),
+        "day": (
+            "Schedule day key, such as Sat-1, Sun-1, Sat-2, or Sun-2."
+        ),
+        "open_time": (
+            "Start of the available scheduling window for this resource."
+        ),
+        "close_time": (
+            "End of the available scheduling window for this resource."
+        ),
+        "slot_minutes": (
+            "Length of each solver slot for this resource."
+        ),
+        "exclusive_group": (
+            "Mutually-exclusive venue group, if any. Resources in the same group cannot all be used at once."
+        ),
+    }
+    _SCHEDULE_INPUT_PLAYOFF_HEADER_NOTES: Dict[str, str] = {
+        "game_id": (
+            "Exact playoff game ID to pin to a specific slot."
+        ),
+        "event": (
+            "Canonical event name for the pinned playoff game."
+        ),
+        "stage": (
+            "Playoff stage being pinned, such as QF, Semi, Final, or 3rd."
+        ),
+        "resource_id": (
+            "Exact resource ID the playoff game must use."
+        ),
+        "slot": (
+            "Exact solver slot label, typically Day-HH:MM, that the playoff game must occupy."
+        ),
+    }
+    _GYM_ALLOCATION_DECISION_HEADER_NOTES: Dict[str, str] = {
+        "gym_name": (
+            "Exclusive Venue Group / gym block name being allocated."
+        ),
+        "day": (
+            "Schedule day for this gym block."
+        ),
+        "open_time": (
+            "Start time of the allocated gym block."
+        ),
+        "close_time": (
+            "End time of the allocated gym block."
+        ),
+        "mode": (
+            "Chosen sport mode or resource mode for this block."
+        ),
+        "courts": (
+            "Number of courts assigned to the chosen mode in this block."
+        ),
+        "slot_minutes": (
+            "Slot length in minutes for this block."
+        ),
+    }
+    _GYM_ALLOCATION_SUPPLY_HEADER_NOTES: Dict[str, str] = {
+        "mode": (
+            "Sport mode or resource mode being compared."
+        ),
+        "demand": (
+            "Total slot demand from games needing this mode."
+        ),
+        "supply": (
+            "Total slot supply produced by the allocator for this mode."
+        ),
+        "shortfall": (
+            "Unmet slots after allocation. Zero means the current allocation covers demand."
+        ),
+    }
 
     # ── Shared helpers ───────────────────────────────────────────────────────
 
@@ -583,6 +937,620 @@ class ScheduleWorkbookBuilder:
 
         return rows
 
+    @staticmethod
+    def _pool_assignments_sidecar_path(base_dir: Path) -> Path:
+        """Return the default sidecar file used to persist editable pool seeds."""
+        return Path(base_dir) / "pool_assignments.json"
+
+    @staticmethod
+    def _normalize_pool_seed(value: Any) -> Optional[int]:
+        """Normalize blank/zero-like seed input to None, else return a positive int."""
+        if value in (None, "", "0", 0):
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _positive_int_or_none(value: Any) -> Optional[int]:
+        """Return a positive int when possible; otherwise None."""
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @classmethod
+    def _pool_assignment_event_prefix(cls, event_name: str) -> str:
+        """Return the placeholder prefix used for one pool-assignment event."""
+        for known_event, prefix in cls._POOL_ASSIGNMENT_EVENT_DEFS:
+            if known_event == event_name:
+                return prefix
+        return event_name[:3].upper()
+
+    @classmethod
+    def _event_sort_index(cls, event_name: str) -> int:
+        """Return a stable event ordering for the Pool-Assignment tab."""
+        for idx, (known_event, _) in enumerate(cls._POOL_ASSIGNMENT_EVENT_DEFS):
+            if known_event == event_name:
+                return idx
+        return len(cls._POOL_ASSIGNMENT_EVENT_DEFS)
+
+    @classmethod
+    def _load_pool_assignment_state(
+        cls,
+        sidecar_path: Optional[Path],
+    ) -> Dict[Tuple[str, str], Dict[str, Any]]:
+        """Load persisted seed/draw metadata keyed by (event, team_id)."""
+        if not sidecar_path:
+            return {}
+        sidecar_path = Path(sidecar_path)
+        if not sidecar_path.exists():
+            return {}
+
+        try:
+            payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning(
+                f"Could not parse pool-assignment sidecar '{sidecar_path}': {exc}. "
+                "Ignoring persisted seeds for this build."
+            )
+            return {}
+
+        rows = payload.get("rows", []) if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            logger.warning(
+                f"Pool-assignment sidecar '{sidecar_path}' has invalid rows content. "
+                "Ignoring persisted seeds for this build."
+            )
+            return {}
+
+        state: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            event_name = str(row.get("Event") or row.get("event") or "").strip()
+            team_id = str(row.get("Team ID") or row.get("team_id") or "").strip()
+            if not event_name or not team_id:
+                continue
+            state[(event_name, team_id)] = {
+                "Seed": cls._normalize_pool_seed(row.get("Seed", row.get("seed"))),
+                "Random Draw Order": cls._positive_int_or_none(
+                    row.get("Random Draw Order", row.get("random_draw_order"))
+                ),
+                "Notes": str(row.get("Notes", row.get("notes")) or "").strip(),
+            }
+        return state
+
+    @classmethod
+    def _write_pool_assignment_state(
+        cls,
+        sidecar_path: Path,
+        rows: List[Dict[str, Any]],
+    ) -> None:
+        """Persist editable Pool-Assignment state to a JSON sidecar."""
+        payload_rows: List[Dict[str, Any]] = []
+        for row in rows:
+            event_name = str(row.get("Event") or "").strip()
+            team_id = str(row.get("Team ID") or "").strip()
+            if not event_name or not team_id:
+                continue
+            payload_rows.append({
+                "event": event_name,
+                "church_code": str(row.get("Church Team") or "").strip(),
+                "team_order": str(row.get("Team Order") or "").strip(),
+                "team_id": team_id,
+                "seed": cls._normalize_pool_seed(row.get("Seed")),
+                "random_draw_order": cls._positive_int_or_none(
+                    row.get("Random Draw Order")
+                ),
+                "notes": str(row.get("Notes") or "").strip(),
+            })
+
+        sidecar_path = Path(sidecar_path)
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        sidecar_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                    "rows": payload_rows,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    def _build_pool_assignment_base_rows(
+        self,
+        roster_rows: List[Dict[str, Any]],
+        persisted_state: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Build one Pool-Assignment row per eligible core gym team."""
+        persisted_state = persisted_state or {}
+        rows: List[Dict[str, Any]] = []
+
+        for event_name, _prefix in self._POOL_ASSIGNMENT_EVENT_DEFS:
+            min_team_size = self._get_min_team_size(event_name)
+            target_type, target_gender, _target_format = self._decompose_event_name(event_name)
+
+            counts_by_key: Dict[Tuple[str, str], int] = {}
+            for roster_row in roster_rows:
+                r_type = str(roster_row.get("sport_type") or "").strip()
+                r_gender = str(roster_row.get("sport_gender") or "").strip()
+                r_format = str(roster_row.get("sport_format") or "").strip()
+                if (
+                    r_type.casefold() != target_type.casefold()
+                    and r_type.casefold() != event_name.casefold()
+                ):
+                    continue
+                if target_gender and r_gender.casefold() != target_gender.casefold():
+                    continue
+                if r_format and r_format.casefold() != SPORT_FORMAT["TEAM"].casefold():
+                    continue
+
+                church_code = str(roster_row.get("Church Team") or "").strip().upper()
+                if not church_code:
+                    continue
+                team_order = str(roster_row.get("team_order") or "").strip().upper()
+                counts_by_key[(church_code, team_order)] = (
+                    counts_by_key.get((church_code, team_order), 0) + 1
+                )
+
+            for (church_code, team_order), roster_count in sorted(counts_by_key.items()):
+                if roster_count < min_team_size:
+                    continue
+
+                team_id = church_code if not team_order else f"{church_code}-{team_order}"
+                persisted = persisted_state.get((event_name, team_id), {})
+                rows.append({
+                    "Event": event_name,
+                    "Church Team": church_code,
+                    "Team Order": team_order,
+                    "Team ID": team_id,
+                    "Team Label": team_id,
+                    "Team Source": "ExplicitTeamOrder" if team_order else "ChurchLevel",
+                    "Roster Count": roster_count,
+                    "Min Team Size": min_team_size,
+                    "Seed": persisted.get("Seed"),
+                    "Random Draw Order": persisted.get("Random Draw Order"),
+                    "Draw Position": None,
+                    "Pool ID": "",
+                    "Pool Slot": "",
+                    "Assignment Basis": "",
+                    "Notes": persisted.get("Notes", ""),
+                })
+
+        return rows
+
+    @staticmethod
+    def _default_random_draw_orders(
+        event_name: str,
+        team_ids: List[str],
+    ) -> Dict[str, int]:
+        """Return a stable pseudo-random ordering for unseeded teams."""
+        ordered_ids = sorted(team_ids)
+        rng = random.Random(f"vaysf-pool-draw|{event_name}|{'|'.join(ordered_ids)}")
+        rng.shuffle(ordered_ids)
+        return {team_id: idx for idx, team_id in enumerate(ordered_ids, start=1)}
+
+    @staticmethod
+    def _serpentine_pool_slots(pool_sizes: List[int]) -> List[Tuple[str, str]]:
+        """Return pool slots in serpentine fill order."""
+        slots: List[Tuple[str, str]] = []
+        if not pool_sizes:
+            return slots
+
+        max_size = max(pool_sizes)
+        for slot_idx in range(1, max_size + 1):
+            eligible = [pool_idx for pool_idx, size in enumerate(pool_sizes, start=1) if size >= slot_idx]
+            if slot_idx % 2 == 0:
+                eligible = list(reversed(eligible))
+            for pool_idx in eligible:
+                slots.append((f"P{pool_idx}", f"T{slot_idx}"))
+        return slots
+
+    def _pool_sizes_for_assignment(
+        self,
+        event_name: str,
+        n_teams: int,
+    ) -> List[int]:
+        """Return the pool sizes implied by the current placeholder-pool policy."""
+        if n_teams < 2:
+            return []
+
+        prefix = self._pool_assignment_event_prefix(event_name)
+        gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(
+            event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
+        )
+        pairs = self._make_pool_game_pairs(prefix, n_teams, gpg)
+        slot_ids_by_pool: Dict[str, set] = {}
+        for team_a_id, team_b_id, pool_id in pairs:
+            for team_id in (team_a_id, team_b_id):
+                match = re.search(r"-P\d+-T(\d+)$", str(team_id))
+                if not match:
+                    continue
+                slot_ids_by_pool.setdefault(pool_id, set()).add(int(match.group(1)))
+
+        if not slot_ids_by_pool:
+            return [n_teams]
+
+        def _pool_key(pool_id: str) -> int:
+            try:
+                return int(str(pool_id).replace("P", ""))
+            except ValueError:
+                return 0
+
+        return [
+            len(slot_ids_by_pool[pool_id])
+            for pool_id in sorted(slot_ids_by_pool.keys(), key=_pool_key)
+        ]
+
+    def _apply_pool_assignments_to_rows(
+        self,
+        rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Compute draw order and pool placement for Pool-Assignment rows."""
+        normalized_rows = [dict(row) for row in rows]
+        grouped_rows: Dict[str, List[Dict[str, Any]]] = {}
+        for row in normalized_rows:
+            event_name = str(row.get("Event") or "").strip()
+            team_id = str(row.get("Team ID") or "").strip()
+            if not event_name or not team_id:
+                continue
+            row["Seed"] = self._normalize_pool_seed(row.get("Seed"))
+            row["Random Draw Order"] = self._positive_int_or_none(row.get("Random Draw Order"))
+            row["Notes"] = str(row.get("Notes") or "").strip()
+            grouped_rows.setdefault(event_name, []).append(row)
+
+        output_rows: List[Dict[str, Any]] = []
+        for event_name, _prefix in self._POOL_ASSIGNMENT_EVENT_DEFS:
+            event_rows = grouped_rows.get(event_name, [])
+            if not event_rows:
+                continue
+
+            existing_draw_orders = {
+                row["Team ID"]: row["Random Draw Order"]
+                for row in event_rows
+                if self._positive_int_or_none(row.get("Random Draw Order")) is not None
+            }
+            next_draw_order = max(existing_draw_orders.values(), default=0)
+            missing_draw_ids = [
+                str(row.get("Team ID") or "").strip()
+                for row in event_rows
+                if str(row.get("Team ID") or "").strip() not in existing_draw_orders
+            ]
+            if missing_draw_ids:
+                for team_id in sorted(
+                    missing_draw_ids,
+                    key=lambda value: self._default_random_draw_orders(event_name, missing_draw_ids)[value],
+                ):
+                    next_draw_order += 1
+                    existing_draw_orders[team_id] = next_draw_order
+
+            for row in event_rows:
+                row["Random Draw Order"] = existing_draw_orders.get(
+                    str(row.get("Team ID") or "").strip()
+                )
+
+            seeded_rows = sorted(
+                [row for row in event_rows if row.get("Seed") is not None],
+                key=lambda row: (int(row["Seed"]), str(row.get("Team ID") or "")),
+            )
+            unseeded_rows = sorted(
+                [row for row in event_rows if row.get("Seed") is None],
+                key=lambda row: (
+                    int(row.get("Random Draw Order") or 0),
+                    str(row.get("Team ID") or ""),
+                ),
+            )
+            ordered_rows = seeded_rows + unseeded_rows
+
+            if len(ordered_rows) < 2:
+                for draw_position, row in enumerate(ordered_rows, start=1):
+                    row["Draw Position"] = draw_position
+                    row["Pool ID"] = ""
+                    row["Pool Slot"] = ""
+                    row["Assignment Basis"] = "WaitingForMoreTeams"
+                output_rows.extend(ordered_rows)
+                continue
+
+            pool_sizes = self._pool_sizes_for_assignment(event_name, len(ordered_rows))
+            slots = self._serpentine_pool_slots(pool_sizes)
+            if len(slots) != len(ordered_rows):
+                logger.warning(
+                    f"Pool-assignment slot count mismatch for event '{event_name}': "
+                    f"{len(slots)} slots for {len(ordered_rows)} teams. Leaving pool cells blank."
+                )
+                for draw_position, row in enumerate(ordered_rows, start=1):
+                    row["Draw Position"] = draw_position
+                    row["Pool ID"] = ""
+                    row["Pool Slot"] = ""
+                    row["Assignment Basis"] = (
+                        "Seeded" if row.get("Seed") is not None else "RandomDraw"
+                    )
+                output_rows.extend(ordered_rows)
+                continue
+
+            for draw_position, (row, slot) in enumerate(zip(ordered_rows, slots), start=1):
+                row["Draw Position"] = draw_position
+                row["Pool ID"] = slot[0]
+                row["Pool Slot"] = slot[1]
+                row["Assignment Basis"] = (
+                    "Seeded" if row.get("Seed") is not None else "RandomDraw"
+                )
+
+            output_rows.extend(ordered_rows)
+
+        return sorted(
+            output_rows,
+            key=lambda row: (
+                self._event_sort_index(str(row.get("Event") or "")),
+                int(row.get("Draw Position") or 0),
+                str(row.get("Team ID") or ""),
+            ),
+        )
+
+    def _build_pool_assignment_rows(
+        self,
+        roster_rows: List[Dict[str, Any]],
+        sidecar_path: Optional[Path],
+    ) -> List[Dict[str, Any]]:
+        """Build Pool-Assignment rows from roster data plus persisted seed state."""
+        persisted_state = self._load_pool_assignment_state(sidecar_path)
+        base_rows = self._build_pool_assignment_base_rows(roster_rows, persisted_state)
+        return self._apply_pool_assignments_to_rows(base_rows)
+
+    @staticmethod
+    def _normalize_primary_sport_name(value: Any) -> str:
+        """Normalize a declared primary sport value for conflict weighting."""
+        return str(value or "").strip()
+
+    @classmethod
+    def _solver_team_id(cls, event_name: str, team_id: str) -> str:
+        """Return an event-scoped internal team id safe for cross-sport solving."""
+        return f"{cls._pool_assignment_event_prefix(event_name)}::{team_id}"
+
+    @classmethod
+    def _pool_assignment_placeholder_map(
+        cls,
+        pool_assignment_rows: List[Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """Return {event: {PREFIX-Px-Ty: team metadata}} from assigned pool rows."""
+        grouped: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for row in pool_assignment_rows:
+            event_name = str(row.get("Event") or "").strip()
+            pool_id = str(row.get("Pool ID") or "").strip()
+            pool_slot = str(row.get("Pool Slot") or "").strip()
+            team_id = str(row.get("Team ID") or "").strip()
+            if not event_name or not pool_id or not pool_slot or not team_id:
+                continue
+            prefix = cls._pool_assignment_event_prefix(event_name)
+            placeholder_id = f"{prefix}-{pool_id}-{pool_slot}"
+            display_label = str(row.get("Team Label") or team_id).strip() or team_id
+            grouped.setdefault(event_name, {})[placeholder_id] = {
+                "solver_team_id": cls._solver_team_id(event_name, team_id),
+                "display_label": display_label,
+                "team_id": team_id,
+                "pool_id": pool_id,
+                "pool_slot": pool_slot,
+            }
+        return grouped
+
+    @classmethod
+    def _build_core_gym_team_lookup(
+        cls,
+        roster_rows: List[Dict[str, Any]],
+    ) -> Dict[Tuple[str, str], Dict[str, Any]]:
+        """Return team membership metadata keyed by (event_name, team_id)."""
+        team_lookup: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+        for event_name, _prefix in cls._POOL_ASSIGNMENT_EVENT_DEFS:
+            min_team_size = cls._get_min_team_size(cls(), event_name)
+            target_type, target_gender, _target_format = cls._decompose_event_name(event_name)
+            provisional: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+            for roster_row in roster_rows:
+                r_type = str(roster_row.get("sport_type") or "").strip()
+                r_gender = str(roster_row.get("sport_gender") or "").strip()
+                r_format = str(roster_row.get("sport_format") or "").strip()
+                if (
+                    r_type.casefold() != target_type.casefold()
+                    and r_type.casefold() != event_name.casefold()
+                ):
+                    continue
+                if target_gender and r_gender.casefold() != target_gender.casefold():
+                    continue
+                if r_format and r_format.casefold() != SPORT_FORMAT["TEAM"].casefold():
+                    continue
+
+                church_code = str(roster_row.get("Church Team") or "").strip().upper()
+                if not church_code:
+                    continue
+                team_order = str(roster_row.get("team_order") or "").strip().upper()
+                team_id = church_code if not team_order else f"{church_code}-{team_order}"
+                key = (event_name, team_id)
+                team_state = provisional.setdefault(
+                    key,
+                    {
+                        "event": event_name,
+                        "team_id": team_id,
+                        "solver_team_id": cls._solver_team_id(event_name, team_id),
+                        "display_label": team_id,
+                        "participant_ids": set(),
+                        "participant_names": {},
+                        "primary_sports": {},
+                    },
+                )
+                participant_id = str(
+                    roster_row.get("Participant ID (WP)")
+                    or roster_row.get("ChMeetings ID")
+                    or ""
+                ).strip()
+                if not participant_id:
+                    continue
+
+                team_state["participant_ids"].add(participant_id)
+                full_name = (
+                    f"{str(roster_row.get('First Name') or '').strip()} "
+                    f"{str(roster_row.get('Last Name') or '').strip()}"
+                ).strip()
+                if full_name:
+                    team_state["participant_names"][participant_id] = full_name
+                team_state["primary_sports"][participant_id] = cls._normalize_primary_sport_name(
+                    roster_row.get("participant_primary_sport")
+                )
+
+            for key, team_state in provisional.items():
+                if len(team_state["participant_ids"]) < min_team_size:
+                    continue
+                team_lookup[key] = team_state
+
+        return team_lookup
+
+    @classmethod
+    def _build_gym_team_conflicts(
+        cls,
+        roster_rows: List[Dict[str, Any]],
+        pool_assignment_rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Return cross-sport shared-athlete edges for the core gym sports."""
+        team_lookup = cls._build_core_gym_team_lookup(roster_rows)
+        if not team_lookup:
+            return []
+
+        assigned_rows = {
+            (str(row.get("Event") or "").strip(), str(row.get("Team ID") or "").strip())
+            for row in pool_assignment_rows
+            if str(row.get("Pool ID") or "").strip() and str(row.get("Pool Slot") or "").strip()
+        }
+        ordered_keys = sorted(
+            [key for key in team_lookup.keys() if key in assigned_rows],
+            key=lambda item: (cls._event_sort_index(item[0]), item[1]),
+        )
+
+        conflicts: List[Dict[str, Any]] = []
+        for idx, key_a in enumerate(ordered_keys):
+            team_a = team_lookup[key_a]
+            ids_a = team_a["participant_ids"]
+            if not ids_a:
+                continue
+
+            for key_b in ordered_keys[idx + 1:]:
+                if key_a[0] == key_b[0]:
+                    continue
+                team_b = team_lookup[key_b]
+                shared_ids = sorted(ids_a & team_b["participant_ids"])
+                if not shared_ids:
+                    continue
+
+                primary_overlap_count = 0
+                shared_names: List[str] = []
+                for participant_id in shared_ids:
+                    primary_sport = (
+                        team_a["primary_sports"].get(participant_id)
+                        or team_b["primary_sports"].get(participant_id)
+                        or ""
+                    )
+                    if primary_sport and primary_sport.casefold() in {
+                        str(team_a["event"]).casefold(),
+                        str(team_b["event"]).casefold(),
+                    }:
+                        primary_overlap_count += 1
+                    shared_names.append(
+                        team_a["participant_names"].get(
+                            participant_id,
+                            team_b["participant_names"].get(participant_id, participant_id),
+                        )
+                    )
+
+                conflicts.append({
+                    "team_a_id": team_a["solver_team_id"],
+                    "team_a_label": team_a["display_label"],
+                    "event_a": team_a["event"],
+                    "team_b_id": team_b["solver_team_id"],
+                    "team_b_label": team_b["display_label"],
+                    "event_b": team_b["event"],
+                    "shared_participant_ids": shared_ids,
+                    "shared_participant_names": shared_names,
+                    "shared_count": len(shared_ids),
+                    "primary_overlap_count": primary_overlap_count,
+                    "secondary_only_count": len(shared_ids) - primary_overlap_count,
+                })
+
+        return conflicts
+
+    @classmethod
+    def _build_assigned_gym_game_objects(
+        cls,
+        roster_rows: List[Dict[str, Any]],
+        pool_assignment_rows: List[Dict[str, Any]],
+        allow_placeholder_fallback: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Return gym games using assigned real teams when pool assignments exist."""
+        sport_defs = [
+            (SPORT_TYPE["BASKETBALL"], "BBM", GYM_RESOURCE_TYPE_BASKETBALL),
+            (SPORT_TYPE["VOLLEYBALL_MEN"], "VBM", GYM_RESOURCE_TYPE_VOLLEYBALL),
+            (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW", GYM_RESOURCE_TYPE_VOLLEYBALL),
+        ]
+        mpg = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
+        games: List[Dict[str, Any]] = []
+        placeholder_map_by_event = cls._pool_assignment_placeholder_map(pool_assignment_rows)
+
+        for event_name, prefix, resource_type in sport_defs:
+            min_team_size = cls._get_min_team_size(cls(), event_name)
+            counts = cls()._count_estimating_teams(roster_rows, event_name, min_team_size)
+            slot_map = placeholder_map_by_event.get(event_name, {})
+            if slot_map:
+                n_teams = len(slot_map)
+            elif counts["n_estimating"] >= 2:
+                n_teams = counts["n_estimating"]
+            elif allow_placeholder_fallback:
+                n_teams = 8
+            else:
+                continue
+
+            gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(
+                event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
+            )
+            pool_pairs = cls()._make_pool_game_pairs(prefix, n_teams, gpg)
+            for pair_idx, (team_a_id, team_b_id, pool_id) in enumerate(pool_pairs, start=1):
+                team_a_meta = slot_map.get(team_a_id)
+                team_b_meta = slot_map.get(team_b_id)
+                if slot_map and (team_a_meta is None or team_b_meta is None):
+                    logger.warning(
+                        f"Pool-assignment map for event '{event_name}' is missing "
+                        f"{team_a_id!r} or {team_b_id!r}; falling back to placeholders."
+                    )
+                games.append({
+                    "game_id": f"{prefix}-{pair_idx:02d}",
+                    "event": event_name,
+                    "stage": "Pool",
+                    "pool_id": pool_id,
+                    "round": pair_idx,
+                    "team_a_id": (
+                        team_a_meta["solver_team_id"] if team_a_meta is not None else team_a_id
+                    ),
+                    "team_b_id": (
+                        team_b_meta["solver_team_id"] if team_b_meta is not None else team_b_id
+                    ),
+                    "team_a_label": (
+                        team_a_meta["display_label"] if team_a_meta is not None else team_a_id
+                    ),
+                    "team_b_label": (
+                        team_b_meta["display_label"] if team_b_meta is not None else team_b_id
+                    ),
+                    "duration_minutes": mpg,
+                    "resource_type": resource_type,
+                    "solver_pool": cls._GYM_CORE_SOLVER_POOL,
+                    "earliest_slot": None,
+                    "latest_slot": None,
+                })
+
+        return games
+
     # ── Schedule-Input JSON builders ─────────────────────────────────────────
 
     def _build_gym_game_objects(
@@ -971,6 +1939,7 @@ class ScheduleWorkbookBuilder:
         roster_rows: List[Dict[str, Any]],
         validation_rows: List[Dict[str, Any]],
         venue_input_path: Path,
+        pool_assignment_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Assemble the full schedule_input package consumed by OR-Tools.
 
@@ -1006,12 +1975,18 @@ class ScheduleWorkbookBuilder:
             else "fallback"
         )
 
-        gym_games = self._build_gym_game_objects(
+        pool_assignment_rows = self._build_pool_assignment_rows(
             roster_rows,
+            pool_assignment_path,
+        )
+        gym_games = self._build_assigned_gym_game_objects(
+            roster_rows,
+            pool_assignment_rows,
             allow_placeholder_fallback=(gym_resource_strategy == "fallback"),
         )
         pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
         all_games = gym_games + pod_games
+        team_conflicts = self._build_gym_team_conflicts(roster_rows, pool_assignment_rows)
 
         gym_allocation: Optional[Dict[str, Any]] = None
         if gym_resource_strategy == "allocator":
@@ -1075,6 +2050,13 @@ class ScheduleWorkbookBuilder:
 
         playoff_slots = self._load_playoff_slots(venue_input_path)
 
+        for resource in all_resources:
+            if resource.get("resource_type") in (
+                GYM_RESOURCE_TYPE_BASKETBALL,
+                GYM_RESOURCE_TYPE_VOLLEYBALL,
+            ):
+                resource["solver_pool"] = self._GYM_CORE_SOLVER_POOL
+
         return {
             "generated_at":       datetime.now().isoformat(timespec="seconds"),
             "gym_court_scenario": SCHEDULE_SOLVER_GYM_COURTS,
@@ -1085,10 +2067,370 @@ class ScheduleWorkbookBuilder:
             "playoff_slots":      playoff_slots,
             "gym_modes":          gym_modes,
             "gym_allocation":     gym_allocation,
+            "team_conflicts":     team_conflicts,
         }
 
     @staticmethod
-    def _write_schedule_input_tab(ws, schedule_input: Dict[str, Any]) -> None:
+    def _write_summary_tab(ws) -> None:
+        """Write an operator-facing guide for using the planning workbook."""
+        from openpyxl.styles import PatternFill, Font, Alignment
+
+        title_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_HEADER, fill_type="solid")
+        section_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_SECTION, fill_type="solid")
+        title_font = Font(bold=True, color="FFFFFF", size=14)
+        section_font = Font(bold=True)
+        body_font = Font(size=11)
+        wrap_left = Alignment(horizontal="left", vertical="top", wrap_text=True)
+
+        rows: List[Tuple[str, str]] = [
+            (
+                "What This Workbook Is",
+                "This workbook is the Layer 1 planning aid for Sports Fest scheduling. "
+                "Use it to estimate court demand, review pod/racquet entries, inspect "
+                "resource IDs, and iterate on venue_input.xlsx before producing the final "
+                "Layer 2 floor schedule.",
+            ),
+            (
+                "What This Workbook Is Not",
+                "This is not the final game timetable for coordinators on event day. "
+                "The final Layer 2 output is VAYSF_Schedule_YYYY-MM-DD.xlsx, produced after "
+                "running the solver.",
+            ),
+            (
+                "Where To Start",
+                "Work from the middleware folder. Start by refreshing the live exports with "
+                "run-me.bat or, if you only need the scheduling artifacts, "
+                "python main.py export-church-teams.",
+            ),
+            (
+                "Required Roster Input",
+                "build-schedule-workbook should read the consolidated ALL-church export "
+                "(Church_Team_Status_ALL_YYYY-MM-DD.xlsx) as its roster and validation "
+                "context. Do not point it at a single-church workbook if you want full "
+                "Venue-Estimator / pod planning results.",
+            ),
+            (
+                "Layer 1 Loop",
+                "1. Edit middleware/data/venue_input.xlsx.\n"
+                "2. Run: python main.py export-church-teams\n"
+                "3. Run: python main.py build-schedule-workbook "
+                "--input-xlsx \"...\\Church_Team_Status_ALL_YYYY-MM-DD.xlsx\"\n"
+                "   If omitted, the command tries to auto-detect the newest ALL workbook "
+                "beside schedule_input.json or in EXPORT_DIR.\n"
+                "4. Review the planning tabs in this workbook.\n"
+                "5. Edit the Pool-Assignment tab if you want to seed BB/VBM/VBW teams, then run:\n"
+                "   python main.py assign-pools --workbook \"...\\Schedule_Workbook_YYYY-MM-DD.xlsx\"\n"
+                "6. Repeat until venue capacity, seeding, pod planning, and resource IDs look right.",
+            ),
+            (
+                "Layer 2 Commands",
+                "When Layer 1 looks good, run Layer 2 from the middleware folder:\n"
+                "run-schedule.bat\n"
+                "Or run the two commands separately:\n"
+                "python main.py solve-schedule\n"
+                "python main.py produce-schedule",
+            ),
+            (
+                "Tabs In This Workbook",
+                "Summary: operator guide and command cheat sheet.\n"
+                "Venue-Estimator: rough demand estimate for team/racquet sports.\n"
+                "Pool-Assignment: editable BB/VBM/VBW seed and pool-draw workspace.\n"
+                "Pod-Divisions: planned pod divisions for racquet/pod events.\n"
+                "Pod-Entries-Review: detailed entry review for pod sports.\n"
+                "Court-Schedule-Sketch: quick planning sketch using Layer 1 assumptions.\n"
+                "Pod-Resource-Estimate: compare pod demand against available venue resources.\n"
+                "Schedule-Input: readable echo of schedule_input.json, including resource IDs.\n"
+                "Gym-Allocation: Stage-A Layer 2 gym-mode allocation summary.",
+            ),
+            (
+                "Most Important Checks",
+                "Use Venue-Estimator and Pod-Resource-Estimate to see whether the booked venue "
+                "is large enough. Use Schedule-Input to copy exact resource_id values into the "
+                "Playoff-Slots tab of venue_input.xlsx. Use Gym-Allocation to confirm how gym "
+                "time blocks are being assigned across basketball and volleyball modes.",
+            ),
+            (
+                "Where To Read More",
+                "For the full operator walkthrough, open docs/SCHEDULE-HOW-TO.md. "
+                "For the deeper technical reference, open docs/SCHEDULING.md.",
+            ),
+        ]
+
+        ws.sheet_view.showGridLines = False
+        ws.column_dimensions["A"].width = 28
+        ws.column_dimensions["B"].width = 110
+
+        ws.merge_cells("A1:B1")
+        title_cell = ws["A1"]
+        title_cell.value = "VAY Sports Fest — Schedule Workbook Guide"
+        title_cell.fill = title_fill
+        title_cell.font = title_font
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 24
+
+        ws["A2"] = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        ws["A2"].font = Font(italic=True)
+        ws["A2"].alignment = wrap_left
+        ws.merge_cells("A2:B2")
+
+        current_row = 4
+        for heading, body in rows:
+            head_cell = ws.cell(row=current_row, column=1, value=heading)
+            head_cell.fill = section_fill
+            head_cell.font = section_font
+            head_cell.alignment = wrap_left
+
+            body_cell = ws.cell(row=current_row, column=2, value=body)
+            body_cell.font = body_font
+            body_cell.alignment = wrap_left
+
+            line_count = max(2, body.count("\n") + 1)
+            ws.row_dimensions[current_row].height = max(24, 18 * line_count)
+            current_row += 1
+
+    @staticmethod
+    def _set_excel_comment(cell, note: Optional[str]) -> None:
+        """Attach a standard Excel note/comment to a cell when note text exists."""
+        if not note:
+            return
+        from openpyxl.comments import Comment
+
+        cell.comment = Comment(note, "VAYSF")
+
+    @classmethod
+    def _annotate_header_row(
+        cls,
+        ws,
+        row_idx: int,
+        n_cols: int,
+        header_notes: Dict[str, str],
+        *,
+        width_map: Optional[Dict[str, float]] = None,
+        freeze_panes: Optional[str] = None,
+        autofilter: bool = False,
+    ) -> None:
+        """Add consistent header comments and simple usability affordances."""
+        from openpyxl.styles import Alignment
+        from openpyxl.utils import get_column_letter
+
+        if freeze_panes:
+            ws.freeze_panes = freeze_panes
+        if autofilter and n_cols > 0:
+            ws.auto_filter.ref = f"A{row_idx}:{get_column_letter(n_cols)}{row_idx}"
+        if width_map:
+            for col_letter, width in width_map.items():
+                ws.column_dimensions[col_letter].width = width
+
+        for col_idx in range(1, n_cols + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            header = str(cell.value or "").strip()
+            cls._set_excel_comment(cell, header_notes.get(header))
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        if row_idx not in ws.row_dimensions:
+            ws.row_dimensions[row_idx].height = 30
+        else:
+            ws.row_dimensions[row_idx].height = max(ws.row_dimensions[row_idx].height or 0, 30)
+
+    @classmethod
+    def _annotate_venue_estimator_tab(cls, ws, n_cols: int) -> None:
+        """Add operator-facing comments to the Venue-Estimator header row."""
+        cls._annotate_header_row(
+            ws,
+            1,
+            n_cols,
+            cls._VENUE_ESTIMATOR_HEADER_NOTES,
+            width_map={
+                "A": 26,
+                "B": 16,
+                "C": 18,
+                "D": 20,
+                "E": 18,
+                "F": 18,
+                "G": 18,
+                "H": 12,
+                "I": 16,
+                "J": 12,
+                "K": 12,
+                "L": 12,
+                "M": 12,
+                "N": 16,
+                "O": 16,
+                "P": 20,
+            },
+            freeze_panes="A2",
+            autofilter=True,
+        )
+
+    @classmethod
+    def _annotate_pod_divisions_tab(cls, ws, n_cols: int) -> None:
+        """Add operator-facing Excel comments and light usability affordances."""
+        cls._annotate_header_row(
+            ws,
+            1,
+            n_cols,
+            cls._POD_DIVISION_HEADER_NOTES,
+            width_map={
+                "A": 20,
+                "B": 16,
+                "C": 14,
+                "D": 14,
+                "E": 18,
+                "F": 16,
+                "G": 16,
+                "H": 17,
+                "I": 18,
+                "J": 14,
+                "K": 16,
+                "L": 24,
+            },
+            freeze_panes="A2",
+            autofilter=True,
+        )
+
+    @classmethod
+    def _annotate_pod_entries_review_tab(cls, ws, n_cols: int) -> None:
+        """Add operator-facing comments to the Pod-Entries-Review header row."""
+        cls._annotate_header_row(
+            ws,
+            1,
+            n_cols,
+            cls._POD_ENTRY_HEADER_NOTES,
+            width_map={
+                "A": 10,
+                "B": 20,
+                "C": 20,
+                "D": 22,
+                "E": 22,
+                "F": 18,
+                "G": 12,
+                "H": 18,
+                "I": 16,
+                "J": 36,
+            },
+            freeze_panes="A2",
+            autofilter=True,
+        )
+
+    @classmethod
+    def _annotate_pool_assignment_tab(cls, ws, n_cols: int) -> None:
+        """Add operator-facing comments to the Pool-Assignment header row."""
+        cls._annotate_header_row(
+            ws,
+            1,
+            n_cols,
+            cls._POOL_ASSIGNMENT_HEADER_NOTES,
+            width_map={
+                "A": 24,
+                "B": 14,
+                "C": 12,
+                "D": 14,
+                "E": 16,
+                "F": 18,
+                "G": 12,
+                "H": 12,
+                "I": 10,
+                "J": 18,
+                "K": 12,
+                "L": 10,
+                "M": 10,
+                "N": 18,
+                "O": 28,
+            },
+            freeze_panes="A2",
+            autofilter=True,
+        )
+
+    @classmethod
+    def _write_pool_assignment_tab(
+        cls,
+        ws,
+        pool_assignment_rows: List[Dict[str, Any]],
+    ) -> None:
+        """Write the editable Pool-Assignment planning tab."""
+        columns = cls._POOL_ASSIGNMENT_COLUMNS
+        ws.append(columns)
+        for row in pool_assignment_rows:
+            values = []
+            for column in columns:
+                value = row.get(column)
+                if column == "Seed" and value in (None, 0):
+                    value = ""
+                values.append(value)
+            ws.append(values)
+
+        cls._annotate_pool_assignment_tab(ws, len(columns))
+
+    def refresh_pool_assignments(
+        self,
+        workbook_path: Path,
+        output_path: Optional[Path] = None,
+        sidecar_path: Optional[Path] = None,
+    ) -> List[Dict[str, Any]]:
+        """Refresh Pool-Assignment rows from an edited workbook and persist them."""
+        from openpyxl import load_workbook
+
+        workbook_path = Path(workbook_path)
+        output_path = Path(output_path) if output_path else workbook_path
+        effective_sidecar_path = (
+            Path(sidecar_path)
+            if sidecar_path is not None
+            else self._pool_assignments_sidecar_path(output_path.parent)
+        )
+
+        sheet_rows = self._read_xlsx_sheet_rows(workbook_path, "Pool-Assignment")
+        if not sheet_rows:
+            raise ValueError(
+                f"Workbook '{workbook_path}' has no usable Pool-Assignment sheet."
+            )
+
+        normalized_rows: List[Dict[str, Any]] = []
+        for row in sheet_rows:
+            event_name = str(row.get("Event") or "").strip()
+            team_id = str(row.get("Team ID") or "").strip()
+            if not event_name or not team_id:
+                continue
+            normalized_rows.append({
+                "Event": event_name,
+                "Church Team": str(row.get("Church Team") or "").strip(),
+                "Team Order": str(row.get("Team Order") or "").strip(),
+                "Team ID": team_id,
+                "Team Label": str(row.get("Team Label") or team_id).strip(),
+                "Team Source": str(row.get("Team Source") or "").strip(),
+                "Roster Count": self._positive_int_or_none(row.get("Roster Count")) or 0,
+                "Min Team Size": self._positive_int_or_none(row.get("Min Team Size")) or 0,
+                "Seed": self._normalize_pool_seed(row.get("Seed")),
+                "Random Draw Order": self._positive_int_or_none(row.get("Random Draw Order")),
+                "Draw Position": self._positive_int_or_none(row.get("Draw Position")),
+                "Pool ID": str(row.get("Pool ID") or "").strip(),
+                "Pool Slot": str(row.get("Pool Slot") or "").strip(),
+                "Assignment Basis": str(row.get("Assignment Basis") or "").strip(),
+                "Notes": str(row.get("Notes") or "").strip(),
+            })
+
+        refreshed_rows = self._apply_pool_assignments_to_rows(normalized_rows)
+        self._write_pool_assignment_state(effective_sidecar_path, refreshed_rows)
+
+        wb = load_workbook(workbook_path)
+        if "Pool-Assignment" not in wb.sheetnames:
+            raise ValueError(
+                f"Workbook '{workbook_path}' does not contain a Pool-Assignment sheet."
+            )
+
+        sheet_index = wb.sheetnames.index("Pool-Assignment")
+        wb.remove(wb["Pool-Assignment"])
+        ws = wb.create_sheet(title="Pool-Assignment", index=sheet_index)
+        self._write_pool_assignment_tab(ws, refreshed_rows)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(output_path)
+        logger.info(
+            f"Pool-Assignment tab refreshed: {len(refreshed_rows)} rows -> {output_path}"
+        )
+        logger.info(f"Pool-assignment sidecar written to: {effective_sidecar_path}")
+        return refreshed_rows
+
+    @classmethod
+    def _write_schedule_input_tab(cls, ws, schedule_input: Dict[str, Any]) -> None:
         """Write Schedule-Input tab with Games, Resources, and Playoff-Slots sections."""
         from openpyxl.styles import PatternFill, Font, Alignment
         from openpyxl.utils import get_column_letter
@@ -1120,17 +2462,32 @@ class ScheduleWorkbookBuilder:
         )
         current_row += 2
 
-        def _write_section(title: str, cols: List[str], rows: List[Dict]) -> None:
+        def _write_section(
+            title: str,
+            cols: List[str],
+            rows: List[Dict],
+            header_notes: Dict[str, str],
+            section_note: str,
+        ) -> None:
             nonlocal current_row
             sec_cell = ws.cell(row=current_row, column=1, value=title)
             sec_cell.fill = sec_fill
             sec_cell.font = sec_font
+            cls._set_excel_comment(sec_cell, section_note)
             current_row += 1
             for c_idx, col in enumerate(cols, start=1):
                 cell = ws.cell(row=current_row, column=c_idx, value=col)
                 cell.fill = hdr_fill
                 cell.font = hdr_font
-                cell.alignment = Alignment(horizontal="center")
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                note = header_notes.get(col)
+                if title == "GYM-MODES" and not note and col != "gym_name":
+                    note = (
+                        f"Maximum concurrent {col} resources this gym can provide when allocated "
+                        "to that mode."
+                    )
+                cls._set_excel_comment(cell, note)
+            ws.row_dimensions[current_row].height = max(ws.row_dimensions[current_row].height or 0, 30)
             current_row += 1
             for data_row in rows:
                 for c_idx, col in enumerate(cols, start=1):
@@ -1153,18 +2510,52 @@ class ScheduleWorkbookBuilder:
             else [{"gym_name": "No Gym-Modes tab loaded — add Gym-Modes tab to venue_input.xlsx"}]
         )
 
-        _write_section("GAMES",          game_cols,          schedule_input["games"])
-        _write_section("RESOURCES",      resource_cols,      schedule_input["resources"])
-        _write_section("PLAYOFF-SLOTS",  playoff_slot_cols,  playoff_note_rows)
-        _write_section("GYM-MODES",      gym_mode_cols,      gym_mode_rows)
+        cls._set_excel_comment(
+            ws.cell(row=1, column=1),
+            "Timestamp when schedule_input.json was generated."
+        )
+        cls._set_excel_comment(
+            ws.cell(row=1, column=3),
+            "Quick counts of total games and resources in this schedule-input snapshot."
+        )
+
+        _write_section(
+            "GAMES",
+            game_cols,
+            schedule_input["games"],
+            cls._SCHEDULE_INPUT_GAME_HEADER_NOTES,
+            "Game rows the Layer 2 solver must place into resource slots.",
+        )
+        _write_section(
+            "RESOURCES",
+            resource_cols,
+            schedule_input["resources"],
+            cls._SCHEDULE_INPUT_RESOURCE_HEADER_NOTES,
+            "Resource rows available to the Layer 2 solver.",
+        )
+        _write_section(
+            "PLAYOFF-SLOTS",
+            playoff_slot_cols,
+            playoff_note_rows,
+            cls._SCHEDULE_INPUT_PLAYOFF_HEADER_NOTES,
+            "Optional fixed-slot playoff constraints loaded from the Playoff-Slots tab in venue_input.xlsx.",
+        )
+        _write_section(
+            "GYM-MODES",
+            gym_mode_cols,
+            gym_mode_rows,
+            {"gym_name": "Venue block / gym name from the Gym-Modes sheet."},
+            "Stage-A gym capability matrix showing which sport modes each grouped gym can host.",
+        )
 
         # Column widths
         col_widths = [20, 30, 10, 10, 8, 16, 16, 18, 22, 14, 12]
         for i, w in enumerate(col_widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A4"
 
-    @staticmethod
-    def _write_gym_allocation_tab(ws, gym_allocation: Optional[Dict[str, Any]]) -> None:
+    @classmethod
+    def _write_gym_allocation_tab(cls, ws, gym_allocation: Optional[Dict[str, Any]]) -> None:
         """Write the Gym-Allocation tab summarising the Stage-A allocator output."""
         from openpyxl.styles import PatternFill, Font, Alignment
         from openpyxl.utils import get_column_letter
@@ -1222,18 +2613,36 @@ class ScheduleWorkbookBuilder:
                 row=1, column=1,
                 value=message,
             )
+            cls._set_excel_comment(
+                ws.cell(row=1, column=1),
+                "This tab only shows detailed allocation tables when grouped gym rows and Gym-Modes data are available."
+            )
             ws.column_dimensions["A"].width = 80
             return
 
         source = gym_allocation.get("source", "unknown")
         ws.cell(row=cur_row[0], column=1, value=f"Source: {source}").font = sec_font
         ws.cell(row=cur_row[0], column=2, value=f"Mode switches: {gym_allocation.get('switch_count', '?')}")
+        cls._set_excel_comment(
+            ws.cell(row=cur_row[0], column=1),
+            "Where this allocation summary came from. allocator means Stage-A Gym-Modes allocation was used."
+        )
+        cls._set_excel_comment(
+            ws.cell(row=cur_row[0], column=2),
+            "How many times the chosen gym mode switches between adjacent grouped venue blocks."
+        )
         cur_row[0] += 2
 
         # Decisions
         _hrow("ALLOCATION DECISIONS")
         dec_cols = ["gym_name", "day", "open_time", "close_time", "mode", "courts", "slot_minutes"]
         _header_row(dec_cols)
+        for idx, col in enumerate(dec_cols, start=1):
+            cls._set_excel_comment(
+                ws.cell(row=cur_row[0] - 1, column=idx),
+                cls._GYM_ALLOCATION_DECISION_HEADER_NOTES.get(col),
+            )
+        ws.row_dimensions[cur_row[0] - 1].height = 30
         for dec in gym_allocation.get("decisions", []):
             _data_row(dec_cols, dec)
         cur_row[0] += 1
@@ -1242,6 +2651,12 @@ class ScheduleWorkbookBuilder:
         _hrow("MODE DEMAND vs SUPPLY")
         ds_cols = ["mode", "demand", "supply", "shortfall"]
         _header_row(ds_cols)
+        for idx, col in enumerate(ds_cols, start=1):
+            cls._set_excel_comment(
+                ws.cell(row=cur_row[0] - 1, column=idx),
+                cls._GYM_ALLOCATION_SUPPLY_HEADER_NOTES.get(col),
+            )
+        ws.row_dimensions[cur_row[0] - 1].height = 30
         demand = gym_allocation.get("mode_demand", {})
         supply = gym_allocation.get("mode_supply", {})
         shortfall = gym_allocation.get("mode_shortfall", {})
@@ -1256,6 +2671,7 @@ class ScheduleWorkbookBuilder:
         col_widths = [22, 8, 10, 10, 22, 8, 14, 10, 10, 10]
         for i, w in enumerate(col_widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A4"
 
     # ── Pool planning ─────────────────────────────────────────────────────────
 
@@ -1673,6 +3089,10 @@ class ScheduleWorkbookBuilder:
 
         # --- Row 1: inputs summary (target/actual pool games per team) ---
         ws.cell(row=INPUTS_ROW, column=1, value="Inputs:").font = bold_font
+        self._set_excel_comment(
+            ws.cell(row=INPUTS_ROW, column=1),
+            "Planning assumptions used to generate this Layer 1 sketch, including pool-game targets and minutes per game."
+        )
         col = 2
         for ev, prefix, _ in sport_defs:
             meta = sport_meta[ev]
@@ -1690,6 +3110,10 @@ class ScheduleWorkbookBuilder:
 
         # --- Row 2: per-sport game counts ---
         ws.cell(row=2, column=1, value="Game totals:").font = bold_font
+        self._set_excel_comment(
+            ws.cell(row=2, column=1),
+            "High-level game totals used in this what-if sketch. These are planning placeholders, not final assignments."
+        )
         col_offset = 2
         for ev, prefix, _ in sport_defs:
             meta = sport_meta[ev]
@@ -1720,6 +3144,10 @@ class ScheduleWorkbookBuilder:
             sc_cell.font = hdr_font
             sc_cell.fill = hdr_fill
             sc_cell.alignment = center
+            self._set_excel_comment(
+                sc_cell,
+                f"What-if sketch assuming {n_courts} simultaneous shared gym courts across Basketball, Volleyball Men, and Volleyball Women."
+            )
             ws.merge_cells(
                 start_row=SCENARIO_HDR_ROW, start_column=start_col,
                 end_row=SCENARIO_HDR_ROW,   end_column=end_col,
@@ -1727,10 +3155,18 @@ class ScheduleWorkbookBuilder:
             # Column sub-headers
             t_cell = ws.cell(row=COL_HDR_ROW, column=start_col, value="Time")
             t_cell.font = bold_font
+            self._set_excel_comment(
+                t_cell,
+                "Start time for the slot within the session block."
+            )
             for c in range(n_courts):
                 ct_cell = ws.cell(row=COL_HDR_ROW, column=start_col + 1 + c, value=f"Court {c + 1}")
                 ct_cell.font = bold_font
                 ct_cell.alignment = center
+                self._set_excel_comment(
+                    ct_cell,
+                    "Placeholder court lane in this scenario. Colored BBM/VBM/VBW IDs are Layer 1 planning placeholders, not final team assignments."
+                )
 
         # --- Render session sections and time-slot rows ---
         current_row = DATA_START_ROW
@@ -1768,6 +3204,7 @@ class ScheduleWorkbookBuilder:
             ws.column_dimensions[get_column_letter(start_col)].width = 10      # Time
             for c in range(n_courts):
                 ws.column_dimensions[get_column_letter(start_col + 1 + c)].width = 12  # Courts
+        ws.freeze_panes = "A5"
 
         total_pool  = sum(len(q) for q in pool_queues_by_sport)
         total_early = sum(len(q) for q in early_playoff_queues_by_sport)
@@ -1900,6 +3337,7 @@ class ScheduleWorkbookBuilder:
             })
         return rows
 
+    @classmethod
     def _write_pod_resource_estimate(
         self,
         ws,
@@ -1922,6 +3360,8 @@ class ScheduleWorkbookBuilder:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = Alignment(horizontal="center")
+            self._set_excel_comment(cell, self._POD_RESOURCE_HEADER_NOTES.get(col))
+        ws.row_dimensions[1].height = 30
 
         fit_colors = {
             "Green":  POD_FIT_COLOR_GREEN,
@@ -1961,6 +3401,7 @@ class ScheduleWorkbookBuilder:
         ws.column_dimensions["B"].width = 22
         for letter in ["C", "D", "E", "F", "G"]:
             ws.column_dimensions[letter].width = 16
+        ws.freeze_panes = "A2"
 
         # Snapshot note
         note_row = len(pod_rows) + 3
@@ -2046,8 +3487,8 @@ class ScheduleWorkbookBuilder:
                 "event":            game.get("event", ""),
                 "stage":            game.get("stage", ""),
                 "round":            game.get("round", ""),
-                "team_a_id":        game.get("team_a_id", ""),
-                "team_b_id":        game.get("team_b_id", ""),
+                "team_a_id":        game.get("team_a_label", game.get("team_a_id", "")),
+                "team_b_id":        game.get("team_b_label", game.get("team_b_id", "")),
                 "resource_label":   res.get("label", rid),
                 "day":              _DAY_DISPLAY.get(res.get("day", ""), res.get("day", "")),
                 "slot":             time_part,
@@ -2067,12 +3508,13 @@ class ScheduleWorkbookBuilder:
         schedule_output: Dict[str, Any],
         schedule_input: Dict[str, Any],
     ) -> None:
-        """Write Schedule-by-Time and Schedule-by-Sport Excel tabs from solver output.
+        """Write Schedule-by-Time, Schedule-by-Sport, and Conflict-Audit tabs.
 
         Tab 1 — Schedule-by-Time: grid (rows = time slots, columns = courts),
           colour-coded by sport, with session sections separated by grey rows.
         Tab 2 — Schedule-by-Sport: flat list sorted by event → stage → round,
           with auto-filter and an unscheduled section when applicable.
+        Tab 3 — Conflict-Audit: cross-sport shared-athlete audit rows when available.
         """
         from openpyxl import Workbook
         from openpyxl.styles import PatternFill, Font, Alignment
@@ -2137,10 +3579,10 @@ class ScheduleWorkbookBuilder:
 
         def _cell_text(game: Dict[str, Any]) -> str:
             gid = game.get("game_id", "")
-            a   = str(game.get("team_a_id") or "")
-            b   = str(game.get("team_b_id") or "")
-            # Show teams only when they look like real church codes (≤5 chars, no hyphens)
-            if a and b and len(a) <= 5 and "-" not in a:
+            a   = str(game.get("team_a_label") or game.get("team_a_id") or "")
+            b   = str(game.get("team_b_label") or game.get("team_b_id") or "")
+            # Show compact team labels when available; otherwise fall back to game_id only.
+            if a and b and len(a) <= 12 and len(b) <= 12:
                 return f"{gid}\n{a} vs {b}"
             return gid
 
@@ -2339,6 +3781,76 @@ class ScheduleWorkbookBuilder:
         for ci, (_, width) in enumerate(col_defs, start=1):
             ws2.column_dimensions[get_column_letter(ci)].width = width
 
+        # ── Tab 3: Conflict-Audit ────────────────────────────────────────────
+        ws3 = wb.create_sheet("Conflict-Audit")
+        conflict_summary = schedule_output.get("conflict_audit_summary", {}) or {}
+        conflict_rows = schedule_output.get("conflict_audit", []) or []
+        ws3.cell(row=1, column=1, value="Cross-Sport Conflict Audit").fill = hdr_fill
+        ws3.cell(row=1, column=1).font = hdr_font
+
+        summary_lines = [
+            (
+                "Summary",
+                (
+                    f"Edges: {conflict_summary.get('total_edges', 0)}  |  "
+                    f"Separated: {conflict_summary.get('separated_edges', 0)}  |  "
+                    f"Remaining: {conflict_summary.get('overlapping_edges', 0)}  |  "
+                    f"Incomplete: {conflict_summary.get('incomplete_edges', 0)}"
+                ),
+            ),
+            (
+                "Remaining Penalties",
+                (
+                    f"Primary: {conflict_summary.get('remaining_primary_overlap_penalty', 0)}  |  "
+                    f"Secondary-only: {conflict_summary.get('remaining_secondary_overlap_penalty', 0)}"
+                ),
+            ),
+        ]
+        for row_idx, (label, value) in enumerate(summary_lines, start=3):
+            ws3.cell(row=row_idx, column=1, value=label).font = bold_font
+            ws3.cell(row=row_idx, column=2, value=value)
+
+        audit_headers = [
+            ("team_a_label", 16),
+            ("event_a", 24),
+            ("team_b_label", 16),
+            ("event_b", 24),
+            ("shared_count", 12),
+            ("primary_overlap_count", 18),
+            ("secondary_only_count", 18),
+            ("status", 20),
+            ("overlap_count", 14),
+            ("scheduled_team_a_games", 20),
+            ("scheduled_team_b_games", 20),
+            ("shared_participant_names", 40),
+            ("overlap_game_pairs", 48),
+        ]
+        header_row = 6
+        for ci, (col, width) in enumerate(audit_headers, start=1):
+            cell = ws3.cell(row=header_row, column=ci, value=col)
+            cell.fill, cell.font, cell.alignment = hdr_fill, hdr_font, center
+            ws3.column_dimensions[get_column_letter(ci)].width = width
+        ws3.freeze_panes = "A7"
+        ws3.auto_filter.ref = f"A{header_row}:{get_column_letter(len(audit_headers))}{header_row}"
+
+        if conflict_rows:
+            for ri3, row in enumerate(conflict_rows, start=header_row + 1):
+                row_fill = red_fill if row.get("status") == "ConflictRemains" else PatternFill(
+                    fgColor="C6EFCE", fill_type="solid"
+                )
+                if row.get("status") == "IncompleteSchedule":
+                    row_fill = PatternFill(fgColor="FFF2CC", fill_type="solid")
+                for ci, (col, _width) in enumerate(audit_headers, start=1):
+                    cell = ws3.cell(row=ri3, column=ci, value=row.get(col, ""))
+                    cell.fill = row_fill
+                    cell.alignment = left
+        else:
+            ws3.cell(
+                row=header_row + 1,
+                column=1,
+                value="No cross-sport conflict audit rows were produced for this schedule.",
+            )
+
         wb.save(filepath)
         logger.info(f"Schedule output report written to: {filepath}")
 
@@ -2397,12 +3909,18 @@ class ScheduleWorkbookBuilder:
         validation_rows: List[Dict[str, Any]],
         venue_input_path: Path,
         json_path: Path,
+        pool_assignment_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Build schedule_input dict and write it as JSON. Returns the dict.
         Always called by export-church-teams, regardless of whether venue_input.xlsx
         exists (graceful degradation is handled inside _build_schedule_input).
         """
-        schedule_input = self._build_schedule_input(roster_rows, validation_rows, venue_input_path)
+        schedule_input = self._build_schedule_input(
+            roster_rows,
+            validation_rows,
+            venue_input_path,
+            pool_assignment_path=pool_assignment_path,
+        )
         json_path.write_text(json.dumps(schedule_input, indent=2, default=str), encoding="utf-8")
         logger.info(
             f"Schedule-Input: {schedule_input['game_count']} games, "
@@ -2417,6 +3935,7 @@ class ScheduleWorkbookBuilder:
         validation_rows: List[Dict[str, Any]],
         schedule_input: Dict[str, Any],
         venue_input_path: Optional[Path],
+        pool_assignment_path: Optional[Path] = None,
     ) -> None:
         """Write the Schedule_Workbook xlsx with all scheduling tabs.
         Called by build-schedule-workbook command (Step 3).
@@ -2450,6 +3969,10 @@ class ScheduleWorkbookBuilder:
             "source_participant_ids", "church_team",
             "partner_status", "review_status", "notes",
         ]
+        pool_assignment_rows = self._build_pool_assignment_rows(
+            roster_rows,
+            pool_assignment_path,
+        )
 
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             # Venue-Estimator tab (pandas)
@@ -2461,18 +3984,28 @@ class ScheduleWorkbookBuilder:
                 "Approval-agnostic. Updates with each export run."
             )
             venue_ws = writer.sheets["Venue-Estimator"]
+            self._annotate_venue_estimator_tab(venue_ws, len(venue_cols))
             note_row = len(df_venue) + 3
             venue_ws.cell(row=note_row, column=1, value=snapshot_note)
             logger.debug(f"Venue-Estimator tab: {len(df_venue)} rows.")
 
+            # Pool-Assignment tab (openpyxl native - editable seed/draw workspace)
+            pool_ws = writer.book.create_sheet(title="Pool-Assignment", index=1)
+            self._write_pool_assignment_tab(pool_ws, pool_assignment_rows)
+            logger.debug(f"Pool-Assignment tab: {len(pool_assignment_rows)} rows.")
+
             # Pod-Divisions tab (pandas)
             df_pod_div = pd.DataFrame(pod_div_rows, columns=pod_div_cols)
             df_pod_div.to_excel(writer, sheet_name="Pod-Divisions", index=False)
+            self._annotate_pod_divisions_tab(writer.sheets["Pod-Divisions"], len(pod_div_cols))
             logger.debug(f"Pod-Divisions tab: {len(df_pod_div)} rows.")
 
             # Pod-Entries-Review tab (pandas)
             df_pod_entries = pd.DataFrame(pod_entry_rows, columns=pod_entry_cols)
             df_pod_entries.to_excel(writer, sheet_name="Pod-Entries-Review", index=False)
+            self._annotate_pod_entries_review_tab(
+                writer.sheets["Pod-Entries-Review"], len(pod_entry_cols)
+            )
             logger.debug(f"Pod-Entries-Review tab: {len(df_pod_entries)} rows.")
 
             # Court-Schedule-Sketch tab (openpyxl native)
@@ -2504,6 +4037,10 @@ class ScheduleWorkbookBuilder:
             # Gym-Allocation tab (openpyxl native — Stage-A allocator summary)
             gym_alloc_ws = writer.book.create_sheet(title="Gym-Allocation")
             self._write_gym_allocation_tab(gym_alloc_ws, schedule_input.get("gym_allocation"))
+
+            # Summary tab (openpyxl native — operator guide / command cheat sheet)
+            summary_ws = writer.book.create_sheet(title="Summary", index=0)
+            self._write_summary_tab(summary_ws)
 
         logger.info(f"Schedule workbook written to: {output_path}")
 

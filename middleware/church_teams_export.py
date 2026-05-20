@@ -864,6 +864,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                     "Age (at Event)": self._calculate_age(chm_person["Birthdate"]),
                                     "Mobile Phone": chm_person["Mobile Phone"],
                                     "Email": chm_person["Email"],
+                                    "participant_primary_sport": chm_person.get("ChM_Primary_Sport", ""),
+                                    "participant_secondary_sport": chm_person.get("ChM_Secondary_Sport", ""),
                                     "sport_type": roster_entry.get("sport_type"),
                                     "sport_gender": roster_entry.get("sport_gender"),
                                     "sport_format": roster_entry.get("sport_format"),
@@ -2824,14 +2826,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 # Scheduling tabs live in Schedule_Workbook_*.xlsx (build-schedule-workbook).
                 if include_venue_capacity:
                     venue_input_path = DATA_DIR / VENUE_INPUT_FILENAME
-                    schedule_input = self._build_schedule_input(
-                        roster_rows, validation_rows, venue_input_path
+                    schedule_input = self.write_schedule_input_json(
+                        roster_rows,
+                        validation_rows,
+                        venue_input_path,
+                        filepath.parent / "schedule_input.json",
+                        pool_assignment_path=filepath.parent / "pool_assignments.json",
                     )
                     json_path = filepath.parent / "schedule_input.json"
-                    json_path.write_text(
-                        json.dumps(schedule_input, indent=2, default=str),
-                        encoding="utf-8",
-                    )
                     logger.info(
                         f"schedule_input.json: {schedule_input['game_count']} games, "
                         f"{schedule_input['resource_count']} resources → {json_path}"
@@ -3557,7 +3559,26 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_build_pod_divisions_rows",
     "_build_pod_entries_review_rows",
     "_build_venue_capacity_rows",
+    "_pool_assignments_sidecar_path",
+    "_normalize_pool_seed",
+    "_positive_int_or_none",
+    "_pool_assignment_event_prefix",
+    "_event_sort_index",
+    "_load_pool_assignment_state",
+    "_write_pool_assignment_state",
+    "_build_pool_assignment_base_rows",
+    "_default_random_draw_orders",
+    "_serpentine_pool_slots",
+    "_pool_sizes_for_assignment",
+    "_apply_pool_assignments_to_rows",
+    "_build_pool_assignment_rows",
+    "_normalize_primary_sport_name",
+    "_solver_team_id",
+    "_pool_assignment_placeholder_map",
+    "_build_core_gym_team_lookup",
     "_build_gym_game_objects",
+    "_build_assigned_gym_game_objects",
+    "_build_gym_team_conflicts",
     "_build_pod_game_objects",
     "_build_gym_resource_objects",
     "_build_gym_resources_from_allocator",
@@ -3592,4 +3613,16 @@ for _method_name in _SCHEDULE_WORKBOOK_METHOD_NAMES:
         ChurchTeamsExporter,
         _method_name,
         ScheduleWorkbookBuilder.__dict__[_method_name],
+    )
+
+for _attr_name in (
+    "_GYM_CORE_SOLVER_POOL",
+    "_POOL_ASSIGNMENT_COLUMNS",
+    "_POOL_ASSIGNMENT_EVENT_DEFS",
+    "_POOL_ASSIGNMENT_HEADER_NOTES",
+):
+    setattr(
+        ChurchTeamsExporter,
+        _attr_name,
+        getattr(ScheduleWorkbookBuilder, _attr_name),
     )
