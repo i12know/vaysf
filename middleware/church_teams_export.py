@@ -58,6 +58,7 @@ from config import (
 from validation.name_matcher import normalized_name as _norm_name
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
+from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 from schedule_workbook import ScheduleWorkbookBuilder
 from validation.models import RulesManager
 from math import ceil
@@ -742,8 +743,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 )
 
         deadline_date = datetime.strptime(REGISTRATION_DEADLINE, "%Y-%m-%d").date()
-        today = datetime.now().date()
-        if today >= deadline_date:
+        today = current_business_date()
+        # Use > (not >=) so the deadline date itself is the last early-bird day;
+        # late fee applies starting the day after (e.g. deadline 2026-05-16 -> late from 2026-05-17).
+        if today > deadline_date:
             fee_tier = f"LATE (${ATHLETE_FEE_LATE}, past deadline {REGISTRATION_DEADLINE})"
         else:
             fee_tier = f"STANDARD (${ATHLETE_FEE_STANDARD} early-bird, deadline {REGISTRATION_DEADLINE})"
@@ -886,13 +889,19 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                     if wp_created_at_str:
                         try:
-                            created_date = datetime.strptime(wp_created_at_str.split()[0], "%Y-%m-%d").date()
+                            created_date = parse_wordpress_created_at_to_business_date(
+                                wp_created_at_str
+                            )
+                            if created_date is None:
+                                raise ValueError("Could not parse WordPress created_at into business date")
                             registration_date_str = created_date.strftime("%Y-%m-%d")
                             deadline_date = datetime.strptime(REGISTRATION_DEADLINE, "%Y-%m-%d").date()
 
                             if not _primary and not _secondary and _other:
                                 athlete_fee = ATHLETE_FEE_OTHER_EVENTS_ONLY
-                            elif created_date >= deadline_date:
+                            # Use > (not >=) so the deadline date itself is the last early-bird day;
+                            # late fee applies starting the day after (e.g. deadline 2026-05-16 -> late from 2026-05-17).
+                            elif created_date > deadline_date:
                                 athlete_fee = ATHLETE_FEE_LATE
                             else:
                                 athlete_fee = ATHLETE_FEE_STANDARD
@@ -2811,76 +2820,20 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 df_validation.to_excel(writer, sheet_name="Validation-Issues", index=False)
                 logger.debug(f"Validation-Issues tab: {len(df_validation)} rows.")
 
-                # Venue-Estimator Tab (only on the consolidated ALL export — see Issue #83)
+                # schedule_input.json — consumed by solve-schedule and build-schedule-workbook.
+                # Scheduling tabs live in Schedule_Workbook_*.xlsx (build-schedule-workbook).
                 if include_venue_capacity:
-                    venue_rows = self._build_venue_capacity_rows(roster_rows)
-                    venue_cols = [
-                        "Event", "Potential Teams/Entries", "Estimating Teams/Entries", "Teams",
-                        "Target Pool Games/Team", "Actual Pool Games/Team",
-                        "Pool Composition", "BYE Slots", "Minutes Per Game", "Pool Slots",
-                        "Playoff Teams", "Playoff Slots", "Third Place?",
-                        "Third Place Slots", "Total Court Slots", "Estimated Court Hours",
-                    ]
-                    df_venue = pd.DataFrame(venue_rows, columns=venue_cols)
-                    snapshot_note = (
-                        f"Roster snapshot as of {datetime.now().strftime('%Y-%m-%d')} — "
-                        "Estimating = complete entries; Potential = all registrations including partial. "
-                        "Approval-agnostic. Updates with each export run."
-                    )
-                    # Data first, then a blank row, then the snapshot disclaimer at the bottom.
-                    df_venue.to_excel(writer, sheet_name="Venue-Estimator", index=False, startrow=0)
-                    venue_ws = writer.sheets["Venue-Estimator"]
-                    note_row = len(df_venue) + 3  # header + data rows + blank row
-                    venue_ws.cell(row=note_row, column=1, value=snapshot_note)
-                    logger.debug(f"Venue-Estimator tab: {len(df_venue)} rows.")
-
-                    # Pod-Divisions Tab (Issue #88) — division-level pod planning summary.
-                    pod_div_rows = self._build_pod_divisions_rows(roster_rows, validation_rows)
-                    pod_div_cols = [
-                        "division_id", "sport_type", "sport_gender", "sport_format",
-                        "resource_type", "minutes_per_game",
-                        "planning_entries", "confirmed_entries", "provisional_entries",
-                        "anomaly_count", "division_status", "notes",
-                    ]
-                    df_pod_div = pd.DataFrame(pod_div_rows, columns=pod_div_cols)
-                    df_pod_div.to_excel(writer, sheet_name="Pod-Divisions", index=False)
-                    logger.debug(f"Pod-Divisions tab: {len(df_pod_div)} rows.")
-
-                    # Pod-Entries-Review Tab (Issue #88) — coordinator review of each entry.
-                    pod_entry_rows = self._build_pod_entries_review_rows(roster_rows, validation_rows)
-                    pod_entry_cols = [
-                        "entry_id", "division_id", "entry_type",
-                        "participant_1_name", "participant_2_name",
-                        "source_participant_ids", "church_team",
-                        "partner_status", "review_status", "notes",
-                    ]
-                    df_pod_entries = pd.DataFrame(pod_entry_rows, columns=pod_entry_cols)
-                    df_pod_entries.to_excel(writer, sheet_name="Pod-Entries-Review", index=False)
-                    logger.debug(f"Pod-Entries-Review tab: {len(df_pod_entries)} rows.")
-                    # Court-Schedule-Sketch Tab (Excel-only planning — no WordPress writes)
-                    sketch_ws = writer.book.create_sheet(title="Court-Schedule-Sketch")
-                    self._write_court_schedule_sketch(sketch_ws, roster_rows)
-
-                    # Pod-Resource-Estimate Tab (Excel-only planning — no WordPress writes)
                     venue_input_path = DATA_DIR / VENUE_INPUT_FILENAME
-                    available_by_resource = self._load_venue_input(venue_input_path)
-                    pod_rows = self._build_pod_resource_rows(roster_rows, available_by_resource)
-                    pod_ws = writer.book.create_sheet(title="Pod-Resource-Estimate")
-                    self._write_pod_resource_estimate(pod_ws, pod_rows, available_by_resource)
-
-                    # Schedule-Input Tab + JSON (Issue #87) — OR-Tools-ready planning artifact
                     schedule_input = self._build_schedule_input(
                         roster_rows, validation_rows, venue_input_path
                     )
-                    si_ws = writer.book.create_sheet(title="Schedule-Input")
-                    self._write_schedule_input_tab(si_ws, schedule_input)
                     json_path = filepath.parent / "schedule_input.json"
                     json_path.write_text(
                         json.dumps(schedule_input, indent=2, default=str),
                         encoding="utf-8",
                     )
                     logger.info(
-                        f"Schedule-Input: {schedule_input['game_count']} games, "
+                        f"schedule_input.json: {schedule_input['game_count']} games, "
                         f"{schedule_input['resource_count']} resources → {json_path}"
                     )
 
@@ -3607,6 +3560,7 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_build_gym_game_objects",
     "_build_pod_game_objects",
     "_build_gym_resource_objects",
+    "_build_gym_resources_from_allocator",
     "_clean_excel_text",
     "_float_from_excel",
     "_load_venue_input_rows",

@@ -161,7 +161,9 @@ def test_send_email(wp_connector, mocker):
         "to": "pastorbumble@gmail.com",
         "subject": "Pytest Email Test",
         "message": "<p>Test email from pytest</p>",
-        "from_email": "SportsFest Staff <info@sportsfest.vayhub.us>"
+        "from_email": "SportsFest Staff <info@sportsfest.vayhub.us>",
+        "cc": ["churchrep@example.com"],
+        "bcc": ["ops@example.com"],
     }
 
     if live_test:
@@ -173,10 +175,21 @@ def test_send_email(wp_connector, mocker):
         mock_response = mocker.Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"success": True}
-        mocker.patch.object(wp_connector.session, "post", return_value=mock_response)
+        mocked_post = mocker.patch.object(wp_connector.session, "post", return_value=mock_response)
         result = wp_connector.send_email(**email_data)
         logger.info(f"Mocked email result: {result}")
         assert result.get("success", False), "Mocked email sending failed"
+        mocked_post.assert_called_once_with(
+            f"{wp_connector.custom_api_url}/send-email",
+            json={
+                "to": "pastorbumble@gmail.com",
+                "subject": "Pytest Email Test",
+                "message": "<p>Test email from pytest</p>",
+                "from": "SportsFest Staff <info@sportsfest.vayhub.us>",
+                "cc": ["churchrep@example.com"],
+                "bcc": ["ops@example.com"],
+            },
+        )
 
 
 def test_update_validation_issue_empty_success_response(wp_connector, mocker):

@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from church_teams_export import ChurchTeamsExporter, CHM_FIELDS, MEMBERSHIP_QUESTION
-from config import SPORT_TYPE
+from config import Config, SPORT_TYPE
 
 
 @pytest.fixture()
@@ -399,6 +399,64 @@ def test_generate_reports_filters_stale_individual_validation_issues(mock_connec
     assert len(validation_rows) == 1
     assert validation_rows[0]["Participant ID (WP)"] == 42
     assert validation_rows[0]["Issue Type"] == "missing_photo"
+
+
+def test_generate_reports_converts_wp_created_at_to_business_date_for_fee_logic(
+    mock_connectors, mocker, tmp_path
+):
+    chm_connector, wp_connector = mock_connectors
+    chm_connector.authenticate.return_value = True
+    mocker.patch.object(Config, "WORDPRESS_CREATED_AT_TIMEZONE", "UTC")
+    mocker.patch.object(Config, "BUSINESS_TIMEZONE", "America/Los_Angeles")
+
+    exporter = ChurchTeamsExporter()
+    exporter.latest_chm_update_by_church = {"RPC": "2026-05-08 10:00:00"}
+    mocker.patch.object(
+        exporter,
+        "_fetch_chm_church_team_data",
+        return_value={
+            "RPC": [
+                {
+                    "Church Team": "RPC",
+                    "ChMeetings ID": "101",
+                    "First Name": "Alice",
+                    "Last Name": "Nguyen",
+                    "Gender": "Female",
+                    "Birthdate": "2000-01-02",
+                    "Mobile Phone": "555-0101",
+                    "Email": "alice@test.com",
+                    "Is_Member_ChM": True,
+                    "ChM_Roles": "Athlete",
+                    "ChM_Primary_Sport": "Badminton",
+                    "ChM_Secondary_Sport": "",
+                    "ChM_Other_Events": "",
+                    "ChM_Completion_Checklist": "",
+                    "Update_on_ChM": "2026-05-08 10:00:00",
+                }
+            ]
+        },
+    )
+
+    wp_connector.get_church_by_code.return_value = {"church_id": 1, "church_code": "RPC"}
+    wp_connector.get_participants.return_value = [
+        {
+            "participant_id": 42,
+            "approval_status": "pending",
+            "photo_url": "https://example.com/photo.jpg",
+            "created_at": "2026-05-17 06:59:59",
+        }
+    ]
+    wp_connector.get_validation_issues.return_value = []
+    wp_connector.get_rosters.return_value = []
+
+    write_report = mocker.patch.object(exporter, "_write_excel_report")
+
+    result = exporter.generate_reports("RPC", tmp_path)
+
+    assert result is True
+    _, _, contacts_rows, _, _ = write_report.call_args.args
+    assert contacts_rows[0]["Registration Date (WP)"] == "2026-05-16"
+    assert contacts_rows[0]["Athlete Fee"] == 30
 
 
 def test_write_excel_report_adds_validation_issues_tab(mock_connectors, tmp_path):
@@ -835,7 +893,7 @@ def test_contacts_status_tab_includes_sports_registered_column(mock_connectors, 
 
 
 def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_path):
-    """Venue-Estimator tab appears only when include_venue_capacity=True (Issue #83)."""
+    """Venue-Estimator tab is absent from all church-teams exports; it lives in Schedule_Workbook via build-schedule-workbook."""
     exporter = ChurchTeamsExporter()
 
     summary_rows = [{
@@ -868,53 +926,18 @@ def test_venue_capacity_tab_only_in_consolidated_export(mock_connectors, tmp_pat
     exporter._write_excel_report(single_path, summary_rows, contacts_rows, roster_rows, [])
     assert "Venue-Estimator" not in pd.ExcelFile(single_path).sheet_names
 
-    # Consolidated ALL export: tab present, snapshot note appended after data
+    # Consolidated ALL export: Venue-Estimator tab also absent (now in Schedule_Workbook)
     all_path = tmp_path / "all.xlsx"
     exporter._write_excel_report(all_path, summary_rows, contacts_rows, roster_rows, [],
                                  include_venue_capacity=True)
-    sheets = pd.ExcelFile(all_path).sheet_names
-    assert "Venue-Estimator" in sheets
-
-    venue_df = pd.read_excel(all_path, sheet_name="Venue-Estimator", header=0)
-    assert list(venue_df.columns)[0] == "Event"
-    assert "Potential Teams/Entries" in venue_df.columns
-    assert "Estimating Teams/Entries" in venue_df.columns
-    assert "Teams" in venue_df.columns
-    assert "Target Pool Games/Team" in venue_df.columns
-    assert "Actual Pool Games/Team" in venue_df.columns
-    assert "Pool Composition" in venue_df.columns
-    assert "BYE Slots" in venue_df.columns
-    assert "Estimated Court Hours" in venue_df.columns
-    # 5 team sports + 6 racquet sports
-    assert len(venue_df[venue_df["Minutes Per Game"].notna()]) == 11  # 5 team + 6 racquet sports
-
-    # Column order: Potential before Estimating before Teams
-    cols = list(venue_df.columns)
-    assert cols.index("Potential Teams/Entries") < cols.index("Estimating Teams/Entries") < cols.index("Teams")
-
-    bball = venue_df[venue_df["Event"] == "Basketball - Men Team"].iloc[0]
-    assert int(bball["Estimating Teams/Entries"]) == 1   # RPC's 6 basketball players qualify
-    assert int(bball["Potential Teams/Entries"]) == 1    # RPC (estimating) counts in potential too
-    assert str(bball["Teams"]) == "RPC"
-    assert int(bball["Pool Slots"]) == 0         # 1 team can't play pool games (B3: actual=0)
-    assert int(bball["Playoff Teams"]) == 0      # 1 team → no playoff
-    assert int(bball["Total Court Slots"]) == 0
-
-    vb_men = venue_df[venue_df["Event"] == "Volleyball - Men Team"].iloc[0]
-    assert int(vb_men["Estimating Teams/Entries"]) == 0  # no volleyball rosters
-    assert str(vb_men["Teams"]) in ("", "nan")
-
-    # Snapshot disclaimer appears after the data (header + 11 rows + blank = row 13)
-    raw = pd.read_excel(all_path, sheet_name="Venue-Estimator", header=None)
-    note_row_idx = 13  # 0-based: row 14 in Excel (1 header + 11 data + 1 blank + note)
-    assert "Roster snapshot as of" in str(raw.iloc[note_row_idx, 0])
+    assert "Venue-Estimator" not in pd.ExcelFile(all_path).sheet_names
 
 
 # ── Pod-Divisions / Pod-Entries-Review tests (Issue #88) ────────────────────
 
 
 def test_pod_tabs_present_in_consolidated_export(mock_connectors, tmp_path):
-    """Pod-Divisions and Pod-Entries-Review tabs appear only in the ALL export."""
+    """Pod-Divisions and Pod-Entries-Review tabs are absent from all church-teams exports; they live in Schedule_Workbook."""
     exporter = ChurchTeamsExporter()
 
     summary_rows = [{
@@ -968,36 +991,17 @@ def test_pod_tabs_present_in_consolidated_export(mock_connectors, tmp_path):
     assert "Pod-Divisions" not in single_sheets
     assert "Pod-Entries-Review" not in single_sheets
 
-    # ALL export: pod tabs present
+    # ALL export: pod tabs also absent (now in Schedule_Workbook)
     all_path = tmp_path / "all.xlsx"
     exporter._write_excel_report(all_path, summary_rows, contacts_rows, roster_rows, validation_rows,
                                  include_venue_capacity=True)
     all_sheets = pd.ExcelFile(all_path).sheet_names
-    assert "Pod-Divisions" in all_sheets
-    assert "Pod-Entries-Review" in all_sheets
-
-    pod_div_df = pd.read_excel(all_path, sheet_name="Pod-Divisions")
-    assert list(pod_div_df.columns)[:3] == ["division_id", "sport_type", "sport_gender"]
-    assert len(pod_div_df) == 1
-    row = pod_div_df.iloc[0]
-    assert row["division_id"] == "BAD-Women-Singles"
-    assert int(row["planning_entries"]) == 2
-    assert int(row["confirmed_entries"]) == 1   # participant 2 has ERROR
-    assert int(row["provisional_entries"]) == 1
-    assert int(row["anomaly_count"]) == 0
-
-    pod_entry_df = pd.read_excel(all_path, sheet_name="Pod-Entries-Review")
-    assert "entry_type" in pod_entry_df.columns
-    assert len(pod_entry_df) == 2
-    assert set(pod_entry_df["entry_type"]) == {"Singles"}
-    ok_rows = pod_entry_df[pod_entry_df["review_status"] == "OK"]
-    needs_review_rows = pod_entry_df[pod_entry_df["review_status"] == "NeedsReview"]
-    assert len(ok_rows) == 1
-    assert len(needs_review_rows) == 1
+    assert "Pod-Divisions" not in all_sheets
+    assert "Pod-Entries-Review" not in all_sheets
 
 
 def test_court_schedule_sketch_tab_present(mock_connectors, tmp_path):
-    """Court-Schedule-Sketch tab appears only in consolidated ALL export."""
+    """Court-Schedule-Sketch tab is absent from all church-teams exports; it lives in Schedule_Workbook."""
     exporter = ChurchTeamsExporter()
     summary_rows = [{
         "Church Code": "RPC",
@@ -1021,145 +1025,14 @@ def test_court_schedule_sketch_tab_present(mock_connectors, tmp_path):
     all_path = tmp_path / "all.xlsx"
     exporter._write_excel_report(all_path, summary_rows, [], roster_rows, [],
                                  include_venue_capacity=True)
-    sheets = pd.ExcelFile(all_path).sheet_names
-    assert "Court-Schedule-Sketch" in sheets
-
-
-def test_court_schedule_sketch_structure(mock_connectors, tmp_path):
-    """Court-Schedule-Sketch tab has three scenario blocks with correct structure."""
-    from config import SCHEDULE_SKETCH_N_COURTS
-    exporter = ChurchTeamsExporter()
-    summary_rows = [{
-        "Church Code": "RPC",
-        "Total Members (ChM Team Group)": 6, "Total Participants (in WP)": 6,
-        "Total Approved (WP)": 0, "Total Pending Approval (WP)": 6, "Total Denied (WP)": 0,
-        "Total Participants w/ Open ERRORs (WP)": 0,
-        "Total Open Individual ERRORs (WP)": 0, "Total Open TEAM ERRORs (WP)": 0,
-        "Total Open WARNINGs (WP)": 0, "Total Sports w/ Open TEAM Issues (WP)": 0,
-        "Latest ChM Record Update for Team": "2026-05-13",
-    }]
-    # Six BBM, six VBM, six VBW players → one team each, falls back to 8 teams for planning
-    sports = [
-        ("Basketball", "Men"),
-        ("Volleyball", "Men"),
-        ("Volleyball", "Women"),
-    ]
-    roster_rows = []
-    for sport_type, sport_gender in sports:
-        for i in range(6):
-            roster_rows.append({
-                "Church Team": "RPC", "ChMeetings ID": str(200 + len(roster_rows)),
-                "Participant ID (WP)": len(roster_rows),
-                "sport_type": sport_type, "sport_gender": sport_gender, "sport_format": "Team",
-            })
-
-    all_path = tmp_path / "all.xlsx"
-    exporter._write_excel_report(all_path, summary_rows, [], roster_rows, [],
-                                 include_venue_capacity=True)
-
-    from openpyxl import load_workbook
-    wb = load_workbook(all_path)
-    ws = wb["Court-Schedule-Sketch"]
-
-    # Row 3 should contain scenario headers for each court count
-    row3_values = [ws.cell(row=3, column=c).value for c in range(1, 20)]
-    scenario_headers = [v for v in row3_values if v and "Scenario" in str(v)]
-    assert len(scenario_headers) == len(SCHEDULE_SKETCH_N_COURTS)
-    for n_courts, hdr in zip(SCHEDULE_SKETCH_N_COURTS, scenario_headers):
-        assert str(n_courts) in str(hdr)
-
-    # Row 4 should have "Time" and "Court N" sub-headers in each block
-    row4_values = [ws.cell(row=4, column=c).value for c in range(1, 20)]
-    time_headers = [v for v in row4_values if v == "Time"]
-    court_headers = [v for v in row4_values if v and str(v).startswith("Court")]
-    assert len(time_headers) == len(SCHEDULE_SKETCH_N_COURTS)
-    # Total court columns = 3 + 4 + 5 = 12
-    assert len(court_headers) == sum(SCHEDULE_SKETCH_N_COURTS)
-
-    # Section labels ("1st Saturday" etc.) must appear somewhere in the sheet
-    all_values = []
-    for row in ws.iter_rows():
-        for cell in row:
-            if cell.value:
-                all_values.append(str(cell.value))
-    assert any("1st Saturday" in v for v in all_values)
-    assert any("1st Sunday" in v for v in all_values)
-    assert any("2nd Saturday" in v for v in all_values)
-    assert any("2nd Sunday" in v for v in all_values)
-
-
-def test_court_schedule_sketch_game_id_prefixes(mock_connectors, tmp_path):
-    """Game IDs use BBM, VBM, VBW prefixes with two-digit sequential numbering."""
-    exporter = ChurchTeamsExporter()
-
-    # Provide enough players for 2 teams per sport (min 6 for VB)
-    roster_rows = []
-    sports = [
-        ("Basketball", "Men"),
-        ("Volleyball", "Men"),
-        ("Volleyball", "Women"),
-    ]
-    for sport_type, sport_gender in sports:
-        for i in range(12):
-            roster_rows.append({
-                "Church Team": f"CH{i}",
-                "ChMeetings ID": str(300 + len(roster_rows)),
-                "Participant ID (WP)": len(roster_rows),
-                "sport_type": sport_type,
-                "sport_gender": sport_gender,
-                "sport_format": "Team",
-            })
-
-    all_path = tmp_path / "all.xlsx"
-    summary_rows = [{
-        "Church Code": "CH0",
-        "Total Members (ChM Team Group)": 6, "Total Participants (in WP)": 6,
-        "Total Approved (WP)": 0, "Total Pending Approval (WP)": 6, "Total Denied (WP)": 0,
-        "Total Participants w/ Open ERRORs (WP)": 0,
-        "Total Open Individual ERRORs (WP)": 0, "Total Open TEAM ERRORs (WP)": 0,
-        "Total Open WARNINGs (WP)": 0, "Total Sports w/ Open TEAM Issues (WP)": 0,
-        "Latest ChM Record Update for Team": "2026-05-13",
-    }]
-    exporter._write_excel_report(all_path, summary_rows, [], roster_rows, [],
-                                 include_venue_capacity=True)
-
-    from openpyxl import load_workbook
-    wb = load_workbook(all_path)
-    ws = wb["Court-Schedule-Sketch"]
-
-    cell_values = set()
-    for row in ws.iter_rows():
-        for cell in row:
-            v = cell.value
-            if isinstance(v, str) and "-" in v and v.split("-")[0] in ("BBM", "VBM", "VBW"):
-                cell_values.add(v)
-
-    bbm_ids = {v for v in cell_values if v.startswith("BBM-")}
-    vbm_ids = {v for v in cell_values if v.startswith("VBM-")}
-    vbw_ids = {v for v in cell_values if v.startswith("VBW-")}
-
-    assert bbm_ids, "Expected BBM game IDs in Court-Schedule-Sketch"
-    assert vbm_ids, "Expected VBM game IDs in Court-Schedule-Sketch"
-    assert vbw_ids, "Expected VBW game IDs in Court-Schedule-Sketch"
-
-    # Pool IDs: BBM-01, BBM-02, … — two-digit numeric suffix after the dash
-    pool_ids = {v for v in cell_values if v[4:].isdigit() and len(v[4:]) == 2}
-    assert pool_ids, "Expected pool game IDs with two-digit suffix (e.g. BBM-01)"
-
-    # Playoff IDs: named labels (Final, Semi-N, QF-N, 3rd)
-    playoff_labels = {"Final", "Semi-1", "Semi-2", "QF-1", "QF-2", "QF-3", "QF-4", "3rd"}
-    found_playoff_labels = {v.split("-", 1)[1] for v in cell_values if not v[4:].isdigit()}
-    assert found_playoff_labels & playoff_labels, (
-        f"Expected named playoff labels in Court-Schedule-Sketch, got: {found_playoff_labels}"
-    )
-    assert "Final" in found_playoff_labels, "Expected BBM/VBM/VBW-Final in sketch"
+    assert "Court-Schedule-Sketch" not in pd.ExcelFile(all_path).sheet_names
 
 
 # ── Pod-Resource-Estimate tests (Issue #86) ─────────────────────────────────
 
 
 def test_pod_resource_estimate_tab_present(mock_connectors, tmp_path):
-    """Pod-Resource-Estimate tab appears only in the consolidated ALL export."""
+    """Pod-Resource-Estimate tab is absent from all church-teams exports; it lives in Schedule_Workbook."""
     exporter = ChurchTeamsExporter()
     summary_rows = [{
         "Church Code": "RPC",
@@ -1177,7 +1050,7 @@ def test_pod_resource_estimate_tab_present(mock_connectors, tmp_path):
 
     all_path = tmp_path / "all.xlsx"
     exporter._write_excel_report(all_path, summary_rows, [], [], [], include_venue_capacity=True)
-    assert "Pod-Resource-Estimate" in pd.ExcelFile(all_path).sheet_names
+    assert "Pod-Resource-Estimate" not in pd.ExcelFile(all_path).sheet_names
 
 
 # ── Schedule-Input helpers tests (Issue #87) ────────────────────────────────
@@ -1200,7 +1073,7 @@ def _make_gym_roster(n_churches: int = 8) -> list:
 
 
 def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path):
-    """Schedule-Input tab and schedule_input.json are written in the ALL export."""
+    """Schedule-Input tab absent from ALL export; schedule_input.json is still written (closes #101)."""
     exporter = ChurchTeamsExporter()
 
     summary_rows = [{
@@ -1232,7 +1105,7 @@ def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path):
     )
 
     sheets = pd.ExcelFile(all_path).sheet_names
-    assert "Schedule-Input" in sheets, f"Schedule-Input tab missing; sheets: {sheets}"
+    assert "Schedule-Input" not in sheets
 
     json_path = tmp_path / "schedule_input.json"
     assert json_path.exists(), "schedule_input.json was not written"

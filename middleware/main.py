@@ -246,6 +246,19 @@ def parse_args() -> argparse.Namespace:
         help="Limit the run to a single church code such as RPC",
     )
 
+    investigate_consent_parser = subparsers.add_parser(
+        "investigate-consent-404s",
+        help="Investigate consent rows whose stored ChMeetings IDs now return 404",
+    )
+    investigate_consent_parser.add_argument(
+        "--log-file",
+        help="Path to a sportsfest_YYYYMMDD.log file (default: newest file in middleware/logs)",
+    )
+    investigate_consent_parser.add_argument(
+        "--output",
+        help="Output xlsx path (default: data/consent_404_investigation.xlsx)",
+    )
+
     return parser.parse_args()
 
 
@@ -612,25 +625,33 @@ def generate_venue_template(output_path: Optional[Path] = None) -> bool:
     """
     from openpyxl import Workbook
     from openpyxl.styles import PatternFill, Font, Alignment
+    from openpyxl.utils import get_column_letter
     from config import (
         DATA_DIR, VENUE_TEMPLATE_FILENAME,
         POD_RESOURCE_TYPE_TENNIS, POD_RESOURCE_TYPE_PICKLEBALL,
         POD_RESOURCE_TYPE_TABLE_TENNIS, POD_RESOURCE_TYPE_BADMINTON,
-        SCHEDULE_SKETCH_COLOR_HEADER,
+        GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL,
+        SCHEDULE_SKETCH_COLOR_HEADER, SCHEDULE_SKETCH_COLOR_SECTION,
     )
 
     if output_path is None:
         output_path = DATA_DIR / VENUE_TEMPLATE_FILENAME
 
     wb = Workbook()
+
+    # ── Venue-Input sheet ──────────────────────────────────────────────────────
     ws = wb.active
     ws.title = "Venue-Input"
 
+    # Columns: Day is new (col 5); Exclusive Venue Group added at end before Notes
     headers = [
         "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Day",
         "Date", "Start Time", "Last Start Time", "Slot Minutes",
-        "Available Slots", "Contact", "Cost", "Notes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
     ]
+    # Column letter helpers (1-based)
+    # D=Quantity(4), G=Start Time(7), H=Last Start Time(8), I=Slot Minutes(9), J=Available Slots(10)
 
     header_fill = PatternFill("solid", fgColor=SCHEDULE_SKETCH_COLOR_HEADER)
     header_font = Font(color="FFFFFF", bold=True)
@@ -640,31 +661,31 @@ def generate_venue_template(output_path: Optional[Path] = None) -> bool:
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
 
-    # Example rows: (pod, venue, resource_type, qty, date, start_hr, last_hr, slot_min, contact, cost, notes)
+    # Example rows: (pod, venue, resource_type, qty, day, date, start_hr, last_hr, slot_min, excl_group, contact, cost, notes)
     examples = [
-        ("North OC Tennis Pod",  "City Park",        POD_RESOURCE_TYPE_TENNIS,       4, "2026-07-19", 13, 18, 60,  "TBD", "TBD", "Staff verified usable"),
-        ("Pickleball Pod A",     "Community Center", POD_RESOURCE_TYPE_PICKLEBALL,   6, "2026-07-19", 13, 18, 45,  "TBD", "TBD", "Includes 35+"),
-        ("Indoor Table Pod",     "Church Hall",      POD_RESOURCE_TYPE_TABLE_TENNIS, 6, "2026-07-20", 18, 21, 30,  "TBD", "TBD", "Includes 35+"),
-        ("Badminton Pod",        "School Gym",       POD_RESOURCE_TYPE_BADMINTON,    4, "2026-07-20", 18, 21, 45,  "TBD", "TBD", "Staff verified usable"),
+        ("Main Gym",             "Church Main Gym",  GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sat-1", "2026-07-18", 8,  20, 60, "Main Gym", "TBD", "TBD", "BB or VB — set Gym-Modes"),
+        ("Main Gym",             "Church Main Gym",  GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1", "2026-07-18", 8,  20, 60, "Main Gym", "TBD", "TBD", "BB or VB — set Gym-Modes"),
+        ("North OC Tennis Pod",  "City Park",        POD_RESOURCE_TYPE_TENNIS,     4, "Sun-1", "2026-07-19", 13, 18, 60, "",         "TBD", "TBD", "Staff verified usable"),
+        ("Pickleball Pod A",     "Community Center", POD_RESOURCE_TYPE_PICKLEBALL, 6, "Sun-1", "2026-07-19", 13, 18, 45, "",         "TBD", "TBD", "Includes 35+"),
+        ("Indoor Table Pod",     "Church Hall",      POD_RESOURCE_TYPE_TABLE_TENNIS, 6, "Sun-2", "2026-07-26", 18, 21, 30, "",       "TBD", "TBD", "Includes 35+"),
+        ("Badminton Pod",        "School Gym",       POD_RESOURCE_TYPE_BADMINTON,  4, "Sun-2", "2026-07-26", 18, 21, 45, "",         "TBD", "TBD", "Staff verified usable"),
     ]
 
     for row_idx, ex in enumerate(examples, start=2):
-        pod, venue, rtype, qty, date, start_hr, last_hr, slot_min, contact, cost, notes = ex
-        row_vals = [pod, venue, rtype, qty, date, start_hr, last_hr, slot_min, None, contact, cost, notes]
+        pod, venue, rtype, qty, day, date, start_hr, last_hr, slot_min, excl_group, contact, cost, notes = ex
+        # Col positions: 1=Pod,2=Venue,3=ResourceType,4=Qty,5=Day,6=Date,7=StartTime,8=LastStart,9=SlotMin,10=AvailSlots,11=ExclGroup,12=Contact,13=Cost,14=Notes
+        row_vals = [pod, venue, rtype, qty, day, date, start_hr, last_hr, slot_min, None, excl_group, contact, cost, notes]
         for col_idx, val in enumerate(row_vals, start=1):
-            if col_idx == 9:  # Available Slots — formula; col letters D=4 F=6 G=7 H=8
-                # Formula: Qty * ((LastStart - Start) * 60 / SlotMin + 1)
-                # where Start/LastStart are stored as decimal hours (integers like 13, 18)
+            if col_idx == 10:  # Available Slots — formula; D=col4, G=col7, H=col8, I=col9
                 cell = ws.cell(
                     row=row_idx, column=col_idx,
-                    value=f"=D{row_idx}*(((G{row_idx}-F{row_idx})*60/H{row_idx})+1)",
+                    value=f"=D{row_idx}*(((H{row_idx}-G{row_idx})*60/I{row_idx})+1)",
                 )
             else:
                 ws.cell(row=row_idx, column=col_idx, value=val)
 
     # Column widths
-    col_widths = [22, 22, 22, 10, 12, 12, 16, 14, 16, 16, 10, 28]
-    from openpyxl.utils import get_column_letter
+    col_widths = [22, 22, 24, 10, 8, 12, 12, 16, 14, 16, 22, 16, 10, 28]
     for i, w in enumerate(col_widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -673,9 +694,65 @@ def generate_venue_template(output_path: Optional[Path] = None) -> bool:
     ws.cell(
         row=note_row, column=1,
         value=(
-            "Available Slots formula: =D*(((G-F)*60/H)+1) "
-            "where D=Quantity, F=Start Time (decimal hour), G=Last Start Time (decimal hour), H=Slot Minutes. "
-            "Add one row per pod per date. Staff-entered resources are assumed valid."
+            "Available Slots formula: =D*(((H-G)*60/I)+1) "
+            "where D=Quantity, G=Start Time (decimal hour), H=Last Start Time (decimal hour), I=Slot Minutes. "
+            "Day: use Sat-1, Sun-1, Sat-2, or Sun-2.  "
+            "Exclusive Venue Group: same label on all rows sharing a physical gym (e.g. 'Main Gym'). "
+            "Leave blank for standalone courts.  Add one row per resource type per day."
+        ),
+    )
+
+    # ── Gym-Modes sheet ───────────────────────────────────────────────────────
+    gm_ws = wb.create_sheet(title="Gym-Modes")
+
+    gm_headers = [
+        "Gym Name", "Basketball Courts", "Volleyball Courts",
+        "Badminton Courts", "Pickleball Courts", "Soccer Fields",
+    ]
+    for col_idx, header in enumerate(gm_headers, start=1):
+        cell = gm_ws.cell(row=1, column=col_idx, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    gm_examples = [
+        ("Main Gym",   1, 2, 0, 0, 0),
+        ("Side Gym",   0, 0, 4, 2, 0),
+    ]
+    for row_idx, ex in enumerate(gm_examples, start=2):
+        for col_idx, val in enumerate(ex, start=1):
+            gm_ws.cell(row=row_idx, column=col_idx, value=val)
+
+    gm_col_widths = [22, 20, 20, 18, 18, 14]
+    for i, w in enumerate(gm_col_widths, start=1):
+        gm_ws.column_dimensions[get_column_letter(i)].width = w
+
+    gm_note_row = len(gm_examples) + 3
+    gm_ws.cell(
+        row=gm_note_row, column=1,
+        value=(
+            "One row per physical gym that can switch between sport modes.  "
+            "Gym Name must match the Exclusive Venue Group value in Venue-Input.  "
+            "Enter the number of courts each mode provides.  Use 0 if a mode is not available."
+        ),
+    )
+
+    # ── Playoff-Slots sheet (stub) ─────────────────────────────────────────────
+    ps_ws = wb.create_sheet(title="Playoff-Slots")
+    ps_headers = ["game_id", "event", "stage", "resource_id", "slot"]
+    for col_idx, header in enumerate(ps_headers, start=1):
+        cell = ps_ws.cell(row=1, column=col_idx, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+    ps_col_widths = [18, 30, 8, 18, 14]
+    for i, w in enumerate(ps_col_widths, start=1):
+        ps_ws.column_dimensions[get_column_letter(i)].width = w
+    ps_ws.cell(
+        row=3, column=1,
+        value=(
+            "Add one row per playoff game (QF, Semi, Final, 3rd).  "
+            "resource_id and slot must match generated values — see SCHEDULE-HOW-TO.md."
         ),
     )
 
@@ -950,6 +1027,16 @@ def main() -> None:
                     church_code=args.church_code,
                 )
                 success = summary["api_error"] == 0
+    elif args.command == "investigate-consent-404s":
+        from sync.consent_404_investigator import Consent404Investigator
+
+        with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+            investigator = Consent404Investigator(chm_conn, wp_conn)
+            summary = investigator.run(
+                log_file=args.log_file,
+                output_file=args.output,
+            )
+            success = summary["api_error"] == 0
     else:
         logger.error(f"Unknown command: {args.command}")
         success = False

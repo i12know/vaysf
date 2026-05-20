@@ -464,27 +464,100 @@ function vaysf_is_racquet_sport($sport) {
 }
 
 /**
+ * Normalize a recipient list for Cc/Bcc headers.
+ *
+ * @param string|array $emails Recipient email(s) as an array or comma-separated string
+ * @return array Sanitized unique email addresses
+ */
+function vaysf_normalize_email_list($emails) {
+    if (empty($emails)) {
+        return array();
+    }
+
+    if (!is_array($emails)) {
+        $emails = preg_split('/[;,]+/', (string) $emails);
+    }
+
+    $normalized = array();
+    foreach ($emails as $email) {
+        $sanitized = sanitize_email(trim((string) $email));
+        if (!empty($sanitized)) {
+            $normalized[] = $sanitized;
+        }
+    }
+
+    return array_values(array_unique($normalized));
+}
+
+/**
+ * Build a valid From header from a plain email or "Name <email>" string.
+ *
+ * @param string $from Sender identity supplied by the caller
+ * @return string Fully formatted From header
+ */
+function vaysf_build_from_header($from = '') {
+    $from = trim((string) $from);
+
+    if (!empty($from) && preg_match('/^(.*)<([^>]+)>$/', $from, $matches)) {
+        $from_name = sanitize_text_field(trim($matches[1], " \t\n\r\0\x0B\"'"));
+        $from_email = sanitize_email(trim($matches[2]));
+        if (!empty($from_email)) {
+            return !empty($from_name)
+                ? 'From: ' . $from_name . ' <' . $from_email . '>'
+                : 'From: ' . $from_email;
+        }
+    }
+
+    $from_email = sanitize_email($from);
+    if (!empty($from_email)) {
+        return 'From: ' . $from_email;
+    }
+
+    $default_from_email = sanitize_email(get_option('vaysf_email_from', get_option('admin_email')));
+    return 'From: Sports Fest <' . $default_from_email . '>';
+}
+
+/**
+ * Build HTML mail headers with optional From/Cc/Bcc entries.
+ *
+ * @param array $args Optional arguments (from, cc, bcc)
+ * @return array Ready-to-send wp_mail() headers
+ */
+function vaysf_build_mail_headers($args = array()) {
+    $from = isset($args['from']) ? $args['from'] : '';
+    $cc_list = isset($args['cc']) ? $args['cc'] : array();
+    $bcc_list = isset($args['bcc']) ? $args['bcc'] : array();
+
+    $headers = array(
+        'Content-Type: text/html; charset=UTF-8',
+        vaysf_build_from_header($from)
+    );
+
+    foreach (vaysf_normalize_email_list($cc_list) as $cc_email) {
+        $headers[] = 'Cc: ' . $cc_email;
+    }
+
+    foreach (vaysf_normalize_email_list($bcc_list) as $bcc_email) {
+        $headers[] = 'Bcc: ' . $bcc_email;
+    }
+
+    return $headers;
+}
+
+/**
  * Send an email and optionally log it in the database
  *
  * @param string $to      Recipient email address
  * @param string $subject Email subject line
  * @param string $message HTML email body
- * @param array  $args    Optional arguments (from => sender email)
+ * @param array  $args    Optional arguments (from, cc, bcc)
  * @return bool True if email was sent successfully
  */
 function vaysf_send_email($to, $subject, $message, $args = array()) {
     $to = sanitize_email($to);
     $subject = sanitize_text_field($subject);
     $message = wp_kses_post($message);
-
-    $headers = array('Content-Type: text/html; charset=UTF-8');
-    if (!empty($args['from'])) {
-        $from_email = sanitize_email($args['from']);
-        $headers[] = 'From: ' . $from_email;
-    } else {
-        $from_email = get_option('vaysf_email_from', get_option('admin_email'));
-        $headers[] = 'From: Sports Fest <' . $from_email . '>';
-    }
+    $headers = vaysf_build_mail_headers($args);
 
     $sent = wp_mail($to, $subject, $message, $headers);
 

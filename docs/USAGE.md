@@ -13,6 +13,7 @@ This guide provides instructions for using the Sports Fest ChMeetings Integratio
   - [Running Synchronization Tasks](#running-synchronization-tasks)
   - [Exporting Church Team Reports](#exporting-church-team-reports)
   - [Processing Consent Forms](#processing-consent-forms)
+  - [Investigating Consent 404s](#investigating-consent-404s)
   - [Season Reset (Year-End Archive and Field Clear)](#season-reset-year-end-archive-and-field-clear)
   - [Church Team Group Assignment](#church-team-group-assignment)
   - [Auditing Team Groups for Orphaned Members](#auditing-team-groups-for-orphaned-members)
@@ -165,6 +166,38 @@ python main.py sync --type participants --chm-id 1234567
 
 This will fetch and sync only the participant with ID 1234567 from ChMeetings. Note: The `--chm-id` option works only with `--type participants`.
 
+##### Late Racquet Overrides
+
+Late new racquet registrations are blocked after the inclusive early-bird deadline in `REGISTRATION_DEADLINE`. The cutoff now follows the same season date logic as athlete fee calculation:
+
+- if the athlete already exists in WordPress, the middleware uses `sf_participants.created_at` as that athlete's season registration date
+- if the athlete has not been synced into WordPress yet, the middleware uses the current sync date for that first create
+- after a participant is first seen late, later re-syncs stay blocked unless you add an explicit override
+- the middleware interprets WordPress `created_at` in `WORDPRESS_CREATED_AT_TIMEZONE` and converts it into `BUSINESS_TIMEZONE` before comparing it to the deadline; keep these two `.env` values aligned with your WordPress server and your Sports Fest business timezone
+
+For rare approved exceptions, edit `middleware/data/late_racquet_overrides.json` on the middleware machine and add the athlete's ChMeetings ID:
+
+```json
+{
+  "3633885": {
+    "enabled": true,
+    "sports": ["Badminton"],
+    "approved_by": "Bumble / A. Loc",
+    "reason": "Late men's doubles exception"
+  }
+}
+```
+
+- use the ChMeetings ID as the JSON key
+- omit `sports` or leave it empty to allow all racquet sports for that athlete
+- keep this file for one-off approved exceptions only; normal late racquet registrations should remain blocked
+
+After saving the file, rerun a targeted participant sync:
+
+```bash
+python main.py sync --type participants --chm-id 3633885
+```
+
 #### Approvals Sync
 
 To sync approved participants to ChMeetings (adds them to the approved group via API):
@@ -315,6 +348,41 @@ python main.py check-consent --file "data/Consent Form Export.xlsx" --church-cod
 The command writes an audit workbook (`data/consent_check_audit.xlsx`) on every run, including both matched and unmatched rows so you can investigate any gaps.
 
 > **Manual verification:** If a participant's consent form does not auto-link in ChMeetings (per ChMeetings ticket #11991 - linking only works when name and email match exactly), check the Forms section separately and connect the form manually before re-running `check-consent`.
+
+### Investigating Consent 404s
+
+If `check-consent` reports `api_error` rows like `Could not retrieve ChMeetings person ... while processing consent row ...`, use the investigation command to turn those stale IDs into a review workbook:
+
+```bash
+python main.py investigate-consent-404s
+```
+
+This command:
+- reads the newest `middleware/logs/sportsfest_YYYYMMDD.log` by default
+- extracts each consent-row `404` case
+- loads current WordPress participants and current live ChMeetings people
+- looks for likely re-registrations under a new ChMeetings ID using exact matches on email, phone, birthdate, and full name
+- writes `data/consent_404_investigation.xlsx` with:
+  - `Cases` sheet: one row per stale ID, including the likely outcome (`likely_reregistered_synced`, `likely_reregistered_not_synced`, `likely_deleted_or_removed`, etc.)
+  - `Candidates` sheet: every matching replacement candidate from WordPress or ChMeetings, with score and match basis
+
+To target a specific log file:
+
+```bash
+python main.py investigate-consent-404s --log-file "logs/sportsfest_20260519.log"
+```
+
+You can also run the helper batch file from `middleware/`:
+
+```bash
+run-consent-404-investigation.bat
+run-consent-404-investigation.bat --log-file "S:\MyDownloads\Screenpresso\sportsfest_20260519.log"
+```
+
+Use this workflow to separate:
+- athletes who were probably re-registered under a new ChMeetings ID
+- athletes who may still exist in ChMeetings but have not been re-synced into WordPress yet
+- athletes whose old record was likely deleted or removed with no current replacement found
 
 ### Season Reset (Year-End Archive and Field Clear)
 

@@ -1,13 +1,14 @@
 # Begin of sync/participants.py
 # Version 1.0.4: replaced _map_chmeetings_participants, added _parse_format() before _sync_roster, updated _sync_rosters to use primary_format when available
 # Version 1.0.5: Fixed imports, removed redundant logger setup, update log_validation_issues only with newer chmeetings timestamp
+import json
 from typing import Dict, List, Tuple, Any, Optional
 from loguru import logger  # Import from config.py
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
 from config import (Config, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION, CHM_FIELDS,
                    SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, RULE_LEVEL, FORMAT_MAPPINGS,
-                   SPORT_UNSELECTED, RACQUET_SPORTS, VALIDATION_SEVERITY, is_racquet_sport,
+                   SPORT_UNSELECTED, RACQUET_SPORTS, VALIDATION_SEVERITY, REGISTRATION_DEADLINE, is_racquet_sport,
                    SF_IS_MEMBER_OPTION_IDS, SF_FIELD_IDS)
 import datetime
 import pytz
@@ -16,6 +17,7 @@ import pytz
 from validation.individual_validator import IndividualValidator
 from validation.models import Participant
 from pydantic import ValidationError
+from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 
 # Helper functions
 def parse_format(format_value: str) -> tuple[str, str]:
@@ -43,6 +45,7 @@ class ParticipantSyncer:
         self.participants_cache = {}  # Local cache for participant IDs
         # Initialize the IndividualValidator with the event collection
         self.validator = IndividualValidator(collection="SUMMER_2026")
+        self.late_racquet_overrides = self._load_late_racquet_overrides()
 
     @staticmethod
     def _validation_issue_key(
@@ -58,6 +61,286 @@ class ParticipantSyncer:
             str(sport_type or ""),
             str(sport_format or ""),
         )
+
+    @staticmethod
+    def _current_local_date() -> datetime.date:
+        """Return the local calendar date used for deadline-based registration rules."""
+        return current_business_date()
+
+    @staticmethod
+    def _parse_date_only(value: Any) -> Optional[datetime.date]:
+        """Parse a YYYY-MM-DD date from a date or datetime-like string."""
+        text = str(value or "").strip()
+        if not text:
+            return None
+
+        text = text.split("T", 1)[0].split(" ", 1)[0]
+        try:
+            return datetime.datetime.strptime(text, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _normalize_override_sports(value: Any) -> List[str]:
+        """Return a normalized lower-case sport list from JSON override input."""
+        if value in (None, ""):
+            return []
+
+        if isinstance(value, str):
+            values = [value]
+        elif isinstance(value, list):
+            values = value
+        else:
+            return []
+
+        sports: List[str] = []
+        for sport in values:
+            sport_name = str(sport or "").strip().lower()
+            if sport_name:
+                sports.append(sport_name)
+        return sorted(set(sports))
+
+    def _load_late_racquet_overrides(self) -> Dict[str, Dict[str, Any]]:
+        """Load middleware-side late racquet overrides keyed by ChMeetings ID."""
+        override_path = getattr(Config, "LATE_RACQUET_OVERRIDES_FILE", None)
+        if not override_path:
+            return {}
+
+        try:
+            with open(override_path, "r", encoding="utf-8") as handle:
+                raw_overrides = json.load(handle)
+        except FileNotFoundError:
+            return {}
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                f"[VAY SM] Could not parse late racquet overrides file '{override_path}': {exc}. "
+                "Ignoring overrides for this run."
+            )
+            return {}
+
+        if not isinstance(raw_overrides, dict):
+            logger.warning(
+                f"[VAY SM] Late racquet overrides file '{override_path}' must contain a JSON object. "
+                "Ignoring overrides for this run."
+            )
+            return {}
+
+        overrides: Dict[str, Dict[str, Any]] = {}
+        for chm_id_raw, entry_raw in raw_overrides.items():
+            chm_id = str(chm_id_raw or "").strip()
+            if not chm_id:
+                continue
+
+            if isinstance(entry_raw, bool):
+                entry = {
+                    "enabled": entry_raw,
+                    "sports": [],
+                    "approved_by": "",
+                    "reason": "",
+                }
+            elif isinstance(entry_raw, dict):
+                entry = {
+                    "enabled": bool(entry_raw.get("enabled", True)),
+                    "sports": self._normalize_override_sports(entry_raw.get("sports", [])),
+                    "approved_by": str(entry_raw.get("approved_by", "") or "").strip(),
+                    "reason": str(entry_raw.get("reason", "") or "").strip(),
+                }
+            else:
+                logger.warning(
+                    f"[VAY SM] Ignoring late racquet override for chm_id={chm_id}: "
+                    f"expected boolean or object, got {type(entry_raw).__name__}."
+                )
+                continue
+
+            overrides[chm_id] = entry
+
+        return overrides
+
+    def _effective_registration_date(
+        self,
+        participant: Dict[str, Any],
+        existing_wp_participant: Optional[Dict[str, Any]] = None,
+    ) -> datetime.date:
+        """Return the season registration date used for late-racquet enforcement."""
+        if existing_wp_participant:
+            created_at_raw = existing_wp_participant.get("created_at", "")
+            created_date = parse_wordpress_created_at_to_business_date(created_at_raw)
+            if created_date:
+                return created_date
+
+            logger.warning(
+                f"[VAY SM] WordPress participant for chm_id={participant.get('chmeetings_id', 'unknown')} "
+                f"has invalid created_at='{created_at_raw}'. Falling back to the current local date "
+                "for late-racquet enforcement."
+            )
+
+        return self._current_local_date()
+
+    def _get_late_racquet_override(
+        self,
+        chm_id: str,
+        sport_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the matching override metadata for a participant/sport, if any."""
+        override = self.late_racquet_overrides.get(str(chm_id or "").strip())
+        if not override or not override.get("enabled", False):
+            return None
+
+        scoped_sports = override.get("sports", [])
+        if scoped_sports and str(sport_name or "").strip().lower() not in scoped_sports:
+            return None
+
+        return override
+
+    @staticmethod
+    def _has_any_accepted_activity(participant: Dict[str, Any]) -> bool:
+        """Return True when at least one accepted sport/event remains after pruning."""
+        for sport_field in ("primary_sport", "secondary_sport"):
+            sport_value = str(participant.get(sport_field, "") or "").strip()
+            if sport_value and sport_value != SPORT_UNSELECTED:
+                return True
+        return any(
+            sport.strip()
+            for sport in str(participant.get("other_events", "") or "").split(",")
+        )
+
+    def _apply_new_registration_racquet_cutoff(
+        self,
+        participant: Dict[str, Any],
+        existing_wp_participant: Optional[Dict[str, Any]] = None,
+    ) -> tuple[Dict[str, Any], List[Dict[str, str]]]:
+        """Drop disallowed late racquet entries based on season registration timing.
+
+        Uses the existing WordPress participant row's ``created_at`` date when
+        available so the cutoff matches the fee logic. For the first sync (no
+        WordPress row yet), the current local date becomes the effective season
+        registration date. Approved middleware overrides can allow specific late
+        racquet sports through for a participant by ChMeetings ID.
+        """
+        effective_participant = dict(participant)
+        chm_id = str(participant.get("chmeetings_id", "unknown") or "unknown").strip()
+        registration_date = self._effective_registration_date(
+            participant,
+            existing_wp_participant=existing_wp_participant,
+        )
+
+        cutoff_rules_by_sport: Dict[str, List[Dict[str, Any]]] = {}
+        for rule in self.validator.rules_manager.get_rules_by_type("registration_cutoff"):
+            if str(rule.get("category", "")).strip() != "new_after_deadline":
+                continue
+            sport_name = str(rule.get("sport_event", "") or "").strip()
+            if sport_name:
+                cutoff_rules_by_sport.setdefault(sport_name, []).append(rule)
+
+        issues: List[Dict[str, str]] = []
+
+        def _maybe_block_sport(
+            sport_name: str,
+            sport_format: str = "",
+        ) -> Optional[Dict[str, str]]:
+            rules = cutoff_rules_by_sport.get(sport_name, [])
+            if not rules:
+                return None
+
+            rule = rules[0]
+            deadline_raw = str(REGISTRATION_DEADLINE or "").strip()
+            deadline_date = self._parse_date_only(deadline_raw)
+            if deadline_date is None:
+                logger.warning(
+                    f"Invalid REGISTRATION_DEADLINE '{deadline_raw}' for sport "
+                    f"'{sport_name}'; skipping late-racquet enforcement."
+                )
+                return None
+
+            # Use > (not >=) so the deadline date itself still accepts the sport;
+            # new racquet cutoffs begin the following day.
+            if registration_date <= deadline_date:
+                return None
+
+            override = self._get_late_racquet_override(chm_id, sport_name)
+            if override:
+                approved_by = override.get("approved_by", "")
+                reason = override.get("reason", "")
+                details = []
+                if approved_by:
+                    details.append(f"approved_by={approved_by}")
+                if reason:
+                    details.append(f"reason={reason}")
+                detail_suffix = f" ({', '.join(details)})" if details else ""
+                logger.info(
+                    f"[VAY SM] Applied late racquet override for chm_id={chm_id}, "
+                    f"sport='{sport_name}', season_registration_date={registration_date.isoformat()}"
+                    f"{detail_suffix}."
+                )
+                return None
+
+            description = (
+                f"This athlete's season registration date ({registration_date.isoformat()}) "
+                f"is after {deadline_raw}; {sport_name} was not accepted for scheduling."
+            )
+            if sport_format:
+                description += f" Attempted format: {sport_format}."
+
+            return {
+                "type": "late_racquet_registration",
+                "description": description,
+                "rule_code": str(rule.get("rule_code", "") or ""),
+                "rule_level": str(rule.get("rule_level", RULE_LEVEL["INDIVIDUAL"]) or RULE_LEVEL["INDIVIDUAL"]),
+                "severity": str(rule.get("severity", VALIDATION_SEVERITY["WARNING"]) or VALIDATION_SEVERITY["WARNING"]),
+                "sport": sport_name,
+                "sport_format": sport_format or None,
+            }
+
+        for sport_field, format_field, partner_field in (
+            ("primary_sport", "primary_format", "primary_partner"),
+            ("secondary_sport", "secondary_format", "secondary_partner"),
+        ):
+            sport_value = str(effective_participant.get(sport_field, "") or "").strip()
+            if not sport_value or sport_value == SPORT_UNSELECTED:
+                continue
+
+            sport_name = sport_value.split(" - ", 1)[0].strip()
+            sport_format = str(effective_participant.get(format_field, "") or "").strip()
+            issue = _maybe_block_sport(sport_name, sport_format)
+            if not issue:
+                continue
+
+            issues.append(issue)
+            effective_participant[sport_field] = SPORT_UNSELECTED
+            effective_participant[format_field] = ""
+            effective_participant[partner_field] = ""
+            logger.info(
+                f"[VAY SM] Removed late racquet selection '{sport_name}' for "
+                f"chm_id={chm_id} (season_registration_date={registration_date.isoformat()})."
+            )
+
+        other_events = [
+            sport.strip()
+            for sport in str(effective_participant.get("other_events", "") or "").split(",")
+            if sport.strip()
+        ]
+        if other_events:
+            kept_other_events: List[str] = []
+            for sport_name in other_events:
+                issue = _maybe_block_sport(sport_name)
+                if issue:
+                    issues.append(issue)
+                    logger.info(
+                        f"[VAY SM] Removed late racquet Other Event '{sport_name}' for "
+                        f"chm_id={chm_id} (season_registration_date={registration_date.isoformat()})."
+                    )
+                else:
+                    kept_other_events.append(sport_name)
+            effective_participant["other_events"] = ", ".join(kept_other_events)
+
+        if issues and not self._has_any_accepted_activity(effective_participant):
+            for issue in issues:
+                issue["severity"] = VALIDATION_SEVERITY["ERROR"]
+                issue["description"] += (
+                    " No accepted team sports or other events remain on this application."
+                )
+
+        return effective_participant, issues
 
 # In sync/participants.py, inside the ParticipantSyncer class
 
@@ -360,17 +643,29 @@ class ParticipantSyncer:
                 mapped["membership_claim_at_approval"] = int(frozen_raw)
         # --- End membership-flip defence ---
 
-        mapped["approval_status"] = current_wp_status
+        participant_payload, cutoff_issues = self._apply_new_registration_racquet_cutoff(
+            mapped,
+            existing_wp_participant=participant_in_wp,
+        )
+        participant_payload["approval_status"] = current_wp_status
         validation_issues_list = [] # Renamed to avoid conflict with 'issues' from validate_participant
         
         if not final_status_determined:
             if chm_id == target_chm_id_for_debug:
-                logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Entering validation/checklist logic. mapped['approval_status'] before: {mapped.get('approval_status')}")
+                logger.debug(
+                    f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Entering validation/checklist logic. "
+                    f"participant_payload['approval_status'] before: {participant_payload.get('approval_status')}"
+                )
             
-            is_valid, validation_issues_list = self.validate_participant(mapped)
+            is_valid, validation_issues_list = self.validate_participant(participant_payload)
+            validation_issues_list = cutoff_issues + validation_issues_list
+            is_valid = not any(
+                issue.get("severity") == VALIDATION_SEVERITY["ERROR"]
+                for issue in validation_issues_list
+            )
             
             if is_valid:
-                completion_checklist = mapped.get("completion_checklist", "")
+                completion_checklist = participant_payload.get("completion_checklist", "")
                 required_items = [
                     CHECK_BOXES["1-IDENTITY"], CHECK_BOXES["2-CONSENT"],
                     CHECK_BOXES["3-ACCOUNT"], CHECK_BOXES["4-PHOTO_ID"]
@@ -378,49 +673,71 @@ class ParticipantSyncer:
                 all_items_checked = all(item.strip() in completion_checklist for item in required_items)
                 
                 if all_items_checked:
-                    mapped["approval_status"] = APPROVAL_STATUS["PENDING_APPROVAL"]
+                    participant_payload["approval_status"] = APPROVAL_STATUS["PENDING_APPROVAL"]
                 else:
-                    mapped["approval_status"] = APPROVAL_STATUS["VALIDATED"]
+                    participant_payload["approval_status"] = APPROVAL_STATUS["VALIDATED"]
             else:
-                mapped["approval_status"] = APPROVAL_STATUS["PENDING"]
+                participant_payload["approval_status"] = APPROVAL_STATUS["PENDING"]
             
             if chm_id == target_chm_id_for_debug:
-                logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] After validation/checklist logic - mapped['approval_status']: {mapped.get('approval_status')}, Issues: {validation_issues_list}")
+                logger.debug(
+                    f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] After validation/checklist logic - "
+                    f"participant_payload['approval_status']: {participant_payload.get('approval_status')}, "
+                    f"Issues: {validation_issues_list}"
+                )
+        else:
+            validation_issues_list = cutoff_issues
         
         if chm_id == target_chm_id_for_debug:
-            logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Final approval_status for {mapped['chmeetings_id']} before WP update/create: {mapped.get('approval_status')}")
+            logger.debug(
+                f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Final approval_status for "
+                f"{participant_payload['chmeetings_id']} before WP update/create: "
+                f"{participant_payload.get('approval_status')}"
+            )
 
         try:
             if chm_id == target_chm_id_for_debug:
-                logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Payload for WordPress (participant_in_wp: {bool(participant_in_wp)}) MAPPED DATA: {mapped}")
+                logger.debug(
+                    f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Payload for WordPress "
+                    f"(participant_in_wp: {bool(participant_in_wp)}) PARTICIPANT DATA: "
+                    f"{participant_payload}"
+                )
             
             participant_id_for_roster_sync = None # Use a distinct name
 
             if participant_in_wp:
                 # wp_participant_id is already defined if participant_in_wp is True
-                updated_participant = self.wordpress_connector.update_participant(wp_participant_id, mapped)
+                updated_participant = self.wordpress_connector.update_participant(
+                    wp_participant_id, participant_payload
+                )
                 if chm_id == target_chm_id_for_debug:
                     logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Update result: {updated_participant}")
                 if updated_participant:
                     self.stats["participants"]["updated"] += 1
-                    self.participants_cache[mapped["chmeetings_id"]] = updated_participant
+                    self.participants_cache[participant_payload["chmeetings_id"]] = updated_participant
                     participant_id_for_roster_sync = updated_participant["participant_id"]
                 else:
-                    logger.error(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Failed to update participant {mapped['chmeetings_id']}: No result returned")
+                    logger.error(
+                        f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Failed to update participant "
+                        f"{participant_payload['chmeetings_id']}: No result returned"
+                    )
                     self.stats["participants"]["errors"] += 1
                     if chm_id == target_chm_id_for_debug:
                         logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] END PROCESSING (WP UPDATE FAILED)")
                     return False
             else:
-                created_participant = self.wordpress_connector.create_participant(mapped)
+                created_participant = self.wordpress_connector.create_participant(participant_payload)
                 if chm_id == target_chm_id_for_debug:
                     logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Create result: {created_participant}")
                 if created_participant:
                     self.stats["participants"]["created"] += 1
-                    self.participants_cache[mapped["chmeetings_id"]] = created_participant
+                    self.participants_cache[participant_payload["chmeetings_id"]] = created_participant
                     participant_id_for_roster_sync = created_participant["participant_id"]
                 else:
-                    logger.error(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Failed to create participant {mapped['chmeetings_id']}: No result returned")
+                    logger.error(
+                        f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Failed to create participant "
+                        f"{participant_payload['chmeetings_id']}: No result returned"
+                    )
                     self.stats["participants"]["errors"] += 1
                     if chm_id == target_chm_id_for_debug:
                         logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] END PROCESSING (WP CREATE FAILED)")
@@ -429,12 +746,17 @@ class ParticipantSyncer:
             if participant_id_for_roster_sync:
                 if chm_id == target_chm_id_for_debug:
                     logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Syncing rosters for WP participant_id {participant_id_for_roster_sync}")
-                self._sync_rosters(str(participant_id_for_roster_sync), mapped) # Ensure participant_id is string if expected by _sync_rosters
+                self._sync_rosters(str(participant_id_for_roster_sync), participant_payload) # Ensure participant_id is string if expected by _sync_rosters
                 
-                chm_updated_on_utc_for_issues = mapped["updated_at"] # Already a string
+                chm_updated_on_utc_for_issues = participant_payload["updated_at"] # Already a string
                 if chm_id == target_chm_id_for_debug:
                      logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Syncing validation issues for WP participant_id {participant_id_for_roster_sync}. Issues to sync: {validation_issues_list}")
-                self._sync_validation_issues(str(participant_id_for_roster_sync), mapped["church_code"], validation_issues_list, chm_updated_on_utc_for_issues)
+                self._sync_validation_issues(
+                    str(participant_id_for_roster_sync),
+                    participant_payload["church_code"],
+                    validation_issues_list,
+                    chm_updated_on_utc_for_issues,
+                )
             else:
                 # This case should ideally be caught by create/update failures above
                 logger.error(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] participant_id_for_roster_sync was not defined. Skipping roster and validation sync.")                   
@@ -443,7 +765,10 @@ class ParticipantSyncer:
                 return False # Indicate failure as subsequent steps were skipped
 
         except Exception as e:
-            logger.exception(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Error syncing participant {mapped['chmeetings_id']}: {e}")
+            logger.exception(
+                f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Error syncing participant "
+                f"{participant_payload['chmeetings_id']}: {e}"
+            )
             self.stats["participants"]["errors"] += 1
             if chm_id == target_chm_id_for_debug:
                 logger.error(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Exception occurred during WP update/create or subsequent sync.")

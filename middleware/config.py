@@ -10,6 +10,7 @@ import datetime
 from urllib.parse import urlparse
 from pathlib import Path
 import sys
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Load environment variables
 load_dotenv()
@@ -38,12 +39,15 @@ else:
     EXPORT_DIR = Path(DEFAULT_EXPORT_PATH_STR)
 DEFAULT_APPROVED_GROUP_NAME = "2026 Sports Fest"
 DEFAULT_SPORTS_FEST_DATE = "2026-07-18"
+DEFAULT_BUSINESS_TIMEZONE = "America/Los_Angeles"
+DEFAULT_WORDPRESS_CREATED_AT_TIMEZONE = "UTC"
 
 # Athlete registration fees
 ATHLETE_FEE_STANDARD = 30          # athlete with a primary or secondary sport (early registration)
 ATHLETE_FEE_OTHER_EVENTS_ONLY = 20  # athlete registered only under Other Events (no deadline increase)
 ATHLETE_FEE_LATE = 60              # athlete with primary or secondary sport (after deadline)
-REGISTRATION_DEADLINE = "2026-05-16"  # ISO date; on/after this date, late fee applies
+REGISTRATION_DEADLINE = "2026-05-16"  # ISO date; last day for early-bird rate (inclusive); late fee starts the following day
+LATE_RACQUET_OVERRIDES_FILE = DATA_DIR / "late_racquet_overrides.json"  # middleware-side allowlist for approved late racquet exceptions
 
 # Ensure directories exist with error handling
 for directory in [LOG_DIR, DATA_DIR, TEMP_DIR, EXPORT_DIR]:
@@ -509,7 +513,9 @@ POD_SPORT_ABBREV = {
 VENUE_INPUT_FILENAME    = "venue_input.xlsx"
 VENUE_TEMPLATE_FILENAME = "SportsFest_2026_Venue_Input_Template.xlsx"
 
-GYM_RESOURCE_TYPE              = "Gym Court"
+GYM_RESOURCE_TYPE              = "Gym Court"        # legacy / fallback label
+GYM_RESOURCE_TYPE_BASKETBALL   = "Basketball Court"
+GYM_RESOURCE_TYPE_VOLLEYBALL   = "Volleyball Court"
 POD_RESOURCE_TYPE_TENNIS       = "Tennis Court"
 POD_RESOURCE_TYPE_PICKLEBALL   = "Pickleball Court"
 POD_RESOURCE_TYPE_TABLE_TENNIS = "Table Tennis Table"
@@ -580,6 +586,14 @@ class Config:
     APPROVED_GROUP_NAME = os.getenv("APPROVED_GROUP_NAME", DEFAULT_APPROVED_GROUP_NAME)
     APPROVED_EXCEL_FILE = DATA_DIR / os.getenv("APPROVED_EXCEL_FILE", "group_import_approved_participants.xlsx")
     VAYSM_GROUP_ID = os.getenv("VAYSM_GROUP_ID", "")
+    LATE_RACQUET_OVERRIDES_FILE = Path(
+        os.getenv("LATE_RACQUET_OVERRIDES_FILE", str(LATE_RACQUET_OVERRIDES_FILE))
+    )
+    BUSINESS_TIMEZONE = os.getenv("BUSINESS_TIMEZONE", DEFAULT_BUSINESS_TIMEZONE)
+    WORDPRESS_CREATED_AT_TIMEZONE = os.getenv(
+        "WORDPRESS_CREATED_AT_TIMEZONE",
+        DEFAULT_WORDPRESS_CREATED_AT_TIMEZONE,
+    )
     
     # Sync settings
     SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", 60))
@@ -629,6 +643,20 @@ class Config:
         except ValueError:
             logger.error(f"Invalid SPORTS_FEST_DATE: {cls.SPORTS_FEST_DATE} (must be YYYY-MM-DD)")
             cls.SPORTS_FEST_DATE = DEFAULT_SPORTS_FEST_DATE
+
+        for attr_name, default_name in [
+            ("BUSINESS_TIMEZONE", DEFAULT_BUSINESS_TIMEZONE),
+            ("WORDPRESS_CREATED_AT_TIMEZONE", DEFAULT_WORDPRESS_CREATED_AT_TIMEZONE),
+        ]:
+            timezone_name = getattr(cls, attr_name)
+            try:
+                ZoneInfo(timezone_name)
+            except ZoneInfoNotFoundError:
+                logger.error(
+                    f"Invalid {attr_name}: {timezone_name} "
+                    f"(falling back to {default_name})"
+                )
+                setattr(cls, attr_name, default_name)
 
         # Warn if CHURCH_EXCEL_FILE doesn’t exist in LIVE_TEST mode
         if os.getenv("LIVE_TEST", "false").lower() == "true" and not os.path.exists(cls.CHURCH_EXCEL_FILE):
@@ -693,6 +721,8 @@ APPROVED_EXCEL_FILE=group_import_approved_participants.xlsx
 # Sync settings
 TEAM_PREFIX=Team
 SPORTS_FEST_DATE={DEFAULT_SPORTS_FEST_DATE}
+BUSINESS_TIMEZONE={DEFAULT_BUSINESS_TIMEZONE}
+WORDPRESS_CREATED_AT_TIMEZONE={DEFAULT_WORDPRESS_CREATED_AT_TIMEZONE}
 VAYSM_GROUP_ID=
 
 # Export directory

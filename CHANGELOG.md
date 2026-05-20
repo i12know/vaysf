@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### New Features
+- Added a consent-404 investigation workflow for stale ChMeetings IDs found during `check-consent`
+  - New `python main.py investigate-consent-404s [--log-file ...] [--output ...]` command reads consent-run log warnings, loads current WordPress and ChMeetings data, and classifies each stale ID as likely re-registered, likely deleted, or manual-review-needed
+  - New `middleware/run-consent-404-investigation.bat` helper for one-click reruns on the middleware machine
+  - Writes `data/consent_404_investigation.xlsx` with `Cases` and `Candidates` sheets so staff can audit replacement IDs and match evidence
+
+- Added middleware late-racquet overrides and aligned cutoff timing with season registration dates
+  - New `middleware/data/late_racquet_overrides.json` allowlist plus `Config.LATE_RACQUET_OVERRIDES_FILE` for pastor-approved / scheduler-approved exception handling on the middleware side
+  - Late racquet enforcement now uses the participant's effective season registration date: existing WordPress `sf_participants.created_at` when present, otherwise the current sync date on first create
+  - WordPress `created_at` timestamps are now interpreted in `WORDPRESS_CREATED_AT_TIMEZONE` (default `UTC`) and converted into `BUSINESS_TIMEZONE` (default `America/Los_Angeles`) before late-racquet or athlete-fee date comparisons
+  - Overrides are keyed by `chmeetings_id`, can be scoped to specific racquet sports, and can carry optional `approved_by` / `reason` metadata for operator context
+  - Re-syncs now stay blocked for post-deadline racquet athletes until an override is added, closing the previous "brand-new only" loophole
+  - Added sync tests covering first-sync late pruning, pre-deadline re-sync allowance, post-deadline re-sync blocking, and scoped override behavior
+
+- Wired the Layer-2 Stage-A gym mode allocator into the live scheduling pipeline — closes [#103](https://github.com/i12know/vaysf/issues/103)
+  - `_build_schedule_input()` now runs the greedy allocator (Stage A) when `venue_input.xlsx` is present with a `Gym-Modes` tab and gym blocks with `Exclusive Venue Group` set; falls back to the `SCHEDULE_SOLVER_GYM_COURTS` constant when not
+  - New `_build_gym_resources_from_allocator(decisions)`: converts `AllocationDecision` objects into `schedule_input.json` resources with day-aware IDs (`GYM-{day}-{n}`), `exclusive_group` set to the gym name, and the allocator-assigned `resource_type`
+  - `_load_venue_input_rows()` now reads the `Day` column (if present) and uses day-aware resource IDs: `BAD-Sat-1-1`, `PIC-Sun-1-1`, etc.  Falls back to `"Day-1"` when the column is absent.  Counter is keyed by `(resource_type, day)` so courts on different days are numbered independently
+  - `GYM_RESOURCE_TYPE` (`"Gym Court"`) split into `GYM_RESOURCE_TYPE_BASKETBALL = "Basketball Court"` and `GYM_RESOURCE_TYPE_VOLLEYBALL = "Volleyball Court"` in `config.py`; `_build_gym_game_objects()` assigns these specific types per sport
+  - `_build_gym_resource_objects()` signature changed from `(n_courts)` to `(n_basketball, n_volleyball)` for the fallback path; basketball courts numbered first within each session
+  - `AllocationDecision` dataclass gains `slot_minutes: int = 60` field (populated from the source `GymBlock`)
+  - New `Gym-Allocation` tab added as 7th tab in `Schedule_Workbook_*.xlsx`; shows allocation decisions, mode demand vs supply, and shortfall table (or a fallback note when the allocator did not run)
+  - `gym_allocation` key added to `schedule_input.json`; carries full allocator output or `{"source": "fallback", ...}` when the constant-based fallback was used
+  - `generate_venue_template()` regenerated: new `Day` and `Exclusive Venue Group` columns in `Venue-Input`; new `Gym-Modes` and `Playoff-Slots` sheets with example rows; `SportsFest_2026_Venue_Input_Template.xlsx` updated accordingly
+  - `docs/SCHEDULING.md`, `docs/SCHEDULE-HOW-TO.md`, and `CHANGELOG.md` updated
+
+- Added greedy gym mode allocator (`middleware/gym_allocator.py`) — closes [#102](https://github.com/i12know/vaysf/issues/102)
+  - New module implementing Layer-2, Stage A of the scheduling pipeline
+  - `allocate(demand, gym_modes, blocks)` — greedy priority allocator: ranks sport modes by court-hours demand (most-needed first), claims gym time-ranges until demand is met, prefers the gym with most courts for each mode, and breaks ties by switch penalty (avoids mode flips)
+  - `extract_gym_blocks(venue_rows)` — collapses expanded per-court venue rows into unique `GymBlock` objects keyed on `(exclusive_group, day, open_time, close_time, slot_minutes)`
+  - `aggregate_demand_by_mode(venue_capacity_rows)` — sums `Estimated Court Hours` per mode; Volleyball Men + Women aggregate under `"Volleyball Court"`, Pickleball + Pickleball 35+ under `"Pickleball Court"`; Table Tennis and Tennis are excluded (dedicated pod courts)
+  - `EVENT_TO_MODE` maps all gym-sport event names to their Gym-Modes resource type
+  - `AllocationResult` reports `decisions`, `mode_supply`, `mode_demand`, `mode_shortfall`, and `switch_count`
+  - Structural exclusivity guaranteed — no block is ever handed to two modes
+  - Graceful on demand > capacity: `mode_shortfall` carries the per-mode gap, no crash
+  - 32 unit tests in `tests/test_gym_allocator.py` covering: block extraction, demand aggregation, demand-fits, demand-exceeds-capacity, priority ordering, structural exclusivity, switch minimization, and preferred-gym selection
+
+### Removed
+- Dropped 6 scheduling tabs (`Venue-Estimator`, `Pod-Divisions`, `Pod-Entries-Review`, `Court-Schedule-Sketch`, `Pod-Resource-Estimate`, `Schedule-Input`) from `Church_Team_Status_ALL_*.xlsx` — closes [#101](https://github.com/i12know/vaysf/issues/101)
+  - `export-church-teams` still writes `schedule_input.json` alongside the ALL workbook for `solve-schedule` and `build-schedule-workbook`
+  - All 6 tabs remain available via `python main.py build-schedule-workbook` → `Schedule_Workbook_*.xlsx`
+  - `docs/SCHEDULING.md` and `docs/SCHEDULE-HOW-TO.md` updated: transition note removed; Step 1 description and resource-ID lookup instructions updated to point operators to `build-schedule-workbook`
+
 ### Breaking Changes / Refactor
 - Solver now handles **pool play only**; playoffs managed via Playoff-Slots tab in `venue_input.xlsx`
   - Gym sport playoff games (QF/Semi/Final/3rd) removed from `schedule_input.json` `games` array — `_build_gym_game_objects()` now emits pool-play games only

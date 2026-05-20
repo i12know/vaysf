@@ -31,7 +31,7 @@ def _minimal_schedule_input() -> dict:
                 "team_a_id": "BBM-P1-T1",
                 "team_b_id": "BBM-P1-T2",
                 "duration_minutes": 60,
-                "resource_type": "Gym Court",
+                "resource_type": "Basketball Court",
                 "earliest_slot": None,
                 "latest_slot": None,
             },
@@ -44,7 +44,7 @@ def _minimal_schedule_input() -> dict:
                 "team_a_id": "BBM-P1-T3",
                 "team_b_id": "BBM-P1-T4",
                 "duration_minutes": 60,
-                "resource_type": "Gym Court",
+                "resource_type": "Basketball Court",
                 "earliest_slot": None,
                 "latest_slot": None,
             },
@@ -52,7 +52,7 @@ def _minimal_schedule_input() -> dict:
         "resources": [
             {
                 "resource_id": "GYM-Sat-1-1",
-                "resource_type": "Gym Court",
+                "resource_type": "Basketball Court",
                 "label": "Court-1",
                 "day": "Sat-1",
                 "open_time": "08:00",
@@ -191,6 +191,19 @@ def test_main_build_schedule_workbook_missing_input_fails(monkeypatch, tmp_path)
     )
 
     _run_main_expect_exit(1)
+
+
+def test_generate_venue_template_example_dates_match_day_labels(tmp_path):
+    out_path = tmp_path / "venue_template.xlsx"
+
+    assert main.generate_venue_template(out_path) is True
+
+    wb = load_workbook(out_path)
+    ws = wb["Venue-Input"]
+    assert ws["E2"].value == "Sat-1"
+    assert ws["F2"].value == "2026-07-18"
+    assert ws["E4"].value == "Sun-1"
+    assert ws["F4"].value == "2026-07-19"
 
 
 def test_main_solve_schedule_uses_default_paths(mocker, monkeypatch, tmp_path):

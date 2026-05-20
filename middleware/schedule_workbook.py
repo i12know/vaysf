@@ -40,6 +40,8 @@ from config import (
     SCHEDULE_SKETCH_COLOR_SECTION,
     SCHEDULE_SKETCH_COLOR_HEADER,
     GYM_RESOURCE_TYPE,
+    GYM_RESOURCE_TYPE_BASKETBALL,
+    GYM_RESOURCE_TYPE_VOLLEYBALL,
     SCHEDULE_SOLVER_GYM_COURTS,
     VENUE_INPUT_FILENAME,
     POD_RESOURCE_EVENT_TYPE,
@@ -584,7 +586,9 @@ class ScheduleWorkbookBuilder:
     # ── Schedule-Input JSON builders ─────────────────────────────────────────
 
     def _build_gym_game_objects(
-        self, roster_rows: List[Dict[str, Any]]
+        self,
+        roster_rows: List[Dict[str, Any]],
+        allow_placeholder_fallback: bool = True,
     ) -> List[Dict[str, Any]]:
         """Return pool-play game placeholder dicts for gym sports (Basketball, VB Men, VB Women).
 
@@ -594,19 +598,29 @@ class ScheduleWorkbookBuilder:
 
         Playoff games (QF/Semi/Final/3rd) are pre-assigned via the Playoff-Slots
         tab in venue_input.xlsx and are not included here.
+
+        When allow_placeholder_fallback is True, sports with fewer than two
+        estimating teams fall back to the legacy 8-team planning scaffold so
+        offline sketching still works without venue data. When False, those
+        sports are omitted from the solver input entirely.
         """
         sport_defs = [
-            (SPORT_TYPE["BASKETBALL"],       "BBM"),
-            (SPORT_TYPE["VOLLEYBALL_MEN"],   "VBM"),
-            (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW"),
+            (SPORT_TYPE["BASKETBALL"],       "BBM", GYM_RESOURCE_TYPE_BASKETBALL),
+            (SPORT_TYPE["VOLLEYBALL_MEN"],   "VBM", GYM_RESOURCE_TYPE_VOLLEYBALL),
+            (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW", GYM_RESOURCE_TYPE_VOLLEYBALL),
         ]
         mpg = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
         games: List[Dict[str, Any]] = []
 
-        for event_name, prefix in sport_defs:
+        for event_name, prefix, resource_type in sport_defs:
             min_sz = self._get_min_team_size(event_name)
             counts = self._count_estimating_teams(roster_rows, event_name, min_sz)
-            n_teams = counts["n_estimating"] if counts["n_estimating"] >= 2 else 8
+            if counts["n_estimating"] >= 2:
+                n_teams = counts["n_estimating"]
+            elif allow_placeholder_fallback:
+                n_teams = 8
+            else:
+                continue
             gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(
                 event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
             )
@@ -623,7 +637,7 @@ class ScheduleWorkbookBuilder:
                     "team_a_id": team_a_id,
                     "team_b_id": team_b_id,
                     "duration_minutes": mpg,
-                    "resource_type": GYM_RESOURCE_TYPE,
+                    "resource_type": resource_type,
                     "earliest_slot": None,
                     "latest_slot":   None,
                 })
@@ -670,12 +684,16 @@ class ScheduleWorkbookBuilder:
         return games
 
     @staticmethod
-    def _build_gym_resource_objects(n_courts: int = 4) -> List[Dict[str, Any]]:
-        """Return one resource object per (session × court) for gym sports.
+    def _build_gym_resource_objects(
+        n_basketball: int = 2,
+        n_volleyball: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """Fallback gym resource builder (no venue_input.xlsx).
 
-        Four sessions: 1st Saturday, 1st Sunday, 2nd Saturday, 2nd Sunday.
-        Time windows are taken from SCHEDULE_SKETCH_* config constants.
-        close_time = last game start + slot_minutes (one slot after last start).
+        Generates n_basketball + n_volleyball resources per session across four
+        sessions (Sat-1, Sun-1, Sat-2, Sun-2) using SCHEDULE_SKETCH_* time
+        windows.  Basketball courts are numbered first within each session,
+        volleyball courts second.
         """
         mpg = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
         close_sat = f"{SCHEDULE_SKETCH_SATURDAY_LAST_GAME + mpg // 60:02d}:00"
@@ -686,18 +704,58 @@ class ScheduleWorkbookBuilder:
             ("Sat-2", f"{SCHEDULE_SKETCH_SATURDAY_START:02d}:00", close_sat),
             ("Sun-2", f"{SCHEDULE_SKETCH_SUNDAY_START:02d}:00",   close_sun),
         ]
+        type_blocks = [
+            (GYM_RESOURCE_TYPE_BASKETBALL, n_basketball),
+            (GYM_RESOURCE_TYPE_VOLLEYBALL, n_volleyball),
+        ]
         resources: List[Dict[str, Any]] = []
         for day_label, open_time, close_time in sessions:
-            for c in range(1, n_courts + 1):
+            c = 0
+            for rtype, count in type_blocks:
+                for local in range(1, count + 1):
+                    c += 1
+                    resources.append({
+                        "resource_id":     f"GYM-{day_label}-{c}",
+                        "resource_type":   rtype,
+                        "label":           f"Court-{c}",
+                        "day":             day_label,
+                        "open_time":       open_time,
+                        "close_time":      close_time,
+                        "slot_minutes":    mpg,
+                        "exclusive_group": "",
+                    })
+        return resources
+
+    @staticmethod
+    def _build_gym_resources_from_allocator(decisions) -> List[Dict[str, Any]]:
+        """Convert Stage-A AllocationDecision objects into schedule_input resources.
+
+        Courts within each decision are numbered per-day sequentially so that
+        resource IDs remain stable across re-runs with the same venue configuration.
+        """
+        resources: List[Dict[str, Any]] = []
+        court_counter: Dict[str, int] = {}  # day → running counter
+
+        # Sort for ID stability: day order, then open_time, then gym name.
+        from gym_allocator import _DAY_ORDER
+        sorted_decisions = sorted(
+            decisions,
+            key=lambda d: (_DAY_ORDER.get(d.day, 99), d.open_time, d.gym_name),
+        )
+        for decision in sorted_decisions:
+            day = decision.day
+            for local in range(1, decision.courts + 1):
+                court_counter[day] = court_counter.get(day, 0) + 1
+                n = court_counter[day]
                 resources.append({
-                    "resource_id":   f"GYM-{day_label}-{c}",
-                    "resource_type": GYM_RESOURCE_TYPE,
-                    "label":         f"Court-{c}",
-                    "day":           day_label,
-                    "open_time":     open_time,
-                    "close_time":    close_time,
-                    "slot_minutes":  mpg,
-                    "exclusive_group": "",
+                    "resource_id":     f"GYM-{day}-{n}",
+                    "resource_type":   decision.mode,
+                    "label":           f"Court-{local}",
+                    "day":             day,
+                    "open_time":       decision.open_time,
+                    "close_time":      decision.close_time,
+                    "slot_minutes":    decision.slot_minutes,
+                    "exclusive_group": decision.gym_name,
                 })
         return resources
 
@@ -736,7 +794,9 @@ class ScheduleWorkbookBuilder:
             return []
 
         rows: List[Dict[str, Any]] = []
-        resource_counts: Dict[str, int] = {}
+        # Counter keyed by (resource_type, day) for day-aware resource IDs.
+        resource_counts: Dict[tuple, int] = {}
+        has_day_col = "Day" in df.columns
 
         for _, row in df.iterrows():
             resource_type = ScheduleWorkbookBuilder._clean_excel_text(row.get("Resource Type"))
@@ -748,6 +808,11 @@ class ScheduleWorkbookBuilder:
             exclusive_group = ScheduleWorkbookBuilder._clean_excel_text(
                 row.get("Exclusive Venue Group")
             )
+            # Day column: use value from sheet when present, fall back to "Day-1".
+            if has_day_col:
+                day = ScheduleWorkbookBuilder._clean_excel_text(row.get("Day")) or "Day-1"
+            else:
+                day = "Day-1"
             qty = max(1, int(ScheduleWorkbookBuilder._float_from_excel(row.get("Quantity"), 1)))
             slot_min = max(1, int(ScheduleWorkbookBuilder._float_from_excel(row.get("Slot Minutes"), 60)))
             start = ScheduleWorkbookBuilder._parse_hour(row.get("Start Time"))
@@ -757,7 +822,8 @@ class ScheduleWorkbookBuilder:
             close_time = f"{int(close_decimal):02d}:{int(round((close_decimal % 1) * 60)):02d}"
 
             abbrev = resource_type.split()[0][:3].upper()
-            rc = resource_counts.get(resource_type, 0)
+            count_key = (resource_type, day)
+            rc = resource_counts.get(count_key, 0)
 
             for i in range(1, qty + 1):
                 rc += 1
@@ -765,16 +831,16 @@ class ScheduleWorkbookBuilder:
                     f"Table-{i}" if "table" in resource_type.lower() else f"Court-{i}"
                 )
                 rows.append({
-                    "resource_id":     f"{abbrev}-{rc}",
+                    "resource_id":     f"{abbrev}-{day}-{rc}",
                     "resource_type":   resource_type,
                     "label":           label,
-                    "day":             "Day-1",
+                    "day":             day,
                     "open_time":       open_time,
                     "close_time":      close_time,
                     "slot_minutes":    slot_min,
                     "exclusive_group": exclusive_group,
                 })
-            resource_counts[resource_type] = rc
+            resource_counts[count_key] = rc
 
         logger.debug(f"Loaded {len(rows)} venue resource rows from {venue_input_path}")
         return rows
@@ -909,22 +975,105 @@ class ScheduleWorkbookBuilder:
         """Assemble the full schedule_input package consumed by OR-Tools.
 
         Returns a dict with keys: generated_at, gym_court_scenario, game_count,
-        resource_count, games, resources, playoff_slots, gym_modes.
+        resource_count, games, resources, playoff_slots, gym_modes, gym_allocation.
 
-        Gym resources are built from the explicit SCHEDULE_SOLVER_GYM_COURTS
-        constant (config.py) so the solver knows exactly which court scenario
-        was chosen for this run.
+        When venue_input.xlsx is present with a Gym-Modes tab, the Layer-2
+        Stage-A greedy allocator runs and produces real gym resources keyed to
+        the booked venue.  Otherwise falls back to the SCHEDULE_SOLVER_GYM_COURTS
+        constant split evenly between basketball and volleyball when no explicit
+        venue rows exist. If venue rows exist but the allocator cannot run, the
+        explicit Venue-Input rows are used directly.
         """
-        gym_games = self._build_gym_game_objects(roster_rows)
+        from gym_allocator import (
+            aggregate_demand_by_mode, extract_gym_blocks, allocate,
+        )
+        gym_modes = self._load_gym_modes(venue_input_path)
+        venue_rows = self._load_venue_input_rows(venue_input_path)
+        gym_blocks = extract_gym_blocks(venue_rows)
+        explicit_gym_resource_types = {
+            GYM_RESOURCE_TYPE_BASKETBALL,
+            GYM_RESOURCE_TYPE_VOLLEYBALL,
+        }
+        has_explicit_gym_rows = any(
+            resource.get("resource_type") in explicit_gym_resource_types
+            for resource in venue_rows
+        )
+        gym_resource_strategy = (
+            "allocator"
+            if gym_blocks and gym_modes
+            else "direct_venue_input"
+            if has_explicit_gym_rows
+            else "fallback"
+        )
+
+        gym_games = self._build_gym_game_objects(
+            roster_rows,
+            allow_placeholder_fallback=(gym_resource_strategy == "fallback"),
+        )
         pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
         all_games = gym_games + pod_games
 
-        gym_resources = self._build_gym_resource_objects(SCHEDULE_SOLVER_GYM_COURTS)
-        pod_resources = self._load_venue_input_rows(venue_input_path)
-        all_resources = gym_resources + pod_resources
+        gym_allocation: Optional[Dict[str, Any]] = None
+        if gym_resource_strategy == "allocator":
+            venue_capacity_rows = self._build_venue_capacity_rows(roster_rows)
+            demand = aggregate_demand_by_mode(venue_capacity_rows)
+            alloc_result = allocate(demand, gym_modes, gym_blocks)
+            gym_resources = self._build_gym_resources_from_allocator(alloc_result.decisions)
+            direct_resources = [r for r in venue_rows if not r.get("exclusive_group")]
+            all_resources = gym_resources + direct_resources
+            gym_allocation = {
+                "source":        "allocator",
+                "decisions":     [
+                    {
+                        "gym_name":     d.gym_name,
+                        "day":          d.day,
+                        "open_time":    d.open_time,
+                        "close_time":   d.close_time,
+                        "mode":         d.mode,
+                        "courts":       d.courts,
+                        "slot_minutes": d.slot_minutes,
+                    }
+                    for d in alloc_result.decisions
+                ],
+                "mode_supply":    alloc_result.mode_supply,
+                "mode_demand":    alloc_result.mode_demand,
+                "mode_shortfall": alloc_result.mode_shortfall,
+                "switch_count":   alloc_result.switch_count,
+            }
+            logger.info(
+                f"Gym allocation (Stage A): {len(alloc_result.decisions)} blocks assigned, "
+                f"{alloc_result.switch_count} mode switches"
+            )
+        elif gym_resource_strategy == "direct_venue_input":
+            all_resources = venue_rows
+            if gym_blocks and not gym_modes:
+                reason = "grouped_rows_without_gym_modes"
+                logger.warning(
+                    "Gym allocation skipped: Venue-Input contains Exclusive Venue Group rows "
+                    "but no Gym-Modes tab. Using Venue-Input rows directly; mutual exclusivity "
+                    "is not enforced in this mode."
+                )
+            elif gym_modes and not gym_blocks:
+                reason = "gym_modes_without_grouped_rows"
+                logger.info(
+                    "Gym allocation skipped: Gym-Modes tab is present but no Exclusive Venue "
+                    "Group rows were found. Using Venue-Input rows directly."
+                )
+            else:
+                reason = "explicit_venue_rows_without_allocator"
+            gym_allocation = {"source": "direct_venue_input", "reason": reason}
+        else:
+            n_bb = SCHEDULE_SOLVER_GYM_COURTS // 2
+            n_vb = SCHEDULE_SOLVER_GYM_COURTS - n_bb
+            gym_resources = self._build_gym_resource_objects(n_bb, n_vb)
+            all_resources = gym_resources + venue_rows
+            gym_allocation = {"source": "fallback", "gym_court_scenario": SCHEDULE_SOLVER_GYM_COURTS}
+            logger.info(
+                f"Gym allocation: fallback mode — {n_bb} basketball + {n_vb} volleyball courts "
+                f"per session (SCHEDULE_SOLVER_GYM_COURTS={SCHEDULE_SOLVER_GYM_COURTS})"
+            )
 
         playoff_slots = self._load_playoff_slots(venue_input_path)
-        gym_modes = self._load_gym_modes(venue_input_path)
 
         return {
             "generated_at":       datetime.now().isoformat(timespec="seconds"),
@@ -935,6 +1084,7 @@ class ScheduleWorkbookBuilder:
             "resources":          all_resources,
             "playoff_slots":      playoff_slots,
             "gym_modes":          gym_modes,
+            "gym_allocation":     gym_allocation,
         }
 
     @staticmethod
@@ -1010,6 +1160,100 @@ class ScheduleWorkbookBuilder:
 
         # Column widths
         col_widths = [20, 30, 10, 10, 8, 16, 16, 18, 22, 14, 12]
+        for i, w in enumerate(col_widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+    @staticmethod
+    def _write_gym_allocation_tab(ws, gym_allocation: Optional[Dict[str, Any]]) -> None:
+        """Write the Gym-Allocation tab summarising the Stage-A allocator output."""
+        from openpyxl.styles import PatternFill, Font, Alignment
+        from openpyxl.utils import get_column_letter
+
+        hdr_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_HEADER, fill_type="solid")
+        hdr_font = Font(bold=True, color="FFFFFF")
+        sec_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_SECTION, fill_type="solid")
+        sec_font = Font(bold=True)
+        cur_row = [1]  # mutable so nested fn can advance it
+
+        def _hrow(label: str) -> None:
+            cell = ws.cell(row=cur_row[0], column=1, value=label)
+            cell.fill = sec_fill
+            cell.font = sec_font
+            cur_row[0] += 1
+
+        def _header_row(cols: List[str]) -> None:
+            for c_idx, col in enumerate(cols, start=1):
+                cell = ws.cell(row=cur_row[0], column=c_idx, value=col)
+                cell.fill = hdr_fill
+                cell.font = hdr_font
+                cell.alignment = Alignment(horizontal="center")
+            cur_row[0] += 1
+
+        def _data_row(cols: List[str], data: Dict) -> None:
+            for c_idx, col in enumerate(cols, start=1):
+                ws.cell(row=cur_row[0], column=c_idx, value=data.get(col))
+            cur_row[0] += 1
+
+        source = gym_allocation.get("source") if gym_allocation else None
+        if not gym_allocation or source in ("fallback", "direct_venue_input"):
+            if not gym_allocation:
+                message = "Gym allocation data not available."
+            elif source == "fallback":
+                message = (
+                    "Gym allocation not run — no Gym-Modes tab or no venue blocks with "
+                    "Exclusive Venue Group found in venue_input.xlsx.  "
+                    f"Fallback: {gym_allocation.get('gym_court_scenario', '?')} courts per session "
+                    "(SCHEDULE_SOLVER_GYM_COURTS)."
+                )
+            elif gym_allocation.get("reason") == "grouped_rows_without_gym_modes":
+                message = (
+                    "Gym allocation not run — Venue-Input contains Exclusive Venue Group rows "
+                    "but no Gym-Modes tab. Using Venue-Input rows directly, so mutual exclusivity "
+                    "is not enforced."
+                )
+            elif gym_allocation.get("reason") == "gym_modes_without_grouped_rows":
+                message = (
+                    "Gym allocation not run — Gym-Modes tab is present but no Exclusive Venue "
+                    "Group rows were found. Using Venue-Input rows directly."
+                )
+            else:
+                message = "Gym allocation not run — using Venue-Input rows directly."
+            ws.cell(
+                row=1, column=1,
+                value=message,
+            )
+            ws.column_dimensions["A"].width = 80
+            return
+
+        source = gym_allocation.get("source", "unknown")
+        ws.cell(row=cur_row[0], column=1, value=f"Source: {source}").font = sec_font
+        ws.cell(row=cur_row[0], column=2, value=f"Mode switches: {gym_allocation.get('switch_count', '?')}")
+        cur_row[0] += 2
+
+        # Decisions
+        _hrow("ALLOCATION DECISIONS")
+        dec_cols = ["gym_name", "day", "open_time", "close_time", "mode", "courts", "slot_minutes"]
+        _header_row(dec_cols)
+        for dec in gym_allocation.get("decisions", []):
+            _data_row(dec_cols, dec)
+        cur_row[0] += 1
+
+        # Demand vs supply
+        _hrow("MODE DEMAND vs SUPPLY")
+        ds_cols = ["mode", "demand", "supply", "shortfall"]
+        _header_row(ds_cols)
+        demand = gym_allocation.get("mode_demand", {})
+        supply = gym_allocation.get("mode_supply", {})
+        shortfall = gym_allocation.get("mode_shortfall", {})
+        for mode in sorted(demand):
+            _data_row(ds_cols, {
+                "mode":      mode,
+                "demand":    demand.get(mode, 0),
+                "supply":    supply.get(mode, 0),
+                "shortfall": shortfall.get(mode, 0),
+            })
+
+        col_widths = [22, 8, 10, 10, 22, 8, 14, 10, 10, 10]
         for i, w in enumerate(col_widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -1942,7 +2186,7 @@ class ScheduleWorkbookBuilder:
             day_label = _DAY_DISPLAY.get(day, day)
             if (
                 day in _DAY_DISPLAY
-                and resource_type == GYM_RESOURCE_TYPE
+                and resource_type in (GYM_RESOURCE_TYPE, GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL)
                 and group_counts_by_day.get(day, 0) == 1
             ):
                 return day_label
@@ -2256,6 +2500,10 @@ class ScheduleWorkbookBuilder:
             # Schedule-Input tab (openpyxl native — echo of the JSON)
             si_ws = writer.book.create_sheet(title="Schedule-Input")
             self._write_schedule_input_tab(si_ws, schedule_input)
+
+            # Gym-Allocation tab (openpyxl native — Stage-A allocator summary)
+            gym_alloc_ws = writer.book.create_sheet(title="Gym-Allocation")
+            self._write_gym_allocation_tab(gym_alloc_ws, schedule_input.get("gym_allocation"))
 
         logger.info(f"Schedule workbook written to: {output_path}")
 

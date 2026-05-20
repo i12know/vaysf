@@ -76,6 +76,7 @@ def test_church_teams_exporter_schedule_methods_delegate_to_builder():
         "_write_schedule_input_tab",
         "_build_schedule_output_flat_rows",
         "_write_schedule_output_report",
+        "_build_gym_resources_from_allocator",
         "write_schedule_input_json",
         "write_schedule_workbook",
         "write_schedule_output_workbook",
@@ -105,7 +106,7 @@ def test_write_schedule_input_json_writes_file(tmp_path):
 
 
 def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
-    """The planning workbook entry point should always create the six schedule tabs."""
+    """The planning workbook entry point should always create the seven schedule tabs."""
     builder = ScheduleWorkbookBuilder()
     roster_rows = _make_gym_roster()
     schedule_input = builder.write_schedule_input_json(
@@ -132,6 +133,7 @@ def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
         "Court-Schedule-Sketch",
         "Pod-Resource-Estimate",
         "Schedule-Input",
+        "Gym-Allocation",
     ]
 
 
@@ -942,8 +944,10 @@ def test_build_gym_game_objects_structure():
     }
     for g in games:
         assert required_fields <= g.keys(), f"Missing fields in {g}"
-    from config import GYM_RESOURCE_TYPE
-    assert all(g["resource_type"] == GYM_RESOURCE_TYPE for g in games)
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+    valid_types = {GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL}
+    assert all(g["resource_type"] in valid_types for g in games), \
+        f"Unexpected resource_type(s): {[g['resource_type'] for g in games]}"
     # team_a_id and team_b_id must be non-null strings for all games (pool + playoff)
     assert all(
         isinstance(g["team_a_id"], str) and isinstance(g["team_b_id"], str)
@@ -1012,14 +1016,102 @@ def test_build_gym_game_objects_team_id_format():
 
 
 def test_build_schedule_input_gym_court_scenario(tmp_path):
-    """gym_court_scenario in schedule_input matches SCHEDULE_SOLVER_GYM_COURTS."""
-    from config import SCHEDULE_SOLVER_GYM_COURTS
+    """Fallback path: gym resources cover all four sessions split by basketball/volleyball."""
+    from config import SCHEDULE_SOLVER_GYM_COURTS, GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
     builder = ScheduleWorkbookBuilder()
     si = builder._build_schedule_input(_make_gym_roster(), [], tmp_path / "missing.xlsx")
     assert si["gym_court_scenario"] == SCHEDULE_SOLVER_GYM_COURTS
-    gym_resources = [r for r in si["resources"] if r["resource_type"] == "Gym Court"]
+    gym_resources = [r for r in si["resources"] if r["resource_type"] in (GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL)]
     n_sessions = 4  # Sat-1, Sun-1, Sat-2, Sun-2
     assert len(gym_resources) == SCHEDULE_SOLVER_GYM_COURTS * n_sessions
+    # Allocation source should be "fallback" when venue_input.xlsx is absent
+    assert si.get("gym_allocation", {}).get("source") == "fallback"
+
+
+def test_build_schedule_input_legacy_venue_rows_do_not_add_fallback_gyms(tmp_path):
+    """Legacy Venue-Input rows should be used directly instead of adding fallback gym courts."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL,
+         1, "2026-07-18", 8, 10, 60, None, None, None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    assert si["gym_allocation"]["source"] == "direct_venue_input"
+    assert si["resource_count"] == 1
+    assert {g["resource_type"] for g in si["games"]} == {GYM_RESOURCE_TYPE_BASKETBALL}
+    assert [r["resource_type"] for r in si["resources"]] == [GYM_RESOURCE_TYPE_BASKETBALL]
+    assert si["resources"][0]["day"] == "Day-1"
+
+
+def test_build_schedule_input_grouped_rows_without_gym_modes_use_direct_resources(tmp_path):
+    """Grouped venue rows should not be dropped when Gym-Modes is missing."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sat-1",
+         "2026-07-18", 8, 12, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 12, 60, None, "Main Gym", None, None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    assert si["gym_allocation"]["source"] == "direct_venue_input"
+    assert si["gym_allocation"]["reason"] == "grouped_rows_without_gym_modes"
+    assert {r["resource_type"] for r in si["resources"]} == {
+        GYM_RESOURCE_TYPE_BASKETBALL,
+        GYM_RESOURCE_TYPE_VOLLEYBALL,
+    }
+    assert {g["resource_type"] for g in si["games"]} == {GYM_RESOURCE_TYPE_BASKETBALL}
+
+
+def test_build_schedule_input_allocator_omits_zero_team_gym_sports(tmp_path):
+    """Allocator-backed schedule input should omit placeholder sports with no estimating teams."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sat-1",
+         "2026-07-18", 8, 12, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 12, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 1, 2],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows, gym_modes_rows=gym_modes)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    assert si["gym_allocation"]["source"] == "allocator"
+    assert {g["resource_type"] for g in si["games"]} == {GYM_RESOURCE_TYPE_BASKETBALL}
+    assert {r["resource_type"] for r in si["resources"]} == {GYM_RESOURCE_TYPE_BASKETBALL}
 
 
 def test_build_pod_game_objects_single_elimination():
@@ -1054,18 +1146,23 @@ def test_build_pod_game_objects_skips_empty_divisions():
 
 
 def test_build_gym_resource_objects_count():
-    """4 sessions × n_courts resources are returned."""
-    resources = ScheduleWorkbookBuilder._build_gym_resource_objects(n_courts=4)
+    """4 sessions × (n_basketball + n_volleyball) resources are returned."""
+    resources = ScheduleWorkbookBuilder._build_gym_resource_objects(n_basketball=2, n_volleyball=2)
     assert len(resources) == 16, f"Expected 4 sessions × 4 courts = 16, got {len(resources)}"
-    from config import GYM_RESOURCE_TYPE
-    assert all(r["resource_type"] == GYM_RESOURCE_TYPE for r in resources)
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+    valid_types = {GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL}
+    assert all(r["resource_type"] in valid_types for r in resources)
     days = {r["day"] for r in resources}
     assert days == {"Sat-1", "Sun-1", "Sat-2", "Sun-2"}
+    bb = [r for r in resources if r["resource_type"] == GYM_RESOURCE_TYPE_BASKETBALL]
+    vb = [r for r in resources if r["resource_type"] == GYM_RESOURCE_TYPE_VOLLEYBALL]
+    assert len(bb) == 8, f"Expected 4 sessions × 2 basketball courts = 8, got {len(bb)}"
+    assert len(vb) == 8, f"Expected 4 sessions × 2 volleyball courts = 8, got {len(vb)}"
 
 
 def test_build_gym_resource_objects_labels():
     """Court labels and resource_ids are formatted correctly."""
-    resources = ScheduleWorkbookBuilder._build_gym_resource_objects(n_courts=3)
+    resources = ScheduleWorkbookBuilder._build_gym_resource_objects(n_basketball=2, n_volleyball=1)
     labels = {r["label"] for r in resources}
     assert labels == {"Court-1", "Court-2", "Court-3"}
     ids = {r["resource_id"] for r in resources}
@@ -1075,7 +1172,7 @@ def test_build_gym_resource_objects_labels():
 
 def test_build_gym_resource_objects_include_blank_exclusive_group():
     """Gym resources carry the same exclusive_group field as venue-loaded resources."""
-    resources = ScheduleWorkbookBuilder._build_gym_resource_objects(n_courts=2)
+    resources = ScheduleWorkbookBuilder._build_gym_resource_objects(n_basketball=1, n_volleyball=1)
     assert resources
     assert all("exclusive_group" in r for r in resources)
     assert all(r["exclusive_group"] == "" for r in resources)
@@ -1295,7 +1392,7 @@ def test_build_schedule_input_keys(tmp_path):
     si = builder._build_schedule_input(_make_gym_roster(), [], tmp_path / "missing.xlsx")
     assert set(si.keys()) == {
         "generated_at", "gym_court_scenario", "game_count", "resource_count",
-        "games", "resources", "playoff_slots", "gym_modes",
+        "games", "resources", "playoff_slots", "gym_modes", "gym_allocation",
     }
     assert si["game_count"] == len(si["games"])
     assert si["resource_count"] == len(si["resources"])
