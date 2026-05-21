@@ -139,6 +139,23 @@ def _normalize_conflict_edge_counts(edge: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _game_team_ids(game: dict[str, Any]) -> list[str]:
+    """Return the distinct scheduled team IDs participating in one game."""
+    team_ids: list[str] = []
+    for key in ("team_a_id", "team_b_id", "team_c_id"):
+        team_id = str(game.get(key) or "").strip()
+        if team_id and team_id not in team_ids:
+            team_ids.append(team_id)
+
+    explicit_ids = game.get("team_ids") or []
+    if isinstance(explicit_ids, list):
+        for value in explicit_ids:
+            team_id = str(value or "").strip()
+            if team_id and team_id not in team_ids:
+                team_ids.append(team_id)
+    return team_ids
+
+
 def build_resource_slots(resources: list[dict]) -> dict[str, list[str]]:
     """Return {resource_id: [slot_label, ...]} from each resource's time window.
 
@@ -197,9 +214,8 @@ def build_conflict_audit(
             "slot": assignment.get("slot", ""),
             "resource_id": assignment.get("resource_id", ""),
         }
-        for team_id in (game.get("team_a_id"), game.get("team_b_id")):
-            if team_id:
-                games_by_team[str(team_id)].append(entry)
+        for team_id in _game_team_ids(game):
+            games_by_team[team_id].append(entry)
 
     rows: list[dict[str, Any]] = []
     separated_edges = 0
@@ -596,7 +612,7 @@ def _solve_one_pool(
     team_slot_vars: dict[tuple[str, str], list[Any]] = {}
     for gid, vd in game_vars.items():
         game     = game_meta[gid]
-        teams    = [t for t in (game.get("team_a_id"), game.get("team_b_id")) if t]
+        teams = _game_team_ids(game)
         duration = game["duration_minutes"]
         for (rid, t), var in vd.items():
             slots    = res_slots[rid]
@@ -626,12 +642,26 @@ def _solve_one_pool(
     team_global_assignments: dict[str, dict[int, list[Any]]] = {}
     for gid, vd in game_vars.items():
         game  = game_meta[gid]
-        teams = [t for t in (game.get("team_a_id"), game.get("team_b_id")) if t]
+        teams = _game_team_ids(game)
         for (rid, t), var in vd.items():
             label      = res_slots[rid][t]
             global_idx = slot_to_global[label]
             for team in teams:
                 team_global_assignments.setdefault(team, {}).setdefault(global_idx, []).append(var)
+
+    precedence_rules = pool_input.get("precedence", []) or []
+    for rule in precedence_rules:
+        before_game_id = str(rule.get("before_game_id") or "").strip()
+        after_game_id = str(rule.get("after_game_id") or "").strip()
+        if not before_game_id or not after_game_id:
+            continue
+        if before_game_id not in game_global_slot or after_game_id not in game_global_slot:
+            continue
+        min_gap_slots = max(int(rule.get("min_gap_slots") or 1), 1)
+        model.Add(
+            game_global_slot[after_game_id]
+            >= game_global_slot[before_game_id] + min_gap_slots
+        )
 
     for team, by_idx in team_global_assignments.items():
         for g_idx, vars_at_g in by_idx.items():
@@ -660,21 +690,11 @@ def _solve_one_pool(
         ordered_game_ids = [g["game_id"] for g in games]
         for idx, gid_a in enumerate(ordered_game_ids):
             teams_a = [
-                t
-                for t in (
-                    game_meta[gid_a].get("team_a_id"),
-                    game_meta[gid_a].get("team_b_id"),
-                )
-                if t
+                t for t in _game_team_ids(game_meta[gid_a])
             ]
             for gid_b in ordered_game_ids[idx + 1:]:
                 teams_b = [
-                    t
-                    for t in (
-                        game_meta[gid_b].get("team_a_id"),
-                        game_meta[gid_b].get("team_b_id"),
-                    )
-                    if t
+                    t for t in _game_team_ids(game_meta[gid_b])
                 ]
                 primary_weight = 0
                 secondary_weight = 0
@@ -966,19 +986,34 @@ def solve(
 
     team_conflicts = schedule_input.get("team_conflicts", []) or []
     team_conflicts_by_pool: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    precedence_by_pool: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    game_pool_by_id: dict[str, str] = {}
+    for pool_key, pool_games in games_by_pool.items():
+        for game in pool_games:
+            game_id = str(game.get("game_id") or "").strip()
+            if game_id:
+                game_pool_by_id[game_id] = pool_key
     if team_conflicts:
         game_pool_by_team: dict[str, str] = {}
         for pool_key, pool_games in games_by_pool.items():
             for game in pool_games:
-                for team_id in (game.get("team_a_id"), game.get("team_b_id")):
-                    if team_id:
-                        game_pool_by_team[str(team_id)] = pool_key
+                for team_id in _game_team_ids(game):
+                    game_pool_by_team[team_id] = pool_key
         for edge in team_conflicts:
             team_a_id = str(edge.get("team_a_id") or "").strip()
             team_b_id = str(edge.get("team_b_id") or "").strip()
             pool_key = game_pool_by_team.get(team_a_id)
             if pool_key and pool_key == game_pool_by_team.get(team_b_id):
                 team_conflicts_by_pool[pool_key].append(edge)
+
+    for rule in schedule_input.get("precedence", []) or []:
+        before_game_id = str(rule.get("before_game_id") or "").strip()
+        after_game_id = str(rule.get("after_game_id") or "").strip()
+        if not before_game_id or not after_game_id:
+            continue
+        pool_key = game_pool_by_id.get(before_game_id)
+        if pool_key and pool_key == game_pool_by_id.get(after_game_id):
+            precedence_by_pool[pool_key].append(rule)
 
     if not games_by_pool:
         return {
@@ -991,6 +1026,7 @@ def solve(
                 "total_edges": 0,
                 "separated_edges": 0,
                 "overlapping_edges": 0,
+                "planning_only_edges": 0,
                 "incomplete_edges": 0,
                 "remaining_primary_overlap_penalty": 0,
                 "remaining_secondary_overlap_penalty": 0,
@@ -1009,6 +1045,7 @@ def solve(
             "resources":     resources_by_pool.get(pool_key, []),
             "blocked_slots": blocked_slots_by_pool.get(pool_key, {}),
             "team_conflicts": team_conflicts_by_pool.get(pool_key, []),
+            "precedence": precedence_by_pool.get(pool_key, []),
         }
         result = _solve_one_pool(pool_input, timeout_seconds)
         result["resource_type"] = pool_key

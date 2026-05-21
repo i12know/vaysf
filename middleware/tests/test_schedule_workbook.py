@@ -4,7 +4,7 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from church_teams_export import ChurchTeamsExporter
-from config import SPORT_TYPE
+from config import SPORT_TYPE, TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE
 from schedule_workbook import ScheduleWorkbookBuilder
 
 
@@ -1753,7 +1753,7 @@ def test_build_schedule_input_keys(tmp_path):
     assert set(si.keys()) == {
         "generated_at", "gym_court_scenario", "game_count", "resource_count",
         "games", "resources", "playoff_slots", "gym_modes", "gym_allocation",
-        "team_conflicts",
+        "team_conflicts", "precedence",
     }
     assert si["game_count"] == len(si["games"])
     assert si["resource_count"] == len(si["resources"])
@@ -2051,6 +2051,68 @@ def test_write_schedule_output_report_tab2_flat_list(tmp_path):
     assert ws.cell(row=1, column=1).value == "game_id"
     assert ws.cell(row=2, column=1).value == "BBM-01"    # Pool comes first
     assert ws.cell(row=3, column=1).value == "BBM-Final"
+
+
+def test_write_schedule_output_report_renders_three_team_bc_cell(tmp_path):
+    """Schedule-by-Time should render BC Jeopardy games with all three team labels."""
+    import openpyxl
+
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "BC-P1-RR-1",
+                "event": SPORT_TYPE["BIBLE_CHALLENGE"],
+                "stage": "Pool",
+                "pool_id": "P1",
+                "round": 1,
+                "team_a_id": "BC::RPC",
+                "team_b_id": "BC::ANH",
+                "team_c_id": "BC::OCB",
+                "team_a_label": "RPC",
+                "team_b_label": "ANH",
+                "team_c_label": "OCB",
+                "duration_minutes": 60,
+                "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                "earliest_slot": None,
+                "latest_slot": None,
+            }
+        ],
+        "resources": [
+            {
+                "resource_id": "BC-Sat-1-1",
+                "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                "label": "BC-1",
+                "day": "Sat-1",
+                "open_time": "08:00",
+                "close_time": "10:00",
+                "slot_minutes": 60,
+                "exclusive_group": "",
+            }
+        ],
+        "playoff_slots": [],
+        "precedence": [],
+    }
+    schedule_output = {
+        "solved_at": "2026-05-01T10:00:00",
+        "status": "OPTIMAL",
+        "solver_wall_seconds": 0.1,
+        "assignments": [
+            {"game_id": "BC-P1-RR-1", "resource_id": "BC-Sat-1-1", "slot": "Sat-1-08:00"}
+        ],
+        "unscheduled": [],
+        "conflict_audit_summary": {},
+        "conflict_audit": [],
+    }
+
+    out = tmp_path / "bc_sched.xlsx"
+    ScheduleWorkbookBuilder._write_schedule_output_report(out, schedule_output, schedule_input)
+    ws = openpyxl.load_workbook(out)["Schedule-by-Time"]
+    all_values = [
+        ws.cell(row=r, column=c).value
+        for r in range(1, ws.max_row + 1)
+        for c in range(1, ws.max_column + 1)
+    ]
+    assert any("RPC / ANH / OCB" in str(value) for value in all_values if value)
 
 
 def test_write_schedule_output_report_tab3_conflict_audit(tmp_path):
@@ -2455,14 +2517,54 @@ def test_bc_cross_sport_conflict_edge_with_basketball(tmp_path):
     assert edge["secondary_only_count"] == 0
 
 
-def test_bc_pool_assignment_does_not_create_gym_games(tmp_path):
-    """BC pool-assignment rows must NOT generate Gym Core games (BC is not a gym sport)."""
+def test_bc_pool_assignment_creates_bc_station_games(tmp_path):
+    """BC pool-assignment rows should create sequential BC Station queue games."""
     builder = ScheduleWorkbookBuilder()
     bc_rows = _bc_roster(["RPC", "OCB", "ANH"], n_per_church=3)
 
     si = builder._build_schedule_input(bc_rows, [], tmp_path / "no_venue.xlsx")
     bc_games = [g for g in si.get("games", []) if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]]
-    assert bc_games == []
+    assert len(bc_games) == 2
+    assert all(g["resource_type"] == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE for g in bc_games)
+    assert all(g["team_c_id"] for g in bc_games)
+
+
+def test_bc_pool_of_four_assigns_extra_round_to_t4():
+    """A 4-team BC pool should give the third appearance to T4, not the top slots."""
+    pool_rows = [
+        {"Pool Slot": "T1", "Team ID": "A"},
+        {"Pool Slot": "T2", "Team ID": "B"},
+        {"Pool Slot": "T3", "Team ID": "C"},
+        {"Pool Slot": "T4", "Team ID": "D"},
+    ]
+    triplets = ScheduleWorkbookBuilder._bc_pool_triplets(pool_rows)
+    appearances = {}
+    for trio in triplets:
+        for row in trio:
+            team_id = row["Team ID"]
+            appearances[team_id] = appearances.get(team_id, 0) + 1
+
+    assert len(triplets) == 3
+    assert appearances == {"A": 2, "B": 2, "C": 2, "D": 3}
+
+
+def test_bc_schedule_input_adds_playoff_precedence(tmp_path):
+    """Nine BC teams should add semifinal/final queue games plus final-after-semis precedence."""
+    builder = ScheduleWorkbookBuilder()
+    bc_rows = _bc_roster(
+        ["RPC", "OCB", "ANH", "GLA", "TLC", "FVC", "MWC", "NSD", "WCC"],
+        n_per_church=3,
+    )
+
+    si = builder._build_schedule_input(bc_rows, [], tmp_path / "no_venue.xlsx")
+    bc_games = [g for g in si["games"] if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]]
+    assert any(g["stage"] == "Semi" for g in bc_games)
+    assert any(g["stage"] == "Final" for g in bc_games)
+    assert len(si["precedence"]) == 3
+    assert {rule["after_game_id"] for rule in si["precedence"]} == {"BC-Final"}
+    assert {rule["before_game_id"] for rule in si["precedence"]} == {
+        "BC-Semi-1", "BC-Semi-2", "BC-Semi-3"
+    }
 
 
 def test_bc_event_in_pool_assignment_defs():

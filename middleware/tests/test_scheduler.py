@@ -135,6 +135,64 @@ def test_build_conflict_audit_marks_unscheduled_event_as_planning_only():
     assert rows[0]["status"] == "PlanningOnly"
 
 
+def test_build_conflict_audit_marks_bc_edge_scheduled_when_bc_games_exist():
+    """BC edges should stop being planning-only once BC queue games exist."""
+    from scheduler import build_conflict_audit
+
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "BBM-01",
+                "event": "Basketball - Men Team",
+                "stage": "Pool",
+                "pool_id": "P1",
+                "round": 1,
+                "team_a_id": "BBM::RPC",
+                "team_b_id": "BBM::ANH",
+                "duration_minutes": 60,
+                "resource_type": "Basketball Court",
+            },
+            {
+                "game_id": "BC-P1-RR-1",
+                "event": "Bible Challenge - Mixed Team",
+                "stage": "Pool",
+                "pool_id": "P1",
+                "round": 1,
+                "team_a_id": "BC::OCB",
+                "team_b_id": "BC::TLC",
+                "team_c_id": "BC::GLA",
+                "duration_minutes": 60,
+                "resource_type": "BC Station",
+            },
+        ],
+        "resources": [],
+        "team_conflicts": [
+            {
+                "team_a_id": "BBM::RPC",
+                "team_a_label": "RPC",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "BC::OCB",
+                "team_b_label": "OCB",
+                "event_b": "Bible Challenge - Mixed Team",
+                "shared_count": 1,
+                "primary_overlap_count": 1,
+                "secondary_only_count": 0,
+                "shared_participant_names": ["An"],
+            }
+        ],
+    }
+    assignments = [
+        {"game_id": "BBM-01", "resource_id": "BB-1", "slot": "Sat-1-08:00"},
+        {"game_id": "BC-P1-RR-1", "resource_id": "BC-1", "slot": "Sat-1-09:00"},
+    ]
+
+    summary, rows = build_conflict_audit(schedule_input, assignments)
+
+    assert summary["planning_only_edges"] == 0
+    assert rows[0]["status"] == "SeparatedInSchedule"
+    assert rows[0]["scheduled_team_b_games"] == 1
+
+
 # ---------------------------------------------------------------------------
 # load_schedule_input
 # ---------------------------------------------------------------------------
@@ -213,6 +271,31 @@ def _volleyball_game(game_id, event, team_a, team_b, stage="Pool", pool_id="P1")
     }
 
 
+def _bc_resource(resource_id, day="Sat-1", open_time="08:00", close_time="10:00"):
+    return {
+        "resource_id": resource_id, "resource_type": "BC Station",
+        "label": resource_id, "day": day,
+        "open_time": open_time, "close_time": close_time, "slot_minutes": 60,
+    }
+
+
+def _bc_game(game_id, team_a, team_b, team_c, stage="Pool", pool_id="P1", round_num=1):
+    return {
+        "game_id": game_id,
+        "event": "Bible Challenge - Mixed Team",
+        "stage": stage,
+        "pool_id": pool_id,
+        "round": round_num,
+        "team_a_id": team_a,
+        "team_b_id": team_b,
+        "team_c_id": team_c,
+        "duration_minutes": 60,
+        "resource_type": "BC Station",
+        "earliest_slot": None,
+        "latest_slot": None,
+    }
+
+
 def _core_gym_resource(resource_id, resource_type):
     return {
         "resource_id": resource_id,
@@ -265,6 +348,52 @@ def test_solve_two_games_no_team_overlap():
     # Both games on the same court must be in different slots
     slots = {a["game_id"]: a["slot"] for a in result["assignments"]}
     assert slots["G1"] != slots["G2"]
+
+
+def test_solve_bc_three_team_games_respect_shared_team_overlap():
+    """A BC team appearing in two 3-team games must not be double-booked across stations."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_INFEASIBLE
+
+    si = _minimal_schedule_input(
+        games=[
+            _bc_game("BC-1", "BC::A", "BC::B", "BC::C"),
+            _bc_game("BC-2", "BC::C", "BC::D", "BC::E"),
+        ],
+        resources=[
+            _bc_resource("BC-1", close_time="09:00"),
+            _bc_resource("BC-2", close_time="09:00"),
+        ],
+    )
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_INFEASIBLE
+    assert sorted(result["unscheduled"]) == ["BC-1", "BC-2"]
+
+
+def test_solve_bc_precedence_keeps_final_after_semis():
+    """BC final must be scheduled after all semifinals in the single-room queue."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = _minimal_schedule_input(
+        games=[
+            _bc_game("BC-Semi-1", "BC-S1A", "BC-S1B", "BC-S1C", stage="Semi", pool_id="", round_num=1),
+            _bc_game("BC-Semi-2", "BC-S2A", "BC-S2B", "BC-S2C", stage="Semi", pool_id="", round_num=2),
+            _bc_game("BC-Semi-3", "BC-S3A", "BC-S3B", "BC-S3C", stage="Semi", pool_id="", round_num=3),
+            _bc_game("BC-Final", "WIN-1", "WIN-2", "WIN-3", stage="Final", pool_id="", round_num=1),
+        ],
+        resources=[_bc_resource("BC-ROOM-1", close_time="12:00")],
+    )
+    si["precedence"] = [
+        {"before_game_id": "BC-Semi-1", "after_game_id": "BC-Final", "min_gap_slots": 1},
+        {"before_game_id": "BC-Semi-2", "after_game_id": "BC-Final", "min_gap_slots": 1},
+        {"before_game_id": "BC-Semi-3", "after_game_id": "BC-Final", "min_gap_slots": 1},
+    ]
+
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_OPTIMAL
+    slot_by_game = {row["game_id"]: row["slot"] for row in result["assignments"]}
+    assert slot_by_game["BC-Final"] == "Sat-1-11:00"
 
 
 def test_solve_team_conflict_infeasible():

@@ -131,6 +131,17 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 
 ---
 
+## Scheduling Terms
+
+- **Shared-athlete edge** — one `team_conflicts` row connecting two different sport teams when at least one participant appears on both rosters.
+- **PlanningOnly** — a `Conflict-Audit` status meaning the overlap is real, but at least one side of the edge does not currently generate Layer-2 games. As of May 20, 2026 this is mainly Soccer, not Bible Challenge.
+- **Organizer-scheduled** — the event is still visible in planning tabs and conflict audit, but its actual timetable is managed manually outside the solver.
+- **Solver-scheduled** — the event contributes concrete game rows to `schedule_input.json["games"]`, so Stage B places it onto real resources and times.
+- **Stage A demand** — the per-mode slot demand fed into the gym allocator before the solver runs. Soccer is intentionally excluded from this demand model today.
+- **Gym Core** — the shared Layer-2 solver pool where Basketball / VB Men / VB Women are optimized together for athlete conflicts while still routing to their own court types.
+
+---
+
 ## Four-Step Pipeline
 
 ```
@@ -166,13 +177,18 @@ Key constraints the pipeline must respect:
   model — only total room-minutes.
 - **Round-robin phase.** Each registered BC team is planned for **2 games** in
   the round-robin once at least 3 church teams exist. Total RR games = ⌈N × 2 / 3⌉
-  where N is the number of teams.
-  Matchup pairing within the round-robin is managed by the organizer; the
-  pipeline provides the pool draw and cross-sport conflict edges only.
+  where N is the number of teams. The queue is generated directly from the
+  `Pool-Assignment` draw:
+  - 3-team pool → 2 Jeopardy rounds with the same trio
+  - 4-team pool → 3 rounds, with the extra third appearance assigned to `T4`
+  - 5-team pool → 4 rounds, with the extra appearances assigned to `T4` and `T5`
+  This keeps the bonus rounds away from the top-seeded slots.
 - **Playoff phase.** The **top 9 teams by cumulative Jeopardy score** advance
   to the playoff. Playoff structure: **3 semi-final games** (3 pools of 3
   teams) then **1 final game** (3 semi-final winners) = 4 total playoff games.
-  Playoff phase only runs when N ≥ 9 registered teams.
+  Playoff phase only runs when N ≥ 9 registered teams. The current pipeline
+  schedules these as placeholder queue games and adds precedence rules so the
+  final always starts after all three semi-finals.
 - **Seeding.** Up to 3 seeds from prior-year winners. Remaining teams enter
   the draw unseeded. The existing serpentine-fill `assign-pools` workflow
   applies unchanged.
@@ -198,8 +214,12 @@ Status as of May 20, 2026:
   - Venue-Estimator rewritten for BC sequential single-classroom model
   - BC teams included in `Pool-Assignment`
   - BC shared-athlete edges included in `team_conflicts`
-  - BC cross-sport edges surface in `Conflict-Audit` as planning-only rows
-    until full BC queue scheduling is implemented
+  - BC round-robin queue games generated into `schedule_input.json` using the
+    seeded BC pool draw
+  - BC semi-final / final placeholder games plus precedence rules so the final
+    stays after the semis in the single-room queue
+  - BC cross-sport edges now audit against real scheduled RR queue games rather
+    than planning-only placeholders
   - Soccer included in `Pool-Assignment` and cross-sport conflict edges via
     the `SOCCER_ENABLED` config flag (default `True`). When set to `False`,
     Soccer is removed from the Phase-1 scheduling/planning outputs so the
@@ -221,9 +241,9 @@ Soccer - Coed Exhibition is gated on `SOCCER_ENABLED` in `config.py`:
   omit Soccer. Raw roster exports still reflect the underlying registrations;
   additional validation enforcement for stray Soccer entries is future work.
 
-Future enhancement (out of scope for #118): tie Soccer scheduling into a
-dedicated sequential Soccer-fields queue, similar to BC's planning-only
-treatment today.
+Future enhancement: tie Soccer scheduling into a dedicated sequential
+Soccer-fields queue so it can move from organizer-scheduled / PlanningOnly into
+full Layer-2 solving, similar to what BC now does for its classroom queue.
 
 ### Phase 2 - Racquet conflict engine
 
@@ -259,12 +279,12 @@ When `middleware/data/venue_input.xlsx` is present, also writes
 **`schedule_input.json`** alongside the xlsx containing:
 
 - **`games`** — one object per pool-play match for the gym sports
-  (Basketball, VB Men, VB Women) plus pod sports (single-elimination). When a
-  `pool_assignments.json` sidecar is present beside the export artifacts, the
-  gym games use the real seeded team draw from the `Pool-Assignment` workflow
-  instead of raw `BBM-P1-T1` placeholders. When explicit venue rows exist, gym
-  sports with fewer than two estimating teams are omitted instead of using the
-  legacy 8-team planning scaffold.
+  (Basketball, VB Men, VB Women), one object per BC Jeopardy queue game, plus
+  pod sports (single-elimination). When a `pool_assignments.json` sidecar is
+  present beside the export artifacts, the gym and BC games use the real seeded
+  team draw from the `Pool-Assignment` workflow instead of raw placeholders.
+  When explicit venue rows exist, gym sports with fewer than two estimating
+  teams are omitted instead of using the legacy 8-team planning scaffold.
 - **`resources`** — one object per physical court or table, expanded from
   `venue_input.xlsx` quantities, each annotated with day, time window, and
   `exclusive_group` (see below).
@@ -286,7 +306,12 @@ When `middleware/data/venue_input.xlsx` is present, also writes
 - **`team_conflicts`** — shared-athlete edges between the seeded core gym teams.
   These let Layer 2 solve Basketball / VB Men / VB Women together as one
   conflict-aware gym cluster while still routing Basketball only to Basketball
-  courts and Volleyball only to Volleyball courts.
+  courts and Volleyball only to Volleyball courts. BC and Soccer edges are also
+  carried here so `Conflict-Audit` can report them; BC now has real RR queue
+  games, while Soccer remains organizer-scheduled.
+- **`precedence`** — optional ordering constraints between generated games.
+  Today this is used for Bible Challenge so the final game always starts after
+  all three semi-finals.
 
 **`Exclusive Venue Group` column** (`venue_input.xlsx` → `Venue-Input` tab):
 

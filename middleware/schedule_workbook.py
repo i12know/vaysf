@@ -50,6 +50,7 @@ from config import (
     GYM_RESOURCE_TYPE,
     GYM_RESOURCE_TYPE_BASKETBALL,
     GYM_RESOURCE_TYPE_VOLLEYBALL,
+    TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
     SCHEDULE_SOLVER_GYM_COURTS,
     VENUE_INPUT_FILENAME,
     POD_RESOURCE_EVENT_TYPE,
@@ -344,6 +345,9 @@ class ScheduleWorkbookBuilder:
         "team_b_id": (
             "Placeholder team slot or team ID for side B."
         ),
+        "team_c_id": (
+            "Optional third team ID for multi-team games such as Bible Challenge."
+        ),
         "duration_minutes": (
             "Game duration in minutes used by the solver."
         ),
@@ -355,6 +359,17 @@ class ScheduleWorkbookBuilder:
         ),
         "latest_slot": (
             "Optional latest allowed slot constraint for this game."
+        ),
+    }
+    _SCHEDULE_INPUT_PRECEDENCE_HEADER_NOTES: Dict[str, str] = {
+        "before_game_id": (
+            "Game that must start before the paired after_game_id."
+        ),
+        "after_game_id": (
+            "Game that must start after before_game_id."
+        ),
+        "min_gap_slots": (
+            "Minimum number of solver slot starts that must separate the two games."
         ),
     }
     _SCHEDULE_INPUT_RESOURCE_HEADER_NOTES: Dict[str, str] = {
@@ -1586,6 +1601,164 @@ class ScheduleWorkbookBuilder:
 
         return conflicts
 
+    @staticmethod
+    def _pool_numeric_suffix(value: str, prefix: str) -> int:
+        """Extract the trailing numeric suffix from pool or pool-slot labels."""
+        text = str(value or "").strip()
+        if not text:
+            return 0
+        match = re.match(rf"^{re.escape(prefix)}(\d+)$", text)
+        if match:
+            return int(match.group(1))
+        return 0
+
+    @classmethod
+    def _bc_pool_triplets(
+        cls,
+        pool_rows: List[Dict[str, Any]],
+    ) -> List[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]]:
+        """Return deterministic 3-team BC Jeopardy rounds for one assigned pool."""
+        ordered_rows = sorted(
+            pool_rows,
+            key=lambda row: (
+                cls._pool_numeric_suffix(str(row.get("Pool Slot") or ""), "T"),
+                str(row.get("Team ID") or ""),
+            ),
+        )
+        n_teams = len(ordered_rows)
+        if n_teams < COURT_ESTIMATE_BC_TEAMS_PER_GAME:
+            return []
+        if n_teams == 3:
+            trio = tuple(ordered_rows[:3])
+            return [trio, trio]
+        if n_teams == 4:
+            t1, t2, t3, t4 = ordered_rows
+            return [
+                (t1, t2, t4),
+                (t1, t3, t4),
+                (t2, t3, t4),
+            ]
+        if n_teams == 5:
+            t1, t2, t3, t4, t5 = ordered_rows
+            return [
+                (t1, t2, t4),
+                (t1, t3, t5),
+                (t2, t4, t5),
+                (t3, t4, t5),
+            ]
+        raise ValueError(
+            f"Unexpected BC pool size {n_teams}; expected 3, 4, or 5 teams."
+        )
+
+    @classmethod
+    def _build_assigned_bc_game_objects(
+        cls,
+        pool_assignment_rows: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Return BC queue games and precedence using the assigned BC pool draw."""
+        event_name = SPORT_TYPE["BIBLE_CHALLENGE"]
+        prefix = cls._pool_assignment_event_prefix(event_name)
+        bc_rows = [
+            row
+            for row in pool_assignment_rows
+            if str(row.get("Event") or "").strip() == event_name
+            and str(row.get("Pool ID") or "").strip()
+            and str(row.get("Pool Slot") or "").strip()
+        ]
+        if len(bc_rows) < COURT_ESTIMATE_BC_TEAMS_PER_GAME:
+            return [], []
+
+        rows_by_pool: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in bc_rows:
+            rows_by_pool[str(row.get("Pool ID") or "").strip()].append(row)
+
+        games: List[Dict[str, Any]] = []
+        precedence: List[Dict[str, Any]] = []
+        global_round = 0
+        for pool_id in sorted(
+            rows_by_pool.keys(),
+            key=lambda value: cls._pool_numeric_suffix(value, "P"),
+        ):
+            for local_round, trio in enumerate(cls._bc_pool_triplets(rows_by_pool[pool_id]), start=1):
+                global_round += 1
+                solver_team_ids = [
+                    cls._solver_team_id(event_name, str(row.get("Team ID") or "").strip())
+                    for row in trio
+                ]
+                labels = [
+                    str(row.get("Team Label") or row.get("Team ID") or "").strip()
+                    for row in trio
+                ]
+                games.append({
+                    "game_id": f"{prefix}-{pool_id}-RR-{local_round}",
+                    "event": event_name,
+                    "stage": "Pool",
+                    "pool_id": pool_id,
+                    "round": global_round,
+                    "team_a_id": solver_team_ids[0],
+                    "team_b_id": solver_team_ids[1],
+                    "team_c_id": solver_team_ids[2],
+                    "team_a_label": labels[0],
+                    "team_b_label": labels[1],
+                    "team_c_label": labels[2],
+                    "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+                    "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                    "earliest_slot": None,
+                    "latest_slot": None,
+                })
+
+        if len(bc_rows) >= COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF:
+            semi_ids: List[str] = []
+            for semi_idx in range(1, 4):
+                semi_id = f"{prefix}-Semi-{semi_idx}"
+                semi_ids.append(semi_id)
+                games.append({
+                    "game_id": semi_id,
+                    "event": event_name,
+                    "stage": "Semi",
+                    "pool_id": "",
+                    "round": semi_idx,
+                    "team_a_id": f"{prefix}-Semi-{semi_idx}-A",
+                    "team_b_id": f"{prefix}-Semi-{semi_idx}-B",
+                    "team_c_id": f"{prefix}-Semi-{semi_idx}-C",
+                    "team_a_label": f"Semi {semi_idx} Qualifier A",
+                    "team_b_label": f"Semi {semi_idx} Qualifier B",
+                    "team_c_label": f"Semi {semi_idx} Qualifier C",
+                    "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+                    "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                    "earliest_slot": None,
+                    "latest_slot": None,
+                })
+
+            final_id = f"{prefix}-Final"
+            games.append({
+                "game_id": final_id,
+                "event": event_name,
+                "stage": "Final",
+                "pool_id": "",
+                "round": 1,
+                "team_a_id": f"WIN-{semi_ids[0]}",
+                "team_b_id": f"WIN-{semi_ids[1]}",
+                "team_c_id": f"WIN-{semi_ids[2]}",
+                "team_a_label": "Winner Semi 1",
+                "team_b_label": "Winner Semi 2",
+                "team_c_label": "Winner Semi 3",
+                "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+                "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                "earliest_slot": None,
+                "latest_slot": None,
+            })
+            precedence.extend(
+                {
+                    "before_game_id": semi_id,
+                    "after_game_id": final_id,
+                    "min_gap_slots": 1,
+                }
+                for semi_id in semi_ids
+            )
+
+        return games, precedence
+
     @classmethod
     def _build_assigned_gym_game_objects(
         cls,
@@ -2151,8 +2324,9 @@ class ScheduleWorkbookBuilder:
             pool_assignment_rows,
             allow_placeholder_fallback=(gym_resource_strategy == "fallback"),
         )
+        bc_games, precedence = self._build_assigned_bc_game_objects(pool_assignment_rows)
         pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
-        all_games = gym_games + pod_games
+        all_games = gym_games + bc_games + pod_games
         team_conflicts = self._build_gym_team_conflicts(roster_rows, pool_assignment_rows)
 
         gym_allocation: Optional[Dict[str, Any]] = None
@@ -2217,6 +2391,15 @@ class ScheduleWorkbookBuilder:
 
         playoff_slots = self._load_playoff_slots(venue_input_path)
 
+        if bc_games and not any(
+            str(resource.get("resource_type") or "").strip() == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE
+            for resource in all_resources
+        ):
+            logger.warning(
+                "Bible Challenge games were generated but no 'BC Station' resources were found "
+                "in venue_input.xlsx. Those games will be unscheduled until a BC Station row is added."
+            )
+
         for resource in all_resources:
             if resource.get("resource_type") in (
                 GYM_RESOURCE_TYPE_BASKETBALL,
@@ -2235,6 +2418,7 @@ class ScheduleWorkbookBuilder:
             "gym_modes":          gym_modes,
             "gym_allocation":     gym_allocation,
             "team_conflicts":     team_conflicts,
+            "precedence":         precedence,
         }
 
     @staticmethod
@@ -2611,7 +2795,7 @@ class ScheduleWorkbookBuilder:
 
         game_cols = [
             "game_id", "event", "stage", "pool_id", "round",
-            "team_a_id", "team_b_id", "duration_minutes",
+            "team_a_id", "team_b_id", "team_c_id", "duration_minutes",
             "resource_type", "earliest_slot", "latest_slot",
         ]
         resource_cols = [
@@ -2619,6 +2803,7 @@ class ScheduleWorkbookBuilder:
             "open_time", "close_time", "slot_minutes", "exclusive_group",
         ]
         playoff_slot_cols = ["game_id", "event", "stage", "resource_id", "slot"]
+        precedence_cols = ["before_game_id", "after_game_id", "min_gap_slots"]
 
         current_row = 1
 
@@ -2710,6 +2895,14 @@ class ScheduleWorkbookBuilder:
             "Optional fixed-slot playoff constraints loaded from the Playoff-Slots tab in venue_input.xlsx.",
         )
         _write_section(
+            "PRECEDENCE",
+            precedence_cols,
+            schedule_input.get("precedence", []),
+            cls._SCHEDULE_INPUT_PRECEDENCE_HEADER_NOTES,
+            "Optional ordering constraints between generated games. The after_game_id "
+            "must start at least min_gap_slots after before_game_id.",
+        )
+        _write_section(
             "GYM-MODES",
             gym_mode_cols,
             gym_mode_rows,
@@ -2718,7 +2911,7 @@ class ScheduleWorkbookBuilder:
         )
 
         # Column widths
-        col_widths = [20, 30, 10, 10, 8, 16, 16, 18, 22, 14, 12]
+        col_widths = [20, 30, 10, 10, 8, 16, 16, 16, 18, 22, 14, 12]
         for i, w in enumerate(col_widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A4"
@@ -3658,6 +3851,7 @@ class ScheduleWorkbookBuilder:
                 "round":            game.get("round", ""),
                 "team_a_id":        game.get("team_a_label", game.get("team_a_id", "")),
                 "team_b_id":        game.get("team_b_label", game.get("team_b_id", "")),
+                "team_c_id":        game.get("team_c_label", game.get("team_c_id", "")),
                 "resource_label":   res.get("label", rid),
                 "day":              _DAY_DISPLAY.get(res.get("day", ""), res.get("day", "")),
                 "slot":             time_part,
@@ -3750,7 +3944,10 @@ class ScheduleWorkbookBuilder:
             gid = game.get("game_id", "")
             a   = str(game.get("team_a_label") or game.get("team_a_id") or "")
             b   = str(game.get("team_b_label") or game.get("team_b_id") or "")
+            c   = str(game.get("team_c_label") or game.get("team_c_id") or "")
             # Show compact team labels when available; otherwise fall back to game_id only.
+            if a and b and c and len(a) <= 12 and len(b) <= 12 and len(c) <= 12:
+                return f"{gid}\n{a} / {b} / {c}"
             if a and b and len(a) <= 12 and len(b) <= 12:
                 return f"{gid}\n{a} vs {b}"
             return gid
@@ -4000,6 +4197,7 @@ class ScheduleWorkbookBuilder:
             ("round",             6),
             ("team_a_id",        20),
             ("team_b_id",        20),
+            ("team_c_id",        20),
             ("resource_label",   14),
             ("day",              10),
             ("slot",              8),

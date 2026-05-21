@@ -539,6 +539,7 @@ VENUE_TEMPLATE_FILENAME = "SportsFest_2026_Venue_Input_Template.xlsx"
 GYM_RESOURCE_TYPE              = "Gym Court"        # legacy / fallback label
 GYM_RESOURCE_TYPE_BASKETBALL   = "Basketball Court"
 GYM_RESOURCE_TYPE_VOLLEYBALL   = "Volleyball Court"
+TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE = "BC Station"
 POD_RESOURCE_TYPE_TENNIS       = "Tennis Court"
 POD_RESOURCE_TYPE_PICKLEBALL   = "Pickleball Court"
 POD_RESOURCE_TYPE_TABLE_TENNIS = "Table Tennis Table"
