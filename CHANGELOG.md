@@ -8,10 +8,16 @@
   - `Venue-Estimator`, `Pool-Assignment`, `Court-Schedule-Sketch`, and `schedule_input.json` now all share the same explicit policy for `2` and `3`
   - Unsupported targets such as `4` now fail loudly instead of silently drifting into a legacy round-robin layout
   - Operator docs now explain that `Target Pool Games/Team` is driven from `middleware/config.py`, not edited directly in Excel, and that a `2 -> 3` change requires rebuilding the workbook and rerunning `assign-pools`
+  - Layer 2 now logs an advisory warning when `venue_input.xlsx` `slot_minutes` values do not match the configured per-sport game duration for the same scheduled resource type
+  - Standard bracket sports now default to one 3rd-place game instead of zero; Soccer's live Layer-2 generator now adds `SOC-3rd` after the semi-finals, while Bible Challenge remains a special case because its 3-team final already resolves 1st / 2nd / 3rd
+  - Venue resource naming is now normalized to one canonical vocabulary (`BC Station`, `Soccer Field`, `Table Tennis Table`, etc.), direct venue `resource_id` prefixes now use `BB` / `VB` / `PCK` / `TT` / `TEN` instead of mixed legacy abbreviations like `BAS` / `VOL` / `PIC`, and date-derived logical day keys now use weekday labels such as `Fri-1`, `Sat-1`, `Sun-1`
 - Added Soccer (Coed Exhibition) Phase-1 planning support
   - New `SOCCER_ENABLED` config flag (default `True` for 2026); set to `False` to remove Soccer from the Phase-1 scheduling/planning outputs (`Venue-Estimator`, `Pool-Assignment`, and conflict edges)
   - `Pool-Assignment` now includes Soccer team rows (prefix `SOC`) alongside BB / VBM / VBW / BC, with up-to-3 seeds
-  - Soccer shared-athlete edges with BB / VBM / VBW / BC are included in `team_conflicts`; they surface in `Conflict-Audit` as `PlanningOnly` rows because Soccer remains organizer-scheduled rather than solved by Stage A / Gym Core
+  - Soccer shared-athlete edges with BB / VBM / VBW / BC are included in `team_conflicts`
+  - `schedule_input.json` now includes real Soccer pool games plus `SOC-Semi-1`, `SOC-Semi-2`, and `SOC-Final` on `Soccer Field` resources
+  - Soccer precedence rules now force all Soccer pool rounds to finish before the semis, and the final to start after both semis
+  - `Conflict-Audit` now evaluates Soccer shared-athlete edges against real scheduled Soccer field games instead of leaving them `PlanningOnly`
   - Completes Phase 1 of the scheduling roadmap for the 2026 season
 - Added Bible Challenge Phase-1 planning support
   - `Venue-Estimator` now treats Bible Challenge as a sequential single-classroom Jeopardy queue instead of a normal concurrent court-hours sport
@@ -19,7 +25,7 @@
   - `schedule_input.json` now includes real BC Jeopardy round-robin queue games on `BC Station`, generated from the BC pool draw
   - BC playoff placeholders (`BC-Semi-1..3`, `BC-Final`) are now generated with precedence rules so BC prelim rounds finish before the semis, and the final stays after the semis
   - `scheduler.py` and `produce-schedule` now support optional third-team games via `team_c_id`, so BC appears in the final schedule workbook instead of staying planning-only
-  - `Conflict-Audit` now evaluates BC shared-athlete edges against scheduled BC round-robin games; Soccer remains `PlanningOnly`
+  - `Conflict-Audit` now evaluates BC shared-athlete edges against scheduled BC round-robin games
 
 - Improved final `Schedule-by-Time` readability for mixed-venue gym schedules
   - `venue_input.xlsx` rows now derive logical day labels from the `Date` column when `Day` is absent, so direct venue rows no longer collapse across multiple actual dates into one fake `Day-1`
@@ -67,7 +73,7 @@
 - Wired the Layer-2 Stage-A gym mode allocator into the live scheduling pipeline — closes [#103](https://github.com/i12know/vaysf/issues/103)
   - `_build_schedule_input()` now runs the greedy allocator (Stage A) when `venue_input.xlsx` is present with a `Gym-Modes` tab and gym blocks with `Exclusive Venue Group` set; falls back to the `SCHEDULE_SOLVER_GYM_COURTS` constant when not
   - New `_build_gym_resources_from_allocator(decisions)`: converts `AllocationDecision` objects into `schedule_input.json` resources with day-aware IDs (`GYM-{day}-{n}`), `exclusive_group` set to the gym name, and the allocator-assigned `resource_type`
-  - `_load_venue_input_rows()` now reads the `Day` column (if present) and uses day-aware resource IDs: `BAD-Sat-1-1`, `PIC-Sun-1-1`, etc.  Falls back to `"Day-1"` when the column is absent.  Counter is keyed by `(resource_type, day)` so courts on different days are numbered independently
+  - `_load_venue_input_rows()` now reads the `Day` column (if present) and uses day-aware resource IDs: `BAD-Sat-1-1`, `PCK-Sun-1-1`, etc.  Falls back to `"Day-1"` when the column is absent.  Counter is keyed by `(resource_type, day)` so courts on different days are numbered independently
   - `GYM_RESOURCE_TYPE` (`"Gym Court"`) split into `GYM_RESOURCE_TYPE_BASKETBALL = "Basketball Court"` and `GYM_RESOURCE_TYPE_VOLLEYBALL = "Volleyball Court"` in `config.py`; `_build_gym_game_objects()` assigns these specific types per sport
   - `_build_gym_resource_objects()` signature changed from `(n_courts)` to `(n_basketball, n_volleyball)` for the fallback path; basketball courts numbered first within each session
   - `AllocationDecision` dataclass gains `slot_minutes: int = 60` field (populated from the source `GymBlock`)

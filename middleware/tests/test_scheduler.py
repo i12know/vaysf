@@ -193,6 +193,63 @@ def test_build_conflict_audit_marks_bc_edge_scheduled_when_bc_games_exist():
     assert rows[0]["scheduled_team_b_games"] == 1
 
 
+def test_build_conflict_audit_marks_soccer_edge_scheduled_when_soccer_games_exist():
+    """Soccer edges should stop being planning-only once Soccer Field games exist."""
+    from scheduler import build_conflict_audit
+
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "BBM-01",
+                "event": "Basketball - Men Team",
+                "stage": "Pool",
+                "pool_id": "P1",
+                "round": 1,
+                "team_a_id": "BBM::RPC",
+                "team_b_id": "BBM::ANH",
+                "duration_minutes": 60,
+                "resource_type": "Basketball Court",
+            },
+            {
+                "game_id": "SOC-01",
+                "event": "Soccer - Coed Exhibition",
+                "stage": "Pool",
+                "pool_id": "P1",
+                "round": 1,
+                "team_a_id": "SOC::OCB",
+                "team_b_id": "SOC::TLC",
+                "duration_minutes": 60,
+                "resource_type": "Soccer Field",
+            },
+        ],
+        "resources": [],
+        "team_conflicts": [
+            {
+                "team_a_id": "BBM::RPC",
+                "team_a_label": "RPC",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "SOC::OCB",
+                "team_b_label": "OCB",
+                "event_b": "Soccer - Coed Exhibition",
+                "shared_count": 1,
+                "primary_overlap_count": 1,
+                "secondary_only_count": 0,
+                "shared_participant_names": ["An"],
+            }
+        ],
+    }
+    assignments = [
+        {"game_id": "BBM-01", "resource_id": "BB-1", "slot": "Sat-1-08:00"},
+        {"game_id": "SOC-01", "resource_id": "SOC-1", "slot": "Sat-1-09:00"},
+    ]
+
+    summary, rows = build_conflict_audit(schedule_input, assignments)
+
+    assert summary["planning_only_edges"] == 0
+    assert rows[0]["status"] == "SeparatedInSchedule"
+    assert rows[0]["scheduled_team_b_games"] == 1
+
+
 # ---------------------------------------------------------------------------
 # load_schedule_input
 # ---------------------------------------------------------------------------
@@ -438,6 +495,79 @@ def test_solve_bc_precedence_keeps_semis_after_pool_rounds():
 
     assert pool_max < semi_min
     assert max(slot_index[slot_by_game[game_id]] for game_id in semi_ids) < final_idx
+
+
+def test_solve_soccer_precedence_keeps_final_after_pool_games():
+    """Soccer semis/final/3rd must come after pool play on the field queue."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    soccer_resource = {
+        "resource_id": "SOC-ROOM-1",
+        "resource_type": "Soccer Field",
+        "label": "Field-1",
+        "day": "Sat-1",
+        "open_time": "08:00",
+        "close_time": "14:00",
+        "slot_minutes": 60,
+    }
+    soccer_game = lambda game_id, team_a, team_b, stage="Pool", pool_id="P1", round_num=1: {
+        "game_id": game_id,
+        "event": "Soccer - Coed Exhibition",
+        "stage": stage,
+        "pool_id": pool_id,
+        "round": round_num,
+        "team_a_id": team_a,
+        "team_b_id": team_b,
+        "duration_minutes": 60,
+        "resource_type": "Soccer Field",
+        "earliest_slot": None,
+        "latest_slot": None,
+    }
+
+    si = _minimal_schedule_input(
+        games=[
+            soccer_game("SOC-01", "SOC::A", "SOC::B", stage="Pool", pool_id="P1", round_num=1),
+            soccer_game("SOC-02", "SOC::C", "SOC::D", stage="Pool", pool_id="P2", round_num=2),
+            soccer_game("SOC-Semi-1", "SOC-Seed-1", "SOC-Seed-4", stage="Semi", pool_id="", round_num=1),
+            soccer_game("SOC-Semi-2", "SOC-Seed-2", "SOC-Seed-3", stage="Semi", pool_id="", round_num=2),
+            soccer_game("SOC-Final", "WIN-SOC-Semi-1", "WIN-SOC-Semi-2", stage="Final", pool_id="", round_num=1),
+            soccer_game("SOC-3rd", "LOS-SOC-Semi-1", "LOS-SOC-Semi-2", stage="3rd", pool_id="", round_num=1),
+        ],
+        resources=[soccer_resource],
+    )
+    pool_game_ids = ["SOC-01", "SOC-02"]
+    semi_ids = ["SOC-Semi-1", "SOC-Semi-2"]
+    si["precedence"] = (
+        [
+            {"before_game_id": pool_game_id, "after_game_id": semi_id, "min_gap_slots": 1}
+            for pool_game_id in pool_game_ids
+            for semi_id in semi_ids
+        ]
+        + [
+            {"before_game_id": semi_id, "after_game_id": "SOC-Final", "min_gap_slots": 1}
+            for semi_id in semi_ids
+        ]
+        + [
+            {"before_game_id": semi_id, "after_game_id": "SOC-3rd", "min_gap_slots": 1}
+            for semi_id in semi_ids
+        ]
+    )
+
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_OPTIMAL
+
+    sorted_slots = sorted({row["slot"] for row in result["assignments"]})
+    slot_index = {slot: idx for idx, slot in enumerate(sorted_slots)}
+    slot_by_game = {row["game_id"]: row["slot"] for row in result["assignments"]}
+    pool_max = max(slot_index[slot_by_game[game_id]] for game_id in pool_game_ids)
+    semi_min = min(slot_index[slot_by_game[game_id]] for game_id in semi_ids)
+    final_idx = slot_index[slot_by_game["SOC-Final"]]
+    third_idx = slot_index[slot_by_game["SOC-3rd"]]
+
+    assert pool_max < semi_min
+    assert max(slot_index[slot_by_game[game_id]] for game_id in semi_ids) < final_idx
+    assert max(slot_index[slot_by_game[game_id]] for game_id in semi_ids) < third_idx
 
 
 def test_solve_team_conflict_infeasible():
