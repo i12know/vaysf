@@ -154,6 +154,39 @@ Scope:
 - Bible Challenge - Mixed Team
 - Soccer - Coed Exhibition (optional / config-driven)
 
+#### Bible Challenge format (confirmed 2026)
+
+Bible Challenge runs as a **Jeopardy-style game with 3 church teams per game**.
+
+Key constraints the pipeline must respect:
+
+- **Single classroom, sequential only.** There is exactly one Bible Challenge
+  room and games never run concurrently. The scheduling problem for BC is a
+  simple queue, not a resource-allocation problem. There is no "court-hours"
+  model — only total room-minutes.
+- **Round-robin phase.** Each registered BC team is planned for **2 games** in
+  the round-robin once at least 3 church teams exist. Total RR games = ⌈N × 2 / 3⌉
+  where N is the number of teams.
+  Matchup pairing within the round-robin is managed by the organizer; the
+  pipeline provides the pool draw and cross-sport conflict edges only.
+- **Playoff phase.** The **top 9 teams by cumulative Jeopardy score** advance
+  to the playoff. Playoff structure: **3 semi-final games** (3 pools of 3
+  teams) then **1 final game** (3 semi-final winners) = 4 total playoff games.
+  Playoff phase only runs when N ≥ 9 registered teams.
+- **Seeding.** Up to 3 seeds from prior-year winners. Remaining teams enter
+  the draw unseeded. The existing serpentine-fill `assign-pools` workflow
+  applies unchanged.
+- **Per-game duration.** 60 minutes (includes buffer for late starts).
+- **Venue-Estimator model.** BC appears as a separate row in the
+  Venue-Estimator showing total sequential room-hours, not concurrent
+  court-hours. Formula: `(RR games + playoff games) × 60 min`. If fewer than
+  3 BC teams exist, the estimator shows that the room queue is still waiting
+  for the first 3-team game.
+- **Cross-sport conflict edges.** BC teams produce pairwise shared-athlete
+  edges with BB / VBM / VBW teams exactly like any other team sport. An
+  athlete on a BC team who also plays Basketball still generates a
+  primary-vs-secondary conflict edge in `team_conflicts`.
+
 Status as of May 20, 2026:
 - Partially complete
 - Implemented:
@@ -162,10 +195,15 @@ Status as of May 20, 2026:
   - Layer 2 shared-athlete conflict edges for BB / VBM / VBW
   - conflict-aware Gym Core solve with primary-vs-secondary weighting
   - `Conflict-Audit` output in `VAYSF_Schedule_*.xlsx`
-- Next slice:
-  - extend the same conflict-aware workflow to Bible Challenge
-  - add Soccer in an optional way so the design stays flexible if Soccer does
-    not return next season
+  - Venue-Estimator rewritten for BC sequential single-classroom model
+  - BC teams included in `Pool-Assignment`
+  - BC shared-athlete edges included in `team_conflicts`
+  - BC cross-sport edges surface in `Conflict-Audit` as planning-only rows
+    until full BC queue scheduling is implemented
+- Next slice (issue #118):
+  - add Soccer as optional / config-driven sport
+  - decide whether BC should stay planning-only in Layer 2 or move into a
+    fully scheduled sequential room queue later
 
 ### Phase 2 - Racquet conflict engine
 
@@ -600,8 +638,8 @@ they are pure planning artifacts built from the roster data and
 `schedule_input.json` `resources` so an offline build stays self-consistent.
 
 The `Pool-Assignment` tab is the editable Layer-1 seeding workspace for the
-core gym sports. Operators can review the inferred team rows, set `Seed`
-values, and rerun:
+current Phase 1 team sports (`BB`, `VBM`, `VBW`, `BC`). Operators can review
+the inferred team rows, set `Seed` values, and rerun:
 
 ```bash
 python main.py assign-pools --workbook path/to/Schedule_Workbook_YYYY-MM-DD.xlsx

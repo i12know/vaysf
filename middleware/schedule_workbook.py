@@ -29,6 +29,11 @@ from config import (
     COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME,
     COURT_ESTIMATE_MIN_TEAM_SIZE,
     COURT_ESTIMATE_MINUTES_PER_GAME,
+    COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+    COURT_ESTIMATE_BC_TEAMS_PER_GAME,
+    COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM,
+    COURT_ESTIMATE_BC_PLAYOFF_GAMES,
+    COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF,
     COURT_ESTIMATE_PLAYOFF_RULES,
     POD_SPORT_ABBREV,
     SCHEDULE_SKETCH_SATURDAY_START,
@@ -96,11 +101,12 @@ class ScheduleWorkbookBuilder:
         (SPORT_TYPE["BASKETBALL"], "BBM"),
         (SPORT_TYPE["VOLLEYBALL_MEN"], "VBM"),
         (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW"),
+        (SPORT_TYPE["BIBLE_CHALLENGE"], "BC"),
     ]
     _POOL_ASSIGNMENT_HEADER_NOTES: Dict[str, str] = {
         "Event": (
-            "Canonical team-sport event this row belongs to. Version 1 focuses on the "
-            "core gym sports used for pool seeding."
+            "Canonical team-sport event this row belongs to. Current Phase 1 "
+            "pool-assignment rows cover BB / VBM / VBW / BC."
         ),
         "Church Team": (
             "Church code contributing this team row, such as RPC or TLC."
@@ -218,8 +224,10 @@ class ScheduleWorkbookBuilder:
             "Configured planning target for pool games per team."
         ),
         "Actual Pool Games/Team": (
-            "Actual average pool games per team after the current pool-normalization logic is "
-            "applied. May differ slightly from the target."
+            "Actual pool-game planning assumption for this event. For the standard team-sport "
+            "model this is the average implied by the normalized pool layout; for Bible "
+            "Challenge it reflects the organizer-facing 2-games-per-team target once enough "
+            "teams exist to run the Jeopardy format."
         ),
         "Pool Composition": (
             "Pool sizes used by the current planning policy, such as 4 + 3 + 3."
@@ -930,6 +938,49 @@ class ScheduleWorkbookBuilder:
                 "Estimated Court Hours": s["court_hours"],
             })
 
+        # Bible Challenge — sequential single-classroom (Jeopardy, 3 teams/game)
+        # Games never run concurrently; "court hours" = total room hours.
+        bc_event = SPORT_TYPE["BIBLE_CHALLENGE"]
+        bc_min = self._get_min_team_size(bc_event)
+        bc_counts = self._count_estimating_teams(roster_rows, bc_event, bc_min)
+        n_bc = bc_counts["n_estimating"]
+        bc_can_run_rr = n_bc >= COURT_ESTIMATE_BC_TEAMS_PER_GAME
+        bc_rr_games = (
+            ceil(n_bc * COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM / COURT_ESTIMATE_BC_TEAMS_PER_GAME)
+            if bc_can_run_rr else 0
+        )
+        bc_has_playoff = bc_can_run_rr and n_bc >= COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF
+        bc_playoff_games = COURT_ESTIMATE_BC_PLAYOFF_GAMES if bc_has_playoff else 0
+        bc_total = bc_rr_games + bc_playoff_games
+        bc_hours = round(bc_total * COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE / 60, 2)
+        bc_actual_gpg = COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM if bc_can_run_rr else 0
+        bc_note = f"Sequential, 1 classroom — {COURT_ESTIMATE_BC_TEAMS_PER_GAME} teams/game"
+        if not bc_can_run_rr and n_bc > 0:
+            bc_note += (
+                f" (waiting for at least {COURT_ESTIMATE_BC_TEAMS_PER_GAME} teams to open "
+                "the round-robin queue)"
+            )
+        elif not bc_has_playoff:
+            bc_note += f" (< {COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF} teams: no playoff)"
+        rows.append({
+            "Event": bc_event,
+            "Potential Teams/Entries": bc_counts["n_potential"],
+            "Estimating Teams/Entries": n_bc,
+            "Teams": bc_counts["team_codes"],
+            "Target Pool Games/Team": COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM,
+            "Actual Pool Games/Team": bc_actual_gpg,
+            "Pool Composition": bc_note,
+            "BYE Slots": None,
+            "Minutes Per Game": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+            "Pool Slots": bc_rr_games,
+            "Playoff Teams": COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF if bc_has_playoff else 0,
+            "Playoff Slots": bc_playoff_games,
+            "Third Place?": "No",
+            "Third Place Slots": 0,
+            "Total Court Slots": bc_total,
+            "Estimated Court Hours": bc_hours,
+        })
+
         # Racquet sports — count complete pairs + singles
         for sport_name in COURT_ESTIMATE_RACQUET_EVENTS:
             counts = self._count_racquet_entries(roster_rows, sport_name)
@@ -1465,7 +1516,7 @@ class ScheduleWorkbookBuilder:
         roster_rows: List[Dict[str, Any]],
         pool_assignment_rows: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Return cross-sport shared-athlete edges for the core gym sports."""
+        """Return cross-sport shared-athlete edges for the current Phase 1 team sports."""
         team_lookup = cls._build_core_gym_team_lookup(roster_rows)
         if not team_lookup:
             return []
@@ -2230,7 +2281,7 @@ class ScheduleWorkbookBuilder:
                 "   If omitted, the command tries to auto-detect the newest ALL workbook "
                 "beside schedule_input.json or in EXPORT_DIR.\n"
                 "4. Review the planning tabs in this workbook.\n"
-                "5. Edit the Pool-Assignment tab if you want to seed BB/VBM/VBW teams, then run:\n"
+                "5. Edit the Pool-Assignment tab if you want to seed BB/VBM/VBW/BC teams, then run:\n"
                 "   python main.py assign-pools --workbook \"...\\Schedule_Workbook_YYYY-MM-DD.xlsx\"\n"
                 "6. Repeat until venue capacity, seeding, pod planning, and resource IDs look right.",
             ),
@@ -2246,7 +2297,7 @@ class ScheduleWorkbookBuilder:
                 "Tabs In This Workbook",
                 "Summary: operator guide and command cheat sheet.\n"
                 "Venue-Estimator: rough demand estimate for team/racquet sports.\n"
-                "Pool-Assignment: editable BB/VBM/VBW seed and pool-draw workspace.\n"
+                "Pool-Assignment: editable BB/VBM/VBW/BC seed and pool-draw workspace.\n"
                 "Pod-Divisions: planned pod divisions for racquet/pod events.\n"
                 "Pod-Entries-Review: detailed entry review for pod sports.\n"
                 "Court-Schedule-Sketch: quick planning sketch using Layer 1 assumptions.\n"
@@ -4031,6 +4082,7 @@ class ScheduleWorkbookBuilder:
                     f"Edges: {conflict_summary.get('total_edges', 0)}  |  "
                     f"Separated: {conflict_summary.get('separated_edges', 0)}  |  "
                     f"Remaining: {conflict_summary.get('overlapping_edges', 0)}  |  "
+                    f"Planning-only: {conflict_summary.get('planning_only_edges', 0)}  |  "
                     f"Incomplete: {conflict_summary.get('incomplete_edges', 0)}"
                 ),
             ),
@@ -4076,6 +4128,8 @@ class ScheduleWorkbookBuilder:
                 )
                 if row.get("status") == "IncompleteSchedule":
                     row_fill = PatternFill(fgColor="FFF2CC", fill_type="solid")
+                elif row.get("status") == "PlanningOnly":
+                    row_fill = PatternFill(fgColor="DDEBF7", fill_type="solid")
                 for ci, (col, _width) in enumerate(audit_headers, start=1):
                     cell = ws3.cell(row=ri3, column=ci, value=row.get(col, ""))
                     cell.fill = row_fill
