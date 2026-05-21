@@ -187,8 +187,8 @@ Key constraints the pipeline must respect:
   athlete on a BC team who also plays Basketball still generates a
   primary-vs-secondary conflict edge in `team_conflicts`.
 
-Status as of May 20, 2026:
-- Partially complete
+Status as of May 21, 2026:
+- Phase 1 complete (for the 2026 season)
 - Implemented:
   - editable `Pool-Assignment` workflow for BB / VBM / VBW
   - persisted seeded pool draw via `pool_assignments.json`
@@ -200,10 +200,29 @@ Status as of May 20, 2026:
   - BC shared-athlete edges included in `team_conflicts`
   - BC cross-sport edges surface in `Conflict-Audit` as planning-only rows
     until full BC queue scheduling is implemented
-- Next slice (issue #118):
-  - add Soccer as optional / config-driven sport
-  - decide whether BC should stay planning-only in Layer 2 or move into a
-    fully scheduled sequential room queue later
+  - Soccer included in `Pool-Assignment` and cross-sport conflict edges via
+    the `SOCCER_ENABLED` config flag (default `True`). When set to `False`,
+    Soccer is fully removed from outputs so the design stays flexible if the
+    Coed Exhibition does not return in future seasons.
+
+#### Soccer (optional, config-driven)
+
+Soccer - Coed Exhibition is gated on `SOCCER_ENABLED` in `config.py`:
+
+- **`SOCCER_ENABLED = True`** (current 2026 default): Soccer appears in
+  `Venue-Estimator` (standard concurrent court-hours model on Soccer Fields),
+  in `Pool-Assignment` with up to-3 seeds, and produces shared-athlete
+  conflict edges with BB / VBM / VBW / BC in `team_conflicts`. Soccer games
+  are not generated for the Gym Core solver (Soccer uses dedicated fields,
+  not gym courts) — the organizer manages the Soccer field schedule.
+- **`SOCCER_ENABLED = False`**: Soccer is removed from `COURT_ESTIMATE_EVENTS`
+  and from `_POOL_ASSIGNMENT_EVENT_DEFS`. The pipeline produces no Soccer
+  rows even if stray Soccer registrations exist (which would be a
+  registration-form error in that case).
+
+Future enhancement (out of scope for #118): tie Soccer scheduling into a
+dedicated sequential Soccer-fields queue, similar to BC's planning-only
+treatment today.
 
 ### Phase 2 - Racquet conflict engine
 
@@ -638,7 +657,8 @@ they are pure planning artifacts built from the roster data and
 `schedule_input.json` `resources` so an offline build stays self-consistent.
 
 The `Pool-Assignment` tab is the editable Layer-1 seeding workspace for the
-current Phase 1 team sports (`BB`, `VBM`, `VBW`, `BC`). Operators can review
+current Phase 1 team sports (`BB`, `VBM`, `VBW`, `BC`, and `SOC` when
+`SOCCER_ENABLED`). Operators can review
 the inferred team rows, set `Seed` values, and rerun:
 
 ```bash

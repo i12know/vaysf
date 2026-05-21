@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### New Features
+- Added Soccer (Coed Exhibition) Phase-1 planning support
+  - New `SOCCER_ENABLED` config flag (default `True` for 2026); set to `False` to fully remove Soccer from Pool-Assignment, Venue-Estimator, and conflict edges
+  - `Pool-Assignment` now includes Soccer team rows (prefix `SOC`) alongside BB / VBM / VBW / BC, with up-to-3 seeds
+  - Soccer shared-athlete edges with BB / VBM / VBW / BC included in `team_conflicts`; surface in `Conflict-Audit` as `PlanningOnly` rows since Soccer fields are organizer-scheduled rather than solved by Gym Core
+  - Completes Phase 1 of the scheduling roadmap for the 2026 season
+
 - Added Bible Challenge Phase-1 planning support
   - `Venue-Estimator` now treats Bible Challenge as a sequential single-classroom Jeopardy queue instead of a normal concurrent court-hours sport
   - `Pool-Assignment` now includes BC team rows alongside BB / VBM / VBW
