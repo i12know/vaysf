@@ -134,7 +134,7 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 ## Scheduling Terms
 
 - **Shared-athlete edge** — one `team_conflicts` row connecting two different sport teams when at least one participant appears on both rosters.
-- **PlanningOnly** — a `Conflict-Audit` status meaning the overlap is real, but at least one side of the edge does not currently generate Layer-2 games. As of May 20, 2026 this is mainly Soccer, not Bible Challenge.
+- **PlanningOnly** — a `Conflict-Audit` status meaning the overlap is real, but at least one side of the edge does not currently generate Layer-2 games. After Soccer field scheduling landed, this status should be rare and usually indicates an intentionally unsolved event or missing schedule-input resources.
 - **Organizer-scheduled** — the event is still visible in planning tabs and conflict audit, but its actual timetable is managed manually outside the solver.
 - **Solver-scheduled** — the event contributes concrete game rows to `schedule_input.json["games"]`, so Stage B places it onto real resources and times.
 - **Stage A demand** — the per-mode slot demand fed into the gym allocator before the solver runs. Soccer is intentionally excluded from this demand model today.
@@ -222,11 +222,16 @@ Status as of May 20, 2026:
     semis in the single-room queue
   - BC cross-sport edges now audit against real scheduled RR queue games rather
     than planning-only placeholders
-  - Soccer included in `Pool-Assignment` and cross-sport conflict edges via
-    the `SOCCER_ENABLED` config flag (default `True`). When set to `False`,
-    Soccer is removed from the Phase-1 scheduling/planning outputs so the
-    design stays flexible if the Coed Exhibition does not return in future
-    seasons.
+  - Soccer included in `Pool-Assignment`, `team_conflicts`, and real Layer-2
+    Soccer Field game generation via the `SOCCER_ENABLED` config flag
+    (default `True`)
+  - Soccer pool rounds must finish before the Soccer semi-finals, and the
+    Soccer final must start after both semi-finals
+  - Soccer now appears in `Schedule-by-Time` / `Schedule-by-Sport`, and
+    Soccer cross-sport edges audit against real scheduled field games
+  - When `SOCCER_ENABLED` is set to `False`, Soccer is removed from the
+    Phase-1 scheduling/planning outputs so the design stays flexible if the
+    Coed Exhibition does not return in future seasons.
 
 #### Soccer (optional, config-driven)
 
@@ -235,17 +240,20 @@ Soccer - Coed Exhibition is gated on `SOCCER_ENABLED` in `config.py`:
 - **`SOCCER_ENABLED = True`** (current 2026 default): Soccer appears in
   `Venue-Estimator`, in `Pool-Assignment` with up to-3 seeds, and produces
   shared-athlete conflict edges with BB / VBM / VBW / BC in `team_conflicts`.
-  Soccer games are not generated for the Gym Core solver, and Soccer does not
-  currently participate in the Stage-A gym allocator demand model. The
-  organizer manages the Soccer field schedule separately.
+  Soccer pool/playoff games are generated into `schedule_input.json` and
+  solved on real `Soccer Field` resources from `venue_input.xlsx`. Soccer
+  does not participate in the Stage-A gym allocator demand model because it
+  uses dedicated field resources rather than flexible gym modes.
 - **`SOCCER_ENABLED = False`**: Soccer is removed from `COURT_ESTIMATE_EVENTS`
   and from `_POOL_ASSIGNMENT_EVENT_DEFS`, so the scheduling/planning outputs
   omit Soccer. Raw roster exports still reflect the underlying registrations;
   additional validation enforcement for stray Soccer entries is future work.
 
-Future enhancement: tie Soccer scheduling into a dedicated sequential
-Soccer-fields queue so it can move from organizer-scheduled / PlanningOnly into
-full Layer-2 solving, similar to what BC now does for its classroom queue.
+Current Soccer defaults (May 21, 2026):
+- `2` pool games per team
+- `60` minutes per game
+- top `4` teams advance to `2` semi-finals + `1` final
+- `1` third-place game by default
 
 ### Phase 2 - Racquet conflict engine
 
@@ -290,6 +298,11 @@ When `middleware/data/venue_input.xlsx` is present, also writes
 - **`resources`** — one object per physical court or table, expanded from
   `venue_input.xlsx` quantities, each annotated with day, time window, and
   `exclusive_group` (see below).
+  If a scheduled resource type's `slot_minutes` values do not match the
+  corresponding `COURT_ESTIMATE_MINUTES_*` config duration, Layer 2 logs an
+  advisory warning. This does **not** block the build: config still defines the
+  game duration, while `venue_input.xlsx` still defines the slot granularity.
+  Intentional venue-side overrides are allowed.
 - **`playoff_slots`** — pre-assigned playoff games loaded from the
   **Playoff-Slots** tab of `venue_input.xlsx` (see below).  If the tab is
   absent, a `WARNING` is logged and `playoff_slots` is an empty list — the
@@ -309,11 +322,15 @@ When `middleware/data/venue_input.xlsx` is present, also writes
   These let Layer 2 solve Basketball / VB Men / VB Women together as one
   conflict-aware gym cluster while still routing Basketball only to Basketball
   courts and Volleyball only to Volleyball courts. BC and Soccer edges are also
-  carried here so `Conflict-Audit` can report them; BC now has real RR queue
-  games, while Soccer remains organizer-scheduled.
+  carried here so `Conflict-Audit` can report them against real scheduled BC
+  classroom games and Soccer field games.
 - **`precedence`** — optional ordering constraints between generated games.
-  Today this is used for Bible Challenge so the final game always starts after
-  all three semi-finals.
+  Today this is used for Bible Challenge and Soccer so pool rounds finish before
+  the semi-finals, and the final starts after the semis.
+
+Bible Challenge is a special case: its 3-team final already resolves
+1st / 2nd / 3rd place, so there is no separate `BC-3rd` game or extra
+third-place slot.
 
 **`Exclusive Venue Group` column** (`venue_input.xlsx` → `Venue-Input` tab):
 
@@ -354,6 +371,18 @@ games.  Add one row per playoff game.  Required columns:
 | `slot` | `Sat-2-14:00` | Slot label in `Day-HH:MM` format |
 
 Optional columns: `team_a_id`, `team_b_id`, `duration_minutes`.
+
+Canonical direct-venue resource prefixes are now:
+- `BB-` Basketball Court
+- `VB-` Volleyball Court
+- `BC-` BC Station
+- `SOC-` Soccer Field
+- `BAD-` Badminton Court
+- `PCK-` Pickleball Court
+- `TT-` Table Tennis Table
+- `TEN-` Tennis Court
+
+Logical day keys are weekday-based (`Fri-1`, `Sat-1`, `Sun-1`, `Sat-2`, ...).
 
 To specify the exact finale order (e.g. VB Women → VB Men → Basketball back-to-back),
 simply put those games in that row order with consecutive `slot` values.  No solver
@@ -486,6 +515,9 @@ Every **resource object** looks like:
   "exclusive_group": "Midsize Gym"
 }
 ```
+
+Direct venue rows use the canonical short prefixes above, for example
+`BB-Sat-1-1`, `VB-Sat-1-1`, `BC-Sat-1-1`, `PCK-Sat-1-1`, or `TT-Fri-1-1`.
 
 `exclusive_group` is the `Exclusive Venue Group` value from `venue_input.xlsx`
 (empty string for standalone resources, or for gym courts built from the

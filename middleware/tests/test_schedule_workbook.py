@@ -5,9 +5,11 @@ from openpyxl import load_workbook
 
 from church_teams_export import ChurchTeamsExporter
 from config import (
+    POD_RESOURCE_TYPE_PICKLEBALL,
     COURT_ESTIMATE_POOL_GAMES_PER_TEAM,
     SPORT_TYPE,
     TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+    TEAM_RESOURCE_TYPE_SOCCER,
 )
 from schedule_workbook import ScheduleWorkbookBuilder
 
@@ -693,16 +695,17 @@ def test_venue_capacity_court_slot_math():
     assert s6["pool_slots"] == 6
     assert s6["playoff_teams"] == 4
     assert s6["playoff_slots"] == 3
-    assert s6["third_place_slots"] == 0  # default off
-    assert s6["total_slots"] == 9
-    assert s6["court_hours"] == 9.0  # 60 min/game
+    assert s6["third_place_slots"] == 1
+    assert s6["total_slots"] == 10
+    assert s6["court_hours"] == 10.0  # 60 min/game
 
     # 8 teams -> ceil(8*2/2)=8 pool, 8-team playoff = 7 playoff games
     s8 = builder._compute_court_slots(8)
     assert s8["pool_slots"] == 8
     assert s8["playoff_teams"] == 8
     assert s8["playoff_slots"] == 7
-    assert s8["total_slots"] == 15
+    assert s8["third_place_slots"] == 1
+    assert s8["total_slots"] == 16
 
     # 3 teams -> only pool play, no playoff
     s3 = builder._compute_court_slots(3)
@@ -1667,13 +1670,15 @@ def test_load_venue_input_rows_blank_exclusive_group(tmp_path):
 
 
 def test_load_venue_input_rows_derives_day_labels_from_date_column(tmp_path):
-    """Date-only venue rows should map to logical Sat-*/Sun-* labels."""
+    """Date-only venue rows should map to logical weekday labels like Fri-*/Sat-*."""
     headers = [
         "Pod Name", "Venue Name", "Resource Type", "Quantity",
         "Date", "Start Time", "Last Start Time", "Slot Minutes",
         "Available Slots", "Contact", "Cost", "Notes",
     ]
     rows = [
+        ["Basketball Pod", "HS Small Gym", "Basketball Court", 1,
+         "2026-07-17", 17, 21, 60, None, None, None, None],
         ["Basketball Pod", "HS Small Gym", "Basketball Court", 1,
          "2026-07-18", 8, 16, 60, None, None, None, None],
         ["Basketball Pod", "HS Small Gym", "Basketball Court", 1,
@@ -1687,7 +1692,38 @@ def test_load_venue_input_rows_derives_day_labels_from_date_column(tmp_path):
     _write_venue_input(path, headers, rows)
 
     result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
-    assert [r["day"] for r in result] == ["Sat-1", "Sun-1", "Sat-2", "Sun-2"]
+    assert [r["day"] for r in result] == ["Fri-1", "Sat-1", "Sun-1", "Sat-2", "Sun-2"]
+
+
+def test_load_venue_input_rows_normalizes_resource_types_and_prefixes(tmp_path):
+    """Human-friendly resource names should normalize to canonical scheduler IDs."""
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Bible Challenge", "Library", "Jeopardy stage", 1,
+         "2026-07-18", 11, 20, 60, None, None, None, None],
+        ["Soccer", "Field", "Soccer field", 1,
+         "2026-07-18", 11, 17, 60, None, None, None, None],
+        ["Table Tennis", "Chapel", "Table Tennis station", 1,
+         "2026-07-18", 17, 21, 20, None, None, None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows)
+
+    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    assert [r["resource_type"] for r in result] == [
+        "BC Station",
+        "Soccer Field",
+        "Table Tennis Table",
+    ]
+    assert [r["resource_id"] for r in result] == [
+        "BC-Sat-1-1",
+        "SOC-Sat-1-1",
+        "TT-Sat-1-1",
+    ]
 
 
 def test_load_gym_modes_missing_file(tmp_path):
@@ -2108,6 +2144,39 @@ def test_warn_if_schedules_mismatched_detects_orphan():
     assert any("different runs" in m for m in messages)
 
 
+def test_warn_if_resource_slot_minutes_differ_from_config_is_advisory():
+    """Mismatched venue slot sizes should warn without blocking Layer 2 generation."""
+    from loguru import logger
+
+    messages = []
+    sink_id = logger.add(lambda msg: messages.append(msg), level="WARNING")
+    try:
+        ScheduleWorkbookBuilder._warn_if_resource_slot_minutes_differ_from_config(
+            all_games=[
+                {
+                    "game_id": "PCK-01",
+                    "event": SPORT_TYPE["PICKLEBALL"],
+                    "resource_type": POD_RESOURCE_TYPE_PICKLEBALL,
+                    "duration_minutes": 30,
+                }
+            ],
+            all_resources=[
+                {
+                    "resource_id": "PCK-Sat-1-1",
+                    "resource_type": POD_RESOURCE_TYPE_PICKLEBALL,
+                    "slot_minutes": 20,
+                }
+            ],
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert any("Layer 2 duration mismatch" in m for m in messages)
+    assert any("Pickleball Court" in m for m in messages)
+    assert any("config.py game duration is 30m" in m for m in messages)
+    assert any("ignore this warning" in m for m in messages)
+
+
 def test_write_schedule_output_report_creates_file(tmp_path):
     """_write_schedule_output_report writes an xlsx with all expected tabs."""
     import openpyxl
@@ -2372,7 +2441,7 @@ def test_write_schedule_output_report_merges_gym_core_day_sections(tmp_path):
                 "exclusive_group": "HS Big Gym",
             },
             {
-                "resource_id": "VOL-Day-1-1", "resource_type": "Volleyball Court",
+                "resource_id": "VB-Day-1-1", "resource_type": "Volleyball Court",
                 "label": "Court-2", "day": "Day-1", "open_time": "10:00",
                 "close_time": "13:00", "slot_minutes": 60,
                 "solver_pool": ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL,
@@ -2388,7 +2457,7 @@ def test_write_schedule_output_report_merges_gym_core_day_sections(tmp_path):
         "solver_wall_seconds": 0.1,
         "assignments": [
             {"game_id": "VBM-01", "resource_id": "GYM-Day-1-1", "slot": "Day-1-08:00"},
-            {"game_id": "VBW-01", "resource_id": "VOL-Day-1-1", "slot": "Day-1-10:00"},
+            {"game_id": "VBW-01", "resource_id": "VB-Day-1-1", "slot": "Day-1-10:00"},
             {"game_id": "VBM-02", "resource_id": "GYM-Day-1-4", "slot": "Day-1-14:00"},
         ],
         "unscheduled": [],
@@ -2815,13 +2884,69 @@ def test_soccer_cross_sport_conflict_edge_with_basketball(tmp_path):
     assert edge["primary_overlap_count"] == 1
 
 
-def test_soccer_pool_assignment_does_not_create_gym_games(tmp_path):
-    """Soccer pool-assignment rows must NOT generate Gym Core games (uses Soccer fields)."""
+def test_soccer_schedule_input_creates_soccer_field_games(tmp_path):
+    """Soccer pool-assignment rows should create real Soccer Field games, not Gym Core games."""
     builder = ScheduleWorkbookBuilder()
     rows = _soccer_roster(["RPC", "OCB", "ANH"], n_per_church=4)
     si = builder._build_schedule_input(rows, [], tmp_path / "no_venue.xlsx")
     soccer_games = [g for g in si.get("games", []) if g.get("event") == SPORT_TYPE["SOCCER"]]
-    assert soccer_games == []
+    assert len(soccer_games) == 3
+    assert all(g["resource_type"] == TEAM_RESOURCE_TYPE_SOCCER for g in soccer_games)
+    assert all(g["stage"] == "Pool" for g in soccer_games)
+    assert all(g.get("team_c_id") in (None, "") for g in soccer_games)
+
+
+def test_soccer_schedule_input_adds_playoff_precedence(tmp_path):
+    """Six Soccer teams should add semis/final/3rd plus pool-before-semi precedence."""
+    builder = ScheduleWorkbookBuilder()
+    rows = _soccer_roster(["RPC", "OCB", "ANH", "GLA", "TLC", "FVC"], n_per_church=4)
+
+    si = builder._build_schedule_input(rows, [], tmp_path / "no_venue.xlsx")
+    soccer_games = [g for g in si["games"] if g.get("event") == SPORT_TYPE["SOCCER"]]
+    pool_game_ids = {
+        str(g["game_id"])
+        for g in soccer_games
+        if g.get("stage") == "Pool"
+    }
+    semi_ids = {
+        str(g["game_id"])
+        for g in soccer_games
+        if g.get("stage") == "Semi"
+    }
+    final_ids = {
+        str(g["game_id"])
+        for g in soccer_games
+        if g.get("stage") == "Final"
+    }
+    third_ids = {
+        str(g["game_id"])
+        for g in soccer_games
+        if g.get("stage") == "3rd"
+    }
+
+    assert len(pool_game_ids) == 6
+    assert semi_ids == {"SOC-Semi-1", "SOC-Semi-2"}
+    assert final_ids == {"SOC-Final"}
+    assert third_ids == {"SOC-3rd"}
+
+    precedence_pairs = {
+        (str(rule["before_game_id"]), str(rule["after_game_id"]))
+        for rule in si["precedence"]
+        if str(rule.get("before_game_id") or "").startswith("SOC-")
+           or str(rule.get("after_game_id") or "").startswith("SOC-")
+    }
+    expected_pairs = {
+        (pool_game_id, semi_id)
+        for pool_game_id in pool_game_ids
+        for semi_id in semi_ids
+    } | {
+        (semi_id, "SOC-Final")
+        for semi_id in semi_ids
+    } | {
+        (semi_id, "SOC-3rd")
+        for semi_id in semi_ids
+    }
+    assert precedence_pairs == expected_pairs
 
 
 def test_soccer_disabled_removes_from_pool_assignment(monkeypatch):

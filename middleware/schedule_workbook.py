@@ -51,6 +51,9 @@ from config import (
     GYM_RESOURCE_TYPE_BASKETBALL,
     GYM_RESOURCE_TYPE_VOLLEYBALL,
     TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+    TEAM_RESOURCE_TYPE_SOCCER,
+    RESOURCE_TYPE_ALIASES,
+    RESOURCE_ID_PREFIX_BY_TYPE,
     SCHEDULE_SOLVER_GYM_COURTS,
     VENUE_INPUT_FILENAME,
     POD_RESOURCE_EVENT_TYPE,
@@ -391,7 +394,7 @@ class ScheduleWorkbookBuilder:
             "Human-readable label for the resource, usually what operators will recognize on-site."
         ),
         "day": (
-            "Schedule day key, such as Sat-1, Sun-1, Sat-2, or Sun-2."
+            "Schedule day key, such as Fri-1, Sat-1, Sun-1, Fri-2, or Sun-2."
         ),
         "open_time": (
             "Start of the available scheduling window for this resource."
@@ -562,10 +565,18 @@ class ScheduleWorkbookBuilder:
                 return int(rule["playoff_teams"])
         return 0
 
+    @staticmethod
+    def _get_playoff_teams_for_event(event_name: str, n_teams: int) -> int:
+        """Return playoff-team count for one event under the live planning policy."""
+        if event_name == SPORT_TYPE["SOCCER"]:
+            return 4 if n_teams >= 4 else 0
+        return ScheduleWorkbookBuilder._get_playoff_teams(n_teams)
+
     def _compute_court_slots(self, n_teams: int,
                               minutes_per_game: int = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
                               pool_games_per_team: int = COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM,
-                              actual_pool_games: Optional[int] = None) -> Dict[str, Any]:
+                              actual_pool_games: Optional[int] = None,
+                              event_name: str = "") -> Dict[str, Any]:
         include_third = COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
 
         # When the caller already knows the exact game count (e.g. from
@@ -576,7 +587,7 @@ class ScheduleWorkbookBuilder:
             pool_slots = actual_pool_games
         else:
             pool_slots = ceil((n_teams * pool_games_per_team) / 2) if n_teams > 0 else 0
-        playoff_teams = self._get_playoff_teams(n_teams)
+        playoff_teams = self._get_playoff_teams_for_event(event_name, n_teams)
         playoff_slots = max(playoff_teams - 1, 0)
         third_place_slots = 1 if include_third and playoff_teams >= 4 else 0
         total_slots = pool_slots + playoff_slots + third_place_slots
@@ -945,7 +956,8 @@ class ScheduleWorkbookBuilder:
             actual = len(self._make_pool_game_pairs("_", counts["n_estimating"], gpg))
             s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg,
                                           pool_games_per_team=gpg,
-                                          actual_pool_games=actual)
+                                          actual_pool_games=actual,
+                                          event_name=event_name)
             rows.append({
                 "Event": event_name,
                 "Potential Teams/Entries": counts["n_potential"],
@@ -1012,7 +1024,7 @@ class ScheduleWorkbookBuilder:
         for sport_name in COURT_ESTIMATE_RACQUET_EVENTS:
             counts = self._count_racquet_entries(roster_rows, sport_name)
             mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(sport_name, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME)
-            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg)
+            s = self._compute_court_slots(counts["n_estimating"], minutes_per_game=mpg, event_name=sport_name)
             rows.append({
                 "Event": sport_name,
                 "Potential Teams/Entries": counts["n_potential"],
@@ -1783,6 +1795,231 @@ class ScheduleWorkbookBuilder:
         return games, precedence
 
     @classmethod
+    def _build_assigned_soccer_game_objects(
+        cls,
+        roster_rows: List[Dict[str, Any]],
+        pool_assignment_rows: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Return Soccer field games plus playoff precedence using the assigned pool draw."""
+        if not SOCCER_ENABLED:
+            return [], []
+
+        event_name = SPORT_TYPE["SOCCER"]
+        prefix = cls._pool_assignment_event_prefix(event_name)
+        min_team_size = cls._get_min_team_size(event_name)
+        counts = cls._count_estimating_teams(roster_rows, event_name, min_team_size)
+        slot_map = cls._pool_assignment_placeholder_map(pool_assignment_rows).get(event_name, {})
+        if slot_map:
+            n_teams = len(slot_map)
+        elif counts["n_estimating"] >= 2:
+            n_teams = counts["n_estimating"]
+        else:
+            return [], []
+
+        gpg = COURT_ESTIMATE_POOL_GAMES_PER_TEAM.get(
+            event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
+        )
+        mpg = COURT_ESTIMATE_MINUTES_PER_GAME.get(
+            event_name, COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
+        )
+
+        games: List[Dict[str, Any]] = []
+        precedence: List[Dict[str, Any]] = []
+        pool_pairs = cls._make_pool_game_pairs(prefix, n_teams, gpg)
+        for pair_idx, (team_a_id, team_b_id, pool_id) in enumerate(pool_pairs, start=1):
+            team_a_meta = slot_map.get(team_a_id)
+            team_b_meta = slot_map.get(team_b_id)
+            if slot_map and (team_a_meta is None or team_b_meta is None):
+                logger.warning(
+                    f"Pool-assignment map for event '{event_name}' is missing "
+                    f"{team_a_id!r} or {team_b_id!r}; falling back to placeholders."
+                )
+            games.append({
+                "game_id": f"{prefix}-{pair_idx:02d}",
+                "event": event_name,
+                "stage": "Pool",
+                "pool_id": pool_id,
+                "round": pair_idx,
+                "team_a_id": (
+                    team_a_meta["solver_team_id"] if team_a_meta is not None else team_a_id
+                ),
+                "team_b_id": (
+                    team_b_meta["solver_team_id"] if team_b_meta is not None else team_b_id
+                ),
+                "team_a_label": (
+                    team_a_meta["display_label"] if team_a_meta is not None else team_a_id
+                ),
+                "team_b_label": (
+                    team_b_meta["display_label"] if team_b_meta is not None else team_b_id
+                ),
+                "duration_minutes": mpg,
+                "resource_type": TEAM_RESOURCE_TYPE_SOCCER,
+                "earliest_slot": None,
+                "latest_slot": None,
+            })
+
+        playoff_teams = cls._get_playoff_teams_for_event(event_name, n_teams)
+        if playoff_teams >= 4:
+            pool_game_ids = [str(game.get("game_id") or "").strip() for game in games]
+            semi_ids = [f"{prefix}-Semi-1", f"{prefix}-Semi-2"]
+            semi_seed_pairs = [("Seed 1", "Seed 4"), ("Seed 2", "Seed 3")]
+            for semi_idx, (semi_id, labels) in enumerate(zip(semi_ids, semi_seed_pairs), start=1):
+                games.append({
+                    "game_id": semi_id,
+                    "event": event_name,
+                    "stage": "Semi",
+                    "pool_id": "",
+                    "round": semi_idx,
+                    "team_a_id": f"{prefix}-Seed-{semi_idx}",
+                    "team_b_id": f"{prefix}-Seed-{5 - semi_idx}",
+                    "team_a_label": labels[0],
+                    "team_b_label": labels[1],
+                    "duration_minutes": mpg,
+                    "resource_type": TEAM_RESOURCE_TYPE_SOCCER,
+                    "earliest_slot": None,
+                    "latest_slot": None,
+                })
+
+            precedence.extend(
+                {
+                    "before_game_id": pool_game_id,
+                    "after_game_id": semi_id,
+                    "min_gap_slots": 1,
+                }
+                for pool_game_id in pool_game_ids
+                for semi_id in semi_ids
+            )
+
+            final_id = f"{prefix}-Final"
+            games.append({
+                "game_id": final_id,
+                "event": event_name,
+                "stage": "Final",
+                "pool_id": "",
+                "round": 1,
+                "team_a_id": f"WIN-{semi_ids[0]}",
+                "team_b_id": f"WIN-{semi_ids[1]}",
+                "team_a_label": "Winner Semi 1",
+                "team_b_label": "Winner Semi 2",
+                "duration_minutes": mpg,
+                "resource_type": TEAM_RESOURCE_TYPE_SOCCER,
+                "earliest_slot": None,
+                "latest_slot": None,
+            })
+            precedence.extend(
+                {
+                    "before_game_id": semi_id,
+                    "after_game_id": final_id,
+                    "min_gap_slots": 1,
+                }
+                for semi_id in semi_ids
+            )
+            if COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME:
+                third_id = f"{prefix}-3rd"
+                games.append({
+                    "game_id": third_id,
+                    "event": event_name,
+                    "stage": "3rd",
+                    "pool_id": "",
+                    "round": 1,
+                    "team_a_id": f"LOS-{semi_ids[0]}",
+                    "team_b_id": f"LOS-{semi_ids[1]}",
+                    "team_a_label": "Loser Semi 1",
+                    "team_b_label": "Loser Semi 2",
+                    "duration_minutes": mpg,
+                    "resource_type": TEAM_RESOURCE_TYPE_SOCCER,
+                    "earliest_slot": None,
+                    "latest_slot": None,
+                })
+                precedence.extend(
+                    {
+                        "before_game_id": semi_id,
+                        "after_game_id": third_id,
+                        "min_gap_slots": 1,
+                    }
+                    for semi_id in semi_ids
+                )
+
+        return games, precedence
+
+    @staticmethod
+    def _warn_if_resource_slot_minutes_differ_from_config(
+        all_games: List[Dict[str, Any]],
+        all_resources: List[Dict[str, Any]],
+    ) -> None:
+        """Log advisory warnings when venue slot sizes differ from config durations."""
+        expected_minutes_by_resource_type: Dict[str, int] = {
+            GYM_RESOURCE_TYPE_BASKETBALL: int(
+                COURT_ESTIMATE_MINUTES_PER_GAME.get(
+                    SPORT_TYPE["BASKETBALL"],
+                    COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
+                )
+            ),
+            GYM_RESOURCE_TYPE_VOLLEYBALL: int(
+                COURT_ESTIMATE_MINUTES_PER_GAME.get(
+                    SPORT_TYPE["VOLLEYBALL_MEN"],
+                    COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
+                )
+            ),
+            TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE: int(COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE),
+            TEAM_RESOURCE_TYPE_SOCCER: int(
+                COURT_ESTIMATE_MINUTES_PER_GAME.get(
+                    SPORT_TYPE["SOCCER"],
+                    COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
+                )
+            ),
+        }
+
+        pod_expected_minutes: Dict[str, set[int]] = defaultdict(set)
+        for event_name, resource_type in POD_RESOURCE_EVENT_TYPE.items():
+            pod_expected_minutes[resource_type].add(
+                int(
+                    COURT_ESTIMATE_MINUTES_PER_GAME.get(
+                        event_name,
+                        COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
+                    )
+                )
+            )
+        for resource_type, minute_values in pod_expected_minutes.items():
+            if len(minute_values) == 1:
+                expected_minutes_by_resource_type[resource_type] = next(iter(minute_values))
+
+        scheduled_resource_types = {
+            str(game.get("resource_type") or "").strip()
+            for game in all_games
+            if str(game.get("resource_type") or "").strip()
+        }
+        slot_minutes_by_resource_type: Dict[str, set[int]] = defaultdict(set)
+        for resource in all_resources:
+            resource_type = str(resource.get("resource_type") or "").strip()
+            if resource_type not in scheduled_resource_types:
+                continue
+            try:
+                slot_minutes = int(resource.get("slot_minutes") or 0)
+            except (TypeError, ValueError):
+                continue
+            if slot_minutes > 0:
+                slot_minutes_by_resource_type[resource_type].add(slot_minutes)
+
+        for resource_type in sorted(scheduled_resource_types):
+            expected_minutes = expected_minutes_by_resource_type.get(resource_type)
+            actual_slot_minutes = sorted(slot_minutes_by_resource_type.get(resource_type, set()))
+            if expected_minutes is None or not actual_slot_minutes:
+                continue
+            if actual_slot_minutes == [expected_minutes]:
+                continue
+
+            actual_text = ", ".join(str(value) for value in actual_slot_minutes)
+            logger.warning(
+                f"Layer 2 duration mismatch for '{resource_type}': config.py game duration is "
+                f"{expected_minutes}m but venue_input.xlsx uses slot_minutes [{actual_text}]. "
+                "This is only a warning. The solver keeps the config game duration and uses "
+                "venue_input slot sizes for capacity, so games may span multiple slots or "
+                "consume padded time. If the venue_input values are an intentional real-world "
+                "override, you can ignore this warning."
+            )
+
+    @classmethod
     def _build_assigned_gym_game_objects(
         cls,
         roster_rows: List[Dict[str, Any]],
@@ -2005,10 +2242,10 @@ class ScheduleWorkbookBuilder:
         court_counter: Dict[str, int] = {}  # day → running counter
 
         # Sort for ID stability: day order, then open_time, then gym name.
-        from gym_allocator import _DAY_ORDER
+        from gym_allocator import _day_sort_key
         sorted_decisions = sorted(
             decisions,
-            key=lambda d: (_DAY_ORDER.get(d.day, 99), d.open_time, d.gym_name),
+            key=lambda d: (_day_sort_key(d.day), d.open_time, d.gym_name),
         )
         for decision in sorted_decisions:
             day = decision.day
@@ -2045,6 +2282,74 @@ class ScheduleWorkbookBuilder:
             return default
 
     @staticmethod
+    def _normalize_resource_type_name(val) -> str:
+        """Normalize venue resource names to the canonical scheduler vocabulary."""
+        cleaned = ScheduleWorkbookBuilder._clean_excel_text(val)
+        if not cleaned:
+            return ""
+        key = re.sub(r"[\s_-]+", " ", cleaned).strip().casefold()
+        return RESOURCE_TYPE_ALIASES.get(key, cleaned)
+
+    @staticmethod
+    def _resource_id_prefix(resource_type: str) -> str:
+        """Return the canonical resource-id prefix for one resource type."""
+        return RESOURCE_ID_PREFIX_BY_TYPE.get(
+            resource_type,
+            resource_type.split()[0][:3].upper(),
+        )
+
+    @staticmethod
+    def _ordinal(n: int) -> str:
+        """Return 1st / 2nd / 3rd / 4th style ordinals."""
+        if 10 <= (n % 100) <= 20:
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+        return f"{n}{suffix}"
+
+    @staticmethod
+    def _day_sort_key(day_label: str) -> Tuple[int, int, str]:
+        """Sort logical day labels like Fri-1, Sat-1, Sun-2 chronologically."""
+        cleaned = str(day_label or "").strip()
+        if not cleaned:
+            return (99, 99, "")
+        match = re.fullmatch(r"([A-Za-z]+)-(\d+)", cleaned)
+        if not match:
+            return (99, 99, cleaned)
+        prefix = match.group(1)
+        cycle = int(match.group(2))
+        weekday_order = {
+            "Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3,
+            "Fri": 4, "Sat": 5, "Sun": 6, "Day": 7,
+        }
+        return (cycle, weekday_order.get(prefix, 99), cleaned)
+
+    @classmethod
+    def _day_display_label(cls, day_label: str, short: bool = False) -> str:
+        """Return a human-friendly label for one logical day key."""
+        cleaned = str(day_label or "").strip()
+        match = re.fullmatch(r"([A-Za-z]+)-(\d+)", cleaned)
+        if not match:
+            return cleaned
+        prefix = match.group(1)
+        cycle = int(match.group(2))
+        names = {
+            "Mon": ("Monday", "Mon"),
+            "Tue": ("Tuesday", "Tue"),
+            "Wed": ("Wednesday", "Wed"),
+            "Thu": ("Thursday", "Thu"),
+            "Fri": ("Friday", "Fri"),
+            "Sat": ("Saturday", "Sat"),
+            "Sun": ("Sunday", "Sun"),
+            "Day": ("Day", "Day"),
+        }
+        long_name, short_name = names.get(prefix, (prefix, prefix))
+        if prefix == "Day":
+            return cleaned
+        ordinal = cls._ordinal(cycle)
+        return f"{ordinal} {short_name if short else long_name}"
+
+    @staticmethod
     def _coerce_excel_date(val) -> Optional[datetime]:
         """Convert an Excel date-like cell to datetime, or None when unavailable."""
         if pd.isna(val) or val in (None, ""):
@@ -2061,7 +2366,7 @@ class ScheduleWorkbookBuilder:
 
     @classmethod
     def _derive_day_labels_from_dates(cls, values: List[Any]) -> Dict[str, str]:
-        """Map unique venue dates to logical labels such as Sat-1 / Sun-1."""
+        """Map unique venue dates to logical labels such as Fri-1 / Sat-1 / Sun-2."""
         unique_dates: List[datetime] = []
         seen_keys: set[str] = set()
         for value in values:
@@ -2076,20 +2381,20 @@ class ScheduleWorkbookBuilder:
 
         unique_dates.sort()
         labels: Dict[str, str] = {}
-        sat_idx = 0
-        sun_idx = 0
-        other_idx = 0
+        weekday_counts: Dict[str, int] = defaultdict(int)
+        weekday_prefix = {
+            0: "Mon",
+            1: "Tue",
+            2: "Wed",
+            3: "Thu",
+            4: "Fri",
+            5: "Sat",
+            6: "Sun",
+        }
         for dt_value in unique_dates:
-            weekday = dt_value.weekday()
-            if weekday == 5:
-                sat_idx += 1
-                label = f"Sat-{sat_idx}"
-            elif weekday == 6:
-                sun_idx += 1
-                label = f"Sun-{sun_idx}"
-            else:
-                other_idx += 1
-                label = f"Day-{other_idx}"
+            prefix = weekday_prefix.get(dt_value.weekday(), "Day")
+            weekday_counts[prefix] += 1
+            label = f"{prefix}-{weekday_counts[prefix]}"
             labels[dt_value.date().isoformat()] = label
         return labels
 
@@ -2120,7 +2425,7 @@ class ScheduleWorkbookBuilder:
         )
 
         for _, row in df.iterrows():
-            resource_type = cls._clean_excel_text(row.get("Resource Type"))
+            resource_type = cls._normalize_resource_type_name(row.get("Resource Type"))
             if not resource_type:
                 continue
             venue_name = cls._clean_excel_text(row.get("Venue Name"))
@@ -2151,7 +2456,7 @@ class ScheduleWorkbookBuilder:
             close_decimal = last_start + slot_min / 60.0
             close_time = f"{int(close_decimal):02d}:{int(round((close_decimal % 1) * 60)):02d}"
 
-            abbrev = resource_type.split()[0][:3].upper()
+            abbrev = cls._resource_id_prefix(resource_type)
             count_key = (resource_type, day)
             rc = resource_counts.get(count_key, 0)
 
@@ -2348,9 +2653,14 @@ class ScheduleWorkbookBuilder:
             allow_placeholder_fallback=(gym_resource_strategy == "fallback"),
         )
         bc_games, precedence = self._build_assigned_bc_game_objects(pool_assignment_rows)
+        soccer_games, soccer_precedence = self._build_assigned_soccer_game_objects(
+            roster_rows,
+            pool_assignment_rows,
+        )
         pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
-        all_games = gym_games + bc_games + pod_games
+        all_games = gym_games + bc_games + soccer_games + pod_games
         team_conflicts = self._build_gym_team_conflicts(roster_rows, pool_assignment_rows)
+        precedence.extend(soccer_precedence)
 
         gym_allocation: Optional[Dict[str, Any]] = None
         if gym_resource_strategy == "allocator":
@@ -2422,6 +2732,17 @@ class ScheduleWorkbookBuilder:
                 "Bible Challenge games were generated but no 'BC Station' resources were found "
                 "in venue_input.xlsx. Those games will be unscheduled until a BC Station row is added."
             )
+
+        if soccer_games and not any(
+            str(resource.get("resource_type") or "").strip() == TEAM_RESOURCE_TYPE_SOCCER
+            for resource in all_resources
+        ):
+            logger.warning(
+                "Soccer games were generated but no 'Soccer Field' resources were found "
+                "in venue_input.xlsx. Those games will be unscheduled until a Soccer Field row is added."
+            )
+
+        self._warn_if_resource_slot_minutes_differ_from_config(all_games, all_resources)
 
         for resource in all_resources:
             if resource.get("resource_type") in (
@@ -3502,6 +3823,7 @@ class ScheduleWorkbookBuilder:
                 mpg,
                 pool_games_per_team=gpg,
                 actual_pool_games=actual,
+                event_name=event_name,
             )
             early_ids, final_ids = self._make_playoff_ids(
                 prefix, s["playoff_teams"], include_third
@@ -3736,7 +4058,9 @@ class ScheduleWorkbookBuilder:
 
         totals: Dict[str, int] = {}
         for _, row in df.iterrows():
-            resource_type = ScheduleWorkbookBuilder._clean_excel_text(row.get("Resource Type"))
+            resource_type = ScheduleWorkbookBuilder._normalize_resource_type_name(
+                row.get("Resource Type")
+            )
             if not resource_type:
                 continue
             avail = row.get("Available Slots")
@@ -3950,10 +4274,6 @@ class ScheduleWorkbookBuilder:
         game_meta = {g["game_id"]: g for g in schedule_input.get("games", [])}
         res_meta  = {r["resource_id"]: r for r in schedule_input.get("resources", [])}
         _STAGE_ORDER = {"Pool": 0, "R1": 1, "QF": 2, "Semi": 3, "Final": 4, "3rd": 5}
-        _DAY_DISPLAY = {
-            "Sat-1": "1st Sat", "Sun-1": "1st Sun",
-            "Sat-2": "2nd Sat", "Sun-2": "2nd Sun",
-        }
         rows: List[Dict[str, Any]] = []
         for a in schedule_output.get("assignments", []):
             gid  = a["game_id"]
@@ -3973,7 +4293,10 @@ class ScheduleWorkbookBuilder:
                 "team_b_id":        game.get("team_b_label", game.get("team_b_id", "")),
                 "team_c_id":        game.get("team_c_label", game.get("team_c_id", "")),
                 "resource_label":   res.get("label", rid),
-                "day":              _DAY_DISPLAY.get(res.get("day", ""), res.get("day", "")),
+                "day":              ScheduleWorkbookBuilder._day_display_label(
+                    str(res.get("day", "")),
+                    short=True,
+                ),
                 "slot":             time_part,
                 "duration_minutes": game.get("duration_minutes", ""),
             })
@@ -4036,12 +4359,6 @@ class ScheduleWorkbookBuilder:
             SPORT_TYPE["VOLLEYBALL_MEN"]:   SCHEDULE_SKETCH_COLOR_VB_MEN,
             SPORT_TYPE["VOLLEYBALL_WOMEN"]: SCHEDULE_SKETCH_COLOR_VB_WOMEN,
         }
-        _DAY_ORDER   = {"Sat-1": 0, "Sun-1": 1, "Sat-2": 2, "Sun-2": 3}
-        _DAY_DISPLAY = {
-            "Sat-1": "1st Saturday", "Sun-1": "1st Sunday",
-            "Sat-2": "2nd Saturday", "Sun-2": "2nd Sunday",
-        }
-
         def _sport_fill(event: str) -> PatternFill:
             return PatternFill(
                 fgColor=_SPORT_COLORS.get(event, "EBF1DE"), fill_type="solid"
@@ -4201,8 +4518,7 @@ class ScheduleWorkbookBuilder:
         sorted_group_keys = sorted(
             resource_groups.keys(),
             key=lambda key: (
-                _DAY_ORDER.get(key[0], 99),
-                key[0],
+                ScheduleWorkbookBuilder._day_sort_key(key[0]),
                 _time_sort_key(key[2]) if key[2] else 0,
                 _time_sort_key(key[3]) if key[3] else 0,
                 key[4],
@@ -4217,11 +4533,11 @@ class ScheduleWorkbookBuilder:
             day_res: List[Dict[str, Any]],
         ) -> str:
             day, resource_type, open_time, close_time, slot_minutes = group_key
-            day_label = _DAY_DISPLAY.get(day, day)
+            day_label = ScheduleWorkbookBuilder._day_display_label(day)
             if not open_time or not close_time:
                 open_time, close_time = _group_open_close(day_res)
             if (
-                day in _DAY_DISPLAY
+                day_label != day
                 and resource_type in (GYM_RESOURCE_TYPE, GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL)
                 and group_counts_by_day.get(day, 0) == 1
             ):

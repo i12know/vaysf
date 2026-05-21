@@ -61,14 +61,23 @@ EVENT_TO_MODE: Dict[str, str] = {
     SPORT_TYPE["PICKLEBALL_35"]:    "Pickleball Court",
 }
 
-# Canonical day ordering for contiguity-preserving block sort.
-_DAY_ORDER: Dict[str, int] = {
-    "Sat-1":  0,
-    "Sun-1":  1,
-    "Sat-2":  2,
-    "Sun-2":  3,
-    "Day-1":  0,   # pre-Day-column fallback (Issue #102; Day col added in #103)
-}
+def _day_sort_key(day_label: str) -> tuple[int, int, str]:
+    """Sort logical day labels like Fri-1, Sat-1, Sun-2 chronologically."""
+    cleaned = str(day_label or "").strip()
+    if not cleaned:
+        return (99, 99, "")
+    if "-" not in cleaned:
+        return (99, 99, cleaned)
+    prefix, suffix = cleaned.split("-", 1)
+    try:
+        cycle = int(suffix)
+    except ValueError:
+        return (99, 99, cleaned)
+    weekday_order = {
+        "Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3,
+        "Fri": 4, "Sat": 5, "Sun": 6, "Day": 7,
+    }
+    return (cycle, weekday_order.get(prefix, 99), cleaned)
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +249,7 @@ def allocate(
             # Claim unallocated blocks in this gym, earliest-first (contiguous).
             gym_blocks = sorted(
                 [b for b in available if b.gym_name == gym_name],
-                key=lambda b: (_DAY_ORDER.get(b.day, 99), b.open_time),
+            key=lambda b: (_day_sort_key(b.day), b.open_time),
             )
             for block in gym_blocks:
                 if remaining <= 0:
@@ -294,7 +303,7 @@ def _last_mode_in_gym(gym_name: str, decisions: List[AllocationDecision]) -> Opt
     gym_decisions = [d for d in decisions if d.gym_name == gym_name]
     if not gym_decisions:
         return None
-    latest = max(gym_decisions, key=lambda d: (_DAY_ORDER.get(d.day, 99), d.open_time))
+    latest = max(gym_decisions, key=lambda d: (_day_sort_key(d.day), d.open_time))
     return latest.mode
 
 
@@ -319,7 +328,7 @@ def _count_switches(decisions: List[AllocationDecision]) -> int:
     for gym_decisions in by_gym.values():
         ordered = sorted(
             gym_decisions,
-            key=lambda d: (_DAY_ORDER.get(d.day, 99), d.open_time),
+            key=lambda d: (_day_sort_key(d.day), d.open_time),
         )
         for i in range(1, len(ordered)):
             if ordered[i].mode != ordered[i - 1].mode:
