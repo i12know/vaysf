@@ -367,7 +367,7 @@ games.  Add one row per playoff game.  Required columns:
 | `game_id` | `BBM-Final` | Unique identifier used in the schedule output |
 | `event` | `Basketball - Men Team` | Must match the event name exactly |
 | `stage` | `Final` | QF, Semi, Final, or 3rd |
-| `resource_id` | `GYM-Sat-2-1` | Must match a resource_id in the Resources section |
+| `resource_id` | `GYM-Sat-2-1` or `BB-Sun-2-3` | Must match a resource_id in the Resources section |
 | `slot` | `Sat-2-14:00` | Slot label in `Day-HH:MM` format |
 
 Optional columns: `team_a_id`, `team_b_id`, `duration_minutes`.
@@ -381,6 +381,11 @@ Canonical direct-venue resource prefixes are now:
 - `PCK-` Pickleball Court
 - `TT-` Table Tennis Table
 - `TEN-` Tennis Court
+
+Allocator-managed gym blocks may still use `GYM-*`, while direct standalone
+venue rows usually use one of the sport-specific prefixes above. Operators
+should copy the exact `resource_id` from the generated `Schedule-Input`
+Resources section rather than guessing.
 
 Logical day keys are weekday-based (`Fri-1`, `Sat-1`, `Sun-1`, `Sat-2`, ...).
 
@@ -784,6 +789,24 @@ an offline, fast, repeatable consumer of those artifacts.  The scheduling logic
 lives in `middleware/schedule_workbook.py` (`ScheduleWorkbookBuilder`);
 `church_teams_export.py` delegates to it under a strict one-way dependency
 (`church_teams_export.py` → `schedule_workbook.py`, never the reverse).
+
+One important operator consequence follows from that dependency:
+
+- editing `venue_input.xlsx` does **not** update `schedule_input.json` by itself
+- `build-schedule-workbook` does **not** regenerate `schedule_input.json`
+- `export-church-teams` is the command that pulls venue edits back into the
+  machine contract
+
+So the practical rerun loops are:
+
+| What changed? | What to rerun |
+|---------------|---------------|
+| `Venue-Input` or `Gym-Modes` | `export-church-teams`, then `build-schedule-workbook` |
+| `Pool-Assignment` | `assign-pools`, then `export-church-teams`, then `build-schedule-workbook` |
+| `Playoff-Slots` only | `export-church-teams`, then `produce-schedule` (or `run-schedule.bat` if you want a full rerun) |
+
+The step-by-step operator walkthrough for these loops lives in
+`docs/SCHEDULE-HOW-TO.md`.
 
 The solver-rendered workbook (`Schedule-by-Time` / `Schedule-by-Sport` /
 `Conflict-Audit`) is a

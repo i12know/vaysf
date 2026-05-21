@@ -2534,6 +2534,15 @@ class ScheduleWorkbookBuilder:
         return slots
 
     @staticmethod
+    def _split_slot_label(slot_label: str) -> Tuple[str, str]:
+        """Split a slot label like 'Sun-2-14:00' into ('Sun-2', '14:00')."""
+        cleaned = str(slot_label or "").strip()
+        if "-" not in cleaned:
+            return "", cleaned
+        day, time_part = cleaned.rsplit("-", 1)
+        return day, time_part
+
+    @staticmethod
     def _load_gym_modes(venue_input_path: Path) -> Dict[str, Dict[str, int]]:
         """Load per-gym mode capacities from the Gym-Modes tab in venue_input.xlsx.
 
@@ -2736,66 +2745,180 @@ class ScheduleWorkbookBuilder:
         # derive day from the slot label and resource_type from the game event,
         # then find a representative venue row for slot_minutes / venue metadata.
         from gym_allocator import EVENT_TO_MODE as _EVENT_TO_MODE
-        venue_by_type_day: Dict[tuple, Dict[str, Any]] = {}
-        for _vr in venue_rows:
-            if not _vr.get("exclusive_group"):
-                continue
-            _key = (_vr["resource_type"], _vr["day"])
-            venue_by_type_day.setdefault(_key, _vr)
 
-        existing_resource_ids: set = {r["resource_id"] for r in all_resources}
-        for ps in playoff_slots:
-            rid = str(ps.get("resource_id") or "").strip()
-            slot = str(ps.get("slot") or "").strip()
-            event = str(ps.get("event") or "").strip()
-            if not rid or not slot or rid in existing_resource_ids:
-                continue
-            # Slot format is "{day}-{HH:MM}", e.g. "Sun-2-14:00".
-            day, time_part = (slot.rsplit("-", 1) + [""])[:2] if "-" in slot else ("", slot)
-            if not time_part:
-                logger.warning(
-                    f"Playoff slot {ps.get('game_id')!r}: cannot parse time from slot {slot!r} — skipped."
+        grouped_rows = [row for row in venue_rows if row.get("exclusive_group")]
+        if grouped_rows and playoff_slots:
+            block_mode_rows: Dict[Tuple[Tuple[str, str, str, str], str], List[Dict[str, Any]]] = defaultdict(list)
+            block_capacity: Dict[Tuple[str, str, str, str], int] = {}
+            day_blocks: Dict[str, List[Tuple[str, str, str, str]]] = defaultdict(list)
+
+            for venue_row in grouped_rows:
+                block_key = (
+                    str(venue_row.get("day") or "").strip(),
+                    str(venue_row.get("exclusive_group") or "").strip(),
+                    str(venue_row.get("open_time") or "").strip(),
+                    str(venue_row.get("close_time") or "").strip(),
                 )
-                continue
-            resource_type = _EVENT_TO_MODE.get(event)
-            if not resource_type:
-                logger.warning(
-                    f"Playoff slot {ps.get('game_id')!r}: cannot infer resource_type from "
-                    f"event {event!r} — skipped. Ensure event matches a gym sport name."
-                )
-                continue
-            source_row = venue_by_type_day.get((resource_type, day))
-            if source_row is None:
-                logger.warning(
-                    f"Playoff slot {ps.get('game_id')!r}: no venue row found for "
-                    f"{resource_type!r} on day {day!r} in venue_input.xlsx — skipped."
-                )
-                continue
-            slot_min = int(source_row.get("slot_minutes") or 60)
-            try:
-                h, m = (int(x) for x in time_part.split(":"))
-                close_minutes = h * 60 + m + slot_min
-                close_str = f"{close_minutes // 60:02d}:{close_minutes % 60:02d}"
-            except (ValueError, AttributeError):
-                close_str = source_row.get("close_time", time_part)
-            synthetic = {
-                "resource_id":    rid,
-                "resource_type":  resource_type,
-                "label":          source_row.get("label", "Court-1"),
-                "day":            day,
-                "open_time":      time_part,
-                "close_time":     close_str,
-                "slot_minutes":   slot_min,
-                "venue_name":     source_row.get("venue_name", ""),
-                "exclusive_group": source_row.get("exclusive_group", ""),
-                "playoff_pinned": True,
+                resource_type = str(venue_row.get("resource_type") or "").strip()
+                block_mode_rows[(block_key, resource_type)].append(venue_row)
+
+            for (block_key, _resource_type), rows in block_mode_rows.items():
+                block_capacity[block_key] = max(block_capacity.get(block_key, 0), len(rows))
+
+            for block_key in block_capacity:
+                day_blocks[block_key[0]].append(block_key)
+
+            for day_label, blocks in day_blocks.items():
+                blocks.sort(key=lambda item: (
+                    self._parse_hour(item[2]),
+                    item[1],
+                    self._parse_hour(item[3]),
+                ))
+
+            block_ranges: Dict[Tuple[str, str, str, str], Tuple[int, int]] = {}
+            for day_label, blocks in day_blocks.items():
+                ordinal = 0
+                for block_key in blocks:
+                    start_ordinal = ordinal + 1
+                    ordinal += block_capacity[block_key]
+                    block_ranges[block_key] = (start_ordinal, ordinal)
+
+            resources_by_id: Dict[str, Dict[str, Any]] = {
+                str(resource.get("resource_id") or "").strip(): resource
+                for resource in all_resources
             }
-            all_resources.append(synthetic)
-            existing_resource_ids.add(rid)
-            logger.info(
-                f"Promoted playoff-pinned resource {rid!r} ({resource_type}, "
-                f"{day} {time_part}) — single-slot, excluded from pool play."
-            )
+
+            for playoff_slot in playoff_slots:
+                game_id = str(playoff_slot.get("game_id") or "").strip() or "<unknown>"
+                resource_id = str(playoff_slot.get("resource_id") or "").strip()
+                slot_label = str(playoff_slot.get("slot") or "").strip()
+                event = str(playoff_slot.get("event") or "").strip()
+                if not resource_id or not slot_label:
+                    continue
+
+                existing_resource = resources_by_id.get(resource_id)
+                if existing_resource is not None and not existing_resource.get("playoff_pinned"):
+                    continue
+
+                day, time_part = self._split_slot_label(slot_label)
+                if not day or not time_part:
+                    logger.warning(
+                        f"Playoff slot {game_id!r}: cannot parse day/time from slot {slot_label!r} — skipped."
+                    )
+                    continue
+
+                resource_type = _EVENT_TO_MODE.get(event)
+                if not resource_type:
+                    logger.warning(
+                        f"Playoff slot {game_id!r}: cannot infer resource_type from "
+                        f"event {event!r} — skipped. Ensure event matches a gym sport name."
+                    )
+                    continue
+
+                expected_prefix = f"GYM-{day}-"
+                if not resource_id.startswith(expected_prefix):
+                    logger.warning(
+                        f"Playoff slot {game_id!r}: resource_id {resource_id!r} does not match "
+                        f"slot day {day!r}; expected prefix {expected_prefix!r}. Skipped."
+                    )
+                    continue
+                ordinal_text = resource_id[len(expected_prefix):]
+                if not ordinal_text.isdigit():
+                    logger.warning(
+                        f"Playoff slot {game_id!r}: resource_id {resource_id!r} does not end "
+                        "with a numeric court ordinal; skipped."
+                    )
+                    continue
+                requested_ordinal = int(ordinal_text)
+                slot_hour = self._parse_hour(time_part)
+
+                matched_rows: List[Dict[str, Any]] = []
+                matched_local_index = -1
+                for block_key in day_blocks.get(day, []):
+                    block_open = self._parse_hour(block_key[2])
+                    block_close = self._parse_hour(block_key[3])
+                    if not (block_open <= slot_hour < block_close):
+                        continue
+
+                    start_ordinal, end_ordinal = block_ranges[block_key]
+                    if not (start_ordinal <= requested_ordinal <= end_ordinal):
+                        continue
+
+                    candidate_rows = sorted(
+                        block_mode_rows.get((block_key, resource_type), []),
+                        key=lambda row: (
+                            str(row.get("label") or "").strip(),
+                            str(row.get("resource_id") or "").strip(),
+                        ),
+                    )
+                    if not candidate_rows:
+                        continue
+
+                    local_index = requested_ordinal - start_ordinal
+                    if local_index >= len(candidate_rows):
+                        continue
+
+                    matched_rows = candidate_rows
+                    matched_local_index = local_index
+                    break
+
+                if matched_local_index < 0:
+                    logger.warning(
+                        f"Playoff slot {game_id!r}: resource_id {resource_id!r} is not a plausible "
+                        f"{resource_type} court for {day} at {time_part}. Check the requested "
+                        "court ordinal or add a direct venue row instead."
+                    )
+                    continue
+
+                source_row = matched_rows[matched_local_index]
+                slot_minutes = int(source_row.get("slot_minutes") or 60)
+                try:
+                    hour, minute = (int(x) for x in time_part.split(":"))
+                    close_total = hour * 60 + minute + slot_minutes
+                    close_time = f"{close_total // 60:02d}:{close_total % 60:02d}"
+                except (ValueError, AttributeError):
+                    close_time = str(source_row.get("close_time") or time_part)
+
+                if existing_resource is not None:
+                    if (
+                        str(existing_resource.get("day") or "").strip() != day
+                        or str(existing_resource.get("resource_type") or "").strip() != resource_type
+                    ):
+                        logger.warning(
+                            f"Playoff slot {game_id!r}: resource_id {resource_id!r} was already "
+                            "promoted for a different day/resource_type; skipped."
+                        )
+                        continue
+                    existing_resource["open_time"] = min(
+                        str(existing_resource.get("open_time") or time_part),
+                        time_part,
+                        key=self._parse_hour,
+                    )
+                    existing_resource["close_time"] = max(
+                        str(existing_resource.get("close_time") or close_time),
+                        close_time,
+                        key=self._parse_hour,
+                    )
+                    continue
+
+                synthetic = {
+                    "resource_id":     resource_id,
+                    "resource_type":   resource_type,
+                    "label":           source_row.get("label", "Court-1"),
+                    "day":             day,
+                    "open_time":       time_part,
+                    "close_time":      close_time,
+                    "slot_minutes":    slot_minutes,
+                    "venue_name":      source_row.get("venue_name", ""),
+                    "exclusive_group": source_row.get("exclusive_group", ""),
+                    "playoff_pinned":  True,
+                }
+                all_resources.append(synthetic)
+                resources_by_id[resource_id] = synthetic
+                logger.info(
+                    f"Promoted playoff-pinned resource {resource_id!r} ({resource_type}, "
+                    f"{day} {time_part}) — single-slot, excluded from pool play."
+                )
 
         if bc_games and not any(
             str(resource.get("resource_type") or "").strip() == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE
