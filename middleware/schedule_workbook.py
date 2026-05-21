@@ -2626,6 +2626,7 @@ class ScheduleWorkbookBuilder:
         )
         gym_modes = self._load_gym_modes(venue_input_path)
         venue_rows = self._load_venue_input_rows(venue_input_path)
+        playoff_slots = self._load_playoff_slots(venue_input_path)
         gym_blocks = extract_gym_blocks(venue_rows)
         explicit_gym_resource_types = {
             GYM_RESOURCE_TYPE_BASKETBALL,
@@ -2722,7 +2723,79 @@ class ScheduleWorkbookBuilder:
                 f"per session (SCHEDULE_SOLVER_GYM_COURTS={SCHEDULE_SOLVER_GYM_COURTS})"
             )
 
-        playoff_slots = self._load_playoff_slots(venue_input_path)
+        # Promote any playoff-pinned resource that the allocator didn't emit.
+        # Rather than adding the whole multi-slot venue row (which would expose
+        # unused slots to pool play), we synthesise a one-slot resource covering
+        # only the exact time window referenced in the playoff entry.  The
+        # playoff_pinned flag prevents the solver_pool assignment below from
+        # sweeping the resource into the Gym Core pool.
+        #
+        # Venue rows for gym sports use BB-*/VB-* resource_ids (per
+        # RESOURCE_ID_PREFIX_BY_TYPE), while allocator-generated resources use
+        # GYM-* ids — so we cannot look up by resource_id directly.  Instead we
+        # derive day from the slot label and resource_type from the game event,
+        # then find a representative venue row for slot_minutes / venue metadata.
+        from gym_allocator import EVENT_TO_MODE as _EVENT_TO_MODE
+        venue_by_type_day: Dict[tuple, Dict[str, Any]] = {}
+        for _vr in venue_rows:
+            if not _vr.get("exclusive_group"):
+                continue
+            _key = (_vr["resource_type"], _vr["day"])
+            venue_by_type_day.setdefault(_key, _vr)
+
+        existing_resource_ids: set = {r["resource_id"] for r in all_resources}
+        for ps in playoff_slots:
+            rid = str(ps.get("resource_id") or "").strip()
+            slot = str(ps.get("slot") or "").strip()
+            event = str(ps.get("event") or "").strip()
+            if not rid or not slot or rid in existing_resource_ids:
+                continue
+            # Slot format is "{day}-{HH:MM}", e.g. "Sun-2-14:00".
+            day, time_part = (slot.rsplit("-", 1) + [""])[:2] if "-" in slot else ("", slot)
+            if not time_part:
+                logger.warning(
+                    f"Playoff slot {ps.get('game_id')!r}: cannot parse time from slot {slot!r} — skipped."
+                )
+                continue
+            resource_type = _EVENT_TO_MODE.get(event)
+            if not resource_type:
+                logger.warning(
+                    f"Playoff slot {ps.get('game_id')!r}: cannot infer resource_type from "
+                    f"event {event!r} — skipped. Ensure event matches a gym sport name."
+                )
+                continue
+            source_row = venue_by_type_day.get((resource_type, day))
+            if source_row is None:
+                logger.warning(
+                    f"Playoff slot {ps.get('game_id')!r}: no venue row found for "
+                    f"{resource_type!r} on day {day!r} in venue_input.xlsx — skipped."
+                )
+                continue
+            slot_min = int(source_row.get("slot_minutes") or 60)
+            try:
+                h, m = (int(x) for x in time_part.split(":"))
+                close_minutes = h * 60 + m + slot_min
+                close_str = f"{close_minutes // 60:02d}:{close_minutes % 60:02d}"
+            except (ValueError, AttributeError):
+                close_str = source_row.get("close_time", time_part)
+            synthetic = {
+                "resource_id":    rid,
+                "resource_type":  resource_type,
+                "label":          source_row.get("label", "Court-1"),
+                "day":            day,
+                "open_time":      time_part,
+                "close_time":     close_str,
+                "slot_minutes":   slot_min,
+                "venue_name":     source_row.get("venue_name", ""),
+                "exclusive_group": source_row.get("exclusive_group", ""),
+                "playoff_pinned": True,
+            }
+            all_resources.append(synthetic)
+            existing_resource_ids.add(rid)
+            logger.info(
+                f"Promoted playoff-pinned resource {rid!r} ({resource_type}, "
+                f"{day} {time_part}) — single-slot, excluded from pool play."
+            )
 
         if bc_games and not any(
             str(resource.get("resource_type") or "").strip() == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE
@@ -2745,6 +2818,8 @@ class ScheduleWorkbookBuilder:
         self._warn_if_resource_slot_minutes_differ_from_config(all_games, all_resources)
 
         for resource in all_resources:
+            if resource.get("playoff_pinned"):
+                continue
             if resource.get("resource_type") in (
                 GYM_RESOURCE_TYPE_BASKETBALL,
                 GYM_RESOURCE_TYPE_VOLLEYBALL,

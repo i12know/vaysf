@@ -1460,6 +1460,74 @@ def test_build_schedule_input_allocator_omits_zero_team_gym_sports(tmp_path):
     assert {r["resource_type"] for r in si["resources"]} == {GYM_RESOURCE_TYPE_BASKETBALL}
 
 
+def test_build_schedule_input_playoff_pinned_resource_promoted_as_single_slot(tmp_path):
+    """A playoff slot referencing an allocator-unvisited gym block should be promoted
+    as a one-slot synthetic resource that is excluded from the Gym Core solver pool."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+    from openpyxl import Workbook
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    # Sat-1 block has enough capacity to satisfy all basketball demand; Sun-2 block
+    # will be left unallocated by the greedy allocator.
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 4, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        # Sun-2 block — deliberately left unallocated after Sat-1 satisfies demand.
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 4, 2],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "resource_id", "slot"],
+        ["BBM-Final", "Basketball - Men Team", "Final", "GYM-Sun-2-1", "Sun-2-14:00"],
+    ]
+
+    path = tmp_path / "venue_input.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    for r, row in enumerate(rows, start=2):
+        for c, val in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=val)
+    gm = wb.create_sheet("Gym-Modes")
+    for r, row in enumerate(gym_modes, start=1):
+        for c, val in enumerate(row, start=1):
+            gm.cell(row=r, column=c, value=val)
+    ps = wb.create_sheet("Playoff-Slots")
+    for r, row in enumerate(playoff_rows, start=1):
+        for c, val in enumerate(row, start=1):
+            ps.cell(row=r, column=c, value=val)
+    wb.save(path)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    # The promoted synthetic resource must appear in the resource list.
+    promoted = [r for r in si["resources"] if r["resource_id"] == "GYM-Sun-2-1"]
+    assert len(promoted) == 1, "GYM-Sun-2-1 should be promoted as a synthetic resource"
+    p = promoted[0]
+
+    # Single-slot: open_time == slot time.
+    assert p["open_time"] == "14:00"
+    # close_time = 14:00 + 60 min = 15:00.
+    assert p["close_time"] == "15:00"
+    # Must be flagged so the solver_pool assignment loop skips it.
+    assert p.get("playoff_pinned") is True
+    # Must NOT be assigned to the Gym Core solver pool.
+    assert "solver_pool" not in p, "playoff_pinned resource must not enter Gym Core pool"
+
+
 def test_build_pod_game_objects_single_elimination():
     """With 3 entries in a division, 2 game placeholders are generated."""
     from config import POD_RESOURCE_EVENT_TYPE
