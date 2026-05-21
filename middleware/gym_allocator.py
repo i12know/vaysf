@@ -49,14 +49,13 @@ from config import SPORT_TYPE
 # ---------------------------------------------------------------------------
 
 # Maps every event name that may appear in venue_capacity_rows["Event"] to the
-# Gym-Modes resource_type that serves it.  Events not listed here (Table Tennis,
-# Tennis, Bible Challenge, Track & Field, etc.) use dedicated pod courts and are
-# not subject to gym-mode allocation.
+# Gym-Modes resource_type that serves it. Events not listed here (Table Tennis,
+# Tennis, Bible Challenge, Soccer, Track & Field, etc.) are not subject to
+# gym-mode allocation in the current pipeline.
 EVENT_TO_MODE: Dict[str, str] = {
     SPORT_TYPE["BASKETBALL"]:       "Basketball Court",
     SPORT_TYPE["VOLLEYBALL_MEN"]:   "Volleyball Court",
     SPORT_TYPE["VOLLEYBALL_WOMEN"]: "Volleyball Court",
-    SPORT_TYPE["SOCCER"]:           "Soccer Field",
     SPORT_TYPE["BADMINTON"]:        "Badminton Court",
     SPORT_TYPE["PICKLEBALL"]:       "Pickleball Court",
     SPORT_TYPE["PICKLEBALL_35"]:    "Pickleball Court",
@@ -147,8 +146,8 @@ def aggregate_demand_by_mode(venue_capacity_rows: List[Dict]) -> Dict[str, float
 
     venue_capacity_rows is the output of
     ScheduleWorkbookBuilder._build_venue_capacity_rows().
-    Events without an EVENT_TO_MODE entry (Table Tennis, Tennis, etc.) are
-    skipped — they use dedicated pod courts, not gym floor space.
+    Events without an EVENT_TO_MODE entry (Table Tennis, Tennis, Soccer, etc.)
+    are skipped — they do not consume Stage-A gym allocator demand today.
 
     Volleyball Men + Women demand is aggregated under "Volleyball Court".
 

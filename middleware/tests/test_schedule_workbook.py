@@ -218,13 +218,14 @@ def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
     assert "Church_Team_Status_ALL" in summary_text
     assert "run-schedule.bat" in summary_text
     assert "assign-pools" in summary_text
-    assert "BB/VBM/VBW/BC" in summary_text
+    assert "BB/VBM/VBW/BC/SOC" in summary_text
     venue_ws = wb["Venue-Estimator"]
     assert venue_ws["A1"].comment is not None
     assert "Canonical event name" in venue_ws["A1"].comment.text
     pool_ws = wb["Pool-Assignment"]
     assert pool_ws["A1"].comment is not None
     assert "Canonical team-sport event" in pool_ws["A1"].comment.text
+    assert "SOC" in pool_ws["A1"].comment.text
     assert pool_ws["I1"].comment is not None
     assert "Leave blank or enter 0" in pool_ws["I1"].comment.text
     pod_ws = wb["Pod-Divisions"]
@@ -2471,3 +2472,151 @@ def test_bc_event_in_pool_assignment_defs():
     # Sort index makes BC the last (4th) event
     idx = ScheduleWorkbookBuilder._event_sort_index(SPORT_TYPE["BIBLE_CHALLENGE"])
     assert idx == 3
+
+
+# ---------------------------------------------------------------------------
+# Soccer (optional / config-driven) tests — Issue #118
+# ---------------------------------------------------------------------------
+
+def _soccer_roster(church_codes, n_per_church=4):
+    """Build minimal Soccer roster rows — enough to meet min_team_size=4."""
+    rows = []
+    for code in church_codes:
+        for _ in range(n_per_church):
+            rows.append({"Church Team": code, "sport_type": SPORT_TYPE["SOCCER"], "sport_gender": "Mixed"})
+    return rows
+
+
+def test_soccer_in_pool_assignment_defs_when_enabled():
+    """When SOCCER_ENABLED is True (default), Soccer is included in pool defs as 5th entry."""
+    from config import SOCCER_ENABLED
+    assert SOCCER_ENABLED is True
+    defs = ScheduleWorkbookBuilder._POOL_ASSIGNMENT_EVENT_DEFS
+    assert (SPORT_TYPE["SOCCER"], "SOC") in defs
+    idx = ScheduleWorkbookBuilder._event_sort_index(SPORT_TYPE["SOCCER"])
+    assert idx == 4  # after BB(0), VBM(1), VBW(2), BC(3)
+
+
+def test_soccer_in_court_estimate_events_when_enabled():
+    """Soccer should appear in the standard court-hours estimator when enabled."""
+    from config import COURT_ESTIMATE_EVENTS, SOCCER_ENABLED
+    assert SOCCER_ENABLED is True
+    assert SPORT_TYPE["SOCCER"] in COURT_ESTIMATE_EVENTS
+
+
+def test_soccer_appears_in_pool_assignment_base_rows():
+    """Soccer teams meeting min_team_size=4 should produce Pool-Assignment rows."""
+    builder = ScheduleWorkbookBuilder()
+    churches = ["RPC", "OCB", "ANH"]
+    rows = _soccer_roster(churches, n_per_church=4)
+    base_rows = builder._build_pool_assignment_base_rows(rows)
+    soccer_rows = [r for r in base_rows if r["Event"] == SPORT_TYPE["SOCCER"]]
+    assert {r["Team ID"] for r in soccer_rows} == set(churches)
+    for r in soccer_rows:
+        assert r["Min Team Size"] == 4
+
+
+def test_soccer_pool_assignment_below_min_team_size_excluded():
+    """Soccer team with fewer than 4 roster members is excluded from Pool-Assignment."""
+    builder = ScheduleWorkbookBuilder()
+    rows = (
+        _soccer_roster(["RPC"], n_per_church=4)
+        + _soccer_roster(["OCB"], n_per_church=3)  # below min
+    )
+    base_rows = builder._build_pool_assignment_base_rows(rows)
+    soccer_rows = [r for r in base_rows if r["Event"] == SPORT_TYPE["SOCCER"]]
+    assert {r["Team ID"] for r in soccer_rows} == {"RPC"}
+
+
+def test_soccer_cross_sport_conflict_edge_with_basketball(tmp_path):
+    """Soccer and BB teams sharing an athlete must produce a team_conflicts edge."""
+    builder = ScheduleWorkbookBuilder()
+    shared_id = 42
+    bb_rpc = [
+        {
+            "Church Team": "RPC",
+            "sport_type": SPORT_TYPE["BASKETBALL"],
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "Participant ID (WP)": pid,
+            "participant_primary_sport": SPORT_TYPE["BASKETBALL"],
+        }
+        for pid in range(40, 45)  # includes shared_id=42
+    ]
+    bb_anh = [
+        {
+            "Church Team": "ANH",
+            "sport_type": SPORT_TYPE["BASKETBALL"],
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "Participant ID (WP)": pid,
+            "participant_primary_sport": SPORT_TYPE["BASKETBALL"],
+        }
+        for pid in range(50, 55)
+    ]
+    soccer_ocb = [
+        {
+            "Church Team": "OCB",
+            "sport_type": SPORT_TYPE["SOCCER"],
+            "sport_gender": "Mixed",
+            "sport_format": "Team",
+            "Participant ID (WP)": pid,
+            "participant_primary_sport": SPORT_TYPE["SOCCER"],  # primary is Soccer
+        }
+        for pid in (shared_id, 90, 91, 92)
+    ]
+    soccer_tlc = [
+        {
+            "Church Team": "TLC",
+            "sport_type": SPORT_TYPE["SOCCER"],
+            "sport_gender": "Mixed",
+            "sport_format": "Team",
+            "Participant ID (WP)": pid,
+            "participant_primary_sport": SPORT_TYPE["SOCCER"],
+        }
+        for pid in (95, 96, 97, 98)
+    ]
+    roster_rows = bb_rpc + bb_anh + soccer_ocb + soccer_tlc
+
+    si = builder._build_schedule_input(roster_rows, [], tmp_path / "no_venue.xlsx")
+
+    bb_soccer_edges = [
+        edge for edge in si["team_conflicts"]
+        if {edge.get("event_a"), edge.get("event_b")}
+           == {SPORT_TYPE["BASKETBALL"], SPORT_TYPE["SOCCER"]}
+    ]
+    assert len(bb_soccer_edges) == 1
+    edge = bb_soccer_edges[0]
+    assert edge["shared_count"] == 1
+    # Athlete's primary is Soccer, which is one of the events on this edge.
+    assert edge["primary_overlap_count"] == 1
+
+
+def test_soccer_pool_assignment_does_not_create_gym_games(tmp_path):
+    """Soccer pool-assignment rows must NOT generate Gym Core games (uses Soccer fields)."""
+    builder = ScheduleWorkbookBuilder()
+    rows = _soccer_roster(["RPC", "OCB", "ANH"], n_per_church=4)
+    si = builder._build_schedule_input(rows, [], tmp_path / "no_venue.xlsx")
+    soccer_games = [g for g in si.get("games", []) if g.get("event") == SPORT_TYPE["SOCCER"]]
+    assert soccer_games == []
+
+
+def test_soccer_disabled_removes_from_pool_assignment(monkeypatch):
+    """When SOCCER_ENABLED=False, Soccer is excluded from Pool-Assignment outputs."""
+    # Simulate disabled mode by patching the class attribute to the without-Soccer list.
+    defs_without_soccer = [
+        (event, prefix)
+        for event, prefix in ScheduleWorkbookBuilder._POOL_ASSIGNMENT_EVENT_DEFS
+        if event != SPORT_TYPE["SOCCER"]
+    ]
+    monkeypatch.setattr(
+        ScheduleWorkbookBuilder,
+        "_POOL_ASSIGNMENT_EVENT_DEFS",
+        defs_without_soccer,
+    )
+
+    builder = ScheduleWorkbookBuilder()
+    rows = _soccer_roster(["RPC", "OCB"], n_per_church=4)
+    base_rows = builder._build_pool_assignment_base_rows(rows)
+    soccer_rows = [r for r in base_rows if r["Event"] == SPORT_TYPE["SOCCER"]]
+    assert soccer_rows == []
