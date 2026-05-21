@@ -19,6 +19,7 @@ from math import ceil
 from config import (
     SPORT_TYPE,
     SPORT_FORMAT,
+    SOCCER_ENABLED,
     RACQUET_SPORTS,
     is_racquet_sport,
     COURT_ESTIMATE_EVENTS,
@@ -102,7 +103,9 @@ class ScheduleWorkbookBuilder:
         (SPORT_TYPE["VOLLEYBALL_MEN"], "VBM"),
         (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW"),
         (SPORT_TYPE["BIBLE_CHALLENGE"], "BC"),
-    ]
+    ] + (
+        [(SPORT_TYPE["SOCCER"], "SOC")] if SOCCER_ENABLED else []
+    )
     _POOL_ASSIGNMENT_HEADER_NOTES: Dict[str, str] = {
         "Event": (
             "Canonical team-sport event this row belongs to. Current Phase 1 "
@@ -2281,7 +2284,7 @@ class ScheduleWorkbookBuilder:
                 "   If omitted, the command tries to auto-detect the newest ALL workbook "
                 "beside schedule_input.json or in EXPORT_DIR.\n"
                 "4. Review the planning tabs in this workbook.\n"
-                "5. Edit the Pool-Assignment tab if you want to seed BB/VBM/VBW/BC teams, then run:\n"
+                "5. Edit the Pool-Assignment tab if you want to seed BB/VBM/VBW/BC/SOC teams, then run:\n"
                 "   python main.py assign-pools --workbook \"...\\Schedule_Workbook_YYYY-MM-DD.xlsx\"\n"
                 "6. Repeat until venue capacity, seeding, pod planning, and resource IDs look right.",
             ),
@@ -2297,7 +2300,7 @@ class ScheduleWorkbookBuilder:
                 "Tabs In This Workbook",
                 "Summary: operator guide and command cheat sheet.\n"
                 "Venue-Estimator: rough demand estimate for team/racquet sports.\n"
-                "Pool-Assignment: editable BB/VBM/VBW/BC seed and pool-draw workspace.\n"
+                "Pool-Assignment: editable BB/VBM/VBW/BC/SOC seed and pool-draw workspace.\n"
                 "Pod-Divisions: planned pod divisions for racquet/pod events.\n"
                 "Pod-Entries-Review: detailed entry review for pod sports.\n"
                 "Court-Schedule-Sketch: quick planning sketch using Layer 1 assumptions.\n"

@@ -111,6 +111,14 @@ SPORT_TYPE = {
 SPORT_UNSELECTED = "Unselected/NA"
 DEFAULT_SPORT = "default"
 
+# Soccer - Coed Exhibition is an optional team sport that may not run every
+# season. Toggle this flag to remove Soccer from the planning pipeline:
+#   - True: Soccer appears in Pool-Assignment, Venue-Estimator, and cross-sport
+#     conflict edges with BB / VBM / VBW / BC.
+#   - False: Soccer is fully excluded from outputs even if there are stray
+#     Soccer registrations (treated as registration error in that case).
+SOCCER_ENABLED = True
+
 # Sport Category Classification
 SPORT_CATEGORY = {
     "TEAM": "Team",
@@ -416,12 +424,15 @@ def is_racquet_sport(sport: str) -> bool:
 # min-size threshold, concurrent multi-court model).
 # Bible Challenge is excluded here — it uses a sequential single-classroom
 # model and is handled separately in _build_venue_capacity_rows.
+# Soccer is included only when SOCCER_ENABLED is True (Coed Exhibition is
+# optional and may not return every season).
 COURT_ESTIMATE_EVENTS = [
     SPORT_TYPE["BASKETBALL"],
     SPORT_TYPE["VOLLEYBALL_MEN"],
     SPORT_TYPE["VOLLEYBALL_WOMEN"],
-    SPORT_TYPE["SOCCER"],
 ]
+if SOCCER_ENABLED:
+    COURT_ESTIMATE_EVENTS.append(SPORT_TYPE["SOCCER"])
 
 # Racquet sports included in the estimator (entry-based, doubles counted as pairs).
 COURT_ESTIMATE_RACQUET_EVENTS = [
