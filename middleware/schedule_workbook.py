@@ -101,6 +101,7 @@ class ScheduleWorkbookBuilder:
         (SPORT_TYPE["BASKETBALL"], "BBM"),
         (SPORT_TYPE["VOLLEYBALL_MEN"], "VBM"),
         (SPORT_TYPE["VOLLEYBALL_WOMEN"], "VBW"),
+        (SPORT_TYPE["BIBLE_CHALLENGE"], "BC"),
     ]
     _POOL_ASSIGNMENT_HEADER_NOTES: Dict[str, str] = {
         "Event": (
