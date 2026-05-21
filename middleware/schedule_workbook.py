@@ -29,6 +29,11 @@ from config import (
     COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME,
     COURT_ESTIMATE_MIN_TEAM_SIZE,
     COURT_ESTIMATE_MINUTES_PER_GAME,
+    COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+    COURT_ESTIMATE_BC_TEAMS_PER_GAME,
+    COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM,
+    COURT_ESTIMATE_BC_PLAYOFF_GAMES,
+    COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF,
     COURT_ESTIMATE_PLAYOFF_RULES,
     POD_SPORT_ABBREV,
     SCHEDULE_SKETCH_SATURDAY_START,
@@ -929,6 +934,46 @@ class ScheduleWorkbookBuilder:
                 "Total Court Slots": s["total_slots"],
                 "Estimated Court Hours": s["court_hours"],
             })
+
+        # Bible Challenge — sequential single-classroom (Jeopardy, 3 teams/game)
+        # Games never run concurrently; "court hours" = total room hours.
+        bc_event = SPORT_TYPE["BIBLE_CHALLENGE"]
+        bc_min = self._get_min_team_size(bc_event)
+        bc_counts = self._count_estimating_teams(roster_rows, bc_event, bc_min)
+        n_bc = bc_counts["n_estimating"]
+        bc_rr_games = (
+            ceil(n_bc * COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM / COURT_ESTIMATE_BC_TEAMS_PER_GAME)
+            if n_bc > 0 else 0
+        )
+        bc_has_playoff = n_bc >= COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF
+        bc_playoff_games = COURT_ESTIMATE_BC_PLAYOFF_GAMES if bc_has_playoff else 0
+        bc_total = bc_rr_games + bc_playoff_games
+        bc_hours = round(bc_total * COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE / 60, 2)
+        bc_actual_gpg = (
+            round(bc_rr_games * COURT_ESTIMATE_BC_TEAMS_PER_GAME / n_bc, 1)
+            if n_bc > 0 else 0
+        )
+        bc_note = f"Sequential, 1 classroom — {COURT_ESTIMATE_BC_TEAMS_PER_GAME} teams/game"
+        if not bc_has_playoff:
+            bc_note += f" (< {COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF} teams: no playoff)"
+        rows.append({
+            "Event": bc_event,
+            "Potential Teams/Entries": bc_counts["n_potential"],
+            "Estimating Teams/Entries": n_bc,
+            "Teams": bc_counts["team_codes"],
+            "Target Pool Games/Team": COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM,
+            "Actual Pool Games/Team": bc_actual_gpg,
+            "Pool Composition": bc_note,
+            "BYE Slots": None,
+            "Minutes Per Game": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+            "Pool Slots": bc_rr_games,
+            "Playoff Teams": COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF if bc_has_playoff else 0,
+            "Playoff Slots": bc_playoff_games,
+            "Third Place?": "No",
+            "Third Place Slots": 0,
+            "Total Court Slots": bc_total,
+            "Estimated Court Hours": bc_hours,
+        })
 
         # Racquet sports — count complete pairs + singles
         for sport_name in COURT_ESTIMATE_RACQUET_EVENTS:
