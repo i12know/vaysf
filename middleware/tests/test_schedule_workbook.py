@@ -1528,6 +1528,122 @@ def test_build_schedule_input_playoff_pinned_resource_promoted_as_single_slot(tm
     assert "solver_pool" not in p, "playoff_pinned resource must not enter Gym Core pool"
 
 
+def test_build_schedule_input_playoff_pinned_resource_merges_multiple_slots(tmp_path):
+    """Reusing the same playoff-pinned GYM resource_id across multiple slots should
+    expand one synthetic resource instead of leaving later slots invalid."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+    from openpyxl import Workbook
+    from scheduler import validate_playoff_slots
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 4, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 4, 2],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "resource_id", "slot"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi", "GYM-Sun-2-1", "Sun-2-14:00"],
+        ["BBM-Final", "Basketball - Men Team", "Final", "GYM-Sun-2-1", "Sun-2-16:00"],
+    ]
+
+    path = tmp_path / "venue_input.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    for r, row in enumerate(rows, start=2):
+        for c, val in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=val)
+    gm = wb.create_sheet("Gym-Modes")
+    for r, row in enumerate(gym_modes, start=1):
+        for c, val in enumerate(row, start=1):
+            gm.cell(row=r, column=c, value=val)
+    ps = wb.create_sheet("Playoff-Slots")
+    for r, row in enumerate(playoff_rows, start=1):
+        for c, val in enumerate(row, start=1):
+            ps.cell(row=r, column=c, value=val)
+    wb.save(path)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    promoted = [r for r in si["resources"] if r["resource_id"] == "GYM-Sun-2-1"]
+    assert len(promoted) == 1
+    resource = promoted[0]
+    assert resource["open_time"] == "14:00"
+    assert resource["close_time"] == "17:00"
+
+    validated, _blocked = validate_playoff_slots(si["playoff_slots"], si["resources"])
+    assert len(validated) == 2
+
+
+def test_build_schedule_input_playoff_pinned_resource_rejects_implausible_ordinal(tmp_path):
+    """An unknown GYM-{day}-{n} playoff resource should not be promoted when n exceeds
+    the physically plausible court ordinal range for that day/block."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+    from openpyxl import Workbook
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Practice Gym", "Church Practice Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sun-2",
+         "2026-07-26", 8, 10, 60, None, "Practice Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 1, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Practice Gym", 0, 2],
+        ["Main Gym", 2, 1],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "resource_id", "slot"],
+        ["BBM-Final", "Basketball - Men Team", "Final", "GYM-Sun-2-99", "Sun-2-14:00"],
+    ]
+
+    path = tmp_path / "venue_input.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    for r, row in enumerate(rows, start=2):
+        for c, val in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=val)
+    gm = wb.create_sheet("Gym-Modes")
+    for r, row in enumerate(gym_modes, start=1):
+        for c, val in enumerate(row, start=1):
+            gm.cell(row=r, column=c, value=val)
+    ps = wb.create_sheet("Playoff-Slots")
+    for r, row in enumerate(playoff_rows, start=1):
+        for c, val in enumerate(row, start=1):
+            ps.cell(row=r, column=c, value=val)
+    wb.save(path)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    assert not any(r["resource_id"] == "GYM-Sun-2-99" for r in si["resources"])
+
+
 def test_build_pod_game_objects_single_elimination():
     """With 3 entries in a division, 2 game placeholders are generated."""
     from config import POD_RESOURCE_EVENT_TYPE

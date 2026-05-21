@@ -3647,6 +3647,7 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_float_from_excel",
     "_load_venue_input_rows",
     "_load_playoff_slots",
+    "_split_slot_label",
     "_load_gym_modes",
     "_build_schedule_input",
     "_write_schedule_input_tab",
