@@ -4,7 +4,11 @@ import pandas as pd
 from openpyxl import load_workbook
 
 from church_teams_export import ChurchTeamsExporter
-from config import SPORT_TYPE, TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE
+from config import (
+    COURT_ESTIMATE_POOL_GAMES_PER_TEAM,
+    SPORT_TYPE,
+    TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+)
 from schedule_workbook import ScheduleWorkbookBuilder
 
 
@@ -31,6 +35,11 @@ def _sheet_rows(ws) -> list[dict]:
 def _make_gym_roster(n_churches: int = 8) -> list[dict]:
     """Return minimal Basketball-Men roster rows for n_churches churches."""
     codes = ["RPC", "ANH", "FVC", "GAC", "NSD", "TLC", "GLA", "ORN"][:n_churches]
+    return _make_gym_roster_from_codes(codes)
+
+
+def _make_gym_roster_from_codes(codes: list[str]) -> list[dict]:
+    """Return minimal Basketball-Men roster rows for explicit church codes."""
     rows = []
     for code in codes:
         for _ in range(5):  # 5 members per church -> meets min team size
@@ -1319,9 +1328,10 @@ def test_build_gym_game_objects_stable_team_ids():
         appearances[g["team_a_id"]] += 1
         appearances[g["team_b_id"]] += 1
 
-    # The normalized 2-game policy keeps every team at exactly 2 pool games.
+    # The live Basketball default is now 3 games/team, so 8 teams split into
+    # two 4-team round-robin pools and every placeholder appears 3 times.
     assert appearances, "Expected stable placeholder team IDs to be reused"
-    assert all(count == 2 for count in appearances.values()), appearances
+    assert all(count == 3 for count in appearances.values()), appearances
 
 
 def test_build_gym_game_objects_pool_id_nonempty():
@@ -1838,7 +1848,7 @@ def test_build_assigned_gym_game_objects_fallback_counts_team_order_units():
     basketball_games = [
         game for game in games if game["event"] == SPORT_TYPE["BASKETBALL"]
     ]
-    assert len(basketball_games) == 4
+    assert len(basketball_games) == 6
 
 
 def test_classmethod_schedule_helpers_do_not_instantiate_exporter_subclass():
@@ -1952,16 +1962,102 @@ def test_make_pool_game_pairs_direct_match_for_two_teams():
     assert pairs == [("T-P1-T1", "T-P1-T2", "P1")]
 
 
-def test_make_pool_game_pairs_legacy_fallback_for_nondefault_target():
-    """Non-default targets keep the legacy balanced round-robin fallback."""
+def test_make_pool_game_pairs_exact_three_games_per_team_even_counts():
+    """3-game mode keeps even-count pools at exactly 3 games/team."""
     from collections import Counter
 
-    pairs = ScheduleWorkbookBuilder._make_pool_game_pairs("T", 9, 3)
-    games_per_team: Counter = Counter()
-    for a, b, _ in pairs:
-        games_per_team[a] += 1
-        games_per_team[b] += 1
-    assert min(games_per_team.values()) >= 3
+    cases = [
+        (4, 6),
+        (6, 9),
+        (8, 12),
+        (10, 15),
+        (12, 18),
+    ]
+    for n_teams, expected_total_games in cases:
+        pairs = ScheduleWorkbookBuilder._make_pool_game_pairs("T", n_teams, 3)
+        games_per_team: Counter = Counter()
+        for a, b, _ in pairs:
+            games_per_team[a] += 1
+            games_per_team[b] += 1
+        assert len(pairs) == expected_total_games
+        assert games_per_team
+        assert all(count == 3 for count in games_per_team.values()), dict(games_per_team)
+
+
+def test_make_pool_game_pairs_three_game_policy_odd_counts_use_one_extra_slot():
+    """Odd-size 3-game pools keep everyone at 3 except the highest odd-pool slot."""
+    from collections import Counter
+
+    cases = [
+        (5, [3, 3, 3, 3, 4]),
+        (7, [3, 3, 3, 3, 3, 3, 4]),
+        (9, [3, 3, 3, 3, 3, 3, 3, 3, 4]),
+        (13, [3] * 12 + [4]),
+    ]
+    for n_teams, expected_counts in cases:
+        pairs = ScheduleWorkbookBuilder._make_pool_game_pairs("T", n_teams, 3)
+        games_per_team: Counter = Counter()
+        for a, b, _ in pairs:
+            games_per_team[a] += 1
+            games_per_team[b] += 1
+        assert sorted(games_per_team.values()) == expected_counts, (
+            f"n_teams={n_teams}: {dict(games_per_team)}"
+        )
+
+
+def test_make_pool_game_pairs_reject_unsupported_target():
+    """Only 2 and 3 games/team are supported for live team-sport planning."""
+    import pytest
+
+    with pytest.raises(ValueError, match="Only 2 and 3 games/team are supported"):
+        ScheduleWorkbookBuilder._make_pool_game_pairs("T", 8, 4)
+
+
+def test_summarize_pool_policy_three_game_note_for_odd_pool():
+    """3-game mode should explain which odd-pool slot gets the extra game."""
+    summary = ScheduleWorkbookBuilder._summarize_pool_policy(13, 3)
+
+    assert summary["target_pool_games_per_team"] == 3
+    assert summary["actual_pool_games_per_team"] == 3.08
+    assert "5-team pools give T5 the extra 4th game" in summary["pool_composition"]
+    assert summary["actual_pool_games"] == 20
+
+
+def test_pool_sizes_for_assignment_follow_three_game_policy(monkeypatch):
+    """Pool-Assignment should switch to 4/4/5 sizing when Basketball uses 3 games/team."""
+    builder = ScheduleWorkbookBuilder()
+    codes = [
+        "RPC", "ANH", "FVC", "GAC", "NSD", "TLC", "GLA",
+        "ORN", "WSD", "PCC", "PHX", "WAG", "NHC",
+    ]
+    monkeypatch.setitem(COURT_ESTIMATE_POOL_GAMES_PER_TEAM, SPORT_TYPE["BASKETBALL"], 3)
+
+    assert builder._pool_sizes_for_assignment(
+        SPORT_TYPE["BASKETBALL"],
+        len(codes),
+    ) == [4, 4, 5]
+
+
+def test_build_gym_game_objects_follow_three_game_policy(monkeypatch):
+    """Layer-2 bridge game generation should honor the explicit 3-game policy."""
+    from collections import Counter
+
+    builder = ScheduleWorkbookBuilder()
+    codes = [
+        "RPC", "ANH", "FVC", "GAC", "NSD", "TLC", "GLA",
+        "ORN", "WSD", "PCC", "PHX", "WAG", "NHC",
+    ]
+    monkeypatch.setitem(COURT_ESTIMATE_POOL_GAMES_PER_TEAM, SPORT_TYPE["BASKETBALL"], 3)
+    games = builder._build_gym_game_objects(_make_gym_roster_from_codes(codes))
+    bbm_pool = [g for g in games if g["stage"] == "Pool" and g["event"] == SPORT_TYPE["BASKETBALL"]]
+
+    appearances: Counter = Counter()
+    for g in bbm_pool:
+        appearances[g["team_a_id"]] += 1
+        appearances[g["team_b_id"]] += 1
+
+    assert len(bbm_pool) == 20
+    assert sorted(appearances.values()) == ([3] * 12) + [4]
 
 
 def test_compute_court_slots_consistent_with_make_pool_game_pairs():
@@ -1969,7 +2065,7 @@ def test_compute_court_slots_consistent_with_make_pool_game_pairs():
     several (n_teams, gpg) combinations."""
 
     builder = ScheduleWorkbookBuilder()
-    cases = [(2, 2), (5, 2), (8, 2), (12, 2), (9, 3)]
+    cases = [(2, 2), (5, 2), (8, 2), (12, 2), (9, 3), (13, 3)]
     for n_teams, gpg in cases:
         actual = len(ScheduleWorkbookBuilder._make_pool_game_pairs("_", n_teams, gpg))
         s = builder._compute_court_slots(n_teams, pool_games_per_team=gpg,
@@ -2549,7 +2645,7 @@ def test_bc_pool_of_four_assigns_extra_round_to_t4():
 
 
 def test_bc_schedule_input_adds_playoff_precedence(tmp_path):
-    """Nine BC teams should add semifinal/final queue games plus final-after-semis precedence."""
+    """Nine BC teams should keep all BC prelims ahead of semis, then semis ahead of the final."""
     builder = ScheduleWorkbookBuilder()
     bc_rows = _bc_roster(
         ["RPC", "OCB", "ANH", "GLA", "TLC", "FVC", "MWC", "NSD", "WCC"],
@@ -2558,13 +2654,38 @@ def test_bc_schedule_input_adds_playoff_precedence(tmp_path):
 
     si = builder._build_schedule_input(bc_rows, [], tmp_path / "no_venue.xlsx")
     bc_games = [g for g in si["games"] if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]]
-    assert any(g["stage"] == "Semi" for g in bc_games)
-    assert any(g["stage"] == "Final" for g in bc_games)
-    assert len(si["precedence"]) == 3
-    assert {rule["after_game_id"] for rule in si["precedence"]} == {"BC-Final"}
-    assert {rule["before_game_id"] for rule in si["precedence"]} == {
-        "BC-Semi-1", "BC-Semi-2", "BC-Semi-3"
+    pool_game_ids = {
+        str(g["game_id"])
+        for g in bc_games
+        if g.get("stage") == "Pool"
     }
+    semi_ids = {
+        str(g["game_id"])
+        for g in bc_games
+        if g.get("stage") == "Semi"
+    }
+    final_ids = {
+        str(g["game_id"])
+        for g in bc_games
+        if g.get("stage") == "Final"
+    }
+    assert semi_ids == {"BC-Semi-1", "BC-Semi-2", "BC-Semi-3"}
+    assert final_ids == {"BC-Final"}
+
+    precedence_pairs = {
+        (str(rule["before_game_id"]), str(rule["after_game_id"]))
+        for rule in si["precedence"]
+    }
+    expected_pairs = {
+        (pool_game_id, semi_id)
+        for pool_game_id in pool_game_ids
+        for semi_id in semi_ids
+    } | {
+        (semi_id, "BC-Final")
+        for semi_id in semi_ids
+    }
+    assert precedence_pairs == expected_pairs
+    assert all(int(rule.get("min_gap_slots") or 0) == 1 for rule in si["precedence"])
 
 
 def test_bc_event_in_pool_assignment_defs():

@@ -396,6 +396,50 @@ def test_solve_bc_precedence_keeps_final_after_semis():
     assert slot_by_game["BC-Final"] == "Sat-1-11:00"
 
 
+def test_solve_bc_precedence_keeps_semis_after_pool_rounds():
+    """BC semifinals must not start before all BC pool rounds are complete."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = _minimal_schedule_input(
+        games=[
+            _bc_game("BC-P1-RR-1", "BC::A", "BC::B", "BC::C", stage="Pool", pool_id="P1", round_num=1),
+            _bc_game("BC-P2-RR-1", "BC::D", "BC::E", "BC::F", stage="Pool", pool_id="P2", round_num=2),
+            _bc_game("BC-Semi-1", "BC-S1A", "BC-S1B", "BC-S1C", stage="Semi", pool_id="", round_num=1),
+            _bc_game("BC-Semi-2", "BC-S2A", "BC-S2B", "BC-S2C", stage="Semi", pool_id="", round_num=2),
+            _bc_game("BC-Semi-3", "BC-S3A", "BC-S3B", "BC-S3C", stage="Semi", pool_id="", round_num=3),
+            _bc_game("BC-Final", "WIN-1", "WIN-2", "WIN-3", stage="Final", pool_id="", round_num=1),
+        ],
+        resources=[_bc_resource("BC-ROOM-1", close_time="14:00")],
+    )
+    pool_game_ids = ["BC-P1-RR-1", "BC-P2-RR-1"]
+    semi_ids = ["BC-Semi-1", "BC-Semi-2", "BC-Semi-3"]
+    si["precedence"] = (
+        [
+            {"before_game_id": pool_game_id, "after_game_id": semi_id, "min_gap_slots": 1}
+            for pool_game_id in pool_game_ids
+            for semi_id in semi_ids
+        ]
+        + [
+            {"before_game_id": semi_id, "after_game_id": "BC-Final", "min_gap_slots": 1}
+            for semi_id in semi_ids
+        ]
+    )
+
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_OPTIMAL
+
+    sorted_slots = sorted({row["slot"] for row in result["assignments"]})
+    slot_index = {slot: idx for idx, slot in enumerate(sorted_slots)}
+    slot_by_game = {row["game_id"]: row["slot"] for row in result["assignments"]}
+    pool_max = max(slot_index[slot_by_game[game_id]] for game_id in pool_game_ids)
+    semi_min = min(slot_index[slot_by_game[game_id]] for game_id in semi_ids)
+    final_idx = slot_index[slot_by_game["BC-Final"]]
+
+    assert pool_max < semi_min
+    assert max(slot_index[slot_by_game[game_id]] for game_id in semi_ids) < final_idx
+
+
 def test_solve_team_conflict_infeasible():
     """Two games sharing a team on a single slot/court must be INFEASIBLE."""
     pytest.importorskip("ortools")

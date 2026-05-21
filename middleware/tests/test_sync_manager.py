@@ -244,7 +244,7 @@ def test_new_late_racquet_registration_is_removed_but_allowed_events_remain(sync
     mocker.patch.object(
         ParticipantSyncer,
         "_current_local_date",
-        return_value=datetime.date(2026, 5, 17),
+        return_value=datetime.date(2026, 5, 18),
     )
 
     participant = {
@@ -294,7 +294,7 @@ def test_new_late_racquet_only_registration_becomes_blocking(sync_manager, mocke
     mocker.patch.object(
         ParticipantSyncer,
         "_current_local_date",
-        return_value=datetime.date(2026, 5, 17),
+        return_value=datetime.date(2026, 5, 18),
     )
 
     participant = {

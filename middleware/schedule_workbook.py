@@ -151,7 +151,9 @@ class ScheduleWorkbookBuilder:
             "Computed assigned pool, such as P1 or P2."
         ),
         "Pool Slot": (
-            "Computed slot within the assigned pool, such as T1 or T3."
+            "Computed slot within the assigned pool, such as T1 or T3. Under the 3-game "
+            "policy, the highest slot in an odd pool (T5 in a 5-team pool, T7 in a 7-team "
+            "pool) receives the extra 4th game."
         ),
         "Assignment Basis": (
             "Computed explanation for the row placement: Seeded, SeededDuplicate, "
@@ -226,16 +228,22 @@ class ScheduleWorkbookBuilder:
             "explicit A/B team splits appear as church code plus team order, such as RPC-A."
         ),
         "Target Pool Games/Team": (
-            "Configured planning target for pool games per team."
+            "Configured planning target for pool games per team. This column is generated "
+            "from middleware/config.py and is not edited in Excel. Supported core team-sport "
+            "targets are 2 and 3."
         ),
         "Actual Pool Games/Team": (
             "Actual pool-game planning assumption for this event. For the standard team-sport "
-            "model this is the average implied by the normalized pool layout; for Bible "
+            "model this is the average implied by the normalized pool layout; for 3-game "
+            "team-sport mode, odd team counts may show a value slightly above 3.0 when one "
+            "odd-size pool gives its highest slot an extra game. For Bible "
             "Challenge it reflects the organizer-facing 2-games-per-team target once enough "
             "teams exist to run the Jeopardy format."
         ),
         "Pool Composition": (
-            "Pool sizes used by the current planning policy, such as 4 + 3 + 3."
+            "Pool sizes used by the current planning policy, such as 4 + 3 + 3. Under the "
+            "3-game policy, a 5-team or 7-team pool note means the highest slot in that odd "
+            "pool takes the extra 4th game."
         ),
         "BYE Slots": (
             "Implicit bye slots created by the current pool layout. Most relevant when 5-team pools "
@@ -1708,6 +1716,11 @@ class ScheduleWorkbookBuilder:
                 })
 
         if len(bc_rows) >= COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF:
+            pool_game_ids = [
+                str(game.get("game_id") or "").strip()
+                for game in games
+                if str(game.get("stage") or "").strip() == "Pool"
+            ]
             semi_ids: List[str] = []
             for semi_idx in range(1, 4):
                 semi_id = f"{prefix}-Semi-{semi_idx}"
@@ -1729,6 +1742,16 @@ class ScheduleWorkbookBuilder:
                     "earliest_slot": None,
                     "latest_slot": None,
                 })
+
+            precedence.extend(
+                {
+                    "before_game_id": pool_game_id,
+                    "after_game_id": semi_id,
+                    "min_gap_slots": 1,
+                }
+                for pool_game_id in pool_game_ids
+                for semi_id in semi_ids
+            )
 
             final_id = f"{prefix}-Final"
             games.append({
@@ -2463,16 +2486,19 @@ class ScheduleWorkbookBuilder:
             (
                 "Layer 1 Loop",
                 "1. Edit middleware/data/venue_input.xlsx.\n"
-                "2. Run: python main.py export-church-teams\n"
-                "3. Run: python main.py build-schedule-workbook "
+                "2. If you need to change team-sport pool games per team, edit the "
+                "COURT_ESTIMATE_POOL_GAMES_* constants in middleware/config.py. "
+                "Supported live values are 2 or 3; Venue-Estimator is read-only.\n"
+                "3. Run: python main.py export-church-teams\n"
+                "4. Run: python main.py build-schedule-workbook "
                 "--input-xlsx \"...\\Church_Team_Status_ALL_YYYY-MM-DD.xlsx\"\n"
                 "   If omitted, the command tries to auto-detect the newest ALL workbook "
                 "beside schedule_input.json or in EXPORT_DIR.\n"
-                "4. Review the planning tabs in this workbook.\n"
-                "5. Edit the Pool-Assignment tab if you want to seed BB/VBM/VBW/BC"
+                "5. Review the planning tabs in this workbook.\n"
+                "6. Edit the Pool-Assignment tab if you want to seed BB/VBM/VBW/BC"
                 f"{'/SOC' if SOCCER_ENABLED else ''} teams, then run:\n"
                 "   python main.py assign-pools --workbook \"...\\Schedule_Workbook_YYYY-MM-DD.xlsx\"\n"
-                "6. Repeat until venue capacity, seeding, pod planning, and resource IDs look right.",
+                "7. Repeat until venue capacity, seeding, pod planning, and resource IDs look right.",
             ),
             (
                 "Layer 2 Commands",
@@ -2500,7 +2526,9 @@ class ScheduleWorkbookBuilder:
                 "Use Venue-Estimator and Pod-Resource-Estimate to see whether the booked venue "
                 "is large enough. Use Schedule-Input to copy exact resource_id values into the "
                 "Playoff-Slots tab of venue_input.xlsx. Use Gym-Allocation to confirm how gym "
-                "time blocks are being assigned across basketball and volleyball modes.",
+                "time blocks are being assigned across basketball and volleyball modes. If you "
+                "change team-sport Target Pool Games/Team from 2 to 3 in config.py, rebuild "
+                "the workbook and rerun assign-pools because pool sizes and slot meanings can change.",
             ),
             (
                 "Where To Read More",
@@ -3194,6 +3222,65 @@ class ScheduleWorkbookBuilder:
         raise ValueError(f"Unable to build normalized 2-game pools for n_teams={n_teams}")
 
     @staticmethod
+    def _three_game_even_pool_sizes(n_teams: int) -> List[int]:
+        """Return exact 3-game/team pool sizes for even team counts."""
+        if n_teams < 4 or n_teams % 2:
+            raise ValueError(
+                f"Exact normalized 3-game pools require an even team count >= 4; got {n_teams}"
+            )
+
+        for n_sixes in range(n_teams // 6, -1, -1):
+            remainder = n_teams - (6 * n_sixes)
+            if remainder >= 0 and remainder % 4 == 0:
+                return ([6] * n_sixes) + ([4] * (remainder // 4))
+
+        raise ValueError(f"Unable to build normalized 3-game pools for n_teams={n_teams}")
+
+    @staticmethod
+    def _three_game_pool_sizes(n_teams: int) -> List[int]:
+        """Return deterministic pool sizes for the supported 3-game/team policy."""
+        if n_teams < 2:
+            return []
+        if n_teams in (2, 3, 4, 5, 7):
+            return [n_teams]
+        if n_teams % 2 == 0:
+            return ScheduleWorkbookBuilder._three_game_even_pool_sizes(n_teams)
+        if n_teams >= 9:
+            return ScheduleWorkbookBuilder._three_game_even_pool_sizes(n_teams - 5) + [5]
+
+        raise ValueError(f"Unable to build normalized 3-game pools for n_teams={n_teams}")
+
+    @staticmethod
+    def _format_pool_games_per_team(value: float) -> Any:
+        """Return ints when whole, otherwise a rounded operator-facing float."""
+        rounded = round(float(value), 2)
+        return int(rounded) if float(rounded).is_integer() else rounded
+
+    @staticmethod
+    def _format_pool_composition(pool_sizes: List[int], gpg: int) -> str:
+        """Return the operator-facing pool composition summary string."""
+        if not pool_sizes:
+            return ""
+
+        base = " + ".join(str(size) for size in pool_sizes)
+        notes: List[str] = []
+
+        if gpg == 2:
+            if 5 in pool_sizes:
+                notes.append("5-team pools include one bye per round")
+        elif gpg == 3:
+            if any(size in (2, 3) for size in pool_sizes):
+                notes.append("small pools cannot reach the full 3-game target")
+            if 5 in pool_sizes:
+                notes.append("5-team pools give T5 the extra 4th game")
+            if 7 in pool_sizes:
+                notes.append("7-team pools give T7 the extra 4th game")
+
+        if not notes:
+            return base
+        return f"{base} ({'; '.join(notes)})"
+
+    @staticmethod
     def _summarize_pool_policy(n_teams: int, gpg: int) -> Dict[str, Any]:
         """Return operator-facing metadata for the current pool-generation policy."""
         if n_teams < 2:
@@ -3205,26 +3292,31 @@ class ScheduleWorkbookBuilder:
                 "actual_pool_games": 0,
             }
 
-        if gpg != 2:
-            actual_pool_games = len(
-                ScheduleWorkbookBuilder._make_legacy_pool_game_pairs("_", n_teams, gpg)
+        if gpg == 2:
+            pool_sizes = ScheduleWorkbookBuilder._two_game_pool_sizes(n_teams)
+            games_by_pool_size = {2: 1, 3: 3, 4: 4, 5: 5}
+            actual_pool_games = sum(games_by_pool_size[size] for size in pool_sizes)
+            actual_pool_games_per_team = 1 if n_teams == 2 else 2
+            bye_slots = 5 * pool_sizes.count(5)
+        elif gpg == 3:
+            pool_sizes = ScheduleWorkbookBuilder._three_game_pool_sizes(n_teams)
+            games_by_pool_size = {2: 1, 3: 3, 4: 6, 5: 8, 6: 9, 7: 11}
+            actual_pool_games = sum(games_by_pool_size[size] for size in pool_sizes)
+            actual_pool_games_per_team = ScheduleWorkbookBuilder._format_pool_games_per_team(
+                (2 * actual_pool_games) / n_teams
             )
-            return {
-                "target_pool_games_per_team": gpg,
-                "actual_pool_games_per_team": None,
-                "pool_composition": "",
-                "bye_slots": 0,
-                "actual_pool_games": actual_pool_games,
-            }
+            bye_slots = 0
+        else:
+            raise ValueError(
+                f"Unsupported team-sport pool target {gpg}. Only 2 and 3 games/team are supported."
+            )
 
-        pool_sizes = ScheduleWorkbookBuilder._two_game_pool_sizes(n_teams)
-        games_by_pool_size = {2: 1, 3: 3, 4: 4, 5: 5}
         return {
             "target_pool_games_per_team": gpg,
-            "actual_pool_games_per_team": 1 if n_teams == 2 else 2,
-            "pool_composition": " + ".join(str(size) for size in pool_sizes),
-            "bye_slots": 5 * pool_sizes.count(5),
-            "actual_pool_games": sum(games_by_pool_size[size] for size in pool_sizes),
+            "actual_pool_games_per_team": actual_pool_games_per_team,
+            "pool_composition": ScheduleWorkbookBuilder._format_pool_composition(pool_sizes, gpg),
+            "bye_slots": bye_slots,
+            "actual_pool_games": actual_pool_games,
         }
 
     @staticmethod
@@ -3265,17 +3357,22 @@ class ScheduleWorkbookBuilder:
     ) -> List[Tuple[str, str, str]]:
         """Return (team_a_id, team_b_id, pool_id) tuples for pool-play games.
 
-        Current Layer 1 planning normalizes team sports around exact two-game
-        pool play:
+        Supported team-sport planning policies are:
+
+        2-game mode:
         - 2 teams  -> one direct match
         - 3 teams  -> 3-team round robin
         - 4 teams  -> 4-match matrix (every team plays exactly twice)
         - 5 teams  -> 5-match cycle (every team plays exactly twice)
         - 6+ teams -> deterministic composition of 3-team and 4-team pools
 
-        If a non-default target is requested, fall back to the older balanced
-        round-robin pool builder so the helper remains backwards-compatible for
-        tests and historical data exploration.
+        3-game mode:
+        - 4 teams  -> 4-team round robin (every team plays exactly three)
+        - 6 teams  -> 6-team 3-round matrix (every team plays exactly three)
+        - odd team counts may require one 5-team or 7-team pool where the
+          highest slot (T5 or T7) receives the extra 4th game
+
+        Any target other than 2 or 3 is rejected loudly.
 
         Team IDs are stable planning placeholders: {prefix}-P{pool}-T{slot}.
         The same placeholder is reused across all games involving that team,
@@ -3283,16 +3380,39 @@ class ScheduleWorkbookBuilder:
         """
         if n_teams < 2:
             return []
-        if gpg != 2:
-            return ScheduleWorkbookBuilder._make_legacy_pool_game_pairs(prefix, n_teams, gpg)
 
-        template_pairs = {
-            2: [(0, 1)],
-            3: [(0, 1), (0, 2), (1, 2)],
-            4: [(0, 1), (2, 3), (0, 2), (1, 3)],
-            5: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)],
-        }
-        pool_sizes = ScheduleWorkbookBuilder._two_game_pool_sizes(n_teams)
+        if gpg == 2:
+            template_pairs = {
+                2: [(0, 1)],
+                3: [(0, 1), (0, 2), (1, 2)],
+                4: [(0, 1), (2, 3), (0, 2), (1, 3)],
+                5: [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)],
+            }
+            pool_sizes = ScheduleWorkbookBuilder._two_game_pool_sizes(n_teams)
+        elif gpg == 3:
+            template_pairs = {
+                2: [(0, 1)],
+                3: [(0, 1), (0, 2), (1, 2)],
+                4: [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)],
+                5: [
+                    (0, 1), (1, 2), (2, 3), (3, 4), (4, 0),
+                    (4, 1), (4, 2), (0, 3),
+                ],
+                6: [
+                    (0, 5), (1, 4), (2, 3),
+                    (0, 4), (5, 3), (1, 2),
+                    (0, 3), (4, 2), (5, 1),
+                ],
+                7: [
+                    (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 0),
+                    (6, 1), (6, 3), (0, 4), (2, 5),
+                ],
+            }
+            pool_sizes = ScheduleWorkbookBuilder._three_game_pool_sizes(n_teams)
+        else:
+            raise ValueError(
+                f"Unsupported team-sport pool target {gpg}. Only 2 and 3 games/team are supported."
+            )
 
         pairs: List[Tuple[str, str, str]] = []
         for p_idx, pool_size in enumerate(pool_sizes, start=1):

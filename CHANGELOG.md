@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### New Features
+- Added first-class 2-game / 3-game team-sport pool policies
+  - Core gym team sports no longer rely on the vague legacy fallback when `Target Pool Games/Team` is set to `3`
+  - `Venue-Estimator`, `Pool-Assignment`, `Court-Schedule-Sketch`, and `schedule_input.json` now all share the same explicit policy for `2` and `3`
+  - Unsupported targets such as `4` now fail loudly instead of silently drifting into a legacy round-robin layout
+  - Operator docs now explain that `Target Pool Games/Team` is driven from `middleware/config.py`, not edited directly in Excel, and that a `2 -> 3` change requires rebuilding the workbook and rerunning `assign-pools`
 - Added Soccer (Coed Exhibition) Phase-1 planning support
   - New `SOCCER_ENABLED` config flag (default `True` for 2026); set to `False` to remove Soccer from the Phase-1 scheduling/planning outputs (`Venue-Estimator`, `Pool-Assignment`, and conflict edges)
   - `Pool-Assignment` now includes Soccer team rows (prefix `SOC`) alongside BB / VBM / VBW / BC, with up-to-3 seeds
@@ -12,7 +17,7 @@
   - `Venue-Estimator` now treats Bible Challenge as a sequential single-classroom Jeopardy queue instead of a normal concurrent court-hours sport
   - `Pool-Assignment` now includes BC team rows alongside BB / VBM / VBW
   - `schedule_input.json` now includes real BC Jeopardy round-robin queue games on `BC Station`, generated from the BC pool draw
-  - BC playoff placeholders (`BC-Semi-1..3`, `BC-Final`) are now generated with precedence rules so the final stays after the semis
+  - BC playoff placeholders (`BC-Semi-1..3`, `BC-Final`) are now generated with precedence rules so BC prelim rounds finish before the semis, and the final stays after the semis
   - `scheduler.py` and `produce-schedule` now support optional third-team games via `team_c_id`, so BC appears in the final schedule workbook instead of staying planning-only
   - `Conflict-Audit` now evaluates BC shared-athlete edges against scheduled BC round-robin games; Soccer remains `PlanningOnly`
 

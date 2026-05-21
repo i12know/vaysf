@@ -187,7 +187,8 @@ Key constraints the pipeline must respect:
   to the playoff. Playoff structure: **3 semi-final games** (3 pools of 3
   teams) then **1 final game** (3 semi-final winners) = 4 total playoff games.
   Playoff phase only runs when N ≥ 9 registered teams. The current pipeline
-  schedules these as placeholder queue games and adds precedence rules so the
+  schedules these as placeholder queue games and adds precedence rules so all
+  BC round-robin queue games finish before any semi-final starts, and the
   final always starts after all three semi-finals.
 - **Seeding.** Up to 3 seeds from prior-year winners. Remaining teams enter
   the draw unseeded. The existing serpentine-fill `assign-pools` workflow
@@ -216,8 +217,9 @@ Status as of May 20, 2026:
   - BC shared-athlete edges included in `team_conflicts`
   - BC round-robin queue games generated into `schedule_input.json` using the
     seeded BC pool draw
-  - BC semi-final / final placeholder games plus precedence rules so the final
-    stays after the semis in the single-room queue
+  - BC semi-final / final placeholder games plus precedence rules so the BC
+    round-robin queue finishes before the semis, and the final stays after the
+    semis in the single-room queue
   - BC cross-sport edges now audit against real scheduled RR queue games rather
     than planning-only placeholders
   - Soccer included in `Pool-Assignment` and cross-sport conflict edges via
@@ -696,6 +698,52 @@ state in `pool_assignments.json` beside the workbook so later rebuilds can
 reload the same seed inputs. A later `export-church-teams` run in that same
 folder reads the sidecar back into `schedule_input.json`, so Layer 2 scheduling
 and the conflict audit use the same pool draw you reviewed in Excel.
+
+### Changing `Target Pool Games/Team`
+
+For the core gym team sports (`Basketball - Men Team`, `Volleyball - Men Team`,
+`Volleyball - Women Team`, and optionally `Soccer - Coed Exhibition`), the
+`Venue-Estimator` column **Target Pool Games/Team** is generated from
+`middleware/config.py`. It is **not** edited directly in Excel.
+
+The per-sport knobs are:
+
+- `COURT_ESTIMATE_POOL_GAMES_BASKETBALL`
+- `COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_MEN`
+- `COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_WOMEN`
+- `COURT_ESTIMATE_POOL_GAMES_SOCCER`
+
+Supported live values are **2** and **3** only.
+
+- **2-game mode** is the established normalized policy:
+  - 3-team pool -> full round robin (`2` games/team)
+  - 4-team pool -> 4-match matrix (`2` games/team)
+  - 5-team pool -> 5-match cycle (`2` games/team)
+- **3-game mode** is now a first-class policy too:
+  - 4-team pool -> full round robin (`3` games/team)
+  - 6-team pool -> 3-round matrix (`3` games/team)
+  - odd team counts may require one **5-team** or **7-team** pool; the highest
+    slot in that odd pool (`T5` or `T7`) receives the extra 4th game
+
+Operationally, changing one of these config values affects **both Layer 1 and
+Layer 2** because the same policy is used to:
+
+- estimate demand in `Venue-Estimator`
+- compute `Pool-Assignment` pool sizes / slot meanings
+- generate the actual pool-play games written into `schedule_input.json`
+
+So after changing a team-sport pool target, rerun:
+
+```bash
+python main.py export-church-teams
+python main.py build-schedule-workbook
+python main.py assign-pools --workbook path/to/Schedule_Workbook_YYYY-MM-DD.xlsx
+run-schedule.bat
+```
+
+Re-running `assign-pools` matters because changing from `2` to `3` can change
+the pool geometry itself (`4 + 3 + 3` may become `6 + 4`, `4 + 4 + 5`, etc.),
+which changes what `P1-T1`, `P2-T4`, and similar slots actually mean.
 
 **Two-stage workflow.** `export-church-teams` (Stage 1) owns the live
 ChMeetings/WordPress reads, the `Church_Team_Status_ALL.xlsx`, and the
