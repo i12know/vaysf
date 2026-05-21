@@ -112,11 +112,13 @@ SPORT_UNSELECTED = "Unselected/NA"
 DEFAULT_SPORT = "default"
 
 # Soccer - Coed Exhibition is an optional team sport that may not run every
-# season. Toggle this flag to remove Soccer from the planning pipeline:
+# season. Toggle this flag to include or remove Soccer from the Phase-1
+# scheduling/planning pipeline:
 #   - True: Soccer appears in Pool-Assignment, Venue-Estimator, and cross-sport
 #     conflict edges with BB / VBM / VBW / BC.
-#   - False: Soccer is fully excluded from outputs even if there are stray
-#     Soccer registrations (treated as registration error in that case).
+#   - False: Soccer is omitted from those scheduling/planning surfaces.
+#     Raw roster exports still reflect incoming Soccer registrations; this flag
+#     does not currently convert stray Soccer entries into validation errors.
 SOCCER_ENABLED = True
 
 # Sport Category Classification
@@ -537,6 +539,7 @@ VENUE_TEMPLATE_FILENAME = "SportsFest_2026_Venue_Input_Template.xlsx"
 GYM_RESOURCE_TYPE              = "Gym Court"        # legacy / fallback label
 GYM_RESOURCE_TYPE_BASKETBALL   = "Basketball Court"
 GYM_RESOURCE_TYPE_VOLLEYBALL   = "Volleyball Court"
+TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE = "BC Station"
 POD_RESOURCE_TYPE_TENNIS       = "Tennis Court"
 POD_RESOURCE_TYPE_PICKLEBALL   = "Pickleball Court"
 POD_RESOURCE_TYPE_TABLE_TENNIS = "Table Tennis Table"

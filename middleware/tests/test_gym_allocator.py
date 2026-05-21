@@ -139,9 +139,16 @@ def test_aggregate_demand_zero_hours_included():
 
 
 def test_aggregate_demand_missing_hours_treated_as_zero():
-    rows = [{"Event": SPORT_TYPE["SOCCER"], "Estimated Court Hours": None}]
+    rows = [{"Event": SPORT_TYPE["BADMINTON"], "Estimated Court Hours": None}]
     demand = aggregate_demand_by_mode(rows)
-    assert demand == {"Soccer Field": 0.0}
+    assert demand == {"Badminton Court": 0.0}
+
+
+def test_aggregate_demand_skips_soccer_planning_only_event():
+    """Soccer stays in planning workbooks but does not feed Stage-A allocator demand."""
+    rows = [{"Event": SPORT_TYPE["SOCCER"], "Estimated Court Hours": 7.0}]
+    demand = aggregate_demand_by_mode(rows)
+    assert demand == {}
 
 
 # ---------------------------------------------------------------------------
