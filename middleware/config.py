@@ -412,13 +412,15 @@ def is_racquet_sport(sport: str) -> bool:
 # Team sports: one row per event, counting churches with a complete roster.
 # Racquet sports: one row per sport, counting complete pairs/individuals.
 
-# Team sports included in the estimator (roster-based, min-size threshold).
+# Team sports included in the standard court-hours estimator (roster-based,
+# min-size threshold, concurrent multi-court model).
+# Bible Challenge is excluded here — it uses a sequential single-classroom
+# model and is handled separately in _build_venue_capacity_rows.
 COURT_ESTIMATE_EVENTS = [
     SPORT_TYPE["BASKETBALL"],
     SPORT_TYPE["VOLLEYBALL_MEN"],
     SPORT_TYPE["VOLLEYBALL_WOMEN"],
     SPORT_TYPE["SOCCER"],
-    SPORT_TYPE["BIBLE_CHALLENGE"],
 ]
 
 # Racquet sports included in the estimator (entry-based, doubles counted as pairs).
@@ -440,15 +442,23 @@ COURT_ESTIMATE_POOL_GAMES_BASKETBALL       = 2
 COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_MEN   = 2
 COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_WOMEN = 2
 COURT_ESTIMATE_POOL_GAMES_SOCCER           = 2
-COURT_ESTIMATE_POOL_GAMES_BIBLE_CHALLENGE  = 2
 
 COURT_ESTIMATE_POOL_GAMES_PER_TEAM = {
     SPORT_TYPE["BASKETBALL"]:       COURT_ESTIMATE_POOL_GAMES_BASKETBALL,
     SPORT_TYPE["VOLLEYBALL_MEN"]:   COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_MEN,
     SPORT_TYPE["VOLLEYBALL_WOMEN"]: COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_WOMEN,
     SPORT_TYPE["SOCCER"]:           COURT_ESTIMATE_POOL_GAMES_SOCCER,
-    SPORT_TYPE["BIBLE_CHALLENGE"]:  COURT_ESTIMATE_POOL_GAMES_BIBLE_CHALLENGE,
 }
+
+# Bible Challenge sequential-classroom estimator constants.
+# Format: Jeopardy — 3 church teams per game, games run sequentially in one
+# classroom throughout the event (never concurrent).
+# Round-robin: each team plays 2 games; total RR games = ceil(N * 2 / 3).
+# Playoff: top 9 high-score teams → 3 semi-finals + 1 final = 4 games.
+COURT_ESTIMATE_BC_TEAMS_PER_GAME          = 3
+COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM      = 2
+COURT_ESTIMATE_BC_PLAYOFF_GAMES           = 4   # 3 semis + 1 final
+COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF   = 9
 
 COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME = 60
 COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME = False
@@ -457,7 +467,7 @@ COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME = False
 COURT_ESTIMATE_MINUTES_BASKETBALL = 60
 COURT_ESTIMATE_MINUTES_VOLLEYBALL = 60
 COURT_ESTIMATE_MINUTES_SOCCER = 60
-COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE = 45
+COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE = 60  # 60 min per game (buffer for late starts)
 COURT_ESTIMATE_MINUTES_BADMINTON = 25
 COURT_ESTIMATE_MINUTES_PICKLEBALL = 20
 COURT_ESTIMATE_MINUTES_PICKLEBALL_35 = 20

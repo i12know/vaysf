@@ -2239,3 +2239,85 @@ def test_write_schedule_output_report_merges_gym_core_day_sections(tmp_path):
     assert any("VBM-01" in v for v in string_values)
     assert any("VBM-02" in v for v in string_values)
     assert any("VBW-01" in v for v in string_values)
+
+
+# ---------------------------------------------------------------------------
+# Bible Challenge Venue-Estimator tests (Issue #118)
+# ---------------------------------------------------------------------------
+
+def _bc_roster(church_codes, n_per_church=3):
+    """Build minimal BC roster rows — enough to meet min_team_size=3."""
+    rows = []
+    for code in church_codes:
+        for _ in range(n_per_church):
+            rows.append({"Church Team": code, "sport_type": SPORT_TYPE["BIBLE_CHALLENGE"], "sport_gender": "Mixed"})
+    return rows
+
+
+def test_bc_venue_estimator_rr_game_count_12_teams():
+    """12 BC teams × 2 games/team ÷ 3 teams/game = 8 RR games."""
+    from config import (
+        COURT_ESTIMATE_BC_TEAMS_PER_GAME,
+        COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM,
+        COURT_ESTIMATE_BC_PLAYOFF_GAMES,
+        COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF,
+        COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+    )
+    builder = ScheduleWorkbookBuilder()
+    churches = [f"C{i:02d}" for i in range(1, 13)]  # 12 teams
+    rows = _bc_roster(churches)
+    capacity_rows = builder._build_venue_capacity_rows(rows)
+    bc_row = next(r for r in capacity_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"])
+
+    assert bc_row["Estimating Teams/Entries"] == 12
+    assert bc_row["Pool Slots"] == 8                        # ceil(12*2/3)
+    assert bc_row["Playoff Teams"] == COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF
+    assert bc_row["Playoff Slots"] == COURT_ESTIMATE_BC_PLAYOFF_GAMES  # 4
+    assert bc_row["Total Court Slots"] == 12                # 8 RR + 4 playoff
+    assert bc_row["Minutes Per Game"] == COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE  # 60
+    assert bc_row["Estimated Court Hours"] == 12.0          # 12 games × 60 min / 60
+    assert bc_row["Third Place?"] == "No"
+    assert "Sequential" in bc_row["Pool Composition"]
+    assert "1 classroom" in bc_row["Pool Composition"]
+
+
+def test_bc_venue_estimator_no_playoff_when_fewer_than_9_teams():
+    """8 BC teams → no playoff (need ≥ 9). Pool Slots = ceil(8*2/3) = 6."""
+    from config import COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF
+    builder = ScheduleWorkbookBuilder()
+    churches = [f"C{i:02d}" for i in range(1, 9)]  # 8 teams
+    rows = _bc_roster(churches)
+    capacity_rows = builder._build_venue_capacity_rows(rows)
+    bc_row = next(r for r in capacity_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"])
+
+    assert bc_row["Estimating Teams/Entries"] == 8
+    assert bc_row["Pool Slots"] == 6                        # ceil(8*2/3) = ceil(5.33) = 6
+    assert bc_row["Playoff Teams"] == 0
+    assert bc_row["Playoff Slots"] == 0
+    assert bc_row["Total Court Slots"] == 6
+    assert f"< {COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF}" in bc_row["Pool Composition"]
+
+
+def test_bc_venue_estimator_zero_teams():
+    """0 BC teams → all zeros, no crash."""
+    builder = ScheduleWorkbookBuilder()
+    capacity_rows = builder._build_venue_capacity_rows([])
+    bc_row = next(r for r in capacity_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"])
+
+    assert bc_row["Estimating Teams/Entries"] == 0
+    assert bc_row["Pool Slots"] == 0
+    assert bc_row["Playoff Slots"] == 0
+    assert bc_row["Total Court Slots"] == 0
+    assert bc_row["Estimated Court Hours"] == 0.0
+
+
+def test_bc_venue_estimator_not_in_court_hours_model():
+    """BC must NOT appear via the standard concurrent court-hours COURT_ESTIMATE_EVENTS path."""
+    from config import COURT_ESTIMATE_EVENTS
+    assert SPORT_TYPE["BIBLE_CHALLENGE"] not in COURT_ESTIMATE_EVENTS
+
+
+def test_bc_minutes_per_game_is_60():
+    """Confirm COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE was updated to 60."""
+    from config import COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE
+    assert COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE == 60
