@@ -218,6 +218,7 @@ def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
     assert "Church_Team_Status_ALL" in summary_text
     assert "run-schedule.bat" in summary_text
     assert "assign-pools" in summary_text
+    assert "BB/VBM/VBW/BC" in summary_text
     venue_ws = wb["Venue-Estimator"]
     assert venue_ws["A1"].comment is not None
     assert "Canonical event name" in venue_ws["A1"].comment.text
@@ -2065,6 +2066,24 @@ def test_write_schedule_output_report_tab3_conflict_audit(tmp_path):
     assert ws.cell(row=7, column=8).value == "SeparatedInSchedule"
 
 
+def test_write_schedule_output_report_tab3_planning_only_conflict_audit(tmp_path):
+    """Conflict-Audit should render planning-only rows distinctly."""
+    import openpyxl
+
+    so, si = _make_schedule_pair()
+    so["conflict_audit_summary"]["planning_only_edges"] = 1
+    so["conflict_audit_summary"]["separated_edges"] = 0
+    so["conflict_audit"][0]["event_b"] = SPORT_TYPE["BIBLE_CHALLENGE"]
+    so["conflict_audit"][0]["status"] = "PlanningOnly"
+    so["conflict_audit"][0]["scheduled_team_b_games"] = 0
+
+    out = tmp_path / "sched.xlsx"
+    ScheduleWorkbookBuilder._write_schedule_output_report(out, so, si)
+    ws = openpyxl.load_workbook(out)["Conflict-Audit"]
+    assert "Planning-only" in str(ws.cell(row=3, column=2).value)
+    assert ws.cell(row=7, column=8).value == "PlanningOnly"
+
+
 def test_write_schedule_output_report_unscheduled_section(tmp_path):
     """Unscheduled section appears in Schedule-by-Sport when games are unscheduled."""
     import openpyxl
@@ -2271,6 +2290,7 @@ def test_bc_venue_estimator_rr_game_count_12_teams():
 
     assert bc_row["Estimating Teams/Entries"] == 12
     assert bc_row["Pool Slots"] == 8                        # ceil(12*2/3)
+    assert bc_row["Actual Pool Games/Team"] == 2
     assert bc_row["Playoff Teams"] == COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF
     assert bc_row["Playoff Slots"] == COURT_ESTIMATE_BC_PLAYOFF_GAMES  # 4
     assert bc_row["Total Court Slots"] == 12                # 8 RR + 4 playoff
@@ -2292,6 +2312,7 @@ def test_bc_venue_estimator_no_playoff_when_fewer_than_9_teams():
 
     assert bc_row["Estimating Teams/Entries"] == 8
     assert bc_row["Pool Slots"] == 6                        # ceil(8*2/3) = ceil(5.33) = 6
+    assert bc_row["Actual Pool Games/Team"] == 2
     assert bc_row["Playoff Teams"] == 0
     assert bc_row["Playoff Slots"] == 0
     assert bc_row["Total Court Slots"] == 6
@@ -2305,6 +2326,7 @@ def test_bc_venue_estimator_zero_teams():
     bc_row = next(r for r in capacity_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"])
 
     assert bc_row["Estimating Teams/Entries"] == 0
+    assert bc_row["Actual Pool Games/Team"] == 0
     assert bc_row["Pool Slots"] == 0
     assert bc_row["Playoff Slots"] == 0
     assert bc_row["Total Court Slots"] == 0
@@ -2315,6 +2337,20 @@ def test_bc_venue_estimator_not_in_court_hours_model():
     """BC must NOT appear via the standard concurrent court-hours COURT_ESTIMATE_EVENTS path."""
     from config import COURT_ESTIMATE_EVENTS
     assert SPORT_TYPE["BIBLE_CHALLENGE"] not in COURT_ESTIMATE_EVENTS
+
+
+def test_bc_venue_estimator_waits_for_first_three_team_game():
+    """With only 2 BC teams, the sequential queue should remain in waiting mode."""
+    builder = ScheduleWorkbookBuilder()
+    rows = _bc_roster(["RPC", "OCB"])
+    capacity_rows = builder._build_venue_capacity_rows(rows)
+    bc_row = next(r for r in capacity_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"])
+
+    assert bc_row["Estimating Teams/Entries"] == 2
+    assert bc_row["Actual Pool Games/Team"] == 0
+    assert bc_row["Pool Slots"] == 0
+    assert bc_row["Total Court Slots"] == 0
+    assert "waiting for at least 3 teams" in bc_row["Pool Composition"]
 
 
 def test_bc_minutes_per_game_is_60():

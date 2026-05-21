@@ -90,6 +90,51 @@ def test_normalize_conflict_edge_counts_derives_secondary_only():
     }
 
 
+def test_build_conflict_audit_marks_unscheduled_event_as_planning_only():
+    """Edges touching an event with no Layer-2 games should be planning-only, not incomplete."""
+    from scheduler import build_conflict_audit
+
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "BBM-01",
+                "event": "Basketball - Men Team",
+                "stage": "Pool",
+                "pool_id": "P1",
+                "round": 1,
+                "team_a_id": "BBM::RPC",
+                "team_b_id": "BBM::ANH",
+                "duration_minutes": 60,
+                "resource_type": "Basketball Court",
+            }
+        ],
+        "resources": [],
+        "team_conflicts": [
+            {
+                "team_a_id": "BBM::RPC",
+                "team_a_label": "RPC",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "BC::OCB",
+                "team_b_label": "OCB",
+                "event_b": "Bible Challenge - Mixed Team",
+                "shared_count": 1,
+                "primary_overlap_count": 1,
+                "secondary_only_count": 0,
+                "shared_participant_names": ["An"],
+            }
+        ],
+    }
+    assignments = [
+        {"game_id": "BBM-01", "resource_id": "BB-1", "slot": "Sat-1-08:00"}
+    ]
+
+    summary, rows = build_conflict_audit(schedule_input, assignments)
+
+    assert summary["planning_only_edges"] == 1
+    assert summary["incomplete_edges"] == 0
+    assert rows[0]["status"] == "PlanningOnly"
+
+
 # ---------------------------------------------------------------------------
 # load_schedule_input
 # ---------------------------------------------------------------------------

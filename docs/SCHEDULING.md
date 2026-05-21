@@ -164,8 +164,9 @@ Key constraints the pipeline must respect:
   room and games never run concurrently. The scheduling problem for BC is a
   simple queue, not a resource-allocation problem. There is no "court-hours"
   model — only total room-minutes.
-- **Round-robin phase.** Each registered BC team plays **2 games** in the
-  round-robin. Total RR games = ⌈N × 2 / 3⌉ where N is the number of teams.
+- **Round-robin phase.** Each registered BC team is planned for **2 games** in
+  the round-robin once at least 3 church teams exist. Total RR games = ⌈N × 2 / 3⌉
+  where N is the number of teams.
   Matchup pairing within the round-robin is managed by the organizer; the
   pipeline provides the pool draw and cross-sport conflict edges only.
 - **Playoff phase.** The **top 9 teams by cumulative Jeopardy score** advance
@@ -178,13 +179,15 @@ Key constraints the pipeline must respect:
 - **Per-game duration.** 60 minutes (includes buffer for late starts).
 - **Venue-Estimator model.** BC appears as a separate row in the
   Venue-Estimator showing total sequential room-hours, not concurrent
-  court-hours. Formula: `(RR games + playoff games) × 60 min`.
+  court-hours. Formula: `(RR games + playoff games) × 60 min`. If fewer than
+  3 BC teams exist, the estimator shows that the room queue is still waiting
+  for the first 3-team game.
 - **Cross-sport conflict edges.** BC teams produce pairwise shared-athlete
   edges with BB / VBM / VBW teams exactly like any other team sport. An
   athlete on a BC team who also plays Basketball still generates a
   primary-vs-secondary conflict edge in `team_conflicts`.
 
-Status as of May 21, 2026:
+Status as of May 20, 2026:
 - Partially complete
 - Implemented:
   - editable `Pool-Assignment` workflow for BB / VBM / VBW
@@ -193,12 +196,14 @@ Status as of May 21, 2026:
   - conflict-aware Gym Core solve with primary-vs-secondary weighting
   - `Conflict-Audit` output in `VAYSF_Schedule_*.xlsx`
   - Venue-Estimator rewritten for BC sequential single-classroom model
-    (issue #118, commit on `claude/review-project-status-N2Rxo`)
+  - BC teams included in `Pool-Assignment`
+  - BC shared-athlete edges included in `team_conflicts`
+  - BC cross-sport edges surface in `Conflict-Audit` as planning-only rows
+    until full BC queue scheduling is implemented
 - Next slice (issue #118):
-  - add BC teams to Pool-Assignment tab with up to 3 seeds
-  - include BC teams in cross-sport conflict edges (shared-athlete lookup)
-  - verify BC edges surface in Conflict-Audit tab
   - add Soccer as optional / config-driven sport
+  - decide whether BC should stay planning-only in Layer 2 or move into a
+    fully scheduled sequential room queue later
 
 ### Phase 2 - Racquet conflict engine
 
@@ -633,8 +638,8 @@ they are pure planning artifacts built from the roster data and
 `schedule_input.json` `resources` so an offline build stays self-consistent.
 
 The `Pool-Assignment` tab is the editable Layer-1 seeding workspace for the
-core gym sports. Operators can review the inferred team rows, set `Seed`
-values, and rerun:
+current Phase 1 team sports (`BB`, `VBM`, `VBW`, `BC`). Operators can review
+the inferred team rows, set `Seed` values, and rerun:
 
 ```bash
 python main.py assign-pools --workbook path/to/Schedule_Workbook_YYYY-MM-DD.xlsx
