@@ -2321,3 +2321,117 @@ def test_bc_minutes_per_game_is_60():
     """Confirm COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE was updated to 60."""
     from config import COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE
     assert COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE == 60
+
+
+# ---------------------------------------------------------------------------
+# Bible Challenge Pool-Assignment & conflict-edge tests (Issue #118)
+# ---------------------------------------------------------------------------
+
+def test_bc_appears_in_pool_assignment_base_rows():
+    """BC teams meeting min_team_size=3 should produce Pool-Assignment rows."""
+    builder = ScheduleWorkbookBuilder()
+    churches = ["RPC", "OCB", "ANH"]
+    rows = _bc_roster(churches, n_per_church=3)
+    base_rows = builder._build_pool_assignment_base_rows(rows)
+    bc_rows = [r for r in base_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"]]
+    assert {r["Team ID"] for r in bc_rows} == set(churches)
+    for r in bc_rows:
+        assert r["Min Team Size"] == 3
+        assert r["Roster Count"] == 3
+
+
+def test_bc_pool_assignment_below_min_team_size_excluded():
+    """BC team with fewer than 3 roster members is excluded from Pool-Assignment."""
+    builder = ScheduleWorkbookBuilder()
+    rows = (
+        _bc_roster(["RPC"], n_per_church=3)
+        + _bc_roster(["OCB"], n_per_church=2)  # below min
+    )
+    base_rows = builder._build_pool_assignment_base_rows(rows)
+    bc_rows = [r for r in base_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"]]
+    assert {r["Team ID"] for r in bc_rows} == {"RPC"}
+
+
+def test_bc_cross_sport_conflict_edge_with_basketball(tmp_path):
+    """BC and BB teams sharing an athlete must produce a team_conflicts edge."""
+    builder = ScheduleWorkbookBuilder()
+    shared_id = 42
+    # Need ≥ 2 BB teams and ≥ 2 BC teams so the pool-assignment logic
+    # doesn't fall into the "WaitingForMoreTeams" branch.
+    bb_rpc = [
+        {
+            "Church Team": "RPC",
+            "sport_type": SPORT_TYPE["BASKETBALL"],
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "Participant ID (WP)": pid,
+            "participant_primary_sport": SPORT_TYPE["BASKETBALL"],
+        }
+        for pid in range(40, 45)  # includes shared_id=42
+    ]
+    bb_anh = [
+        {
+            "Church Team": "ANH",
+            "sport_type": SPORT_TYPE["BASKETBALL"],
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "Participant ID (WP)": pid,
+            "participant_primary_sport": SPORT_TYPE["BASKETBALL"],
+        }
+        for pid in range(50, 55)
+    ]
+    bc_ocb = [
+        {
+            "Church Team": "OCB",
+            "sport_type": SPORT_TYPE["BIBLE_CHALLENGE"],
+            "sport_gender": "Mixed",
+            "sport_format": "Team",
+            "Participant ID (WP)": pid,
+            "participant_primary_sport": SPORT_TYPE["BASKETBALL"],  # primary is BB
+        }
+        for pid in (shared_id, 90, 91)  # #42 is shared with RPC's BB team
+    ]
+    bc_tlc = [
+        {
+            "Church Team": "TLC",
+            "sport_type": SPORT_TYPE["BIBLE_CHALLENGE"],
+            "sport_gender": "Mixed",
+            "sport_format": "Team",
+            "Participant ID (WP)": pid,
+            "participant_primary_sport": SPORT_TYPE["BIBLE_CHALLENGE"],
+        }
+        for pid in (95, 96, 97)
+    ]
+    roster_rows = bb_rpc + bb_anh + bc_ocb + bc_tlc
+
+    si = builder._build_schedule_input(roster_rows, [], tmp_path / "no_venue.xlsx")
+
+    bc_bb_edges = [
+        edge for edge in si["team_conflicts"]
+        if {edge.get("event_a"), edge.get("event_b")}
+           == {SPORT_TYPE["BASKETBALL"], SPORT_TYPE["BIBLE_CHALLENGE"]}
+    ]
+    assert len(bc_bb_edges) == 1
+    edge = bc_bb_edges[0]
+    assert edge["shared_count"] == 1
+    assert edge["primary_overlap_count"] == 1  # athlete's primary is BB
+    assert edge["secondary_only_count"] == 0
+
+
+def test_bc_pool_assignment_does_not_create_gym_games(tmp_path):
+    """BC pool-assignment rows must NOT generate Gym Core games (BC is not a gym sport)."""
+    builder = ScheduleWorkbookBuilder()
+    bc_rows = _bc_roster(["RPC", "OCB", "ANH"], n_per_church=3)
+
+    si = builder._build_schedule_input(bc_rows, [], tmp_path / "no_venue.xlsx")
+    bc_games = [g for g in si.get("games", []) if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]]
+    assert bc_games == []
+
+
+def test_bc_event_in_pool_assignment_defs():
+    """BC must be the 4th entry in _POOL_ASSIGNMENT_EVENT_DEFS with prefix 'BC'."""
+    defs = ScheduleWorkbookBuilder._POOL_ASSIGNMENT_EVENT_DEFS
+    assert (SPORT_TYPE["BIBLE_CHALLENGE"], "BC") in defs
+    # Sort index makes BC the last (4th) event
+    idx = ScheduleWorkbookBuilder._event_sort_index(SPORT_TYPE["BIBLE_CHALLENGE"])
+    assert idx == 3
