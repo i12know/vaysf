@@ -176,12 +176,18 @@ def build_conflict_audit(
             "total_edges": 0,
             "separated_edges": 0,
             "overlapping_edges": 0,
+            "planning_only_edges": 0,
             "incomplete_edges": 0,
             "remaining_primary_overlap_penalty": 0,
             "remaining_secondary_overlap_penalty": 0,
         }, []
 
     game_meta = {game["game_id"]: game for game in schedule_input.get("games", [])}
+    events_with_games = {
+        str(game.get("event") or "").strip()
+        for game in schedule_input.get("games", [])
+        if str(game.get("event") or "").strip()
+    }
     games_by_team: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for assignment in assignments:
         game = game_meta.get(assignment.get("game_id"), {})
@@ -198,6 +204,7 @@ def build_conflict_audit(
     rows: list[dict[str, Any]] = []
     separated_edges = 0
     overlapping_edges = 0
+    planning_only_edges = 0
     incomplete_edges = 0
     remaining_primary_overlap_penalty = 0
     remaining_secondary_overlap_penalty = 0
@@ -206,6 +213,8 @@ def build_conflict_audit(
         counts = _normalize_conflict_edge_counts(edge)
         team_a_id = str(edge.get("team_a_id") or "").strip()
         team_b_id = str(edge.get("team_b_id") or "").strip()
+        event_a = str(edge.get("event_a") or "").strip()
+        event_b = str(edge.get("event_b") or "").strip()
         team_a_games = games_by_team.get(team_a_id, [])
         team_b_games = games_by_team.get(team_b_id, [])
         overlap_pairs: list[str] = []
@@ -216,7 +225,10 @@ def build_conflict_audit(
                         f"{game_a['game_id']} vs {game_b['game_id']} @ {game_a['slot']}"
                     )
 
-        if not team_a_games or not team_b_games:
+        if event_a not in events_with_games or event_b not in events_with_games:
+            status = "PlanningOnly"
+            planning_only_edges += 1
+        elif not team_a_games or not team_b_games:
             status = "IncompleteSchedule"
             incomplete_edges += 1
         elif overlap_pairs:
@@ -230,9 +242,9 @@ def build_conflict_audit(
 
         rows.append({
             "team_a_label": str(edge.get("team_a_label") or team_a_id),
-            "event_a": str(edge.get("event_a") or ""),
+            "event_a": event_a,
             "team_b_label": str(edge.get("team_b_label") or team_b_id),
-            "event_b": str(edge.get("event_b") or ""),
+            "event_b": event_b,
             "shared_count": counts["shared_count"],
             "primary_overlap_count": counts["primary"],
             "secondary_only_count": counts["secondary"],
@@ -248,6 +260,7 @@ def build_conflict_audit(
         "total_edges": len(rows),
         "separated_edges": separated_edges,
         "overlapping_edges": overlapping_edges,
+        "planning_only_edges": planning_only_edges,
         "incomplete_edges": incomplete_edges,
         "remaining_primary_overlap_penalty": remaining_primary_overlap_penalty,
         "remaining_secondary_overlap_penalty": remaining_secondary_overlap_penalty,

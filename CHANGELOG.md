@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### New Features
+- Added Bible Challenge Phase-1 planning support
+  - `Venue-Estimator` now treats Bible Challenge as a sequential single-classroom Jeopardy queue instead of a normal concurrent court-hours sport
+  - `Pool-Assignment` now includes BC team rows alongside BB / VBM / VBW
+  - `Conflict-Audit` now surfaces BC shared-athlete edges as `PlanningOnly` rows in `VAYSF_Schedule_*.xlsx` until full BC game-by-game queue scheduling is implemented
+
 - Improved final `Schedule-by-Time` readability for mixed-venue gym schedules
   - `venue_input.xlsx` rows now derive logical day labels from the `Date` column when `Day` is absent, so direct venue rows no longer collapse across multiple actual dates into one fake `Day-1`
   - Direct venue resources now carry `venue_name` through to `schedule_input.json`
