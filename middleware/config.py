@@ -46,7 +46,7 @@ DEFAULT_WORDPRESS_CREATED_AT_TIMEZONE = "UTC"
 ATHLETE_FEE_STANDARD = 30          # athlete with a primary or secondary sport (early registration)
 ATHLETE_FEE_OTHER_EVENTS_ONLY = 20  # athlete registered only under Other Events (no deadline increase)
 ATHLETE_FEE_LATE = 60              # athlete with primary or secondary sport (after deadline)
-REGISTRATION_DEADLINE = "2026-05-16"  # ISO date; last day for early-bird rate (inclusive); late fee starts the following day
+REGISTRATION_DEADLINE = "2026-05-17"  # ISO date; last day for early-bird rate (inclusive); late fee starts the following day
 LATE_RACQUET_OVERRIDES_FILE = DATA_DIR / "late_racquet_overrides.json"  # middleware-side allowlist for approved late racquet exceptions
 
 # Ensure directories exist with error handling
