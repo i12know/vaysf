@@ -5250,9 +5250,9 @@ class ScheduleWorkbookBuilder:
             b = str(game.get("team_b_label") or game.get("team_b_id") or "")
             c = str(game.get("team_c_label") or game.get("team_c_id") or "")
             if a and b and c and len(a) <= 12 and len(b) <= 12 and len(c) <= 12:
-                return f"{gid}\n{a} / {b} / {c}"
+                return f"{gid} {a} / {b} / {c}"
             if a and b and len(a) <= 12 and len(b) <= 12:
-                return f"{gid}\n{a} vs {b}"
+                return f"{gid} {a} v {b}"
             return gid
 
         # ── Header rows ─────────────────────────────────────────────────────
