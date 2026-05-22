@@ -2673,11 +2673,13 @@ class ScheduleWorkbookBuilder:
         """
         # Maps a Gym-Modes column header to the resource_type it represents.
         mode_column_map = {
-            "Basketball Courts": "Basketball Court",
-            "Volleyball Courts": "Volleyball Court",
-            "Badminton Courts":  "Badminton Court",
-            "Pickleball Courts": "Pickleball Court",
-            "Soccer Fields":     "Soccer Field",
+            "Basketball Courts":   "Basketball Court",
+            "Volleyball Courts":   "Volleyball Court",
+            "Badminton Courts":    "Badminton Court",
+            "Pickleball Courts":   "Pickleball Court",
+            "Tennis Courts":       "Tennis Court",
+            "Table Tennis Tables": "Table Tennis Table",
+            "Soccer Fields":       "Soccer Field",
         }
         if not venue_input_path.exists():
             return {}

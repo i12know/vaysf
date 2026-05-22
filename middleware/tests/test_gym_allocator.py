@@ -119,15 +119,26 @@ def test_aggregate_demand_pickleball_aggregates_regular_and_35():
 
 
 def test_aggregate_demand_skips_unmapped_events():
-    """Table Tennis and Tennis use dedicated pod courts — not gym modes."""
+    """Unmapped events (Bible Challenge, Soccer, Track & Field) are skipped."""
     rows = [
-        {"Event": SPORT_TYPE["TABLE_TENNIS"], "Estimated Court Hours": 5.0},
-        {"Event": SPORT_TYPE["TENNIS"],       "Estimated Court Hours": 3.0},
-        {"Event": SPORT_TYPE["BASKETBALL"],   "Estimated Court Hours": 8.0},
+        {"Event": SPORT_TYPE["BIBLE_CHALLENGE"], "Estimated Court Hours": 5.0},
+        {"Event": SPORT_TYPE["SOCCER"],          "Estimated Court Hours": 3.0},
+        {"Event": SPORT_TYPE["BASKETBALL"],      "Estimated Court Hours": 8.0},
     ]
     demand = aggregate_demand_by_mode(rows)
     assert set(demand.keys()) == {"Basketball Court"}
     assert demand["Basketball Court"] == 8.0
+
+
+def test_aggregate_demand_tennis_and_table_tennis_mapped():
+    """Tennis and Table Tennis can be allocated via Gym-Modes (e.g. EHS Tennis Court)."""
+    rows = [
+        {"Event": SPORT_TYPE["TENNIS"],          "Estimated Court Hours": 3.0},
+        {"Event": SPORT_TYPE["TABLE_TENNIS"],    "Estimated Court Hours": 5.0},
+        {"Event": SPORT_TYPE["TABLE_TENNIS_35"], "Estimated Court Hours": 2.0},
+    ]
+    demand = aggregate_demand_by_mode(rows)
+    assert demand == {"Tennis Court": 3.0, "Table Tennis Table": 7.0}
 
 
 def test_aggregate_demand_zero_hours_included():
