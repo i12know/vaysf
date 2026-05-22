@@ -2678,7 +2678,26 @@ class ScheduleWorkbookBuilder:
             demand = aggregate_demand_by_mode(venue_capacity_rows)
             alloc_result = allocate(demand, gym_modes, gym_blocks)
             gym_resources = self._build_gym_resources_from_allocator(alloc_result.decisions)
-            direct_resources = [r for r in venue_rows if not r.get("exclusive_group")]
+            # Rows with no exclusive_group are standalone resources — include directly.
+            # Rows whose exclusive_group has no Gym-Modes entry were not seen by the
+            # allocator; include them directly too, and warn so the operator knows
+            # mutual exclusivity is not enforced for those venues.
+            covered_groups = set(gym_modes.keys())
+            uncovered_groups = {
+                r["exclusive_group"] for r in venue_rows
+                if r.get("exclusive_group") and r["exclusive_group"] not in covered_groups
+            }
+            if uncovered_groups:
+                logger.warning(
+                    f"Exclusive venue group(s) {sorted(uncovered_groups)} appear in Venue-Input "
+                    "but have no entry in the Gym-Modes tab. Their rows are included as direct "
+                    "resources without mode-exclusivity enforcement. Add them to Gym-Modes if "
+                    "the courts in those venues cannot be used simultaneously."
+                )
+            direct_resources = [
+                r for r in venue_rows
+                if not r.get("exclusive_group") or r["exclusive_group"] not in covered_groups
+            ]
             all_resources = gym_resources + direct_resources
             gym_allocation = {
                 "source":        "allocator",
