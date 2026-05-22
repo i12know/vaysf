@@ -373,6 +373,48 @@ def ensure_unique_assignment_slots(assignments: list[dict[str, Any]]) -> None:
         seen[key] = game_id
 
 
+def ensure_unique_assignment_game_ids(assignments: list[dict[str, Any]]) -> None:
+    """Raise when the same game_id appears more than once in the final output."""
+    seen: set[str] = set()
+    for assignment in assignments:
+        game_id = str(assignment.get("game_id") or "").strip()
+        if not game_id:
+            continue
+        if game_id in seen:
+            raise ValueError(
+                f"Duplicate assignment rows for game_id {game_id!r} were produced."
+            )
+        seen.add(game_id)
+
+
+def merge_playoff_slot_assignments(
+    assignments: list[dict[str, Any]],
+    playoff_slots: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Merge manual playoff slots into solver assignments, replacing same-game rows."""
+    merged = [dict(row) for row in assignments]
+    index_by_game_id = {
+        str(row.get("game_id") or "").strip(): idx
+        for idx, row in enumerate(merged)
+        if str(row.get("game_id") or "").strip()
+    }
+    replaced = 0
+    for playoff_slot in playoff_slots:
+        normalized = dict(playoff_slot)
+        game_id = str(normalized.get("game_id") or "").strip()
+        if not game_id:
+            merged.append(normalized)
+            continue
+        existing_idx = index_by_game_id.get(game_id)
+        if existing_idx is not None:
+            merged[existing_idx] = normalized
+            replaced += 1
+        else:
+            index_by_game_id[game_id] = len(merged)
+            merged.append(normalized)
+    return merged, replaced
+
+
 def build_infeasibility_diagnostics(schedule_input: dict[str, Any]) -> list[dict[str, Any]]:
     """Return lower-bound capacity diagnostics for operator-facing INFEASIBLE cases.
 
@@ -1084,22 +1126,47 @@ def solve(
         top_status = STATUS_INFEASIBLE
 
     # Merge pre-assigned playoff slots from schedule_input into assignments.
+    replaced_playoff_assignments = 0
     if playoff_slots:
-        for ps in playoff_slots:
-            all_assignments.append(dict(ps))
-        logger.info(f"Merged {len(playoff_slots)} pre-assigned playoff slots into output.")
+        all_assignments, replaced_playoff_assignments = merge_playoff_slot_assignments(
+            all_assignments,
+            playoff_slots,
+        )
+        manual_only_count = len(playoff_slots) - replaced_playoff_assignments
+        logger.info(
+            f"Merged {len(playoff_slots)} pre-assigned playoff slots into output "
+            f"({replaced_playoff_assignments} replaced existing modeled assignments, "
+            f"{manual_only_count} manual-only rows)."
+        )
 
     ensure_unique_assignment_slots(all_assignments)
+    ensure_unique_assignment_game_ids(all_assignments)
 
     conflict_audit_summary, conflict_audit = build_conflict_audit(
         schedule_input,
         all_assignments,
     )
 
+    modeled_game_ids = {
+        str(game.get("game_id") or "").strip()
+        for game in games
+        if str(game.get("game_id") or "").strip()
+    }
+    assigned_game_ids = {
+        str(assignment.get("game_id") or "").strip()
+        for assignment in all_assignments
+        if str(assignment.get("game_id") or "").strip()
+    }
+    modeled_assigned_count = len(assigned_game_ids & modeled_game_ids)
+    manual_only_assignment_count = len(assigned_game_ids - modeled_game_ids)
+
     logger.info(
         f"Solver (all pools): status={top_status}, "
         f"wall_time={total_wall_seconds:.3f}s, "
-        f"assigned={len(all_assignments)}, unscheduled={len(all_unscheduled)}, "
+        f"assigned_modeled_games={modeled_assigned_count}, "
+        f"manual_playoff_only={manual_only_assignment_count}, "
+        f"output_rows={len(all_assignments)}, "
+        f"unscheduled={len(all_unscheduled)}, "
         f"pools={len(pool_results)}"
     )
 

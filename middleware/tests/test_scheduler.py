@@ -1311,6 +1311,39 @@ def test_solve_playoff_slots_reserve_pool_slots():
     assert final_asgn["slot"] == "Sat-1-08:00"
 
 
+def test_solve_playoff_slot_replaces_existing_modeled_assignment():
+    """When a pinned playoff row targets a modeled game_id, the pinned slot should win once."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+    si = _minimal_schedule_input(
+        games=[
+            _gym_game("G1", "T1", "T2"),
+            _gym_game("BC-Final", "T3", "T4"),
+        ],
+        resources=[
+            _gym_resource("GYM-Sat-1-1", close_time="10:00"),
+            _gym_resource("GYM-Sat-2-1", day="Sat-2", close_time="10:00"),
+        ],
+    )
+    si["playoff_slots"] = [
+        {
+            "game_id": "BC-Final",
+            "event": "Bible Challenge - Mixed Team",
+            "stage": "Final",
+            "resource_id": "GYM-Sat-2-1",
+            "slot": "Sat-2-09:00",
+        },
+    ]
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    bc_rows = [row for row in result["assignments"] if row["game_id"] == "BC-Final"]
+    assert len(bc_rows) == 1
+    assert bc_rows[0]["resource_id"] == "GYM-Sat-2-1"
+    assert bc_rows[0]["slot"] == "Sat-2-09:00"
+
+
 def test_solve_duplicate_playoff_slot_raises():
     """Duplicate manual playoff reservations fail loudly before rendering can hide them."""
     pytest.importorskip("ortools")
