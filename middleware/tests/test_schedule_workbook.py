@@ -2995,12 +2995,10 @@ def test_bc_cross_sport_conflict_edge_with_basketball(tmp_path):
 
 
 def test_bc_pool_assignment_creates_bc_station_games(tmp_path):
-    """BC pool games: each team plays COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM
-    (currently 3) games against different opponents using intra-pool +
-    Latin-square cross-pool rounds.
+    """BC pool games: all teams treated as one global pool.
 
-    For 9 teams (three 3-team pools): 3 intra-pool + 3 slot-aligned cross +
-    3 diagonal cross = 9 pool games; each team appears exactly 3 times."""
+    For 9 teams: 9 pool games (n * 3 / 3 = n); each team appears exactly 3
+    times; no pair of teams meets in more than one game."""
     builder = ScheduleWorkbookBuilder()
 
     bc_rows_nine = _bc_roster(
@@ -3010,8 +3008,9 @@ def test_bc_pool_assignment_creates_bc_station_games(tmp_path):
     bc_nine = [g for g in si_nine.get("games", []) if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]
                and g.get("stage") == "Pool"]
     assert len(bc_nine) == 9
-    cross_games = [g for g in bc_nine if g["game_id"].startswith("BC-X")]
-    assert len(cross_games) == 6  # 3 slot-aligned + 3 diagonal
+
+    # All pool game IDs follow the flat BC-RR-N scheme.
+    assert all(g["game_id"].startswith("BC-RR-") for g in bc_nine)
 
     # Each of the 9 teams appears in exactly 3 pool games.
     appearances: dict = {}
@@ -3020,31 +3019,41 @@ def test_bc_pool_assignment_creates_bc_station_games(tmp_path):
             appearances[g[key]] = appearances.get(g[key], 0) + 1
     assert all(v == 3 for v in appearances.values()), appearances
 
-    # No two games share the same three-team set.
-    game_sets = [
-        frozenset([g["team_a_id"], g["team_b_id"], g["team_c_id"]]) for g in bc_nine
-    ]
-    assert len(set(game_sets)) == len(game_sets), \
-        "Each BC pool game should match a unique combination of three teams"
+    # No pair of teams meets in more than one game.
+    seen_pairs: set = set()
+    for g in bc_nine:
+        ids = [g["team_a_id"], g["team_b_id"], g["team_c_id"]]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                pair = (min(ids[i], ids[j]), max(ids[i], ids[j]))
+                assert pair not in seen_pairs, \
+                    f"Pair {pair} appears in more than one BC game"
+                seen_pairs.add(pair)
 
 
-def test_bc_pool_of_four_assigns_three_games_per_team():
-    """A 4-team BC pool with games-per-team=3 yields all 4 triplets; each team plays 3."""
-    pool_rows = [
-        {"Pool Slot": "T1", "Team ID": "A"},
-        {"Pool Slot": "T2", "Team ID": "B"},
-        {"Pool Slot": "T3", "Team ID": "C"},
-        {"Pool Slot": "T4", "Team ID": "D"},
+def test_bc_no_repeat_triplets_nine_teams():
+    """_bc_no_repeat_triplets produces 9 valid games for 9 teams: each team
+    plays 3 times and no pair meets twice."""
+    rows = [
+        {"Pool ID": "P1", "Pool Slot": f"T{i+1}", "Team ID": chr(65 + i)}
+        for i in range(9)
     ]
-    triplets = ScheduleWorkbookBuilder._bc_pool_triplets(pool_rows)
-    appearances = {}
+    triplets = ScheduleWorkbookBuilder._bc_no_repeat_triplets(rows)
+    assert len(triplets) == 9
+
+    appearances: dict = {}
+    seen_pairs: set = set()
     for trio in triplets:
-        for row in trio:
-            team_id = row["Team ID"]
+        ids = [r["Team ID"] for r in trio]
+        for team_id in ids:
             appearances[team_id] = appearances.get(team_id, 0) + 1
+        for i in range(3):
+            for j in range(i + 1, 3):
+                pair = (min(ids[i], ids[j]), max(ids[i], ids[j]))
+                assert pair not in seen_pairs, f"Pair {pair} repeats"
+                seen_pairs.add(pair)
 
-    assert len(triplets) == 4
-    assert appearances == {"A": 3, "B": 3, "C": 3, "D": 3}
+    assert appearances == {chr(65 + i): 3 for i in range(9)}
 
 
 def test_bc_schedule_input_adds_playoff_precedence(tmp_path):

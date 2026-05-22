@@ -1758,69 +1758,103 @@ class ScheduleWorkbookBuilder:
         return 0
 
     @classmethod
-    def _bc_pool_triplets(
+    def _bc_no_repeat_triplets(
         cls,
-        pool_rows: List[Dict[str, Any]],
+        all_rows: List[Dict[str, Any]],
     ) -> List[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]]:
-        """Return deterministic 3-team BC Jeopardy rounds for one assigned pool."""
-        ordered_rows = sorted(
-            pool_rows,
-            key=lambda row: (
-                cls._pool_numeric_suffix(str(row.get("Pool Slot") or ""), "T"),
-                str(row.get("Team ID") or ""),
+        """Generate BC round-robin triplets across all teams in one global pool.
+
+        Each team appears in exactly COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM triplets.
+        No pair of teams is in more than one triplet (the "no same opponent twice"
+        rule the user expects from traditional BC Jeopardy format).
+
+        Uses backtracking with a most-constrained-first pivot.  For n ≥ 7 with
+        3 games/team a valid schedule always exists; for smaller n the constraint
+        cannot be satisfied and the method returns [] with a warning.
+        """
+        ordered = sorted(
+            all_rows,
+            key=lambda r: (
+                cls._pool_numeric_suffix(str(r.get("Pool ID") or ""), "P"),
+                cls._pool_numeric_suffix(str(r.get("Pool Slot") or ""), "T"),
+                str(r.get("Team ID") or ""),
             ),
         )
-        n_teams = len(ordered_rows)
-        if n_teams < COURT_ESTIMATE_BC_TEAMS_PER_GAME:
+        n = len(ordered)
+        gpt = COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM
+        if n < COURT_ESTIMATE_BC_TEAMS_PER_GAME:
             return []
-        if n_teams == 3:
-            trio = tuple(ordered_rows[:3])
-            # One intra-pool game only; a cross-pool Round 2 game is generated
-            # by _build_assigned_bc_game_objects so teams face different opponents.
-            return [trio]
-        if n_teams == 4:
-            t1, t2, t3, t4 = ordered_rows
-            if COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM >= 3:
-                # All 4 triplets — each team plays exactly 3 games.
-                return [
-                    (t1, t2, t3),
-                    (t1, t2, t4),
-                    (t1, t3, t4),
-                    (t2, t3, t4),
-                ]
-            # 2 games per team: 3 triplets, T4 plays the extra game.
-            return [
-                (t1, t2, t4),
-                (t1, t3, t4),
-                (t2, t3, t4),
-            ]
-        if n_teams == 5:
-            t1, t2, t3, t4, t5 = ordered_rows
-            if COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM >= 3:
-                # 5 triplets — each team plays exactly 3 games.
-                return [
-                    (t1, t2, t3),
-                    (t1, t2, t4),
-                    (t1, t3, t5),
-                    (t2, t4, t5),
-                    (t3, t4, t5),
-                ]
-            return [
-                (t1, t2, t4),
-                (t1, t3, t5),
-                (t2, t4, t5),
-                (t3, t4, t5),
-            ]
-        raise ValueError(
-            f"Unexpected BC pool size {n_teams}; expected 3, 4, or 5 teams."
-        )
+        n_games = (n * gpt) // COURT_ESTIMATE_BC_TEAMS_PER_GAME
+
+        from itertools import combinations as _combinations
+        all_triples: List[Tuple[int, int, int]] = list(_combinations(range(n), 3))
+
+        used_pairs: set = set()
+        count = [0] * n
+        chosen: List[Tuple[int, int, int]] = []
+
+        def _pair(a: int, b: int) -> Tuple[int, int]:
+            return (a, b) if a < b else (b, a)
+
+        def _valid(a: int, b: int, c: int) -> bool:
+            return (
+                count[a] < gpt and count[b] < gpt and count[c] < gpt
+                and _pair(a, b) not in used_pairs
+                and _pair(b, c) not in used_pairs
+                and _pair(a, c) not in used_pairs
+            )
+
+        def _apply(a: int, b: int, c: int) -> None:
+            count[a] += 1; count[b] += 1; count[c] += 1
+            used_pairs.add(_pair(a, b))
+            used_pairs.add(_pair(b, c))
+            used_pairs.add(_pair(a, c))
+            chosen.append((a, b, c))
+
+        def _undo(a: int, b: int, c: int) -> None:
+            count[a] -= 1; count[b] -= 1; count[c] -= 1
+            used_pairs.discard(_pair(a, b))
+            used_pairs.discard(_pair(b, c))
+            used_pairs.discard(_pair(a, c))
+            chosen.pop()
+
+        def _solve() -> bool:
+            if len(chosen) == n_games:
+                return True
+            incomplete = [i for i in range(n) if count[i] < gpt]
+            pivot = min(incomplete, key=lambda i: count[i])
+            for a, b, c in all_triples:
+                if pivot not in (a, b, c):
+                    continue
+                if _valid(a, b, c):
+                    _apply(a, b, c)
+                    if _solve():
+                        return True
+                    _undo(a, b, c)
+            return False
+
+        if not _solve():
+            logger.warning(
+                "BC: no-repeat triplet schedule is not possible for %d teams "
+                "with %d games/team (need n ≥ 7 for 3 games/team). "
+                "BC pool games will be omitted.",
+                n, gpt,
+            )
+            return []
+
+        return [tuple(ordered[i] for i in t) for t in chosen]  # type: ignore[return-value]
 
     @classmethod
     def _build_assigned_bc_game_objects(
         cls,
         pool_assignment_rows: List[Dict[str, Any]],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Return BC queue games and precedence using the assigned BC pool draw."""
+        """Return BC queue games and precedence using the assigned BC pool draw.
+
+        All BC teams are treated as a single global pool.  Triplets are generated
+        by _bc_no_repeat_triplets so no pair of teams meets more than once before
+        the playoffs — equivalent to last year's manually-scheduled 16-team format.
+        """
         event_name = SPORT_TYPE["BIBLE_CHALLENGE"]
         prefix = cls._pool_assignment_event_prefix(event_name)
         bc_rows = [
@@ -1833,110 +1867,38 @@ class ScheduleWorkbookBuilder:
         if len(bc_rows) < COURT_ESTIMATE_BC_TEAMS_PER_GAME:
             return [], []
 
-        rows_by_pool: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        for row in bc_rows:
-            rows_by_pool[str(row.get("Pool ID") or "").strip()].append(row)
+        triplets = cls._bc_no_repeat_triplets(bc_rows)
+        if not triplets:
+            return [], []
 
         games: List[Dict[str, Any]] = []
         precedence: List[Dict[str, Any]] = []
-        global_round = 0
-        for pool_id in sorted(
-            rows_by_pool.keys(),
-            key=lambda value: cls._pool_numeric_suffix(value, "P"),
-        ):
-            for local_round, trio in enumerate(cls._bc_pool_triplets(rows_by_pool[pool_id]), start=1):
-                global_round += 1
-                solver_team_ids = [
-                    cls._solver_team_id(event_name, str(row.get("Team ID") or "").strip())
-                    for row in trio
-                ]
-                labels = [
-                    str(row.get("Team Label") or row.get("Team ID") or "").strip()
-                    for row in trio
-                ]
-                games.append({
-                    "game_id": f"{prefix}-{pool_id}-RR-{local_round}",
-                    "event": event_name,
-                    "stage": "Pool",
-                    "pool_id": pool_id,
-                    "round": global_round,
-                    "team_a_id": solver_team_ids[0],
-                    "team_b_id": solver_team_ids[1],
-                    "team_c_id": solver_team_ids[2],
-                    "team_a_label": labels[0],
-                    "team_b_label": labels[1],
-                    "team_c_label": labels[2],
-                    "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
-                    "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
-                    "earliest_slot": None,
-                    "latest_slot": None,
-                })
-
-        # ── Cross-pool Round 2 for 3-team pools ─────────────────────────────
-        # Groups of exactly 3 small (3-team) pools rotate by seed slot so each
-        # team plays a second game against opponents from different pools.
-        # e.g. P1-T1 + P2-T1 + P3-T1, P1-T2 + P2-T2 + P3-T2, etc.
-        def _sorted_pool_rows(pid: str) -> List[Dict[str, Any]]:
-            return sorted(
-                rows_by_pool[pid],
-                key=lambda r: (
-                    cls._pool_numeric_suffix(str(r.get("Pool Slot") or ""), "T"),
-                    str(r.get("Team ID") or ""),
-                ),
-            )
-
-        small_pool_ids = [
-            pid
-            for pid in sorted(
-                rows_by_pool.keys(),
-                key=lambda v: cls._pool_numeric_suffix(v, "P"),
-            )
-            if len(rows_by_pool[pid]) == 3
-        ]
-        # Cross-pool rotation patterns indexed by (slot_idx, pool_idx).
-        # Round 2 — slot-aligned: top/mid/bottom seeds play together across pools.
-        # Round 3 — diagonal: each pool's slot rotates by its pool index, giving
-        # a Latin square so no team plays the same opponent set as Round 2.
-        rotation_patterns = [lambda s, p: s]  # always include Round 2
-        if COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM >= 3:
-            rotation_patterns.append(lambda s, p: (s + p) % 3)
-
-        cross_num = 0
-        for chunk_start in range(0, len(small_pool_ids) - 2, 3):
-            chunk = small_pool_ids[chunk_start : chunk_start + 3]
-            ordered_pools = [_sorted_pool_rows(pid) for pid in chunk]
-            for pattern in rotation_patterns:
-                for slot_idx in range(3):
-                    cross_trio = tuple(
-                        ordered_pools[p][pattern(slot_idx, p)] for p in range(3)
-                    )
-                    global_round += 1
-                    cross_num += 1
-                    s_ids = [
-                        cls._solver_team_id(event_name, str(r.get("Team ID") or "").strip())
-                        for r in cross_trio
-                    ]
-                    lbls = [
-                        str(r.get("Team Label") or r.get("Team ID") or "").strip()
-                        for r in cross_trio
-                    ]
-                    games.append({
-                        "game_id": f"{prefix}-X{cross_num}-RR-1",
-                        "event": event_name,
-                        "stage": "Pool",
-                        "pool_id": "",
-                        "round": global_round,
-                        "team_a_id": s_ids[0],
-                        "team_b_id": s_ids[1],
-                        "team_c_id": s_ids[2],
-                        "team_a_label": lbls[0],
-                        "team_b_label": lbls[1],
-                        "team_c_label": lbls[2],
-                        "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
-                        "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
-                        "earliest_slot": None,
-                        "latest_slot": None,
-                    })
+        for game_num, trio in enumerate(triplets, start=1):
+            solver_team_ids = [
+                cls._solver_team_id(event_name, str(row.get("Team ID") or "").strip())
+                for row in trio
+            ]
+            labels = [
+                str(row.get("Team Label") or row.get("Team ID") or "").strip()
+                for row in trio
+            ]
+            games.append({
+                "game_id": f"{prefix}-RR-{game_num}",
+                "event": event_name,
+                "stage": "Pool",
+                "pool_id": "",
+                "round": game_num,
+                "team_a_id": solver_team_ids[0],
+                "team_b_id": solver_team_ids[1],
+                "team_c_id": solver_team_ids[2],
+                "team_a_label": labels[0],
+                "team_b_label": labels[1],
+                "team_c_label": labels[2],
+                "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+                "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                "earliest_slot": None,
+                "latest_slot": None,
+            })
 
         if len(bc_rows) >= COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF:
             pool_game_ids = [

@@ -3646,7 +3646,7 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_pool_assignment_placeholder_map",
     "_build_core_gym_team_lookup",
     "_pool_numeric_suffix",
-    "_bc_pool_triplets",
+    "_bc_no_repeat_triplets",
     "_build_assigned_bc_game_objects",
     "_build_assigned_soccer_game_objects",
     "_build_gym_game_objects",
