@@ -5172,15 +5172,16 @@ class ScheduleWorkbookBuilder:
             )
 
         # ── Tab 4: Master-Schedule ───────────────────────────────────────────
-        # Grid with time slots as rows (grouped by day) and every individual
-        # resource (court / table / field) as a column, grouped under a merged
-        # venue-group header.  Columns are ordered by venue_name then by label.
+        # Grid: rows = time slots grouped by day; columns = physical courts/
+        # tables grouped by venue.  One column per (venue_group, label) pair
+        # so that multiple resource_ids on the same physical court (created by
+        # the gym allocator for different sports) collapse into one column.
         ws4 = wb.create_sheet("Master-Schedule")
 
         all_resources: List[Dict[str, Any]] = list(schedule_input.get("resources", []))
 
-        # Build day_order for row ordering (use schedule_input if available).
-        ms_day_order: List[str] = schedule_input.get("day_order") or []
+        # Chronological day order — calendar-date-derived when available.
+        ms_day_order: List[str] = list(schedule_input.get("day_order") or [])
         if not ms_day_order:
             ms_day_order = sorted(
                 {str(r.get("day", "")) for r in all_resources if r.get("day")},
@@ -5193,9 +5194,7 @@ class ScheduleWorkbookBuilder:
             except ValueError:
                 return len(ms_day_order)
 
-        # Determine the physical venue group for each resource.
-        # Resources from the gym solver pool use exclusive_group as venue label;
-        # standalone resources use venue_name.
+        # Physical venue group label for a resource.
         def _venue_group(res: Dict[str, Any]) -> str:
             solver_pool = str(res.get("solver_pool") or "").strip()
             if solver_pool == ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL:
@@ -5206,60 +5205,71 @@ class ScheduleWorkbookBuilder:
                 )
             return str(res.get("venue_name") or "").strip() or "Other"
 
-        # Sort resources: venue group → label → resource_id.
+        def _res_label(res: Dict[str, Any]) -> str:
+            rid = str(res.get("resource_id") or "").strip()
+            return str(res.get("label") or rid).strip()
+
+        # Sort by venue group then label for column ordering.
         sorted_resources = sorted(
             all_resources,
-            key=lambda r: (
-                _venue_group(r),
-                str(r.get("label") or r.get("resource_id") or ""),
-                str(r.get("resource_id") or ""),
-            ),
+            key=lambda r: (_venue_group(r), _res_label(r), str(r.get("resource_id") or "")),
         )
 
-        # Deduplicate: for gym-pool resources sharing the same resource_id across
-        # multiple time windows, keep one column per resource_id.
-        seen_rids: set = set()
-        unique_resources: List[Dict[str, Any]] = []
+        # Build one column per physical court = (venue_group, label) pair.
+        # Multiple resource_ids that share the same (venue_group, label) —
+        # e.g. the gym allocator creates separate IDs per sport on the same
+        # court — all map to the same column so no duplicate Court-N columns.
+        col_keys: List[Tuple[str, str]] = []       # ordered (vg, label) list
+        col_key_set: set = set()
+        rid_to_col_key: Dict[str, Tuple[str, str]] = {}  # resource_id → (vg, label)
         for res in sorted_resources:
             rid = str(res.get("resource_id") or "").strip()
-            if rid and rid not in seen_rids:
-                seen_rids.add(rid)
-                unique_resources.append(res)
+            key = (_venue_group(res), _res_label(res))
+            rid_to_col_key[rid] = key
+            if key not in col_key_set:
+                col_keys.append(key)
+                col_key_set.add(key)
 
-        # Build column structure: list of (venue_group, resource) in order.
-        # Columns start at col 3 (col 1 = Day, col 2 = Time).
-        venue_groups_ordered: List[str] = list(
-            dict.fromkeys(_venue_group(r) for r in unique_resources)
-        )
+        venue_groups_ordered: List[str] = list(dict.fromkeys(vg for vg, _ in col_keys))
 
-        # Column indices for each resource_id (1-based).
-        resource_col: Dict[str, int] = {}
+        # Columns start at 3 (col 1 = Day, col 2 = Time).
+        col_key_idx: Dict[Tuple[str, str], int] = {}
         col_idx = 3
-        for res in unique_resources:
-            rid = str(res.get("resource_id") or "").strip()
-            resource_col[rid] = col_idx
+        for key in col_keys:
+            col_key_idx[key] = col_idx
             col_idx += 1
 
-        total_cols = col_idx - 1  # last used column index
+        total_cols = max(col_idx - 1, 3)
 
-        # Row 1: report title
+        # Compact cell text for Master-Schedule: game_id + matchup only.
+        # The sport badge from _cell_text() is redundant here because cells
+        # are already colour-coded by sport.
+        def _master_cell_text(game: Dict[str, Any]) -> str:
+            gid = str(game.get("game_id") or "")
+            a = str(game.get("team_a_label") or game.get("team_a_id") or "")
+            b = str(game.get("team_b_label") or game.get("team_b_id") or "")
+            c = str(game.get("team_c_label") or game.get("team_c_id") or "")
+            if a and b and c and len(a) <= 12 and len(b) <= 12 and len(c) <= 12:
+                return f"{gid}\n{a} / {b} / {c}"
+            if a and b and len(a) <= 12 and len(b) <= 12:
+                return f"{gid}\n{a} vs {b}"
+            return gid
+
+        # ── Header rows ─────────────────────────────────────────────────────
         ws4.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
         c = ws4.cell(row=1, column=1, value="VAY Sports Fest — Master Schedule")
         c.fill, c.font, c.alignment = hdr_fill, hdr_font, center
 
-        # Row 2: Day | Time | [merged venue group headers]
-        ws4.cell(row=2, column=1, value="Day").fill = hdr_fill
-        ws4.cell(row=2, column=1).font = hdr_font
-        ws4.cell(row=2, column=1).alignment = center
-        ws4.cell(row=2, column=2, value="Time").fill = hdr_fill
-        ws4.cell(row=2, column=2).font = hdr_font
-        ws4.cell(row=2, column=2).alignment = center
+        ws4.cell(row=2, column=1, value="Day").fill   = hdr_fill
+        ws4.cell(row=2, column=1).font                = hdr_font
+        ws4.cell(row=2, column=1).alignment           = center
+        ws4.cell(row=2, column=2, value="Time").fill  = hdr_fill
+        ws4.cell(row=2, column=2).font                = hdr_font
+        ws4.cell(row=2, column=2).alignment           = center
 
-        # Merged venue-group header cells in row 2.
         for vg in venue_groups_ordered:
-            vg_resources = [r for r in unique_resources if _venue_group(r) == vg]
-            first_col = resource_col[str(vg_resources[0].get("resource_id") or "").strip()]
-            last_col  = resource_col[str(vg_resources[-1].get("resource_id") or "").strip()]
+            vg_cols = [col_key_idx[k] for k in col_keys if k[0] == vg]
+            first_col, last_col = min(vg_cols), max(vg_cols)
             if first_col < last_col:
                 ws4.merge_cells(
                     start_row=2, start_column=first_col,
@@ -5268,45 +5278,36 @@ class ScheduleWorkbookBuilder:
             c = ws4.cell(row=2, column=first_col, value=vg)
             c.fill, c.font, c.alignment = hdr_fill, hdr_font, center
 
-        # Row 3: Day | Time | [individual court/table labels]
         ws4.cell(row=3, column=1, value="").fill = sec_fill
         ws4.cell(row=3, column=2, value="").fill = sec_fill
-        for res in unique_resources:
-            rid = str(res.get("resource_id") or "").strip()
-            label = str(res.get("label") or rid).strip()
-            c = ws4.cell(row=3, column=resource_col[rid], value=label)
+        for (vg, label), col in col_key_idx.items():
+            c = ws4.cell(row=3, column=col, value=label)
             c.fill, c.font, c.alignment = sec_fill, bold_font, center
 
         ws4.freeze_panes = "C4"
 
-        # Build the union of all (day, time) slots across all resources.
-        # Key: (day_rank, time_minutes) → (day_label, "HH:MM")
+        # ── Build unified time-slot grid ─────────────────────────────────────
         slot_index: Dict[Tuple[int, int], Tuple[str, str]] = {}
         for res in all_resources:
             day = str(res.get("day") or "").strip()
+            if not day:
+                continue
             day_rank = _ms_day_rank(day)
             for t_str in _slot_times(res):
                 h, m = map(int, t_str.split(":"))
-                key = (day_rank, h * 60 + m)
-                slot_index[key] = (day, t_str)
+                slot_index[(day_rank, h * 60 + m)] = (day, t_str)
 
         sorted_slot_keys = sorted(slot_index.keys())
 
-        # Write data rows, inserting a shaded day-break header whenever the day changes.
+        # ── Data rows ────────────────────────────────────────────────────────
         cur_row4 = 4
         prev_day: str = ""
         prev_day_display: str = ""
-
-        # Track which (resource_id, slot_label) combos span multiple rows
-        # (slot_minutes > row granularity).  We only write text in the first row
-        # and leave continuation rows blank so the grid stays readable.
-        written_slots: set = set()
 
         for day_rank, time_min in sorted_slot_keys:
             day, t_str = slot_index[(day_rank, time_min)]
 
             if day != prev_day:
-                # Day-break header row — merged across all columns.
                 day_display = ScheduleWorkbookBuilder._day_display_label(day)
                 ws4.merge_cells(
                     start_row=cur_row4, start_column=1,
@@ -5320,62 +5321,51 @@ class ScheduleWorkbookBuilder:
 
             slot_label = f"{day}-{t_str}"
 
-            # Day column (abbreviated to avoid wide column).
             day_cell = ws4.cell(row=cur_row4, column=1, value=prev_day_display)
             day_cell.alignment = center
             day_cell.font = Font(color="808080")
 
-            # Time column.
             time_cell = ws4.cell(row=cur_row4, column=2, value=t_str)
             time_cell.alignment = center
 
-            # Resource columns.
-            for res in unique_resources:
+            for res in all_resources:
                 rid = str(res.get("resource_id") or "").strip()
-                col = resource_col[rid]
-                cell = ws4.cell(row=cur_row4, column=col)
+                col_key = rid_to_col_key.get(rid)
+                if col_key is None:
+                    continue
+                col = col_key_idx[col_key]
 
-                # Check if this time falls within this resource's window.
                 res_day = str(res.get("day") or "").strip()
                 if res_day != day:
-                    cell.alignment = center
                     continue
 
                 o_h, o_m = map(int, res["open_time"].split(":"))
                 c_h, c_m = map(int, res["close_time"].split(":"))
+                sm = int(res.get("slot_minutes") or 20)
                 open_min  = o_h * 60 + o_m
                 close_min = c_h * 60 + c_m
-                sm = int(res.get("slot_minutes") or 20)
-
-                if not (open_min <= time_min < close_min - sm + 1 or time_min + sm <= close_min):
-                    # Outside this resource's window.
-                    cell.alignment = center
+                if not (open_min <= time_min and time_min + sm <= close_min):
                     continue
 
                 game = assign_map.get((rid, slot_label))
-                if game and (rid, slot_label) not in written_slots:
-                    written_slots.add((rid, slot_label))
-                    cell.value = _cell_text(game)
-                    cell.fill  = _sport_fill(game.get("event", ""))
-                    cell.font  = _category_font(game, bold=True)
-                elif game:
-                    # Continuation row for a multi-slot game — shade but no text.
-                    cell.fill = _sport_fill(game.get("event", ""))
+                if not game:
+                    continue
+
+                cell = ws4.cell(row=cur_row4, column=col)
+                cell.value     = _master_cell_text(game)
+                cell.fill      = _sport_fill(game.get("event", ""))
+                cell.font      = _category_font(game, bold=True)
                 cell.alignment = center
 
             cur_row4 += 1
 
         ws4.cell(row=cur_row4 + 1, column=1, value=snapshot)
 
-        # Column widths: Day=10, Time=7, resource columns=14.
         ws4.column_dimensions["A"].width = 10
         ws4.column_dimensions["B"].width = 7
-        for res in unique_resources:
-            rid = str(res.get("resource_id") or "").strip()
-            col_letter = get_column_letter(resource_col[rid])
-            ws4.column_dimensions[col_letter].width = 14
+        for col in col_key_idx.values():
+            ws4.column_dimensions[get_column_letter(col)].width = 14
 
-        # Row heights for data rows (taller to show wrap_text).
         for row_num in range(4, cur_row4):
             ws4.row_dimensions[row_num].height = 36
 
