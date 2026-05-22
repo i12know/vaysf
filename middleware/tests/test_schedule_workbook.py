@@ -460,7 +460,7 @@ def test_write_schedule_output_workbook_creates_schedule_tabs(tmp_path):
     )
 
     wb = load_workbook(workbook_path)
-    assert wb.sheetnames == ["Schedule-by-Time", "Schedule-by-Sport", "Conflict-Audit"]
+    assert wb.sheetnames == ["Schedule-by-Time", "Schedule-by-Sport", "Conflict-Audit", "Master-Schedule"]
 
 
 def test_read_roster_validation_rows_missing_path_degrades():
