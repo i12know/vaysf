@@ -2995,15 +2995,47 @@ def test_bc_cross_sport_conflict_edge_with_basketball(tmp_path):
 
 
 def test_bc_pool_assignment_creates_bc_station_games(tmp_path):
-    """BC pool-assignment rows should create sequential BC Station queue games."""
+    """BC pool games: a single 3-team pool produces 1 intra-pool game; nine teams
+    (three 3-team pools) produce 3 intra-pool + 3 cross-pool = 6 pool games so
+    each team faces different opponents in each round."""
     builder = ScheduleWorkbookBuilder()
-    bc_rows = _bc_roster(["RPC", "OCB", "ANH"], n_per_church=3)
 
-    si = builder._build_schedule_input(bc_rows, [], tmp_path / "no_venue.xlsx")
-    bc_games = [g for g in si.get("games", []) if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]]
-    assert len(bc_games) == 2
-    assert all(g["resource_type"] == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE for g in bc_games)
-    assert all(g["team_c_id"] for g in bc_games)
+    # Single 3-team pool — no cross-pool partner, so only 1 game.
+    bc_rows_small = _bc_roster(["RPC", "OCB", "ANH"], n_per_church=3)
+    si_small = builder._build_schedule_input(bc_rows_small, [], tmp_path / "small.xlsx")
+    bc_small = [g for g in si_small.get("games", []) if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]]
+    assert len(bc_small) == 1
+    assert bc_small[0]["resource_type"] == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE
+    assert bc_small[0]["team_c_id"]
+
+    # Nine teams → 3 pools of 3 → 3 intra-pool + 3 cross-pool = 6 pool games.
+    bc_rows_nine = _bc_roster(
+        ["RPC", "OCB", "ANH", "GLA", "TLC", "FVC", "MWC", "NSD", "WCC"], n_per_church=3
+    )
+    si_nine = builder._build_schedule_input(bc_rows_nine, [], tmp_path / "nine.xlsx")
+    bc_nine = [g for g in si_nine.get("games", []) if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]
+               and g.get("stage") == "Pool"]
+    assert len(bc_nine) == 6
+    # Cross-pool games have game_id BC-X*-RR-1 and pool_id "".
+    cross_games = [g for g in bc_nine if g["game_id"].startswith("BC-X")]
+    assert len(cross_games) == 3
+    # Every team appears exactly twice across all pool games.
+    appearances: dict = {}
+    for g in bc_nine:
+        for key in ("team_a_id", "team_b_id", "team_c_id"):
+            tid = g[key]
+            appearances[tid] = appearances.get(tid, 0) + 1
+    assert all(v == 2 for v in appearances.values()), appearances
+    # No two games in different rounds share the same three-team set.
+    intra_games = [g for g in bc_nine if not g["game_id"].startswith("BC-X")]
+    cross_game_sets = [
+        frozenset([g["team_a_id"], g["team_b_id"], g["team_c_id"]]) for g in cross_games
+    ]
+    intra_game_sets = [
+        frozenset([g["team_a_id"], g["team_b_id"], g["team_c_id"]]) for g in intra_games
+    ]
+    assert not any(s in intra_game_sets for s in cross_game_sets), \
+        "Cross-pool games should not repeat the same three-team combination as intra-pool games"
 
 
 def test_bc_pool_of_four_assigns_extra_round_to_t4():

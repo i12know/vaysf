@@ -1775,7 +1775,9 @@ class ScheduleWorkbookBuilder:
             return []
         if n_teams == 3:
             trio = tuple(ordered_rows[:3])
-            return [trio, trio]
+            # One intra-pool game only; a cross-pool Round 2 game is generated
+            # by _build_assigned_bc_game_objects so teams face different opponents.
+            return [trio]
         if n_teams == 4:
             t1, t2, t3, t4 = ordered_rows
             return [
@@ -1846,6 +1848,61 @@ class ScheduleWorkbookBuilder:
                     "team_a_label": labels[0],
                     "team_b_label": labels[1],
                     "team_c_label": labels[2],
+                    "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+                    "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                    "earliest_slot": None,
+                    "latest_slot": None,
+                })
+
+        # ── Cross-pool Round 2 for 3-team pools ─────────────────────────────
+        # Groups of exactly 3 small (3-team) pools rotate by seed slot so each
+        # team plays a second game against opponents from different pools.
+        # e.g. P1-T1 + P2-T1 + P3-T1, P1-T2 + P2-T2 + P3-T2, etc.
+        def _sorted_pool_rows(pid: str) -> List[Dict[str, Any]]:
+            return sorted(
+                rows_by_pool[pid],
+                key=lambda r: (
+                    cls._pool_numeric_suffix(str(r.get("Pool Slot") or ""), "T"),
+                    str(r.get("Team ID") or ""),
+                ),
+            )
+
+        small_pool_ids = [
+            pid
+            for pid in sorted(
+                rows_by_pool.keys(),
+                key=lambda v: cls._pool_numeric_suffix(v, "P"),
+            )
+            if len(rows_by_pool[pid]) == 3
+        ]
+        cross_num = 0
+        for chunk_start in range(0, len(small_pool_ids) - 2, 3):
+            chunk = small_pool_ids[chunk_start : chunk_start + 3]
+            ordered_pools = [_sorted_pool_rows(pid) for pid in chunk]
+            for slot_idx in range(3):
+                cross_trio = tuple(ordered_pools[p][slot_idx] for p in range(3))
+                global_round += 1
+                cross_num += 1
+                s_ids = [
+                    cls._solver_team_id(event_name, str(r.get("Team ID") or "").strip())
+                    for r in cross_trio
+                ]
+                lbls = [
+                    str(r.get("Team Label") or r.get("Team ID") or "").strip()
+                    for r in cross_trio
+                ]
+                games.append({
+                    "game_id": f"{prefix}-X{cross_num}-RR-1",
+                    "event": event_name,
+                    "stage": "Pool",
+                    "pool_id": "",
+                    "round": global_round,
+                    "team_a_id": s_ids[0],
+                    "team_b_id": s_ids[1],
+                    "team_c_id": s_ids[2],
+                    "team_a_label": lbls[0],
+                    "team_b_label": lbls[1],
+                    "team_c_label": lbls[2],
                     "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
                     "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
                     "earliest_slot": None,
