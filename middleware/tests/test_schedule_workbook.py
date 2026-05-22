@@ -1833,9 +1833,10 @@ def test_build_gym_resource_objects_include_blank_exclusive_group():
 
 
 def test_load_venue_input_rows_missing_file(tmp_path):
-    """Returns empty list when venue_input.xlsx does not exist."""
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(tmp_path / "missing.xlsx")
+    """Returns empty list (and empty day_order) when venue_input.xlsx does not exist."""
+    result, day_order = ScheduleWorkbookBuilder._load_venue_input_rows(tmp_path / "missing.xlsx")
     assert result == []
+    assert day_order == []
 
 
 def test_load_venue_input_rows_expands_quantity(tmp_path):
@@ -1862,7 +1863,7 @@ def test_load_venue_input_rows_expands_quantity(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     wb.save(path)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, day_order = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert len(result) == 2
     assert result[0]["resource_type"] == POD_RESOURCE_TYPE_TENNIS
     assert result[0]["label"] == "Court-1"
@@ -1895,7 +1896,7 @@ def test_load_venue_input_rows_table_label(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     wb.save(path)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, _ = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert len(result) == 3
     assert all(r["label"].startswith("Table-") for r in result)
 
@@ -1929,7 +1930,7 @@ def test_load_venue_input_rows_skips_blank_resource_rows(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     wb.save(path)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, _ = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert len(result) == 2
     assert all(r["resource_type"] == POD_RESOURCE_TYPE_TENNIS for r in result)
 
@@ -1950,7 +1951,7 @@ def test_load_venue_input_rows_reads_exclusive_group(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     _write_venue_input(path, headers, rows)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, _ = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert len(result) == 2
     assert all(r["exclusive_group"] == "Midsize Gym" for r in result)
     assert all(r["venue_name"] == "Midsize Gym" for r in result)
@@ -1972,7 +1973,7 @@ def test_load_venue_input_rows_blank_exclusive_group(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     _write_venue_input(path, headers, rows)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, _ = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert result[0]["exclusive_group"] == ""
     assert result[0]["venue_name"] == "Chapman"
 
@@ -1999,8 +2000,11 @@ def test_load_venue_input_rows_derives_day_labels_from_date_column(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     _write_venue_input(path, headers, rows)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, day_order = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert [r["day"] for r in result] == ["Fri-1", "Sat-1", "Sun-1", "Sat-2", "Sun-2"]
+    # day_order reflects actual calendar date order: Fri-1 is the first unique date
+    # (2026-07-17), then Sat-1 (07-18), Sun-1 (07-19), Sat-2 (07-25), Sun-2 (07-26).
+    assert day_order == ["Fri-1", "Sat-1", "Sun-1", "Sat-2", "Sun-2"]
 
 
 def test_load_venue_input_rows_normalizes_resource_types_and_prefixes(tmp_path):
@@ -2021,7 +2025,7 @@ def test_load_venue_input_rows_normalizes_resource_types_and_prefixes(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     _write_venue_input(path, headers, rows)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, _ = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert [r["resource_type"] for r in result] == [
         "BC Station",
         "Soccer Field",
@@ -2107,7 +2111,7 @@ def test_build_schedule_input_keys(tmp_path):
     assert set(si.keys()) == {
         "generated_at", "gym_court_scenario", "game_count", "resource_count",
         "games", "resources", "playoff_slots", "gym_modes", "gym_allocation",
-        "team_conflicts", "precedence",
+        "team_conflicts", "precedence", "day_order",
     }
     assert si["game_count"] == len(si["games"])
     assert si["resource_count"] == len(si["resources"])

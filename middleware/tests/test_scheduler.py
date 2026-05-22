@@ -69,7 +69,20 @@ def test_slot_day_key_ignores_optional_suffix():
     from scheduler import _slot_day_key, _slot_sort_key
 
     assert _slot_day_key("Sat-1-08:00-AM") == "Sat-1"
-    assert _slot_sort_key("Sat-1-08:00-AM") == (0, 8 * 60)
+    # (cycle=1, weekday=Sat→5, minutes=480)
+    assert _slot_sort_key("Sat-1-08:00-AM") == (1, 5, 8 * 60)
+
+
+def test_slot_sort_key_fallback_different_cycles():
+    """Fallback _slot_sort_key: cycle-1 days sort before cycle-2 days."""
+    from scheduler import _slot_sort_key
+
+    fri1 = _slot_sort_key("Fri-1-17:00")
+    sun2 = _slot_sort_key("Sun-2-16:00")
+    sat2 = _slot_sort_key("Sat-2-08:00")
+
+    assert fri1 < sun2, "Fri-1 (cycle 1) must sort before Sun-2 (cycle 2)"
+    assert fri1 < sat2, "Fri-1 (cycle 1) must sort before Sat-2 (cycle 2)"
 
 
 def test_normalize_conflict_edge_counts_derives_secondary_only():
@@ -1342,6 +1355,99 @@ def test_solve_playoff_slot_replaces_existing_modeled_assignment():
     assert len(bc_rows) == 1
     assert bc_rows[0]["resource_id"] == "GYM-Sat-2-1"
     assert bc_rows[0]["slot"] == "Sat-2-09:00"
+
+
+def test_solve_packs_games_into_earliest_day_when_capacity_allows():
+    """Regression for Issue #134: games with capacity on Day-1 should not scatter to Day-2.
+
+    The pre-fix solver minimized only `max(global_slot)`, so once any game had to
+    land on a late day the cost was zero for putting more games there too. The new
+    sum-of-slot-indices tier breaks that degenerate tie and packs games into the
+    earliest available day first.
+    """
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    # Friday has 4 tables × 4 slots = 16 placements available (much more than 4 games).
+    # Sunday has 4 tables × 1 slot = 4 placements. Pre-fix the solver would scatter.
+    fri_resources = [
+        {
+            "resource_id": f"TT-Fri-1-{i}", "resource_type": "Table Tennis Table",
+            "label": f"Table-{i}", "day": "Fri-1",
+            "open_time": "17:00", "close_time": "18:20", "slot_minutes": 20,
+        }
+        for i in range(1, 5)
+    ]
+    sun_resources = [
+        {
+            "resource_id": f"TT-Sun-1-{i}", "resource_type": "Table Tennis Table",
+            "label": f"Table-{i}", "day": "Sun-1",
+            "open_time": "16:00", "close_time": "16:20", "slot_minutes": 20,
+        }
+        for i in range(1, 5)
+    ]
+    games = [
+        {
+            "game_id": f"TT-Singles-{i}", "event": "Table Tennis",
+            "stage": "Pool", "pool_id": "P1", "round": 1,
+            "team_a_id": f"T{i}A", "team_b_id": f"T{i}B",
+            "duration_minutes": 20, "resource_type": "Table Tennis Table",
+            "earliest_slot": None, "latest_slot": None,
+        }
+        for i in range(1, 5)
+    ]
+    # day_order reflects actual calendar dates: Fri-1 is the first event day,
+    # Sun-1 is later in the same weekend series.
+    si = {"games": games, "resources": fri_resources + sun_resources,
+          "day_order": ["Fri-1", "Sun-1"]}
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    days_used = {a["slot"].split("-", 2)[0] + "-" + a["slot"].split("-", 2)[1]
+                 for a in result["assignments"]}
+    assert days_used == {"Fri-1"}, (
+        f"Expected all 4 games on Fri-1 since capacity is ample; got days {days_used}"
+    )
+
+
+def test_solve_friday_preferred_over_sunday_in_day_ordering():
+    """Regression for Issue #134 day-order bug: Fri-1 must beat Sun-2 in the slot ordering.
+
+    Pre-fix _DAY_ORDER only knew Sat/Sun, so Fri-1 fell to 99 and the solver
+    treated Friday slots as 'later' than Sunday, sending games to Sunday.
+    """
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    fri_resource = {
+        "resource_id": "TT-Fri-1-1", "resource_type": "Table Tennis Table",
+        "label": "Table-1", "day": "Fri-1",
+        "open_time": "17:00", "close_time": "17:20", "slot_minutes": 20,
+    }
+    sun_resource = {
+        "resource_id": "TT-Sun-2-1", "resource_type": "Table Tennis Table",
+        "label": "Table-1", "day": "Sun-2",
+        "open_time": "16:00", "close_time": "16:20", "slot_minutes": 20,
+    }
+    game = {
+        "game_id": "TT-1", "event": "Table Tennis",
+        "stage": "Pool", "pool_id": "P1", "round": 1,
+        "team_a_id": "A", "team_b_id": "B",
+        "duration_minutes": 20, "resource_type": "Table Tennis Table",
+        "earliest_slot": None, "latest_slot": None,
+    }
+    # day_order: Fri-1 is chronologically earlier than Sun-2 in this tournament.
+    si = {"games": [game], "resources": [fri_resource, sun_resource],
+          "day_order": ["Fri-1", "Sun-2"]}
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    assignment = result["assignments"][0]
+    assert assignment["resource_id"] == "TT-Fri-1-1", (
+        f"Single game must land on Friday (earlier day), got {assignment}"
+    )
 
 
 def test_solve_duplicate_playoff_slot_raises():

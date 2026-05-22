@@ -2524,21 +2524,25 @@ class ScheduleWorkbookBuilder:
         return labels
 
     @classmethod
-    def _load_venue_input_rows(cls, venue_input_path: Path) -> List[Dict[str, Any]]:
+    def _load_venue_input_rows(cls, venue_input_path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
         """Expand venue_input.xlsx into per-resource objects for schedule_input.json.
 
         Each row with Quantity=N emits N resource objects labelled Court-1…N or
-        Table-1…N.  Returns an empty list if the file does not exist.
+        Table-1…N.
+
+        Returns (rows, day_order) where day_order is a list of unique day labels
+        in actual calendar date order (e.g. ['Sat-1', 'Sun-1', 'Fri-1', 'Sat-2',
+        'Sun-2']).  Both are empty when the file does not exist.
         """
         if not venue_input_path.exists():
-            return []
+            return [], []
         try:
             df = pd.read_excel(
                 venue_input_path, sheet_name="Venue-Input", engine="openpyxl"
             )
         except Exception as e:
             logger.warning(f"Could not read venue input rows from {venue_input_path}: {e}")
-            return []
+            return [], []
 
         rows: List[Dict[str, Any]] = []
         # Counter keyed by (resource_type, day) for day-aware resource IDs.
@@ -2604,7 +2608,11 @@ class ScheduleWorkbookBuilder:
             resource_counts[count_key] = rc
 
         logger.debug(f"Loaded {len(rows)} venue resource rows from {venue_input_path}")
-        return rows
+        # day_order preserves the insertion order from _derive_day_labels_from_dates,
+        # which sorts unique dates chronologically before assigning labels — so this
+        # list is in actual calendar order (e.g. Sat-1, Sun-1, Fri-1, Sat-2, Sun-2).
+        day_order: List[str] = list(dict.fromkeys(date_day_map.values()))
+        return rows, day_order
 
     @staticmethod
     def _load_playoff_slots(venue_input_path: Path) -> List[Dict[str, Any]]:
@@ -2761,7 +2769,7 @@ class ScheduleWorkbookBuilder:
             aggregate_demand_by_mode, extract_gym_blocks, allocate,
         )
         gym_modes = self._load_gym_modes(venue_input_path)
-        venue_rows = self._load_venue_input_rows(venue_input_path)
+        venue_rows, day_order = self._load_venue_input_rows(venue_input_path)
         playoff_slots = self._load_playoff_slots(venue_input_path)
         gym_blocks = extract_gym_blocks(venue_rows)
         explicit_gym_resource_types = {
@@ -3107,6 +3115,7 @@ class ScheduleWorkbookBuilder:
             "gym_allocation":     gym_allocation,
             "team_conflicts":     team_conflicts,
             "precedence":         precedence,
+            "day_order":          day_order,
         }
 
     @staticmethod
