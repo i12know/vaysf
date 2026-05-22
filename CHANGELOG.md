@@ -11,6 +11,7 @@
   - Layer 2 now logs an advisory warning when `venue_input.xlsx` `slot_minutes` values do not match the configured per-sport game duration for the same scheduled resource type
   - Standard bracket sports now default to one 3rd-place game instead of zero; Soccer's live Layer-2 generator now adds `SOC-3rd` after the semi-finals, while Bible Challenge remains a special case because its 3-team final already resolves 1st / 2nd / 3rd
   - Venue resource naming is now normalized to one canonical vocabulary (`BC Station`, `Soccer Field`, `Table Tennis Table`, etc.), direct venue `resource_id` prefixes now use `BB` / `VB` / `PCK` / `TT` / `TEN` instead of mixed legacy abbreviations like `BAS` / `VOL` / `PIC`, and date-derived logical day keys now use weekday labels such as `Fri-1`, `Sat-1`, `Sun-1`
+  - `Venue-Estimator` now treats racquet `Potential Teams/Entries` as a rule-aware ceiling from current registrations, capped by the 2026 church entry limits; `Estimating Teams/Entries` remains the operational count used for the current schedule build
 - Added Soccer (Coed Exhibition) Phase-1 planning support
   - New `SOCCER_ENABLED` config flag (default `True` for 2026); set to `False` to remove Soccer from the Phase-1 scheduling/planning outputs (`Venue-Estimator`, `Pool-Assignment`, and conflict edges)
   - `Pool-Assignment` now includes Soccer team rows (prefix `SOC`) alongside BB / VBM / VBW / BC, with up-to-3 seeds
@@ -113,6 +114,9 @@
   - 8 solver tests removed (C5/C8/C9); 1 new test added (`test_solve_playoff_slots_passed_through`); 22 tests total
 
 ### Bug Fixes
+- Pinned `Playoff-Slots` rows now replace modeled assignments with the same `game_id` instead of duplicating finals in `schedule_output.json` / `VAYSF_Schedule_*.xlsx`
+  - Fixes cases like `BC-Final` appearing once from the solver and a second time from a pinned Sunday finals row
+  - Solver summary logging now separates modeled scheduled games from manual playoff-only rows so the output count is easier to audit
 - Reserve manual playoff slots from the pool-play solver
   - New `validate_playoff_slots()` validates each playoff row (real `resource_id`, real `slot` label, no duplicate court/slot) and extracts per-pool `blocked_slots` so the CP-SAT pool-play solver cannot place a pool game on a court/time already given to a playoff game
   - New `ensure_unique_assignment_slots()` guards the merged output against collisions

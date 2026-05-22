@@ -389,6 +389,17 @@ Resources section rather than guessing.
 
 Logical day keys are weekday-based (`Fri-1`, `Sat-1`, `Sun-1`, `Sat-2`, ...).
 
+Merge behavior at solve time:
+
+- if a `Playoff-Slots` row names a `game_id` that already exists in
+  `schedule_input.json["games"]`, the pinned row replaces the modeled
+  assignment for that game in the final output
+- if a `Playoff-Slots` row names a `game_id` that is not in `games`, it is
+  carried through as a manual playoff-only assignment
+
+This lets coordinators pin modeled finals such as `BC-Final` or `VBM-Final`
+to exact courts/times without editing the generated game list first.
+
 To specify the exact finale order (e.g. VB Women → VB Men → Basketball back-to-back),
 simply put those games in that row order with consecutive `slot` values.  No solver
 constraints are needed — the timetable is the authority.
@@ -720,6 +731,18 @@ they are pure planning artifacts built from the roster data and
 `schedule_input.json`.  When no `venue_input.xlsx` is supplied, the
 `Pod-Resource-Estimate` tab derives court availability directly from the
 `schedule_input.json` `resources` so an offline build stays self-consistent.
+
+`Venue-Estimator` has two intentionally different demand columns:
+
+- **`Estimating Teams/Entries`** â€” the operational count used for the current
+  schedule build
+- **`Potential Teams/Entries`** â€” a ceiling / contingency signal
+
+For racquet sports, `Potential Teams/Entries` is rule-aware: it is calculated
+from current registrations, includes incomplete doubles pairing where that
+still affects possible entries, and caps the result using the active 2026
+church entry limits. It is useful for court-capacity planning, but it is not
+the default number of racquet entries the current run will schedule.
 
 The `Pool-Assignment` tab is the editable Layer-1 seeding workspace for the
 current Phase 1 team sports (`BB`, `VBM`, `VBW`, `BC`, and `SOC` when

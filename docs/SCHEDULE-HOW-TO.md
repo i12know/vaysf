@@ -138,6 +138,11 @@ Important:
 - allocator-managed gym blocks often use `GYM-*`
 - direct standalone rows often use prefixes like `BB-*`, `VB-*`, `BC-*`,
   `SOC-*`, `BAD-*`, `PCK-*`, `TT-*`, `TEN-*`
+- if a pinned row uses a `game_id` that already exists in the modeled
+  `Schedule-Input -> GAMES` list, that pinned row **replaces** the modeled
+  assignment for that game in the final schedule output
+- if a pinned row uses a `game_id` that is not modeled in `games`, it is kept
+  as a manual playoff-only assignment
 
 The authoritative source is always the generated `Schedule-Input` tab.
 
@@ -184,6 +189,23 @@ Use it as your lookup sheet:
   `close_time`, and `slot_minutes`
 
 This is the safest place to copy values for `Playoff-Slots`.
+
+### How to read `Venue-Estimator`
+
+Two columns matter a lot during venue planning:
+
+- `Estimating Teams/Entries`
+  This is the **operational count** used for the current schedule build.
+  It reflects the complete teams / entries the pipeline can schedule now.
+- `Potential Teams/Entries`
+  This is a **capacity-planning ceiling**, not the default scheduling count.
+  For racquet sports, it is rule-aware: it uses current registrations,
+  includes incomplete doubles pairing where relevant, and caps the total using
+  the 2026 church entry limits.
+
+Use `Estimating Teams/Entries` for the schedule you generate today.
+Use `Potential Teams/Entries` to judge whether your booked venue still has
+enough headroom if more partial racquet registrations finish later.
 
 ---
 
@@ -248,6 +270,18 @@ Sun-2-15:00
 Sun-2-16:00
 Sun-2-17:00
 ```
+
+### Override behavior
+
+`Playoff-Slots` is authoritative for game timing.
+
+- If the `game_id` already exists in `Schedule-Input -> GAMES`, the pinned
+  row overrides the solver's modeled placement for that game.
+- If the `game_id` does not exist in `GAMES`, the pinned row is carried
+  through as a manual playoff-only assignment.
+
+This is why you can move a generated final like `BC-Final` to a fixed Sunday
+slot without deleting it from the modeled game list first.
 
 ### Logical day labels
 
