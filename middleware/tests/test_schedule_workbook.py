@@ -1460,6 +1460,51 @@ def test_build_schedule_input_allocator_omits_zero_team_gym_sports(tmp_path):
     assert {r["resource_type"] for r in si["resources"]} == {GYM_RESOURCE_TYPE_BASKETBALL}
 
 
+def test_build_schedule_input_uncovered_exclusive_group_included_as_direct_resource(tmp_path):
+    """Venue rows whose exclusive_group has no Gym-Modes entry must not be silently
+    dropped when the overall gym_resource_strategy is 'allocator'.
+
+    Real-world trigger: EHS Tennis Court rows (Tennis Court + Pickleball Court) share
+    an Exclusive Venue Group but are absent from Gym-Modes.  Without this fix they were
+    excluded by the allocator AND by the direct_resources filter, leaving 0 Pickleball /
+    Tennis resources and making those pools INFEASIBLE."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        # Gym courts — covered by Gym-Modes → go through allocator
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        # Tennis courts — exclusive group NOT in Gym-Modes → must become direct resources
+        ["Tennis Pod", "EHS Tennis Court", "Tennis Court", 6, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "EHS Tennis Court", None, None, None],
+        ["Tennis Pod", "EHS Tennis Court", "Pickleball Court", 12, "Sat-1",
+         "2026-07-18", 8, 17, 30, None, "EHS Tennis Court", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 2, 2],
+        # NOTE: "EHS Tennis Court" is intentionally absent from Gym-Modes
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows, gym_modes_rows=gym_modes)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    resource_types = {r["resource_type"] for r in si["resources"]}
+    assert "Tennis Court" in resource_types, "Tennis Court must not be dropped"
+    assert "Pickleball Court" in resource_types, "Pickleball Court must not be dropped"
+    # Allocator-backed gym sports must also still be present
+    assert GYM_RESOURCE_TYPE_BASKETBALL in resource_types
+
+
 def test_build_schedule_input_playoff_pinned_resource_promoted_as_single_slot(tmp_path):
     """A playoff slot referencing an allocator-unvisited gym block should be promoted
     as a one-slot synthetic resource that is excluded from the Gym Core solver pool."""
