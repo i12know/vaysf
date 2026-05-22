@@ -2829,13 +2829,13 @@ def test_bc_venue_estimator_rr_game_count_12_teams():
     bc_row = next(r for r in capacity_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"])
 
     assert bc_row["Estimating Teams/Entries"] == 12
-    assert bc_row["Pool Slots"] == 8                        # ceil(12*2/3)
-    assert bc_row["Actual Pool Games/Team"] == 2
+    assert bc_row["Pool Slots"] == 12                       # ceil(12*3/3)
+    assert bc_row["Actual Pool Games/Team"] == 3
     assert bc_row["Playoff Teams"] == COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF
     assert bc_row["Playoff Slots"] == COURT_ESTIMATE_BC_PLAYOFF_GAMES  # 4
-    assert bc_row["Total Court Slots"] == 12                # 8 RR + 4 playoff
+    assert bc_row["Total Court Slots"] == 16                # 12 RR + 4 playoff
     assert bc_row["Minutes Per Game"] == COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE  # 60
-    assert bc_row["Estimated Court Hours"] == 12.0          # 12 games × 60 min / 60
+    assert bc_row["Estimated Court Hours"] == 16.0          # 16 games × 60 min / 60
     assert bc_row["Third Place?"] == "No"
     assert "Sequential" in bc_row["Pool Composition"]
     assert "1 classroom" in bc_row["Pool Composition"]
@@ -2851,11 +2851,11 @@ def test_bc_venue_estimator_no_playoff_when_fewer_than_9_teams():
     bc_row = next(r for r in capacity_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"])
 
     assert bc_row["Estimating Teams/Entries"] == 8
-    assert bc_row["Pool Slots"] == 6                        # ceil(8*2/3) = ceil(5.33) = 6
-    assert bc_row["Actual Pool Games/Team"] == 2
+    assert bc_row["Pool Slots"] == 8                        # ceil(8*3/3) = 8
+    assert bc_row["Actual Pool Games/Team"] == 3
     assert bc_row["Playoff Teams"] == 0
     assert bc_row["Playoff Slots"] == 0
-    assert bc_row["Total Court Slots"] == 6
+    assert bc_row["Total Court Slots"] == 8
     assert f"< {COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF}" in bc_row["Pool Composition"]
 
 
@@ -2995,51 +2995,41 @@ def test_bc_cross_sport_conflict_edge_with_basketball(tmp_path):
 
 
 def test_bc_pool_assignment_creates_bc_station_games(tmp_path):
-    """BC pool games: a single 3-team pool produces 1 intra-pool game; nine teams
-    (three 3-team pools) produce 3 intra-pool + 3 cross-pool = 6 pool games so
-    each team faces different opponents in each round."""
+    """BC pool games: each team plays COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM
+    (currently 3) games against different opponents using intra-pool +
+    Latin-square cross-pool rounds.
+
+    For 9 teams (three 3-team pools): 3 intra-pool + 3 slot-aligned cross +
+    3 diagonal cross = 9 pool games; each team appears exactly 3 times."""
     builder = ScheduleWorkbookBuilder()
 
-    # Single 3-team pool — no cross-pool partner, so only 1 game.
-    bc_rows_small = _bc_roster(["RPC", "OCB", "ANH"], n_per_church=3)
-    si_small = builder._build_schedule_input(bc_rows_small, [], tmp_path / "small.xlsx")
-    bc_small = [g for g in si_small.get("games", []) if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]]
-    assert len(bc_small) == 1
-    assert bc_small[0]["resource_type"] == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE
-    assert bc_small[0]["team_c_id"]
-
-    # Nine teams → 3 pools of 3 → 3 intra-pool + 3 cross-pool = 6 pool games.
     bc_rows_nine = _bc_roster(
         ["RPC", "OCB", "ANH", "GLA", "TLC", "FVC", "MWC", "NSD", "WCC"], n_per_church=3
     )
     si_nine = builder._build_schedule_input(bc_rows_nine, [], tmp_path / "nine.xlsx")
     bc_nine = [g for g in si_nine.get("games", []) if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]
                and g.get("stage") == "Pool"]
-    assert len(bc_nine) == 6
-    # Cross-pool games have game_id BC-X*-RR-1 and pool_id "".
+    assert len(bc_nine) == 9
     cross_games = [g for g in bc_nine if g["game_id"].startswith("BC-X")]
-    assert len(cross_games) == 3
-    # Every team appears exactly twice across all pool games.
+    assert len(cross_games) == 6  # 3 slot-aligned + 3 diagonal
+
+    # Each of the 9 teams appears in exactly 3 pool games.
     appearances: dict = {}
     for g in bc_nine:
         for key in ("team_a_id", "team_b_id", "team_c_id"):
-            tid = g[key]
-            appearances[tid] = appearances.get(tid, 0) + 1
-    assert all(v == 2 for v in appearances.values()), appearances
-    # No two games in different rounds share the same three-team set.
-    intra_games = [g for g in bc_nine if not g["game_id"].startswith("BC-X")]
-    cross_game_sets = [
-        frozenset([g["team_a_id"], g["team_b_id"], g["team_c_id"]]) for g in cross_games
+            appearances[g[key]] = appearances.get(g[key], 0) + 1
+    assert all(v == 3 for v in appearances.values()), appearances
+
+    # No two games share the same three-team set.
+    game_sets = [
+        frozenset([g["team_a_id"], g["team_b_id"], g["team_c_id"]]) for g in bc_nine
     ]
-    intra_game_sets = [
-        frozenset([g["team_a_id"], g["team_b_id"], g["team_c_id"]]) for g in intra_games
-    ]
-    assert not any(s in intra_game_sets for s in cross_game_sets), \
-        "Cross-pool games should not repeat the same three-team combination as intra-pool games"
+    assert len(set(game_sets)) == len(game_sets), \
+        "Each BC pool game should match a unique combination of three teams"
 
 
-def test_bc_pool_of_four_assigns_extra_round_to_t4():
-    """A 4-team BC pool should give the third appearance to T4, not the top slots."""
+def test_bc_pool_of_four_assigns_three_games_per_team():
+    """A 4-team BC pool with games-per-team=3 yields all 4 triplets; each team plays 3."""
     pool_rows = [
         {"Pool Slot": "T1", "Team ID": "A"},
         {"Pool Slot": "T2", "Team ID": "B"},
@@ -3053,8 +3043,8 @@ def test_bc_pool_of_four_assigns_extra_round_to_t4():
             team_id = row["Team ID"]
             appearances[team_id] = appearances.get(team_id, 0) + 1
 
-    assert len(triplets) == 3
-    assert appearances == {"A": 2, "B": 2, "C": 2, "D": 3}
+    assert len(triplets) == 4
+    assert appearances == {"A": 3, "B": 3, "C": 3, "D": 3}
 
 
 def test_bc_schedule_input_adds_playoff_precedence(tmp_path):

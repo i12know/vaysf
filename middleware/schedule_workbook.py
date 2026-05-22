@@ -1780,6 +1780,15 @@ class ScheduleWorkbookBuilder:
             return [trio]
         if n_teams == 4:
             t1, t2, t3, t4 = ordered_rows
+            if COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM >= 3:
+                # All 4 triplets — each team plays exactly 3 games.
+                return [
+                    (t1, t2, t3),
+                    (t1, t2, t4),
+                    (t1, t3, t4),
+                    (t2, t3, t4),
+                ]
+            # 2 games per team: 3 triplets, T4 plays the extra game.
             return [
                 (t1, t2, t4),
                 (t1, t3, t4),
@@ -1787,6 +1796,15 @@ class ScheduleWorkbookBuilder:
             ]
         if n_teams == 5:
             t1, t2, t3, t4, t5 = ordered_rows
+            if COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM >= 3:
+                # 5 triplets — each team plays exactly 3 games.
+                return [
+                    (t1, t2, t3),
+                    (t1, t2, t4),
+                    (t1, t3, t5),
+                    (t2, t4, t5),
+                    (t3, t4, t5),
+                ]
             return [
                 (t1, t2, t4),
                 (t1, t3, t5),
@@ -1875,39 +1893,50 @@ class ScheduleWorkbookBuilder:
             )
             if len(rows_by_pool[pid]) == 3
         ]
+        # Cross-pool rotation patterns indexed by (slot_idx, pool_idx).
+        # Round 2 — slot-aligned: top/mid/bottom seeds play together across pools.
+        # Round 3 — diagonal: each pool's slot rotates by its pool index, giving
+        # a Latin square so no team plays the same opponent set as Round 2.
+        rotation_patterns = [lambda s, p: s]  # always include Round 2
+        if COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM >= 3:
+            rotation_patterns.append(lambda s, p: (s + p) % 3)
+
         cross_num = 0
         for chunk_start in range(0, len(small_pool_ids) - 2, 3):
             chunk = small_pool_ids[chunk_start : chunk_start + 3]
             ordered_pools = [_sorted_pool_rows(pid) for pid in chunk]
-            for slot_idx in range(3):
-                cross_trio = tuple(ordered_pools[p][slot_idx] for p in range(3))
-                global_round += 1
-                cross_num += 1
-                s_ids = [
-                    cls._solver_team_id(event_name, str(r.get("Team ID") or "").strip())
-                    for r in cross_trio
-                ]
-                lbls = [
-                    str(r.get("Team Label") or r.get("Team ID") or "").strip()
-                    for r in cross_trio
-                ]
-                games.append({
-                    "game_id": f"{prefix}-X{cross_num}-RR-1",
-                    "event": event_name,
-                    "stage": "Pool",
-                    "pool_id": "",
-                    "round": global_round,
-                    "team_a_id": s_ids[0],
-                    "team_b_id": s_ids[1],
-                    "team_c_id": s_ids[2],
-                    "team_a_label": lbls[0],
-                    "team_b_label": lbls[1],
-                    "team_c_label": lbls[2],
-                    "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
-                    "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
-                    "earliest_slot": None,
-                    "latest_slot": None,
-                })
+            for pattern in rotation_patterns:
+                for slot_idx in range(3):
+                    cross_trio = tuple(
+                        ordered_pools[p][pattern(slot_idx, p)] for p in range(3)
+                    )
+                    global_round += 1
+                    cross_num += 1
+                    s_ids = [
+                        cls._solver_team_id(event_name, str(r.get("Team ID") or "").strip())
+                        for r in cross_trio
+                    ]
+                    lbls = [
+                        str(r.get("Team Label") or r.get("Team ID") or "").strip()
+                        for r in cross_trio
+                    ]
+                    games.append({
+                        "game_id": f"{prefix}-X{cross_num}-RR-1",
+                        "event": event_name,
+                        "stage": "Pool",
+                        "pool_id": "",
+                        "round": global_round,
+                        "team_a_id": s_ids[0],
+                        "team_b_id": s_ids[1],
+                        "team_c_id": s_ids[2],
+                        "team_a_label": lbls[0],
+                        "team_b_label": lbls[1],
+                        "team_c_label": lbls[2],
+                        "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+                        "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                        "earliest_slot": None,
+                        "latest_slot": None,
+                    })
 
         if len(bc_rows) >= COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF:
             pool_game_ids = [
