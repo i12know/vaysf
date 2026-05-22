@@ -79,6 +79,7 @@ class ScheduleWorkbookBuilder:
 
     _rules_manager_cache: Optional[RulesManager] = None
     _rules_manager_cache_failed: bool = False
+    _racquet_entry_limit_cache: Dict[str, Tuple[Dict[str, int], Optional[int]]] = {}
 
     def __init__(self) -> None:
         pass
@@ -102,6 +103,10 @@ class ScheduleWorkbookBuilder:
         "Assignment Basis",
         "Notes",
     ]
+    _POOL_ASSIGNMENT_NOTE = (
+        "If you add in a seed number for the top teams for fair pool-play, remember to rerun "
+        "assign-pools --workbook command (see HOW-TO for details)"
+    )
     _POOL_ASSIGNMENT_EVENT_DEFS: List[Tuple[str, str]] = [
         (SPORT_TYPE["BASKETBALL"], "BBM"),
         (SPORT_TYPE["VOLLEYBALL_MEN"], "VBM"),
@@ -219,8 +224,10 @@ class ScheduleWorkbookBuilder:
             "Canonical event name used for the venue estimate."
         ),
         "Potential Teams/Entries": (
-            "All current registrations for this event, including partial team signups or "
-            "incomplete doubles pairs."
+            "Rule-aware ceiling for this event based on current registrations. Team sports count "
+            "all current team units with at least one roster entry; racquet sports cap each "
+            "church using the 2026 entry-limit rules while still allowing incomplete doubles "
+            "pairs to mature into valid entries."
         ),
         "Estimating Teams/Entries": (
             "Entries currently counted for court estimation. Team sports count only churches "
@@ -488,9 +495,8 @@ class ScheduleWorkbookBuilder:
         return sport_type, gender, sport_format
 
     @classmethod
-    def _get_min_team_size(cls, event_name: str) -> int:
-        """Look up minimum team size from the validation ruleset; fall back
-        to COURT_ESTIMATE_MIN_TEAM_SIZE if the JSON rule is absent."""
+    def _get_rules_manager(cls) -> Optional[RulesManager]:
+        """Return the cached SUMMER_2026 RulesManager when available."""
         rules_manager_cache = getattr(cls, "_rules_manager_cache", None)
         rules_manager_cache_failed = bool(getattr(cls, "_rules_manager_cache_failed", False))
         if rules_manager_cache is None and not rules_manager_cache_failed:
@@ -499,7 +505,13 @@ class ScheduleWorkbookBuilder:
             except Exception as e:
                 logger.warning(f"Could not load validation rules for venue estimate: {e}")
                 setattr(cls, "_rules_manager_cache_failed", True)
-        rules_manager = getattr(cls, "_rules_manager_cache", None)
+        return getattr(cls, "_rules_manager_cache", None)
+
+    @classmethod
+    def _get_min_team_size(cls, event_name: str) -> int:
+        """Look up minimum team size from the validation ruleset; fall back
+        to COURT_ESTIMATE_MIN_TEAM_SIZE if the JSON rule is absent."""
+        rules_manager = cls._get_rules_manager()
         if rules_manager is not None:
             for rule in rules_manager.get_rules_for_sport(event_name):
                 if rule.get("rule_type") == "team_size" and rule.get("category") == "min":
@@ -603,26 +615,130 @@ class ScheduleWorkbookBuilder:
             "court_hours": round(total_slots * minutes_per_game / 60, 2),
         }
 
+    @staticmethod
+    def _normalize_racquet_gender(raw_gender: str, raw_format: str = "") -> str:
+        """Normalize a racquet roster row's gender to Men/Women/Mixed when possible."""
+        tokens = f"{raw_gender} {raw_format}".casefold()
+        if "women" in tokens:
+            return "Women"
+        if "mixed" in tokens or "coed" in tokens:
+            return "Mixed"
+        if "men" in tokens:
+            return "Men"
+        return ""
+
+    @classmethod
+    def _get_racquet_entry_limits(cls, sport_name: str) -> Tuple[Dict[str, int], Optional[int]]:
+        """Return ({format parameter -> max entries}, doubles_total_limit) for one racquet sport."""
+        cache = getattr(cls, "_racquet_entry_limit_cache", None)
+        if cache is None:
+            cache = {}
+            setattr(cls, "_racquet_entry_limit_cache", cache)
+        cached = cache.get(sport_name)
+        if cached is not None:
+            return cached
+
+        format_limits: Dict[str, int] = {}
+        doubles_total_limit: Optional[int] = None
+        rules_manager = cls._get_rules_manager()
+        if rules_manager is not None:
+            for rule in rules_manager.get_rules_for_sport(sport_name):
+                if rule.get("rule_type") != "entry_limit":
+                    continue
+                parameter = str(rule.get("parameter") or "").strip()
+                category = str(rule.get("category") or "").strip()
+                try:
+                    max_entries = int(rule.get("value"))
+                except (TypeError, ValueError):
+                    continue
+                if category == "format" and parameter:
+                    format_limits[parameter] = max_entries
+                elif (
+                    category == "format_total"
+                    and parameter.casefold() == SPORT_FORMAT["DOUBLES"].casefold()
+                ):
+                    doubles_total_limit = max_entries
+
+        cache[sport_name] = (format_limits, doubles_total_limit)
+        return format_limits, doubles_total_limit
+
+    @classmethod
+    def _racquet_rule_parameter_for_row(cls, row: Dict[str, Any]) -> Optional[str]:
+        """Map one racquet roster row to a church-level entry-limit parameter."""
+        raw_format = str(row.get("sport_format") or "").strip()
+        format_cf = raw_format.casefold()
+        gender = cls._normalize_racquet_gender(
+            str(row.get("sport_gender") or "").strip(),
+            raw_format,
+        )
+
+        if "single" in format_cf:
+            if gender in {"Men", "Women"}:
+                return f"{gender} Single"
+            return None
+        if "double" in format_cf or format_cf == SPORT_FORMAT["TEAM"].casefold() or not format_cf:
+            if gender in {"Men", "Women", "Mixed"}:
+                return f"{gender} Double"
+            return None
+        return None
+
     def _count_racquet_entries(self, roster_rows: List[Dict[str, Any]],
                                sport_name: str) -> Dict[str, Any]:
         """Count racquet sport entries for the venue estimator.
 
         Estimating Entries = complete pairs floor(n_doubles / 2) + n_singles.
-        Potential Entries  = total individual registrations (one person may be
-                             waiting for a partner to sign up).
+        Potential Entries  = rule-aware per-church ceiling using the SUMMER_2026
+                             entry-limit rules, while still allowing incomplete
+                             doubles registrations to mature into valid pairs.
         """
         n_singles = 0
         n_doubles = 0
+        singles_by_church: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        doubles_regs_by_church: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        fallback_potential_by_church: Dict[str, int] = defaultdict(int)
         for r in roster_rows:
             if str(r.get("sport_type") or "").strip().casefold() != sport_name.casefold():
                 continue
             fmt = str(r.get("sport_format") or "").strip().casefold()
-            if "singles" in fmt:
+            church = str(r.get("Church Team") or "").strip().upper()
+            parameter = self._racquet_rule_parameter_for_row(r)
+            if "single" in fmt:
                 n_singles += 1
+                if church and parameter:
+                    singles_by_church[church][parameter] += 1
+                elif church:
+                    fallback_potential_by_church[church] += 1
             else:
                 n_doubles += 1
+                if church and parameter:
+                    doubles_regs_by_church[church][parameter] += 1
+                elif church:
+                    fallback_potential_by_church[church] += 1
         n_estimating = n_singles + (n_doubles // 2)
-        n_potential = n_singles + n_doubles
+        format_limits, doubles_total_limit = self._get_racquet_entry_limits(sport_name)
+        if format_limits or doubles_total_limit is not None:
+            churches = (
+                set(singles_by_church.keys())
+                | set(doubles_regs_by_church.keys())
+                | set(fallback_potential_by_church.keys())
+            )
+            n_potential = 0
+            for church in churches:
+                church_total = fallback_potential_by_church.get(church, 0)
+                for parameter, count in singles_by_church.get(church, {}).items():
+                    limit = format_limits.get(parameter)
+                    church_total += min(count, limit) if limit is not None else count
+                doubles_total = 0
+                for parameter, count in doubles_regs_by_church.get(church, {}).items():
+                    team_count = ceil(count / 2)
+                    limit = format_limits.get(parameter)
+                    doubles_total += min(team_count, limit) if limit is not None else team_count
+                if doubles_total_limit is not None:
+                    doubles_total = min(doubles_total, doubles_total_limit)
+                church_total += doubles_total
+                n_potential += church_total
+        else:
+            n_potential = n_singles + n_doubles
         return {
             "n_estimating": n_estimating,
             "n_potential": n_potential,
@@ -2534,6 +2650,15 @@ class ScheduleWorkbookBuilder:
         return slots
 
     @staticmethod
+    def _split_slot_label(slot_label: str) -> Tuple[str, str]:
+        """Split a slot label like 'Sun-2-14:00' into ('Sun-2', '14:00')."""
+        cleaned = str(slot_label or "").strip()
+        if "-" not in cleaned:
+            return "", cleaned
+        day, time_part = cleaned.rsplit("-", 1)
+        return day, time_part
+
+    @staticmethod
     def _load_gym_modes(venue_input_path: Path) -> Dict[str, Dict[str, int]]:
         """Load per-gym mode capacities from the Gym-Modes tab in venue_input.xlsx.
 
@@ -2669,7 +2794,26 @@ class ScheduleWorkbookBuilder:
             demand = aggregate_demand_by_mode(venue_capacity_rows)
             alloc_result = allocate(demand, gym_modes, gym_blocks)
             gym_resources = self._build_gym_resources_from_allocator(alloc_result.decisions)
-            direct_resources = [r for r in venue_rows if not r.get("exclusive_group")]
+            # Rows with no exclusive_group are standalone resources — include directly.
+            # Rows whose exclusive_group has no Gym-Modes entry were not seen by the
+            # allocator; include them directly too, and warn so the operator knows
+            # mutual exclusivity is not enforced for those venues.
+            covered_groups = set(gym_modes.keys())
+            uncovered_groups = {
+                r["exclusive_group"] for r in venue_rows
+                if r.get("exclusive_group") and r["exclusive_group"] not in covered_groups
+            }
+            if uncovered_groups:
+                logger.warning(
+                    f"Exclusive venue group(s) {sorted(uncovered_groups)} appear in Venue-Input "
+                    "but have no entry in the Gym-Modes tab. Their rows are included as direct "
+                    "resources without mode-exclusivity enforcement. Add them to Gym-Modes if "
+                    "the courts in those venues cannot be used simultaneously."
+                )
+            direct_resources = [
+                r for r in venue_rows
+                if not r.get("exclusive_group") or r["exclusive_group"] not in covered_groups
+            ]
             all_resources = gym_resources + direct_resources
             gym_allocation = {
                 "source":        "allocator",
@@ -2736,66 +2880,180 @@ class ScheduleWorkbookBuilder:
         # derive day from the slot label and resource_type from the game event,
         # then find a representative venue row for slot_minutes / venue metadata.
         from gym_allocator import EVENT_TO_MODE as _EVENT_TO_MODE
-        venue_by_type_day: Dict[tuple, Dict[str, Any]] = {}
-        for _vr in venue_rows:
-            if not _vr.get("exclusive_group"):
-                continue
-            _key = (_vr["resource_type"], _vr["day"])
-            venue_by_type_day.setdefault(_key, _vr)
 
-        existing_resource_ids: set = {r["resource_id"] for r in all_resources}
-        for ps in playoff_slots:
-            rid = str(ps.get("resource_id") or "").strip()
-            slot = str(ps.get("slot") or "").strip()
-            event = str(ps.get("event") or "").strip()
-            if not rid or not slot or rid in existing_resource_ids:
-                continue
-            # Slot format is "{day}-{HH:MM}", e.g. "Sun-2-14:00".
-            day, time_part = (slot.rsplit("-", 1) + [""])[:2] if "-" in slot else ("", slot)
-            if not time_part:
-                logger.warning(
-                    f"Playoff slot {ps.get('game_id')!r}: cannot parse time from slot {slot!r} — skipped."
+        grouped_rows = [row for row in venue_rows if row.get("exclusive_group")]
+        if grouped_rows and playoff_slots:
+            block_mode_rows: Dict[Tuple[Tuple[str, str, str, str], str], List[Dict[str, Any]]] = defaultdict(list)
+            block_capacity: Dict[Tuple[str, str, str, str], int] = {}
+            day_blocks: Dict[str, List[Tuple[str, str, str, str]]] = defaultdict(list)
+
+            for venue_row in grouped_rows:
+                block_key = (
+                    str(venue_row.get("day") or "").strip(),
+                    str(venue_row.get("exclusive_group") or "").strip(),
+                    str(venue_row.get("open_time") or "").strip(),
+                    str(venue_row.get("close_time") or "").strip(),
                 )
-                continue
-            resource_type = _EVENT_TO_MODE.get(event)
-            if not resource_type:
-                logger.warning(
-                    f"Playoff slot {ps.get('game_id')!r}: cannot infer resource_type from "
-                    f"event {event!r} — skipped. Ensure event matches a gym sport name."
-                )
-                continue
-            source_row = venue_by_type_day.get((resource_type, day))
-            if source_row is None:
-                logger.warning(
-                    f"Playoff slot {ps.get('game_id')!r}: no venue row found for "
-                    f"{resource_type!r} on day {day!r} in venue_input.xlsx — skipped."
-                )
-                continue
-            slot_min = int(source_row.get("slot_minutes") or 60)
-            try:
-                h, m = (int(x) for x in time_part.split(":"))
-                close_minutes = h * 60 + m + slot_min
-                close_str = f"{close_minutes // 60:02d}:{close_minutes % 60:02d}"
-            except (ValueError, AttributeError):
-                close_str = source_row.get("close_time", time_part)
-            synthetic = {
-                "resource_id":    rid,
-                "resource_type":  resource_type,
-                "label":          source_row.get("label", "Court-1"),
-                "day":            day,
-                "open_time":      time_part,
-                "close_time":     close_str,
-                "slot_minutes":   slot_min,
-                "venue_name":     source_row.get("venue_name", ""),
-                "exclusive_group": source_row.get("exclusive_group", ""),
-                "playoff_pinned": True,
+                resource_type = str(venue_row.get("resource_type") or "").strip()
+                block_mode_rows[(block_key, resource_type)].append(venue_row)
+
+            for (block_key, _resource_type), rows in block_mode_rows.items():
+                block_capacity[block_key] = max(block_capacity.get(block_key, 0), len(rows))
+
+            for block_key in block_capacity:
+                day_blocks[block_key[0]].append(block_key)
+
+            for day_label, blocks in day_blocks.items():
+                blocks.sort(key=lambda item: (
+                    self._parse_hour(item[2]),
+                    item[1],
+                    self._parse_hour(item[3]),
+                ))
+
+            block_ranges: Dict[Tuple[str, str, str, str], Tuple[int, int]] = {}
+            for day_label, blocks in day_blocks.items():
+                ordinal = 0
+                for block_key in blocks:
+                    start_ordinal = ordinal + 1
+                    ordinal += block_capacity[block_key]
+                    block_ranges[block_key] = (start_ordinal, ordinal)
+
+            resources_by_id: Dict[str, Dict[str, Any]] = {
+                str(resource.get("resource_id") or "").strip(): resource
+                for resource in all_resources
             }
-            all_resources.append(synthetic)
-            existing_resource_ids.add(rid)
-            logger.info(
-                f"Promoted playoff-pinned resource {rid!r} ({resource_type}, "
-                f"{day} {time_part}) — single-slot, excluded from pool play."
-            )
+
+            for playoff_slot in playoff_slots:
+                game_id = str(playoff_slot.get("game_id") or "").strip() or "<unknown>"
+                resource_id = str(playoff_slot.get("resource_id") or "").strip()
+                slot_label = str(playoff_slot.get("slot") or "").strip()
+                event = str(playoff_slot.get("event") or "").strip()
+                if not resource_id or not slot_label:
+                    continue
+
+                existing_resource = resources_by_id.get(resource_id)
+                if existing_resource is not None and not existing_resource.get("playoff_pinned"):
+                    continue
+
+                day, time_part = self._split_slot_label(slot_label)
+                if not day or not time_part:
+                    logger.warning(
+                        f"Playoff slot {game_id!r}: cannot parse day/time from slot {slot_label!r} — skipped."
+                    )
+                    continue
+
+                resource_type = _EVENT_TO_MODE.get(event)
+                if not resource_type:
+                    logger.warning(
+                        f"Playoff slot {game_id!r}: cannot infer resource_type from "
+                        f"event {event!r} — skipped. Ensure event matches a gym sport name."
+                    )
+                    continue
+
+                expected_prefix = f"GYM-{day}-"
+                if not resource_id.startswith(expected_prefix):
+                    logger.warning(
+                        f"Playoff slot {game_id!r}: resource_id {resource_id!r} does not match "
+                        f"slot day {day!r}; expected prefix {expected_prefix!r}. Skipped."
+                    )
+                    continue
+                ordinal_text = resource_id[len(expected_prefix):]
+                if not ordinal_text.isdigit():
+                    logger.warning(
+                        f"Playoff slot {game_id!r}: resource_id {resource_id!r} does not end "
+                        "with a numeric court ordinal; skipped."
+                    )
+                    continue
+                requested_ordinal = int(ordinal_text)
+                slot_hour = self._parse_hour(time_part)
+
+                matched_rows: List[Dict[str, Any]] = []
+                matched_local_index = -1
+                for block_key in day_blocks.get(day, []):
+                    block_open = self._parse_hour(block_key[2])
+                    block_close = self._parse_hour(block_key[3])
+                    if not (block_open <= slot_hour < block_close):
+                        continue
+
+                    start_ordinal, end_ordinal = block_ranges[block_key]
+                    if not (start_ordinal <= requested_ordinal <= end_ordinal):
+                        continue
+
+                    candidate_rows = sorted(
+                        block_mode_rows.get((block_key, resource_type), []),
+                        key=lambda row: (
+                            str(row.get("label") or "").strip(),
+                            str(row.get("resource_id") or "").strip(),
+                        ),
+                    )
+                    if not candidate_rows:
+                        continue
+
+                    local_index = requested_ordinal - start_ordinal
+                    if local_index >= len(candidate_rows):
+                        continue
+
+                    matched_rows = candidate_rows
+                    matched_local_index = local_index
+                    break
+
+                if matched_local_index < 0:
+                    logger.warning(
+                        f"Playoff slot {game_id!r}: resource_id {resource_id!r} is not a plausible "
+                        f"{resource_type} court for {day} at {time_part}. Check the requested "
+                        "court ordinal or add a direct venue row instead."
+                    )
+                    continue
+
+                source_row = matched_rows[matched_local_index]
+                slot_minutes = int(source_row.get("slot_minutes") or 60)
+                try:
+                    hour, minute = (int(x) for x in time_part.split(":"))
+                    close_total = hour * 60 + minute + slot_minutes
+                    close_time = f"{close_total // 60:02d}:{close_total % 60:02d}"
+                except (ValueError, AttributeError):
+                    close_time = str(source_row.get("close_time") or time_part)
+
+                if existing_resource is not None:
+                    if (
+                        str(existing_resource.get("day") or "").strip() != day
+                        or str(existing_resource.get("resource_type") or "").strip() != resource_type
+                    ):
+                        logger.warning(
+                            f"Playoff slot {game_id!r}: resource_id {resource_id!r} was already "
+                            "promoted for a different day/resource_type; skipped."
+                        )
+                        continue
+                    existing_resource["open_time"] = min(
+                        str(existing_resource.get("open_time") or time_part),
+                        time_part,
+                        key=self._parse_hour,
+                    )
+                    existing_resource["close_time"] = max(
+                        str(existing_resource.get("close_time") or close_time),
+                        close_time,
+                        key=self._parse_hour,
+                    )
+                    continue
+
+                synthetic = {
+                    "resource_id":     resource_id,
+                    "resource_type":   resource_type,
+                    "label":           source_row.get("label", "Court-1"),
+                    "day":             day,
+                    "open_time":       time_part,
+                    "close_time":      close_time,
+                    "slot_minutes":    slot_minutes,
+                    "venue_name":      source_row.get("venue_name", ""),
+                    "exclusive_group": source_row.get("exclusive_group", ""),
+                    "playoff_pinned":  True,
+                }
+                all_resources.append(synthetic)
+                resources_by_id[resource_id] = synthetic
+                logger.info(
+                    f"Promoted playoff-pinned resource {resource_id!r} ({resource_type}, "
+                    f"{day} {time_part}) — single-slot, excluded from pool play."
+                )
 
         if bc_games and not any(
             str(resource.get("resource_type") or "").strip() == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE
@@ -3094,7 +3352,7 @@ class ScheduleWorkbookBuilder:
         """Add operator-facing comments to the Pool-Assignment header row."""
         cls._annotate_header_row(
             ws,
-            1,
+            2,
             n_cols,
             cls._POOL_ASSIGNMENT_HEADER_NOTES,
             width_map={
@@ -3114,7 +3372,7 @@ class ScheduleWorkbookBuilder:
                 "N": 18,
                 "O": 28,
             },
-            freeze_panes="A2",
+            freeze_panes="A3",
             autofilter=True,
         )
 
@@ -3125,7 +3383,15 @@ class ScheduleWorkbookBuilder:
         pool_assignment_rows: List[Dict[str, Any]],
     ) -> None:
         """Write the editable Pool-Assignment planning tab."""
+        from openpyxl.styles import Alignment, Font
+
         columns = cls._POOL_ASSIGNMENT_COLUMNS
+        ws.cell(row=1, column=1, value=cls._POOL_ASSIGNMENT_NOTE)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(columns))
+        note_cell = ws.cell(row=1, column=1)
+        note_cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        note_cell.font = Font(italic=True)
+        ws.row_dimensions[1].height = 30
         ws.append(columns)
         for row in pool_assignment_rows:
             values = []
@@ -3155,7 +3421,7 @@ class ScheduleWorkbookBuilder:
             else self._pool_assignments_sidecar_path(output_path.parent)
         )
 
-        sheet_rows = self._read_xlsx_sheet_rows(workbook_path, "Pool-Assignment")
+        sheet_rows = self._read_pool_assignment_rows(workbook_path)
         if not sheet_rows:
             raise ValueError(
                 f"Workbook '{workbook_path}' has no usable Pool-Assignment sheet."
@@ -4883,6 +5149,47 @@ class ScheduleWorkbookBuilder:
         return rows
 
     @staticmethod
+    def _read_pool_assignment_rows(xlsx_path: Path) -> List[Dict[str, Any]]:
+        """Read Pool-Assignment while tolerating the operator note row above headers."""
+        try:
+            df = pd.read_excel(
+                xlsx_path,
+                sheet_name="Pool-Assignment",
+                header=None,
+                engine="openpyxl",
+            )
+        except Exception as e:
+            logger.warning(f"Could not read 'Pool-Assignment' tab from {xlsx_path}: {e}")
+            return []
+
+        df = df.astype(object).where(pd.notna(df), None)
+        header_idx: Optional[int] = None
+        for idx in range(min(len(df.index), 3)):
+            first_cell = str(df.iat[idx, 0] or "").strip()
+            if first_cell == "Event":
+                header_idx = idx
+                break
+        if header_idx is None:
+            logger.warning(
+                f"Could not find Pool-Assignment header row in {xlsx_path}; expected a row starting with 'Event'."
+            )
+            return []
+
+        header_values = [
+            str(value).strip() if value is not None else ""
+            for value in df.iloc[header_idx].tolist()
+        ]
+        data_df = df.iloc[header_idx + 1 :].copy()
+        data_df.columns = header_values
+        data_df = data_df.loc[:, [column for column in header_values if column]]
+        rows = data_df.to_dict("records")
+        logger.debug(
+            f"Read {len(rows)} rows from 'Pool-Assignment' tab of {xlsx_path} "
+            f"(header row {header_idx + 1})"
+        )
+        return rows
+
+    @staticmethod
     def read_roster_validation_rows(
         xlsx_path: Optional[Path],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -4985,7 +5292,8 @@ class ScheduleWorkbookBuilder:
             df_venue.to_excel(writer, sheet_name="Venue-Estimator", index=False, startrow=0)
             snapshot_note = (
                 f"Roster snapshot as of {datetime.now().strftime('%Y-%m-%d')} — "
-                "Estimating = complete entries; Potential = all registrations including partial. "
+                "Estimating = complete entries; Potential = rule-aware ceiling from current "
+                "registrations (including incomplete doubles pairings), capped by 2026 entry limits. "
                 "Approval-agnostic. Updates with each export run."
             )
             venue_ws = writer.sheets["Venue-Estimator"]

@@ -21,10 +21,18 @@ def _find_row_by_first_cell(ws, value: str) -> int:
     raise AssertionError(f"Could not find row starting with {value!r}")
 
 
+def _header_row(ws) -> int:
+    for row_idx in range(1, min(ws.max_row, 3) + 1):
+        if ws.cell(row=row_idx, column=1).value == "Event":
+            return row_idx
+    raise AssertionError("Could not find header row starting with 'Event'")
+
+
 def _sheet_rows(ws) -> list[dict]:
-    headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+    header_row = _header_row(ws)
+    headers = [ws.cell(row=header_row, column=col).value for col in range(1, ws.max_column + 1)]
     rows = []
-    for row_idx in range(2, ws.max_row + 1):
+    for row_idx in range(header_row + 1, ws.max_row + 1):
         row = {
             headers[col_idx - 1]: ws.cell(row=row_idx, column=col_idx).value
             for col_idx in range(1, ws.max_column + 1)
@@ -234,11 +242,12 @@ def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
     assert venue_ws["A1"].comment is not None
     assert "Canonical event name" in venue_ws["A1"].comment.text
     pool_ws = wb["Pool-Assignment"]
-    assert pool_ws["A1"].comment is not None
-    assert "Canonical team-sport event" in pool_ws["A1"].comment.text
-    assert "SOC" in pool_ws["A1"].comment.text
-    assert pool_ws["I1"].comment is not None
-    assert "Leave blank or enter 0" in pool_ws["I1"].comment.text
+    assert ScheduleWorkbookBuilder._POOL_ASSIGNMENT_NOTE in str(pool_ws["A1"].value or "")
+    assert pool_ws["A2"].comment is not None
+    assert "Canonical team-sport event" in pool_ws["A2"].comment.text
+    assert "SOC" in pool_ws["A2"].comment.text
+    assert pool_ws["I2"].comment is not None
+    assert "Leave blank or enter 0" in pool_ws["I2"].comment.text
     pod_ws = wb["Pod-Divisions"]
     assert pod_ws["A1"].comment is not None
     assert "Canonical division label" in pod_ws["A1"].comment.text
@@ -351,11 +360,12 @@ def test_refresh_pool_assignments_persists_seed_edits_and_recomputes_draw(tmp_pa
 
     wb = load_workbook(workbook_path)
     ws = wb["Pool-Assignment"]
-    headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+    header_row = _header_row(ws)
+    headers = [ws.cell(row=header_row, column=col).value for col in range(1, ws.max_column + 1)]
     seed_col = headers.index("Seed") + 1
     notes_col = headers.index("Notes") + 1
     team_id_col = headers.index("Team ID") + 1
-    for row_idx in range(2, ws.max_row + 1):
+    for row_idx in range(header_row + 1, ws.max_row + 1):
         team_id = ws.cell(row=row_idx, column=team_id_col).value
         if team_id == "RPC":
             ws.cell(row=row_idx, column=seed_col, value=1)
@@ -414,10 +424,11 @@ def test_refresh_pool_assignments_flags_duplicate_seeds(tmp_path):
 
     wb = load_workbook(workbook_path)
     ws = wb["Pool-Assignment"]
-    headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+    header_row = _header_row(ws)
+    headers = [ws.cell(row=header_row, column=col).value for col in range(1, ws.max_column + 1)]
     seed_col = headers.index("Seed") + 1
     team_id_col = headers.index("Team ID") + 1
-    for row_idx in range(2, ws.max_row + 1):
+    for row_idx in range(header_row + 1, ws.max_row + 1):
         team_id = ws.cell(row=row_idx, column=team_id_col).value
         if team_id in {"RPC", "ANH"}:
             ws.cell(row=row_idx, column=seed_col, value=1)
@@ -816,25 +827,93 @@ def test_count_estimating_teams_respects_explicit_team_order():
 
 
 def test_count_racquet_entries():
-    """Racquet entries: complete pairs counted as 1, singles as 1; potential = all regs."""
+    """Racquet potential should respect church-level 2026 caps while counting complete pairs normally."""
     builder = ScheduleWorkbookBuilder()
 
     roster_rows = [
-        # 5 Badminton doubles registrations → 2 complete pairs + 1 waiting
-        {"sport_type": "Badminton", "sport_format": "Mixed Doubles"} for _ in range(5)
+        # RPC: 5 mixed doubles registrations -> ceil(5/2)=3 teams, capped to 1
+        {
+            "Church Team": "RPC",
+            "sport_type": "Badminton",
+            "sport_gender": "Mixed",
+            "sport_format": "Mixed Doubles",
+        }
+        for _ in range(5)
     ] + [
-        # 2 Badminton singles
-        {"sport_type": "Badminton", "sport_format": "Men Singles"},
-        {"sport_type": "Badminton", "sport_format": "Women Singles"},
+        # RPC: 2 men doubles registrations -> 1 team, within cap 2
+        {
+            "Church Team": "RPC",
+            "sport_type": "Badminton",
+            "sport_gender": "Men",
+            "sport_format": "Men Double",
+        }
+        for _ in range(2)
     ] + [
-        # Pickleball should not bleed into Badminton count
-        {"sport_type": "Pickleball", "sport_format": "Mixed Doubles"},
+        # ANH: singles are not allowed in badminton, so they should not raise the potential ceiling
+        {
+            "Church Team": "ANH",
+            "sport_type": "Badminton",
+            "sport_gender": "Men",
+            "sport_format": "Men Singles",
+        },
+        {
+            "Church Team": "ANH",
+            "sport_type": "Badminton",
+            "sport_gender": "Women",
+            "sport_format": "Women Singles",
+        },
+        # Another sport should not bleed into Badminton count
+        {
+            "Church Team": "RPC",
+            "sport_type": "Pickleball",
+            "sport_gender": "Mixed",
+            "sport_format": "Mixed Doubles",
+        },
     ]
 
     result = builder._count_racquet_entries(roster_rows, "Badminton")
-    assert result["n_estimating"] == 2 + 2   # floor(5/2)=2 pairs + 2 singles
-    assert result["n_potential"] == 5 + 2    # 5 doubles + 2 singles = 7 registrations
+    assert result["n_estimating"] == 5  # floor(7/2)=3 doubles teams + 2 singles
+    assert result["n_potential"] == 2   # RPC mixed=1 cap, RPC men=1 cap, ANH singles cap to 0
     assert result["team_codes"] == ""
+
+
+def test_count_racquet_entries_applies_format_total_caps():
+    """Format-total rules should cap the combined doubles ceiling per church."""
+    builder = ScheduleWorkbookBuilder()
+
+    roster_rows = (
+        [
+            {
+                "Church Team": "RPC",
+                "sport_type": "Pickleball",
+                "sport_gender": "Men",
+                "sport_format": "Men Doubles",
+            }
+            for _ in range(4)
+        ]
+        + [
+            {
+                "Church Team": "RPC",
+                "sport_type": "Pickleball",
+                "sport_gender": "Women",
+                "sport_format": "Women Doubles",
+            }
+            for _ in range(4)
+        ]
+        + [
+            {
+                "Church Team": "RPC",
+                "sport_type": "Pickleball",
+                "sport_gender": "Mixed",
+                "sport_format": "Mixed Doubles",
+            }
+            for _ in range(6)
+        ]
+    )
+
+    result = builder._count_racquet_entries(roster_rows, "Pickleball")
+    assert result["n_estimating"] == 7  # floor(14/2)
+    assert result["n_potential"] == 3   # church total capped by Pickleball doubles total rule
 
 
 def test_pod_format_class():
@@ -1460,6 +1539,51 @@ def test_build_schedule_input_allocator_omits_zero_team_gym_sports(tmp_path):
     assert {r["resource_type"] for r in si["resources"]} == {GYM_RESOURCE_TYPE_BASKETBALL}
 
 
+def test_build_schedule_input_uncovered_exclusive_group_included_as_direct_resource(tmp_path):
+    """Venue rows whose exclusive_group has no Gym-Modes entry must not be silently
+    dropped when the overall gym_resource_strategy is 'allocator'.
+
+    Real-world trigger: EHS Tennis Court rows (Tennis Court + Pickleball Court) share
+    an Exclusive Venue Group but are absent from Gym-Modes.  Without this fix they were
+    excluded by the allocator AND by the direct_resources filter, leaving 0 Pickleball /
+    Tennis resources and making those pools INFEASIBLE."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        # Gym courts — covered by Gym-Modes → go through allocator
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        # Tennis courts — exclusive group NOT in Gym-Modes → must become direct resources
+        ["Tennis Pod", "EHS Tennis Court", "Tennis Court", 6, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "EHS Tennis Court", None, None, None],
+        ["Tennis Pod", "EHS Tennis Court", "Pickleball Court", 12, "Sat-1",
+         "2026-07-18", 8, 17, 30, None, "EHS Tennis Court", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 2, 2],
+        # NOTE: "EHS Tennis Court" is intentionally absent from Gym-Modes
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, headers, rows, gym_modes_rows=gym_modes)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    resource_types = {r["resource_type"] for r in si["resources"]}
+    assert "Tennis Court" in resource_types, "Tennis Court must not be dropped"
+    assert "Pickleball Court" in resource_types, "Pickleball Court must not be dropped"
+    # Allocator-backed gym sports must also still be present
+    assert GYM_RESOURCE_TYPE_BASKETBALL in resource_types
+
+
 def test_build_schedule_input_playoff_pinned_resource_promoted_as_single_slot(tmp_path):
     """A playoff slot referencing an allocator-unvisited gym block should be promoted
     as a one-slot synthetic resource that is excluded from the Gym Core solver pool."""
@@ -1526,6 +1650,122 @@ def test_build_schedule_input_playoff_pinned_resource_promoted_as_single_slot(tm
     assert p.get("playoff_pinned") is True
     # Must NOT be assigned to the Gym Core solver pool.
     assert "solver_pool" not in p, "playoff_pinned resource must not enter Gym Core pool"
+
+
+def test_build_schedule_input_playoff_pinned_resource_merges_multiple_slots(tmp_path):
+    """Reusing the same playoff-pinned GYM resource_id across multiple slots should
+    expand one synthetic resource instead of leaving later slots invalid."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+    from openpyxl import Workbook
+    from scheduler import validate_playoff_slots
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 4, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 4, 2],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "resource_id", "slot"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi", "GYM-Sun-2-1", "Sun-2-14:00"],
+        ["BBM-Final", "Basketball - Men Team", "Final", "GYM-Sun-2-1", "Sun-2-16:00"],
+    ]
+
+    path = tmp_path / "venue_input.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    for r, row in enumerate(rows, start=2):
+        for c, val in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=val)
+    gm = wb.create_sheet("Gym-Modes")
+    for r, row in enumerate(gym_modes, start=1):
+        for c, val in enumerate(row, start=1):
+            gm.cell(row=r, column=c, value=val)
+    ps = wb.create_sheet("Playoff-Slots")
+    for r, row in enumerate(playoff_rows, start=1):
+        for c, val in enumerate(row, start=1):
+            ps.cell(row=r, column=c, value=val)
+    wb.save(path)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    promoted = [r for r in si["resources"] if r["resource_id"] == "GYM-Sun-2-1"]
+    assert len(promoted) == 1
+    resource = promoted[0]
+    assert resource["open_time"] == "14:00"
+    assert resource["close_time"] == "17:00"
+
+    validated, _blocked = validate_playoff_slots(si["playoff_slots"], si["resources"])
+    assert len(validated) == 2
+
+
+def test_build_schedule_input_playoff_pinned_resource_rejects_implausible_ordinal(tmp_path):
+    """An unknown GYM-{day}-{n} playoff resource should not be promoted when n exceeds
+    the physically plausible court ordinal range for that day/block."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+    from openpyxl import Workbook
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Practice Gym", "Church Practice Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sun-2",
+         "2026-07-26", 8, 10, 60, None, "Practice Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 1, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Practice Gym", 0, 2],
+        ["Main Gym", 2, 1],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "resource_id", "slot"],
+        ["BBM-Final", "Basketball - Men Team", "Final", "GYM-Sun-2-99", "Sun-2-14:00"],
+    ]
+
+    path = tmp_path / "venue_input.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    for r, row in enumerate(rows, start=2):
+        for c, val in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=val)
+    gm = wb.create_sheet("Gym-Modes")
+    for r, row in enumerate(gym_modes, start=1):
+        for c, val in enumerate(row, start=1):
+            gm.cell(row=r, column=c, value=val)
+    ps = wb.create_sheet("Playoff-Slots")
+    for r, row in enumerate(playoff_rows, start=1):
+        for c, val in enumerate(row, start=1):
+            ps.cell(row=r, column=c, value=val)
+    wb.save(path)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    assert not any(r["resource_id"] == "GYM-Sun-2-99" for r in si["resources"])
 
 
 def test_build_pod_game_objects_single_elimination():
