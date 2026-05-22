@@ -5322,16 +5322,36 @@ class ScheduleWorkbookBuilder:
 
         sorted_slot_keys = sorted(slot_index.keys())
 
+        # Pre-compute which slot labels have at least one assignment so we can
+        # skip entirely empty rows (e.g. 12:30 half-hour gaps between games).
+        occupied_slots: set = {a["slot"] for a in schedule_output.get("assignments", [])}
+
         # ── Data rows ────────────────────────────────────────────────────────
         cur_row4 = 4
         prev_day: str = ""
         prev_day_display: str = ""
+        # Track whether we've written the day header yet; defer it until the
+        # first non-empty row so a day with all-empty slots is also suppressed.
+        pending_day_header: Optional[Tuple[str, str]] = None  # (day_display, day)
 
         for day_rank, time_min in sorted_slot_keys:
             day, t_str = slot_index[(day_rank, time_min)]
+            slot_label = f"{day}-{t_str}"
 
-            if day != prev_day:
-                day_display = ScheduleWorkbookBuilder._day_display_label(day)
+            if slot_label not in occupied_slots:
+                # No game anywhere at this time — skip the row entirely.
+                if day != prev_day:
+                    day_display = ScheduleWorkbookBuilder._day_display_label(day)
+                    pending_day_header = (day_display, day)
+                continue
+
+            # Emit deferred day-section header now that we know a row follows.
+            if day != prev_day or pending_day_header is not None:
+                if pending_day_header is not None:
+                    day_display, _ = pending_day_header
+                    pending_day_header = None
+                else:
+                    day_display = ScheduleWorkbookBuilder._day_display_label(day)
                 ws4.merge_cells(
                     start_row=cur_row4, start_column=1,
                     end_row=cur_row4, end_column=total_cols,
@@ -5341,8 +5361,6 @@ class ScheduleWorkbookBuilder:
                 cur_row4 += 1
                 prev_day = day
                 prev_day_display = day_display
-
-            slot_label = f"{day}-{t_str}"
 
             day_cell = ws4.cell(row=cur_row4, column=1, value=prev_day_display)
             day_cell.alignment = center
