@@ -5216,9 +5216,17 @@ class ScheduleWorkbookBuilder:
         def _vg_sort_key(vg: str) -> str:
             return "EHS~" if vg == "Other" else vg
 
+        def _label_sort_key(label: str) -> Tuple[str, int, str]:
+            # Natural sort: split on the last run of digits so "Court-2" < "Court-10".
+            m = re.search(r"(\d+)(\D*)$", label)
+            if m:
+                prefix = label[: m.start()]
+                return (prefix, int(m.group(1)), m.group(2))
+            return (label, 0, "")
+
         sorted_resources = sorted(
             all_resources,
-            key=lambda r: (_vg_sort_key(_venue_group(r)), _res_label(r), str(r.get("resource_id") or "")),
+            key=lambda r: (_vg_sort_key(_venue_group(r)), _label_sort_key(_res_label(r)), str(r.get("resource_id") or "")),
         )
 
         # Build one column per physical court = (venue_group, label) pair.
