@@ -64,6 +64,15 @@ from config import (
 )
 from validation.name_matcher import normalized_name as _norm_name
 from validation.models import RulesManager
+from schedule_styles import (
+    SPORT_STYLES,
+    CATEGORY_STYLES,
+    sport_style,
+    category_style,
+    style_for_game,
+    category_prefix,
+    format_compact_label,
+)
 
 
 class ScheduleWorkbookBuilder:
@@ -4627,8 +4636,10 @@ class ScheduleWorkbookBuilder:
             game = game_meta.get(gid, a)
             res  = res_meta.get(rid, {})
             time_part = slot.rsplit("-", maxsplit=1)[-1] if "-" in slot else slot
+            _, _, cat_code = style_for_game(game)
             rows.append({
                 "game_id":          gid,
+                "category":         cat_code,
                 "event":            game.get("event", ""),
                 "stage":            game.get("stage", ""),
                 "round":            game.get("round", ""),
@@ -4697,15 +4708,12 @@ class ScheduleWorkbookBuilder:
         left     = Alignment(horizontal="left",   vertical="center", wrap_text=True)
         red_fill = PatternFill(fgColor="FFC7CE", fill_type="solid")
 
-        _SPORT_COLORS: Dict[str, str] = {
-            SPORT_TYPE["BASKETBALL"]:       SCHEDULE_SKETCH_COLOR_BASKETBALL,
-            SPORT_TYPE["VOLLEYBALL_MEN"]:   SCHEDULE_SKETCH_COLOR_VB_MEN,
-            SPORT_TYPE["VOLLEYBALL_WOMEN"]: SCHEDULE_SKETCH_COLOR_VB_WOMEN,
-        }
         def _sport_fill(event: str) -> PatternFill:
-            return PatternFill(
-                fgColor=_SPORT_COLORS.get(event, "EBF1DE"), fill_type="solid"
-            )
+            return PatternFill(fgColor=sport_style(event).fill_color, fill_type="solid")
+
+        def _category_font(game: Dict[str, Any], bold: bool = False) -> Font:
+            _, cat_style, _ = style_for_game(game)
+            return Font(color=cat_style.text_color, bold=bold)
 
         def _slot_times(res: Dict[str, Any]) -> List[str]:
             o_h, o_m = map(int, res["open_time"].split(":"))
@@ -4721,16 +4729,21 @@ class ScheduleWorkbookBuilder:
             return times
 
         def _cell_text(game: Dict[str, Any]) -> str:
-            gid = game.get("game_id", "")
+            gid    = game.get("game_id", "")
+            event  = str(game.get("event") or "")
+            badge  = format_compact_label(event,
+                                          str(game.get("sport_format") or ""),
+                                          game.get("category"))
             a   = str(game.get("team_a_label") or game.get("team_a_id") or "")
             b   = str(game.get("team_b_label") or game.get("team_b_id") or "")
             c   = str(game.get("team_c_label") or game.get("team_c_id") or "")
-            # Show compact team labels when available; otherwise fall back to game_id only.
+            # Two-line layout: badge + gid on line 1, matchup on line 2 if compact.
+            header = f"{badge}  {gid}" if gid else badge
             if a and b and c and len(a) <= 12 and len(b) <= 12 and len(c) <= 12:
-                return f"{gid}\n{a} / {b} / {c}"
+                return f"{header}\n{a} / {b} / {c}"
             if a and b and len(a) <= 12 and len(b) <= 12:
-                return f"{gid}\n{a} vs {b}"
-            return gid
+                return f"{header}\n{a} vs {b}"
+            return header
 
         def _time_sort_key(hhmm: str) -> int:
             h, m = map(int, hhmm.split(":"))
@@ -4901,9 +4914,31 @@ class ScheduleWorkbookBuilder:
         c = ws1.cell(row=1, column=1, value="VAY Sports Fest — Schedule by Time")
         c.fill, c.font, c.alignment = hdr_fill, hdr_font, center
 
-        ws1.freeze_panes = "A2"
+        # Legend row: one chip per sport (fill color + abbrev) followed by
+        # one chip per category code (text color + prefix).  Keeps the
+        # schedule self-explanatory even when printed in black-and-white.
+        legend_row = 2
+        legend_col = 1
+        for event_name, style in SPORT_STYLES.items():
+            cell = ws1.cell(row=legend_row, column=legend_col, value=style.abbrev)
+            cell.fill = PatternFill(fgColor=style.fill_color, fill_type="solid")
+            cell.font = Font(bold=True)
+            cell.alignment = center
+            legend_col += 1
+            if legend_col > n_cols:
+                break
+        if legend_col <= n_cols:
+            for cat in CATEGORY_STYLES.values():
+                cell = ws1.cell(row=legend_row, column=legend_col, value=cat.prefix)
+                cell.font = Font(color=cat.text_color, bold=True)
+                cell.alignment = center
+                legend_col += 1
+                if legend_col > n_cols:
+                    break
 
-        cur_row = 3
+        ws1.freeze_panes = "A3"
+
+        cur_row = 4
         for group_key in sorted_group_keys:
             day_res = sorted(
                 resource_groups[group_key],
@@ -4954,6 +4989,7 @@ class ScheduleWorkbookBuilder:
                     if game:
                         cell.value = _cell_text(game)
                         cell.fill  = _sport_fill(game.get("event", ""))
+                        cell.font  = _category_font(game, bold=True)
                     cell.alignment = center
                 cur_row += 1
 
@@ -4971,6 +5007,7 @@ class ScheduleWorkbookBuilder:
         )
         col_defs = [
             ("game_id",          14),
+            ("category",          8),
             ("event",            28),
             ("stage",             8),
             ("round",             6),
@@ -4993,9 +5030,10 @@ class ScheduleWorkbookBuilder:
 
         for ri, row in enumerate(flat_rows, start=2):
             fill = _sport_fill(row.get("event", ""))
+            row_font = _category_font(row)
             for ci, col in enumerate(cols, start=1):
                 cell = ws2.cell(row=ri, column=ci, value=row.get(col, ""))
-                cell.fill, cell.alignment = fill, left
+                cell.fill, cell.alignment, cell.font = fill, left, row_font
 
         # Unscheduled section at bottom
         unscheduled = schedule_output.get("unscheduled", [])
