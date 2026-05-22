@@ -5210,9 +5210,15 @@ class ScheduleWorkbookBuilder:
             return str(res.get("label") or rid).strip()
 
         # Sort by venue group then label for column ordering.
+        # "Other" (fallback when venue_name is blank) sorts between EHS venues
+        # and any Orange/external venues by mapping it to "EHS~" which is
+        # lexicographically after all "EHS …" names but before "Orange …".
+        def _vg_sort_key(vg: str) -> str:
+            return "EHS~" if vg == "Other" else vg
+
         sorted_resources = sorted(
             all_resources,
-            key=lambda r: (_venue_group(r), _res_label(r), str(r.get("resource_id") or "")),
+            key=lambda r: (_vg_sort_key(_venue_group(r)), _res_label(r), str(r.get("resource_id") or "")),
         )
 
         # Build one column per physical court = (venue_group, label) pair.
@@ -5229,6 +5235,15 @@ class ScheduleWorkbookBuilder:
             if key not in col_key_set:
                 col_keys.append(key)
                 col_key_set.add(key)
+
+        # Drop columns that have no assignments — avoids empty Table-N columns
+        # for venues the solver left unused (e.g. EHS Practice Gym TT workaround).
+        active_col_keys: set = {
+            rid_to_col_key[rid]
+            for rid in (a["resource_id"] for a in schedule_output.get("assignments", []))
+            if rid in rid_to_col_key
+        }
+        col_keys = [k for k in col_keys if k in active_col_keys]
 
         venue_groups_ordered: List[str] = list(dict.fromkeys(vg for vg, _ in col_keys))
 
@@ -5331,7 +5346,7 @@ class ScheduleWorkbookBuilder:
             for res in all_resources:
                 rid = str(res.get("resource_id") or "").strip()
                 col_key = rid_to_col_key.get(rid)
-                if col_key is None:
+                if col_key is None or col_key not in col_key_idx:
                     continue
                 col = col_key_idx[col_key]
 
