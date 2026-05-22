@@ -3602,11 +3602,15 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 # making ScheduleWorkbookBuilder the single authoritative implementation.
 _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_decompose_event_name",
+    "_get_rules_manager",
     "_get_min_team_size",
     "_count_estimating_teams",
     "_get_playoff_teams",
     "_get_playoff_teams_for_event",
     "_compute_court_slots",
+    "_normalize_racquet_gender",
+    "_get_racquet_entry_limits",
+    "_racquet_rule_parameter_for_row",
     "_count_racquet_entries",
     "_pod_format_class",
     "_make_division_id",

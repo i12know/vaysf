@@ -21,10 +21,18 @@ def _find_row_by_first_cell(ws, value: str) -> int:
     raise AssertionError(f"Could not find row starting with {value!r}")
 
 
+def _header_row(ws) -> int:
+    for row_idx in range(1, min(ws.max_row, 3) + 1):
+        if ws.cell(row=row_idx, column=1).value == "Event":
+            return row_idx
+    raise AssertionError("Could not find header row starting with 'Event'")
+
+
 def _sheet_rows(ws) -> list[dict]:
-    headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+    header_row = _header_row(ws)
+    headers = [ws.cell(row=header_row, column=col).value for col in range(1, ws.max_column + 1)]
     rows = []
-    for row_idx in range(2, ws.max_row + 1):
+    for row_idx in range(header_row + 1, ws.max_row + 1):
         row = {
             headers[col_idx - 1]: ws.cell(row=row_idx, column=col_idx).value
             for col_idx in range(1, ws.max_column + 1)
@@ -234,11 +242,12 @@ def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
     assert venue_ws["A1"].comment is not None
     assert "Canonical event name" in venue_ws["A1"].comment.text
     pool_ws = wb["Pool-Assignment"]
-    assert pool_ws["A1"].comment is not None
-    assert "Canonical team-sport event" in pool_ws["A1"].comment.text
-    assert "SOC" in pool_ws["A1"].comment.text
-    assert pool_ws["I1"].comment is not None
-    assert "Leave blank or enter 0" in pool_ws["I1"].comment.text
+    assert ScheduleWorkbookBuilder._POOL_ASSIGNMENT_NOTE in str(pool_ws["A1"].value or "")
+    assert pool_ws["A2"].comment is not None
+    assert "Canonical team-sport event" in pool_ws["A2"].comment.text
+    assert "SOC" in pool_ws["A2"].comment.text
+    assert pool_ws["I2"].comment is not None
+    assert "Leave blank or enter 0" in pool_ws["I2"].comment.text
     pod_ws = wb["Pod-Divisions"]
     assert pod_ws["A1"].comment is not None
     assert "Canonical division label" in pod_ws["A1"].comment.text
@@ -351,11 +360,12 @@ def test_refresh_pool_assignments_persists_seed_edits_and_recomputes_draw(tmp_pa
 
     wb = load_workbook(workbook_path)
     ws = wb["Pool-Assignment"]
-    headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+    header_row = _header_row(ws)
+    headers = [ws.cell(row=header_row, column=col).value for col in range(1, ws.max_column + 1)]
     seed_col = headers.index("Seed") + 1
     notes_col = headers.index("Notes") + 1
     team_id_col = headers.index("Team ID") + 1
-    for row_idx in range(2, ws.max_row + 1):
+    for row_idx in range(header_row + 1, ws.max_row + 1):
         team_id = ws.cell(row=row_idx, column=team_id_col).value
         if team_id == "RPC":
             ws.cell(row=row_idx, column=seed_col, value=1)
@@ -414,10 +424,11 @@ def test_refresh_pool_assignments_flags_duplicate_seeds(tmp_path):
 
     wb = load_workbook(workbook_path)
     ws = wb["Pool-Assignment"]
-    headers = [ws.cell(row=1, column=col).value for col in range(1, ws.max_column + 1)]
+    header_row = _header_row(ws)
+    headers = [ws.cell(row=header_row, column=col).value for col in range(1, ws.max_column + 1)]
     seed_col = headers.index("Seed") + 1
     team_id_col = headers.index("Team ID") + 1
-    for row_idx in range(2, ws.max_row + 1):
+    for row_idx in range(header_row + 1, ws.max_row + 1):
         team_id = ws.cell(row=row_idx, column=team_id_col).value
         if team_id in {"RPC", "ANH"}:
             ws.cell(row=row_idx, column=seed_col, value=1)
@@ -816,25 +827,93 @@ def test_count_estimating_teams_respects_explicit_team_order():
 
 
 def test_count_racquet_entries():
-    """Racquet entries: complete pairs counted as 1, singles as 1; potential = all regs."""
+    """Racquet potential should respect church-level 2026 caps while counting complete pairs normally."""
     builder = ScheduleWorkbookBuilder()
 
     roster_rows = [
-        # 5 Badminton doubles registrations → 2 complete pairs + 1 waiting
-        {"sport_type": "Badminton", "sport_format": "Mixed Doubles"} for _ in range(5)
+        # RPC: 5 mixed doubles registrations -> ceil(5/2)=3 teams, capped to 1
+        {
+            "Church Team": "RPC",
+            "sport_type": "Badminton",
+            "sport_gender": "Mixed",
+            "sport_format": "Mixed Doubles",
+        }
+        for _ in range(5)
     ] + [
-        # 2 Badminton singles
-        {"sport_type": "Badminton", "sport_format": "Men Singles"},
-        {"sport_type": "Badminton", "sport_format": "Women Singles"},
+        # RPC: 2 men doubles registrations -> 1 team, within cap 2
+        {
+            "Church Team": "RPC",
+            "sport_type": "Badminton",
+            "sport_gender": "Men",
+            "sport_format": "Men Double",
+        }
+        for _ in range(2)
     ] + [
-        # Pickleball should not bleed into Badminton count
-        {"sport_type": "Pickleball", "sport_format": "Mixed Doubles"},
+        # ANH: singles are not allowed in badminton, so they should not raise the potential ceiling
+        {
+            "Church Team": "ANH",
+            "sport_type": "Badminton",
+            "sport_gender": "Men",
+            "sport_format": "Men Singles",
+        },
+        {
+            "Church Team": "ANH",
+            "sport_type": "Badminton",
+            "sport_gender": "Women",
+            "sport_format": "Women Singles",
+        },
+        # Another sport should not bleed into Badminton count
+        {
+            "Church Team": "RPC",
+            "sport_type": "Pickleball",
+            "sport_gender": "Mixed",
+            "sport_format": "Mixed Doubles",
+        },
     ]
 
     result = builder._count_racquet_entries(roster_rows, "Badminton")
-    assert result["n_estimating"] == 2 + 2   # floor(5/2)=2 pairs + 2 singles
-    assert result["n_potential"] == 5 + 2    # 5 doubles + 2 singles = 7 registrations
+    assert result["n_estimating"] == 5  # floor(7/2)=3 doubles teams + 2 singles
+    assert result["n_potential"] == 2   # RPC mixed=1 cap, RPC men=1 cap, ANH singles cap to 0
     assert result["team_codes"] == ""
+
+
+def test_count_racquet_entries_applies_format_total_caps():
+    """Format-total rules should cap the combined doubles ceiling per church."""
+    builder = ScheduleWorkbookBuilder()
+
+    roster_rows = (
+        [
+            {
+                "Church Team": "RPC",
+                "sport_type": "Pickleball",
+                "sport_gender": "Men",
+                "sport_format": "Men Doubles",
+            }
+            for _ in range(4)
+        ]
+        + [
+            {
+                "Church Team": "RPC",
+                "sport_type": "Pickleball",
+                "sport_gender": "Women",
+                "sport_format": "Women Doubles",
+            }
+            for _ in range(4)
+        ]
+        + [
+            {
+                "Church Team": "RPC",
+                "sport_type": "Pickleball",
+                "sport_gender": "Mixed",
+                "sport_format": "Mixed Doubles",
+            }
+            for _ in range(6)
+        ]
+    )
+
+    result = builder._count_racquet_entries(roster_rows, "Pickleball")
+    assert result["n_estimating"] == 7  # floor(14/2)
+    assert result["n_potential"] == 3   # church total capped by Pickleball doubles total rule
 
 
 def test_pod_format_class():

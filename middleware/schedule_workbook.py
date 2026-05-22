@@ -79,6 +79,7 @@ class ScheduleWorkbookBuilder:
 
     _rules_manager_cache: Optional[RulesManager] = None
     _rules_manager_cache_failed: bool = False
+    _racquet_entry_limit_cache: Dict[str, Tuple[Dict[str, int], Optional[int]]] = {}
 
     def __init__(self) -> None:
         pass
@@ -102,6 +103,10 @@ class ScheduleWorkbookBuilder:
         "Assignment Basis",
         "Notes",
     ]
+    _POOL_ASSIGNMENT_NOTE = (
+        "If you add in a seed number for the top teams for fair pool-play, remember to rerun "
+        "assign-pools --workbook command (see HOW-TO for details)"
+    )
     _POOL_ASSIGNMENT_EVENT_DEFS: List[Tuple[str, str]] = [
         (SPORT_TYPE["BASKETBALL"], "BBM"),
         (SPORT_TYPE["VOLLEYBALL_MEN"], "VBM"),
@@ -219,8 +224,10 @@ class ScheduleWorkbookBuilder:
             "Canonical event name used for the venue estimate."
         ),
         "Potential Teams/Entries": (
-            "All current registrations for this event, including partial team signups or "
-            "incomplete doubles pairs."
+            "Rule-aware ceiling for this event based on current registrations. Team sports count "
+            "all current team units with at least one roster entry; racquet sports cap each "
+            "church using the 2026 entry-limit rules while still allowing incomplete doubles "
+            "pairs to mature into valid entries."
         ),
         "Estimating Teams/Entries": (
             "Entries currently counted for court estimation. Team sports count only churches "
@@ -488,9 +495,8 @@ class ScheduleWorkbookBuilder:
         return sport_type, gender, sport_format
 
     @classmethod
-    def _get_min_team_size(cls, event_name: str) -> int:
-        """Look up minimum team size from the validation ruleset; fall back
-        to COURT_ESTIMATE_MIN_TEAM_SIZE if the JSON rule is absent."""
+    def _get_rules_manager(cls) -> Optional[RulesManager]:
+        """Return the cached SUMMER_2026 RulesManager when available."""
         rules_manager_cache = getattr(cls, "_rules_manager_cache", None)
         rules_manager_cache_failed = bool(getattr(cls, "_rules_manager_cache_failed", False))
         if rules_manager_cache is None and not rules_manager_cache_failed:
@@ -499,7 +505,13 @@ class ScheduleWorkbookBuilder:
             except Exception as e:
                 logger.warning(f"Could not load validation rules for venue estimate: {e}")
                 setattr(cls, "_rules_manager_cache_failed", True)
-        rules_manager = getattr(cls, "_rules_manager_cache", None)
+        return getattr(cls, "_rules_manager_cache", None)
+
+    @classmethod
+    def _get_min_team_size(cls, event_name: str) -> int:
+        """Look up minimum team size from the validation ruleset; fall back
+        to COURT_ESTIMATE_MIN_TEAM_SIZE if the JSON rule is absent."""
+        rules_manager = cls._get_rules_manager()
         if rules_manager is not None:
             for rule in rules_manager.get_rules_for_sport(event_name):
                 if rule.get("rule_type") == "team_size" and rule.get("category") == "min":
@@ -603,26 +615,130 @@ class ScheduleWorkbookBuilder:
             "court_hours": round(total_slots * minutes_per_game / 60, 2),
         }
 
+    @staticmethod
+    def _normalize_racquet_gender(raw_gender: str, raw_format: str = "") -> str:
+        """Normalize a racquet roster row's gender to Men/Women/Mixed when possible."""
+        tokens = f"{raw_gender} {raw_format}".casefold()
+        if "women" in tokens:
+            return "Women"
+        if "mixed" in tokens or "coed" in tokens:
+            return "Mixed"
+        if "men" in tokens:
+            return "Men"
+        return ""
+
+    @classmethod
+    def _get_racquet_entry_limits(cls, sport_name: str) -> Tuple[Dict[str, int], Optional[int]]:
+        """Return ({format parameter -> max entries}, doubles_total_limit) for one racquet sport."""
+        cache = getattr(cls, "_racquet_entry_limit_cache", None)
+        if cache is None:
+            cache = {}
+            setattr(cls, "_racquet_entry_limit_cache", cache)
+        cached = cache.get(sport_name)
+        if cached is not None:
+            return cached
+
+        format_limits: Dict[str, int] = {}
+        doubles_total_limit: Optional[int] = None
+        rules_manager = cls._get_rules_manager()
+        if rules_manager is not None:
+            for rule in rules_manager.get_rules_for_sport(sport_name):
+                if rule.get("rule_type") != "entry_limit":
+                    continue
+                parameter = str(rule.get("parameter") or "").strip()
+                category = str(rule.get("category") or "").strip()
+                try:
+                    max_entries = int(rule.get("value"))
+                except (TypeError, ValueError):
+                    continue
+                if category == "format" and parameter:
+                    format_limits[parameter] = max_entries
+                elif (
+                    category == "format_total"
+                    and parameter.casefold() == SPORT_FORMAT["DOUBLES"].casefold()
+                ):
+                    doubles_total_limit = max_entries
+
+        cache[sport_name] = (format_limits, doubles_total_limit)
+        return format_limits, doubles_total_limit
+
+    @classmethod
+    def _racquet_rule_parameter_for_row(cls, row: Dict[str, Any]) -> Optional[str]:
+        """Map one racquet roster row to a church-level entry-limit parameter."""
+        raw_format = str(row.get("sport_format") or "").strip()
+        format_cf = raw_format.casefold()
+        gender = cls._normalize_racquet_gender(
+            str(row.get("sport_gender") or "").strip(),
+            raw_format,
+        )
+
+        if "single" in format_cf:
+            if gender in {"Men", "Women"}:
+                return f"{gender} Single"
+            return None
+        if "double" in format_cf or format_cf == SPORT_FORMAT["TEAM"].casefold() or not format_cf:
+            if gender in {"Men", "Women", "Mixed"}:
+                return f"{gender} Double"
+            return None
+        return None
+
     def _count_racquet_entries(self, roster_rows: List[Dict[str, Any]],
                                sport_name: str) -> Dict[str, Any]:
         """Count racquet sport entries for the venue estimator.
 
         Estimating Entries = complete pairs floor(n_doubles / 2) + n_singles.
-        Potential Entries  = total individual registrations (one person may be
-                             waiting for a partner to sign up).
+        Potential Entries  = rule-aware per-church ceiling using the SUMMER_2026
+                             entry-limit rules, while still allowing incomplete
+                             doubles registrations to mature into valid pairs.
         """
         n_singles = 0
         n_doubles = 0
+        singles_by_church: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        doubles_regs_by_church: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        fallback_potential_by_church: Dict[str, int] = defaultdict(int)
         for r in roster_rows:
             if str(r.get("sport_type") or "").strip().casefold() != sport_name.casefold():
                 continue
             fmt = str(r.get("sport_format") or "").strip().casefold()
-            if "singles" in fmt:
+            church = str(r.get("Church Team") or "").strip().upper()
+            parameter = self._racquet_rule_parameter_for_row(r)
+            if "single" in fmt:
                 n_singles += 1
+                if church and parameter:
+                    singles_by_church[church][parameter] += 1
+                elif church:
+                    fallback_potential_by_church[church] += 1
             else:
                 n_doubles += 1
+                if church and parameter:
+                    doubles_regs_by_church[church][parameter] += 1
+                elif church:
+                    fallback_potential_by_church[church] += 1
         n_estimating = n_singles + (n_doubles // 2)
-        n_potential = n_singles + n_doubles
+        format_limits, doubles_total_limit = self._get_racquet_entry_limits(sport_name)
+        if format_limits or doubles_total_limit is not None:
+            churches = (
+                set(singles_by_church.keys())
+                | set(doubles_regs_by_church.keys())
+                | set(fallback_potential_by_church.keys())
+            )
+            n_potential = 0
+            for church in churches:
+                church_total = fallback_potential_by_church.get(church, 0)
+                for parameter, count in singles_by_church.get(church, {}).items():
+                    limit = format_limits.get(parameter)
+                    church_total += min(count, limit) if limit is not None else count
+                doubles_total = 0
+                for parameter, count in doubles_regs_by_church.get(church, {}).items():
+                    team_count = ceil(count / 2)
+                    limit = format_limits.get(parameter)
+                    doubles_total += min(team_count, limit) if limit is not None else team_count
+                if doubles_total_limit is not None:
+                    doubles_total = min(doubles_total, doubles_total_limit)
+                church_total += doubles_total
+                n_potential += church_total
+        else:
+            n_potential = n_singles + n_doubles
         return {
             "n_estimating": n_estimating,
             "n_potential": n_potential,
@@ -3236,7 +3352,7 @@ class ScheduleWorkbookBuilder:
         """Add operator-facing comments to the Pool-Assignment header row."""
         cls._annotate_header_row(
             ws,
-            1,
+            2,
             n_cols,
             cls._POOL_ASSIGNMENT_HEADER_NOTES,
             width_map={
@@ -3256,7 +3372,7 @@ class ScheduleWorkbookBuilder:
                 "N": 18,
                 "O": 28,
             },
-            freeze_panes="A2",
+            freeze_panes="A3",
             autofilter=True,
         )
 
@@ -3267,7 +3383,15 @@ class ScheduleWorkbookBuilder:
         pool_assignment_rows: List[Dict[str, Any]],
     ) -> None:
         """Write the editable Pool-Assignment planning tab."""
+        from openpyxl.styles import Alignment, Font
+
         columns = cls._POOL_ASSIGNMENT_COLUMNS
+        ws.cell(row=1, column=1, value=cls._POOL_ASSIGNMENT_NOTE)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(columns))
+        note_cell = ws.cell(row=1, column=1)
+        note_cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        note_cell.font = Font(italic=True)
+        ws.row_dimensions[1].height = 30
         ws.append(columns)
         for row in pool_assignment_rows:
             values = []
@@ -3297,7 +3421,7 @@ class ScheduleWorkbookBuilder:
             else self._pool_assignments_sidecar_path(output_path.parent)
         )
 
-        sheet_rows = self._read_xlsx_sheet_rows(workbook_path, "Pool-Assignment")
+        sheet_rows = self._read_pool_assignment_rows(workbook_path)
         if not sheet_rows:
             raise ValueError(
                 f"Workbook '{workbook_path}' has no usable Pool-Assignment sheet."
@@ -5025,6 +5149,47 @@ class ScheduleWorkbookBuilder:
         return rows
 
     @staticmethod
+    def _read_pool_assignment_rows(xlsx_path: Path) -> List[Dict[str, Any]]:
+        """Read Pool-Assignment while tolerating the operator note row above headers."""
+        try:
+            df = pd.read_excel(
+                xlsx_path,
+                sheet_name="Pool-Assignment",
+                header=None,
+                engine="openpyxl",
+            )
+        except Exception as e:
+            logger.warning(f"Could not read 'Pool-Assignment' tab from {xlsx_path}: {e}")
+            return []
+
+        df = df.astype(object).where(pd.notna(df), None)
+        header_idx: Optional[int] = None
+        for idx in range(min(len(df.index), 3)):
+            first_cell = str(df.iat[idx, 0] or "").strip()
+            if first_cell == "Event":
+                header_idx = idx
+                break
+        if header_idx is None:
+            logger.warning(
+                f"Could not find Pool-Assignment header row in {xlsx_path}; expected a row starting with 'Event'."
+            )
+            return []
+
+        header_values = [
+            str(value).strip() if value is not None else ""
+            for value in df.iloc[header_idx].tolist()
+        ]
+        data_df = df.iloc[header_idx + 1 :].copy()
+        data_df.columns = header_values
+        data_df = data_df.loc[:, [column for column in header_values if column]]
+        rows = data_df.to_dict("records")
+        logger.debug(
+            f"Read {len(rows)} rows from 'Pool-Assignment' tab of {xlsx_path} "
+            f"(header row {header_idx + 1})"
+        )
+        return rows
+
+    @staticmethod
     def read_roster_validation_rows(
         xlsx_path: Optional[Path],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -5127,7 +5292,8 @@ class ScheduleWorkbookBuilder:
             df_venue.to_excel(writer, sheet_name="Venue-Estimator", index=False, startrow=0)
             snapshot_note = (
                 f"Roster snapshot as of {datetime.now().strftime('%Y-%m-%d')} — "
-                "Estimating = complete entries; Potential = all registrations including partial. "
+                "Estimating = complete entries; Potential = rule-aware ceiling from current "
+                "registrations (including incomplete doubles pairings), capped by 2026 entry limits. "
                 "Approval-agnostic. Updates with each export run."
             )
             venue_ws = writer.sheets["Venue-Estimator"]
