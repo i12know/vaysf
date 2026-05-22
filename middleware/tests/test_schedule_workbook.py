@@ -463,6 +463,34 @@ def test_write_schedule_output_workbook_creates_schedule_tabs(tmp_path):
     assert wb.sheetnames == ["Schedule-by-Time", "Schedule-by-Sport", "Conflict-Audit", "Master-Schedule"]
 
 
+def test_master_schedule_tab_layout(tmp_path):
+    """Master-Schedule: column A = 'Time', day sections appear before their slots."""
+    schedule_output, schedule_input = _make_schedule_pair()
+    schedule_input["day_order"] = ["Sat-1"]
+    workbook_path = tmp_path / "sched.xlsx"
+
+    ScheduleWorkbookBuilder.write_schedule_output_workbook(
+        workbook_path, schedule_output, schedule_input
+    )
+
+    wb = load_workbook(workbook_path)
+    ws = wb["Master-Schedule"]
+
+    # Row 1 is the title; row 2 has "Time" in col A.
+    assert ws.cell(row=2, column=1).value == "Time"
+    # Row 3 is court-label row (blank time cell, court label in col 2+).
+    assert ws.cell(row=3, column=2).value == "Court-1"
+
+    # Row 4 should be the day-section header for Sat-1.
+    row4_val = ws.cell(row=4, column=1).value
+    assert row4_val and "Saturday" in str(row4_val)
+
+    # Row 5 should show the time "08:00" in column A.
+    assert ws.cell(row=5, column=1).value == "08:00"
+    # And the game cell (col 2) should be non-empty.
+    assert ws.cell(row=5, column=2).value
+
+
 def test_read_roster_validation_rows_missing_path_degrades():
     """A missing ALL workbook should yield empty lists, not raise."""
     roster_rows, validation_rows = ScheduleWorkbookBuilder.read_roster_validation_rows(None)
