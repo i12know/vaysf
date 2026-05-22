@@ -25,15 +25,21 @@ Constraints implemented (per pool):
   C6  Minimum rest — no team plays in two adjacent global time slots.
   C7  Multi-slot games — a game whose duration > slot_minutes blocks consecutive slots.
 
-Objective (per pool, lexicographic via integer dominance):
-  1. Minimize primary shared-athlete conflicts (hard cap).
-  2. Minimize secondary shared-athlete conflicts (soft).
-  3. Minimize the index of the latest occupied global slot (overall makespan).
+Objective (per pool, five-tier lexicographic via integer dominance):
+  1. Minimize primary shared-athlete conflicts — two teams share an athlete
+     whose primary sport is one of the two events (near-hard constraint).
+  2. Minimize secondary shared-athlete conflicts — same collision but the
+     athlete's primary sport is a third event (soft penalty).
+  3. Minimize the index of the latest occupied global slot (makespan).
   4. Minimize the sum of all games' global slot indices — packs games into
-     the earliest available slots so each sport stays concentrated rather
-     than scattered across days when capacity allows.
+     the earliest available slots so each sport stays concentrated on its
+     designated day rather than drifting across the weekend.
   5. For Volleyball Court pools, minimize adjacent same-court Men/Women
      switches so net-height changes are reduced.
+
+Each tier's weight exceeds the maximum possible total of all lower tiers
+combined, so the hierarchy is enforced by arithmetic.  See
+docs/SCHEDULING.md §"Solver objectives" for the full rationale and examples.
 
 Day ordering for global slots follows weekday-then-cycle chronology
 (Fri-1 < Sat-1 < Sun-1 < Fri-2 < ...), so the solver naturally prefers
