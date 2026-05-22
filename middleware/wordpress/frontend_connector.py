@@ -54,6 +54,7 @@ class WordPressConnector:
         self.total_participants = 0
         self.total_participant_pages = 0
         self.last_get_rosters_status = "unknown"
+        self.last_get_validation_issues_status = "unknown"
         self.last_update_validation_issue_status = "unknown"
     
         # Create a session to maintain cookies
@@ -525,6 +526,7 @@ class WordPressConnector:
             logger.error(f"Failed to create validation issue: {str(e)}")
             return None
     
+    @retry(**_WP_READ_RETRY)
     def get_validation_issues(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Get validation issues from WordPress."""
         try:
@@ -533,9 +535,13 @@ class WordPressConnector:
                 params=params
             )
             response.raise_for_status()
+            self.last_get_validation_issues_status = "ok"
             return response.json()
         except requests.RequestException as e:
+            self.last_get_validation_issues_status = "failed"
             logger.error(f"Failed to get validation issues: {str(e)}")
+            if _is_retryable_wp_read_exception(e):
+                raise  # Let retry handle transient failures.
             return []
 
     def update_validation_issue(self, issue_id: int, issue_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:

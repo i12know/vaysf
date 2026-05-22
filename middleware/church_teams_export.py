@@ -122,12 +122,20 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         fetch_per_page = 200
 
         while True:
-            page_issues = self.wp_connector.get_validation_issues({
-                "church_id": church_id,
-                "status": "open",
-                "page": current_page,
-                "per_page": fetch_per_page,
-            })
+            try:
+                page_issues = self.wp_connector.get_validation_issues({
+                    "church_id": church_id,
+                    "status": "open",
+                    "page": current_page,
+                    "per_page": fetch_per_page,
+                })
+            except RetryError as exc:
+                logger.error(
+                    f"WordPress get_validation_issues() failed after all retry attempts "
+                    f"for church_id={church_id} page={current_page}: {exc}. "
+                    "Returning partial results."
+                )
+                break
             if not page_issues:
                 break
 

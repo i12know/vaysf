@@ -356,3 +356,60 @@ def test_get_rosters_does_not_retry_non_transient_errors(wp_connector, mocker):
 
     assert result == []
     assert mock_get.call_count == 1
+
+
+def test_get_validation_issues_retries_on_transient_disconnect(wp_connector, mocker):
+    """get_validation_issues() retries on ConnectionError and returns data on recovery."""
+    mocker.patch("time.sleep")
+
+    good_response = mocker.Mock()
+    good_response.status_code = 200
+    good_response.json.return_value = [{"issue_id": 5, "status": "open"}]
+    good_response.raise_for_status = mocker.Mock()
+
+    mock_get = mocker.patch.object(
+        wp_connector.session,
+        "get",
+        side_effect=[_connection_error(), _connection_error(), good_response],
+    )
+
+    result = wp_connector.get_validation_issues({"church_id": 10, "status": "open"})
+
+    assert result == [{"issue_id": 5, "status": "open"}]
+    assert mock_get.call_count == 3
+    assert wp_connector.last_get_validation_issues_status == "ok"
+
+
+def test_get_validation_issues_raises_retry_error_after_exhausted_attempts(wp_connector, mocker):
+    """get_validation_issues() raises RetryError when all retry attempts fail."""
+    mocker.patch("time.sleep")
+
+    mocker.patch.object(
+        wp_connector.session,
+        "get",
+        side_effect=_connection_error(),
+    )
+
+    with pytest.raises(RetryError):
+        wp_connector.get_validation_issues({"church_id": 10})
+
+
+def test_get_validation_issues_does_not_retry_non_transient_errors(wp_connector, mocker):
+    """Non-transient HTTP errors from get_validation_issues() fail immediately."""
+    mocker.patch("time.sleep")
+
+    bad_response = mocker.Mock()
+    bad_response.status_code = 500
+    bad_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        response=bad_response
+    )
+
+    mock_get = mocker.patch.object(
+        wp_connector.session, "get", return_value=bad_response
+    )
+
+    result = wp_connector.get_validation_issues()
+
+    assert result == []
+    assert mock_get.call_count == 1
+    assert wp_connector.last_get_validation_issues_status == "failed"
