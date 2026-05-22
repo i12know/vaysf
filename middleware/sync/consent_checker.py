@@ -13,6 +13,10 @@ from wordpress.frontend_connector import WordPressConnector
 
 CONSENT_CHECKLIST_OPTION_ID = 199609
 CONSENT_THRESHOLD = 51
+# For guardian-signed forms the parent fills in athlete phone/email fields,
+# so those fields reliably mismatch the participant's ChM profile.
+# Name + birthdate alone (16 + 33 = 49) is sufficient to confirm identity.
+CONSENT_THRESHOLD_GUARDIAN = 49
 CONSENT_SCORE_WEIGHTS = {
     "birthdate": 33,
     "email": 27,
@@ -368,7 +372,11 @@ class ConsentChecker:
                 )
                 continue
 
-            if best_score < CONSENT_THRESHOLD:
+            is_guardian = consent_row.get("signer_type") == "guardian"
+            effective_threshold = (
+                CONSENT_THRESHOLD_GUARDIAN if is_guardian else CONSENT_THRESHOLD
+            )
+            if best_score < effective_threshold:
                 summary["low_confidence"] += 1
                 logger.debug(
                     f"Low-confidence consent match for row {consent_row['source_row_number']} "
