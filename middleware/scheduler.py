@@ -776,18 +776,35 @@ def _solve_one_pool(
                 team_global_assignments.setdefault(team, {}).setdefault(global_idx, []).append(var)
 
     precedence_rules = pool_input.get("precedence", []) or []
+    # pinned_game_global: {game_id: global_slot_index} for manually pinned playoff games.
+    # Used below so precedence rules whose "after" side is pinned still constrain the
+    # solver-assigned "before" pool game to finish early enough.
+    pinned_game_global: dict[str, int] = {
+        gid: slot_to_global[slot]
+        for gid, slot in (pool_input.get("pinned_game_slots") or {}).items()
+        if slot in slot_to_global
+    }
     for rule in precedence_rules:
         before_game_id = str(rule.get("before_game_id") or "").strip()
         after_game_id = str(rule.get("after_game_id") or "").strip()
         if not before_game_id or not after_game_id:
             continue
-        if before_game_id not in game_global_slot or after_game_id not in game_global_slot:
-            continue
         min_gap_slots = max(int(rule.get("min_gap_slots") or 1), 1)
-        model.Add(
-            game_global_slot[after_game_id]
-            >= game_global_slot[before_game_id] + min_gap_slots
-        )
+        if before_game_id in game_global_slot and after_game_id in game_global_slot:
+            # Both games are solver-assigned: standard ordering constraint.
+            model.Add(
+                game_global_slot[after_game_id]
+                >= game_global_slot[before_game_id] + min_gap_slots
+            )
+        elif before_game_id in game_global_slot and after_game_id in pinned_game_global:
+            # "Before" is solver-assigned; "after" is a manually pinned playoff game.
+            # Translate to an upper-bound on the pool game's slot so it must finish
+            # before the pinned playoff starts.
+            pinned_idx = pinned_game_global[after_game_id]
+            model.Add(
+                game_global_slot[before_game_id] <= pinned_idx - min_gap_slots
+            )
+        # Skip if "before" is pinned (can't constrain a pinned game) or both unknown.
 
     for team, by_idx in team_global_assignments.items():
         for g_idx, vars_at_g in by_idx.items():
@@ -1181,6 +1198,20 @@ def solve(
             pool_key = resource_pool_by_id.get(resource_id, resource_type)
             blocked_slots_by_pool.setdefault(pool_key, {})[resource_id] = set(slots)
 
+    # pinned_game_slots_by_pool: {pool_key: {game_id: slot_label}} for manually
+    # pinned playoff games. Passed to _solve_one_pool so precedence rules whose
+    # "after" side is pinned can still constrain pool games (fix for the bug
+    # where VBM pool games spilled past VBM-QF-1 start time on 2nd Saturday).
+    pinned_game_slots_by_pool: dict[str, dict[str, str]] = defaultdict(dict)
+    for _ps in playoff_slots:
+        _gid = str(_ps.get("game_id") or "").strip()
+        _slot = str(_ps.get("slot") or "").strip()
+        _rid  = str(_ps.get("resource_id") or "").strip()
+        if _gid and _slot and _rid:
+            _pk = resource_pool_by_id.get(_rid, "")
+            if _pk:
+                pinned_game_slots_by_pool[_pk][_gid] = _slot
+
     team_conflicts = schedule_input.get("team_conflicts", []) or []
     team_conflicts_by_pool: dict[str, list[dict[str, Any]]] = defaultdict(list)
     precedence_by_pool: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1301,6 +1332,7 @@ def solve(
             "precedence":          precedence_by_pool.get(pool_key, []),
             "day_order":           day_order,
             "cross_pool_avoidance": cross_pool_avoidance,
+            "pinned_game_slots":   pinned_game_slots_by_pool.get(pool_key, {}),
         }
         result = _solve_one_pool(pool_input, timeout_seconds)
         result["resource_type"] = pool_key
