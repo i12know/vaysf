@@ -604,9 +604,9 @@ games.
 
 Configurable timeout via `SCHEDULE_SOLVER_TIMEOUT` env var (default: 30 s).
 
-#### Solver objectives (five-tier lexicographic)
+#### Solver objectives (six-tier lexicographic)
 
-The solver minimizes a single combined integer that encodes five goals in strict
+The solver minimizes a single combined integer that encodes six goals in strict
 priority order.  Because each tier's weight exceeds the maximum possible total of
 all lower tiers combined, improving a higher-tier goal is **always** worth more
 than any improvement at lower tiers — the hierarchy is enforced by arithmetic,
@@ -614,25 +614,36 @@ not policy.
 
 | Tier | Goal | What it means in practice |
 |------|------|--------------------------|
-| 1 | **Primary conflict penalty** | Two teams share an athlete whose *primary* sport is one of the two events. Example: a player whose primary sport is Basketball also registers for Bible Challenge — a BB vs BC same-slot collision is a primary conflict. The solver treats this as a near-hard constraint and will sacrifice any Tier 2–5 improvement to eliminate it. |
+| 1 | **Primary conflict penalty** | Two teams share an athlete whose *primary* sport is one of the two events. Example: a player whose primary sport is Basketball also registers for Bible Challenge — a BB vs BC same-slot collision is a primary conflict. The solver treats this as a near-hard constraint and will sacrifice any Tier 2–6 improvement to eliminate it. |
 | 2 | **Secondary conflict penalty** | Same shared-athlete collision, but the athlete's primary sport is a *third* event. Example: a Soccer-primary player who also plays Basketball and Bible Challenge. A BB vs BC clash is now a secondary conflict — still penalised, but slightly below Tier 1. |
-| 3 | **Latest slot index** (makespan) | After conflicts are settled, minimize the index of the *last occupied slot* across all games. This shrinks the right edge of the schedule: if all games fit in slots 0–20, the solver will not stretch to slot 30 even when those slots are available. |
-| 4 | **Sum of slot indices** (packing) | Even after Tier 3 fixes the horizon, games could scatter anywhere within that window at no extra cost. Tier 4 minimizes `sum(slot_index for each game)`, so a game in slot 2 contributes 2 and a game in slot 8 contributes 8. The solver now actively prefers filling slot 3 before slot 7, which keeps each sport concentrated on its designated day rather than drifting across the weekend. |
-| 5 | **Volleyball court switches** | On a court that alternates between Men's VB and Women's VB, each gender flip requires a net-height change and disrupts spectators. The solver counts back-to-back gender changes per court and minimizes that total — but only after all four higher-tier goals are already optimal. |
+| 3 | **Max-per-day spread** | When cross-pool avoidance is active (another sport has already claimed certain time slots), minimize the *maximum number of games on any single day*. This distributes pool-play games evenly across all available days rather than packing everything into the first available weekend. Activated only when C3x (cross-pool) constraints are present; otherwise skipped so single-sport pools (e.g. Table Tennis) still concentrate on their designated day. |
+| 4 | **Latest slot index** (makespan) | After conflicts and spread are settled, minimize the index of the *last occupied slot* across all games. This shrinks the right edge of the schedule. |
+| 5 | **Volleyball court switches** | On a court that alternates between Men's VB and Women's VB, each gender flip requires a net-height change. The solver minimizes back-to-back gender changes per court. This is prioritized **above** packing (Tier 6) to reduce net-adjustment disruptions. |
+| 6 | **Sum of slot indices** (packing) | Within the constraints set by Tiers 1–5, minimize `sum(slot_index for each game)` as a tiebreaker. Prefers filling slot 3 before slot 7, keeping games front-loaded within each day. |
 
 Weight construction (from `scheduler.py`):
 
 ```python
-vb_weight        = 1
-sum_slots_weight = vb_switch_max + 1                                   # beats any VB saving
-latest_weight    = sum_slots_max * sum_slots_weight + vb_switch_max + 1  # beats Tiers 4+5
-secondary_weight = latest_max * latest_weight + …                        # beats Tiers 3–5
-primary_weight   = secondary_penalty_max * secondary_weight + …          # beats Tiers 2–5
+sum_slots_weight = 1
+vb_weight        = sum_slots_max + 1                                    # beats any packing saving
+latest_weight    = vb_switch_max * vb_weight + sum_slots_max + 1       # beats Tiers 5+6
+spread_weight    = latest_max * latest_weight + … + 1                  # beats Tiers 4+5+6
+secondary_weight = spread_max * spread_weight + …                      # beats Tiers 3–6
+primary_weight   = secondary_penalty_max * secondary_weight + …        # beats Tiers 2–6
 ```
 
+**Cross-pool conflict avoidance (C3x):** Pools are solved in priority order — BC
+Station first, then Soccer Field, then Tennis/Badminton/Pickleball/Table Tennis,
+and finally Gym Core (BB + VB) last.  After each pool is solved, every team's
+assigned slots are recorded.  Conflict edges in `team_conflicts` are used to
+identify cross-sport partner teams: if ANH-BC occupies Sat-1-13:00, the solver
+forbids ANH-BBM from starting any game that spans Sat-1-13:00.  This hard
+constraint (C3x) eliminates the cross-sport pink rows in the Conflict-Audit that
+the within-pool penalty alone could not fix.
+
 Day ordering for global slot indices follows weekday-then-cycle chronology
-(Fri-1 < Sat-1 < Sun-1 < Fri-2 < …), so the Tier 3/4 packing naturally
-prefers earlier dates in the weekend without any extra constraint.
+(Fri-1 < Sat-1 < Sun-1 < Fri-2 < …), so Tier 4/6 packing naturally prefers
+earlier dates in the weekend without any extra constraint.
 
 **Pool decomposition:** games are partitioned by `resource_type` and solved in
 independent CP-SAT models. A capacity shortage in one pool (e.g. Badminton Court)

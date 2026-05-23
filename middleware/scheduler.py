@@ -25,17 +25,19 @@ Constraints implemented (per pool):
   C6  Minimum rest — no team plays in two adjacent global time slots.
   C7  Multi-slot games — a game whose duration > slot_minutes blocks consecutive slots.
 
-Objective (per pool, five-tier lexicographic via integer dominance):
+Objective (per pool, six-tier lexicographic via integer dominance):
   1. Minimize primary shared-athlete conflicts — two teams share an athlete
      whose primary sport is one of the two events (near-hard constraint).
   2. Minimize secondary shared-athlete conflicts — same collision but the
      athlete's primary sport is a third event (soft penalty).
-  3. Minimize the index of the latest occupied global slot (makespan).
-  4. Minimize the sum of all games' global slot indices — packs games into
-     the earliest available slots so each sport stays concentrated on its
-     designated day rather than drifting across the weekend.
+  3. Minimize the maximum number of games on any single day (spread) —
+     distributes pool-play games evenly across all available days instead
+     of packing everything into the first available weekend.
+  4. Minimize the index of the latest occupied global slot (makespan).
   5. For Volleyball Court pools, minimize adjacent same-court Men/Women
      switches so net-height changes are reduced.
+  6. Minimize the sum of all games' global slot indices — within the spread
+     and makespan constraints, prefer earlier start slots as a tiebreaker.
 
 Each tier's weight exceeds the maximum possible total of all lower tiers
 combined, so the hierarchy is enforced by arithmetic.  See
@@ -731,6 +733,26 @@ def _solve_one_pool(
         if len(var_list) > 1:
             model.AddAtMostOne(var_list)
 
+    # C3x — cross-pool: forbid placing a game at any slot that a cross-pool
+    # conflict partner is already assigned to in a previously-solved pool.
+    # pool_input["cross_pool_avoidance"] = {team_id: {slot_label, ...}} where
+    # the slots come from other pools' solved assignments.
+    cross_pool_avoidance: dict[str, set[str]] = pool_input.get("cross_pool_avoidance") or {}
+    if cross_pool_avoidance:
+        for gid, vd in game_vars.items():
+            game  = game_meta[gid]
+            teams = _game_team_ids(game)
+            duration = game["duration_minutes"]
+            for (rid, t), var in vd.items():
+                slot_min = res_by_id[rid]["slot_minutes"]
+                n_slots  = max(1, math.ceil(duration / slot_min))
+                if any(
+                    res_slots[rid][s] in cross_pool_avoidance.get(team, set())
+                    for s in range(t, t + n_slots)
+                    for team in teams
+                ):
+                    model.Add(var == 0)
+
     # Global slot IntVar per game (enables C5 and C6)
     game_global_slot: dict[str, Any] = {}
     for gid, vd in game_vars.items():
@@ -754,18 +776,35 @@ def _solve_one_pool(
                 team_global_assignments.setdefault(team, {}).setdefault(global_idx, []).append(var)
 
     precedence_rules = pool_input.get("precedence", []) or []
+    # pinned_game_global: {game_id: global_slot_index} for manually pinned playoff games.
+    # Used below so precedence rules whose "after" side is pinned still constrain the
+    # solver-assigned "before" pool game to finish early enough.
+    pinned_game_global: dict[str, int] = {
+        gid: slot_to_global[slot]
+        for gid, slot in (pool_input.get("pinned_game_slots") or {}).items()
+        if slot in slot_to_global
+    }
     for rule in precedence_rules:
         before_game_id = str(rule.get("before_game_id") or "").strip()
         after_game_id = str(rule.get("after_game_id") or "").strip()
         if not before_game_id or not after_game_id:
             continue
-        if before_game_id not in game_global_slot or after_game_id not in game_global_slot:
-            continue
         min_gap_slots = max(int(rule.get("min_gap_slots") or 1), 1)
-        model.Add(
-            game_global_slot[after_game_id]
-            >= game_global_slot[before_game_id] + min_gap_slots
-        )
+        if before_game_id in game_global_slot and after_game_id in game_global_slot:
+            # Both games are solver-assigned: standard ordering constraint.
+            model.Add(
+                game_global_slot[after_game_id]
+                >= game_global_slot[before_game_id] + min_gap_slots
+            )
+        elif before_game_id in game_global_slot and after_game_id in pinned_game_global:
+            # "Before" is solver-assigned; "after" is a manually pinned playoff game.
+            # Translate to an upper-bound on the pool game's slot so it must finish
+            # before the pinned playoff starts.
+            pinned_idx = pinned_game_global[after_game_id]
+            model.Add(
+                game_global_slot[before_game_id] <= pinned_idx - min_gap_slots
+            )
+        # Skip if "before" is pinned (can't constrain a pinned game) or both unknown.
 
     for team, by_idx in team_global_assignments.items():
         for g_idx, vars_at_g in by_idx.items():
@@ -846,7 +885,8 @@ def _solve_one_pool(
             model.Add(sum(source_vars) == occ_var)
             game_slot_occ[(gid, slot_label)] = occ_var
 
-    # Objective — minimize the latest occupied global slot (pack games toward start)
+    # Objective — six-tier lexicographic: conflicts > spread > makespan > VB switches > sum
+    max_day_load: Any = None  # set inside block when pool spans multiple days
     if game_global_slot:
         latest = model.NewIntVar(0, max(n_global - 1, 0), "latest_slot")
         for gv in game_global_slot.values():
@@ -928,32 +968,73 @@ def _solve_one_pool(
                     model.Add(women_to_men >= women_current + men_next - 1)
                     volleyball_switch_vars.append(women_to_men)
 
+        # Tier 3 — spread: minimize max games scheduled on any single day.
+        # Distributes pool-play games across all available days so the solver
+        # does not pack everything into the first available weekend.
+        all_pool_days = sorted(
+            {_slot_day_key(lbl) for lbl in sorted_labels},
+            key=_day_chronological_key,
+        )
+        day_load_vars: dict[str, Any] = {}
+        if len(all_pool_days) > 1:
+            for _pool_day in all_pool_days:
+                _day_vars = [
+                    var
+                    for gid, vd in game_vars.items()
+                    for (rid, t), var in vd.items()
+                    if _slot_day_key(res_slots[rid][t]) == _pool_day
+                ]
+                if _day_vars:
+                    _dload = model.NewIntVar(
+                        0, len(game_global_slot), f"dayload_{_pool_day}"
+                    )
+                    model.Add(_dload == sum(_day_vars))
+                    day_load_vars[_pool_day] = _dload
+
+        # Activate spread only when cross-pool avoidance is present — that
+        # signals another sport has claimed specific slots, so the solver needs
+        # encouragement to use alternate days.  Without cross-sport pressure,
+        # prefer the default pack-early behavior so games concentrate on the
+        # designated day (e.g. all Table Tennis on Friday).
+        spread_max = len(game_global_slot)
+        if len(day_load_vars) > 1 and cross_pool_avoidance:
+            max_day_load = model.NewIntVar(0, spread_max, "max_day_load")
+            for _dload in day_load_vars.values():
+                model.Add(max_day_load >= _dload)
+
         secondary_penalty_max = sum(max(entry["secondary_weight"], 0) for entry in conflict_overlap_vars)
         latest_max = max(n_global - 1, 0)
         vb_switch_max = len(volleyball_switch_vars)
         sum_slots_max = len(game_global_slot) * latest_max
 
         # Lexicographic objective via integer dominance.  Each higher-tier
-        # weight strictly exceeds the maximum possible contribution from all
-        # lower tiers, so the solver always settles a higher tier before
+        # weight strictly exceeds the maximum possible total of all lower tiers
+        # combined, so the solver always settles a higher tier before
         # spending degrees of freedom on a lower one.
         #
         # Tier ordering (highest priority first):
-        #   primary conflicts > secondary conflicts > latest slot
-        #     > sum of slot indices (chronological packing) > VB switches
-        vb_weight = 1
-        sum_slots_weight = vb_switch_max + 1
-        latest_weight = sum_slots_max * sum_slots_weight + vb_switch_max + 1
-        secondary_weight = (
+        #   primary conflicts > secondary conflicts > spread (max-per-day)
+        #   > latest slot > VB gender switches > sum of slot indices
+        sum_slots_weight = 1
+        vb_weight = sum_slots_max + 1
+        latest_weight = vb_switch_max * vb_weight + sum_slots_max + 1
+        spread_weight = (
             latest_max * latest_weight
-            + sum_slots_max * sum_slots_weight
-            + vb_switch_max + 1
+            + vb_switch_max * vb_weight
+            + sum_slots_max + 1
+        )
+        secondary_weight = (
+            spread_max * spread_weight
+            + latest_max * latest_weight
+            + vb_switch_max * vb_weight
+            + sum_slots_max + 1
         )
         primary_weight = (
             secondary_penalty_max * secondary_weight
+            + spread_max * spread_weight
             + latest_max * latest_weight
-            + sum_slots_max * sum_slots_weight
-            + vb_switch_max + 1
+            + vb_switch_max * vb_weight
+            + sum_slots_max + 1
         )
 
         objective_terms: list[Any] = []
@@ -961,10 +1042,12 @@ def _solve_one_pool(
             objective_terms.append(sum(primary_conflict_terms) * primary_weight)
         if secondary_conflict_terms:
             objective_terms.append(sum(secondary_conflict_terms) * secondary_weight)
+        if max_day_load is not None:
+            objective_terms.append(max_day_load * spread_weight)
         objective_terms.append(latest * latest_weight)
-        objective_terms.append(sum(game_global_slot.values()) * sum_slots_weight)
         if volleyball_switch_vars:
             objective_terms.append(sum(volleyball_switch_vars) * vb_weight)
+        objective_terms.append(sum(game_global_slot.values()) * sum_slots_weight)
         model.Minimize(sum(objective_terms))
 
     # Solve
@@ -1019,6 +1102,12 @@ def _solve_one_pool(
     if game_global_slot:
         result["latest_slot_index"] = (
             int(solver.Value(latest))
+            if status in (STATUS_OPTIMAL, STATUS_FEASIBLE)
+            else None
+        )
+    if max_day_load is not None:
+        result["max_games_per_day"] = (
+            int(solver.Value(max_day_load))
             if status in (STATUS_OPTIMAL, STATUS_FEASIBLE)
             else None
         )
@@ -1109,6 +1198,20 @@ def solve(
             pool_key = resource_pool_by_id.get(resource_id, resource_type)
             blocked_slots_by_pool.setdefault(pool_key, {})[resource_id] = set(slots)
 
+    # pinned_game_slots_by_pool: {pool_key: {game_id: slot_label}} for manually
+    # pinned playoff games. Passed to _solve_one_pool so precedence rules whose
+    # "after" side is pinned can still constrain pool games (fix for the bug
+    # where VBM pool games spilled past VBM-QF-1 start time on 2nd Saturday).
+    pinned_game_slots_by_pool: dict[str, dict[str, str]] = defaultdict(dict)
+    for _ps in playoff_slots:
+        _gid = str(_ps.get("game_id") or "").strip()
+        _slot = str(_ps.get("slot") or "").strip()
+        _rid  = str(_ps.get("resource_id") or "").strip()
+        if _gid and _slot and _rid:
+            _pk = resource_pool_by_id.get(_rid, "")
+            if _pk:
+                pinned_game_slots_by_pool[_pk][_gid] = _slot
+
     team_conflicts = schedule_input.get("team_conflicts", []) or []
     team_conflicts_by_pool: dict[str, list[dict[str, Any]]] = defaultdict(list)
     precedence_by_pool: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1166,14 +1269,70 @@ def solve(
 
     day_order: list[str] = schedule_input.get("day_order") or []
 
-    for pool_key in sorted(games_by_pool.keys()):
+    # Solve smaller/quicker pools first so their slot assignments can be passed
+    # to larger pools as cross-pool avoidance constraints (C3x).  Gym Core is
+    # solved last because it benefits most from knowing where BC/Soccer landed.
+    _POOL_SOLVE_PRIORITY: dict[str, int] = {
+        "BC Station":          0,
+        "Soccer Field":        1,
+        "Tennis Court":        2,
+        "Table Tennis Table":  3,
+        "Badminton Court":     4,
+        "Pickleball Court":    5,
+        # "Gym Core" and individual court types sort to 99 (last)
+    }
+
+    def _pool_sort_key(pk: str) -> tuple[int, str]:
+        return (_POOL_SOLVE_PRIORITY.get(pk, 99), pk)
+
+    # Build cross-pool conflict mapping:
+    # cross_pool_partners[pool_key][team_id] = {partner_team_ids in other pools}
+    cross_pool_partners: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    if team_conflicts and "game_pool_by_team" in dir():
+        pass  # game_pool_by_team already built above
+    game_pool_by_team_local: dict[str, str] = {}
+    for pool_key, pool_games in games_by_pool.items():
+        for game in pool_games:
+            for team_id in _game_team_ids(game):
+                game_pool_by_team_local[team_id] = pool_key
+    for edge in team_conflicts:
+        ta = str(edge.get("team_a_id") or "").strip()
+        tb = str(edge.get("team_b_id") or "").strip()
+        pool_a = game_pool_by_team_local.get(ta)
+        pool_b = game_pool_by_team_local.get(tb)
+        if pool_a and pool_b and pool_a != pool_b:
+            cross_pool_partners[pool_a][ta].add(tb)
+            cross_pool_partners[pool_b][tb].add(ta)
+
+    # Slots assigned in already-solved pools, keyed by team_id
+    team_occupied_slots: dict[str, set[str]] = defaultdict(set)
+
+    for pool_key in sorted(games_by_pool.keys(), key=_pool_sort_key):
+        # Build cross-pool avoidance for this pool's teams: slots where their
+        # cross-pool conflict partners are already assigned in solved pools.
+        cross_pool_avoidance: dict[str, set[str]] = {}
+        for team_id, partner_ids in cross_pool_partners.get(pool_key, {}).items():
+            avoided: set[str] = set()
+            for partner_id in partner_ids:
+                avoided.update(team_occupied_slots.get(partner_id, set()))
+            if avoided:
+                cross_pool_avoidance[team_id] = avoided
+        if cross_pool_avoidance:
+            logger.debug(
+                f"Pool {pool_key!r}: C3x avoidance for "
+                f"{len(cross_pool_avoidance)} teams across "
+                f"{sum(len(s) for s in cross_pool_avoidance.values())} slot-team pairs"
+            )
+
         pool_input = {
-            "games":         games_by_pool[pool_key],
-            "resources":     resources_by_pool.get(pool_key, []),
-            "blocked_slots": blocked_slots_by_pool.get(pool_key, {}),
-            "team_conflicts": team_conflicts_by_pool.get(pool_key, []),
-            "precedence":    precedence_by_pool.get(pool_key, []),
-            "day_order":     day_order,
+            "games":               games_by_pool[pool_key],
+            "resources":           resources_by_pool.get(pool_key, []),
+            "blocked_slots":       blocked_slots_by_pool.get(pool_key, {}),
+            "team_conflicts":      team_conflicts_by_pool.get(pool_key, []),
+            "precedence":          precedence_by_pool.get(pool_key, []),
+            "day_order":           day_order,
+            "cross_pool_avoidance": cross_pool_avoidance,
+            "pinned_game_slots":   pinned_game_slots_by_pool.get(pool_key, {}),
         }
         result = _solve_one_pool(pool_input, timeout_seconds)
         result["resource_type"] = pool_key
@@ -1181,9 +1340,34 @@ def solve(
         all_assignments.extend(result["assignments"])
         all_unscheduled.extend(result["unscheduled"])
         total_wall_seconds += result["solver_wall_seconds"]
+
+        # Record every slot this pool's teams occupy, for subsequent pools' C3x.
+        _pool_game_meta = {g["game_id"]: g for g in games_by_pool[pool_key]}
+        _pool_res = {r["resource_id"]: r for r in resources_by_pool.get(pool_key, [])}
+        _pool_res_slots = build_resource_slots(resources_by_pool.get(pool_key, []))
+        for _asgn in result["assignments"]:
+            _gm = _pool_game_meta.get(str(_asgn.get("game_id") or ""), {})
+            _slot = str(_asgn.get("slot") or "")
+            _rid  = str(_asgn.get("resource_id") or "")
+            if not _slot or not _rid:
+                continue
+            _res = _pool_res.get(_rid, {})
+            _slot_min = int(_res.get("slot_minutes") or 60)
+            _dur = int(_gm.get("duration_minutes") or _slot_min)
+            _n   = max(1, math.ceil(_dur / _slot_min))
+            _slot_list = _pool_res_slots.get(_rid, [])
+            try:
+                _si = _slot_list.index(_slot)
+                _occupied = _slot_list[_si : _si + _n]
+            except ValueError:
+                _occupied = [_slot]
+            for _team in _game_team_ids(_gm):
+                team_occupied_slots[_team].update(_occupied)
         extra_metrics = ""
+        if result.get("max_games_per_day") is not None:
+            extra_metrics += f", max_games_per_day={result['max_games_per_day']}"
         if result.get("volleyball_adjacent_switches") is not None:
-            extra_metrics = (
+            extra_metrics += (
                 f", volleyball_adjacent_switches={result['volleyball_adjacent_switches']}"
             )
         if result.get("cross_sport_same_slot_conflicts") is not None:

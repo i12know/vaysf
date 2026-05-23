@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## Unreleased
+
+### Solver improvements — day spread + cross-pool conflict elimination
+
+- **Six-tier lexicographic objective** (scheduler.py) — upgraded from five tiers
+  - New **Tier 3 — Max-per-day spread**: when cross-pool avoidance is active, minimize the maximum number of games on any single day, distributing pool-play games evenly across both weekends instead of packing everything into the first Saturday/Sunday
+  - **Tier 5 — VB gender switches** promoted above **Tier 6 — sum of slot indices**: net-height changes between Men's VB and Women's VB now outrank the pack-early preference, reducing the "VBW game right after VBM on the same court" placement that previously occurred
+  - Sum-of-slot-indices demoted to Tier 6 (tiebreaker only)
+  - Updated weight construction in `scheduler.py` and objective table in `docs/SCHEDULING.md`
+
+- **C3x — cross-pool conflict constraint** (scheduler.py): pools are now solved in priority order (BC Station → Soccer Field → Tennis/Badminton/Pickleball/Table Tennis → Gym Core). After each pool is solved, team slot occupancies are collected. Cross-sport conflict edges in `team_conflicts` are used to identify gym-sport partner teams; those teams are forbidden from being assigned to any slot already claimed by their BC/Soccer counterpart in the same time window. This hard constraint eliminates the cross-sport pink rows (BBM/VBM/VBW vs BC, BBM/VBM/VBW vs Soccer) that the within-pool penalty alone could not fix. `max_games_per_day` is reported per pool in solver logs.
+
 ## Version 1.11 (2026-05-23)
 
 ### New Features
@@ -53,6 +65,14 @@
 ## Unreleased
 
 ### New Features
+- Auto-generate gym playoff game objects (QF/Semi/Final/3rd) for Basketball, VB Men, VB Women — closes [#132](https://github.com/i12know/vaysf/issues/132)
+  - `_build_assigned_gym_game_objects()` now returns pool games AND auto-generated single-elimination playoff games sized to the estimating-team count (4-team → Semi/Final/3rd; 8-team → QF/Semi/Final/3rd), matching the existing Soccer pattern
+  - Playoff games carry standard seed/winner/loser references (`BBM-Seed-1`, `WIN-BBM-QF-1`, `LOS-BBM-Semi-2`, etc.) so they appear in `schedule_input.json` without requiring any `Playoff-Slots` entries
+  - Precedence rules are auto-wired: Pool → QF → Semi → Final / 3rd with a one-slot gap between rounds
+  - Operators who still want to pin a specific game to a court/time can continue to do so via the `Playoff-Slots` tab in `venue_input.xlsx` — those rows override the solver assignment via `merge_playoff_slot_assignments()`
+  - New shared helper `_build_single_elim_playoff()` centralizes the bracket-generation logic so future sports can reuse it
+
+
 - Added first-class 2-game / 3-game team-sport pool policies
   - Core gym team sports no longer rely on the vague legacy fallback when `Target Pool Games/Team` is set to `3`
   - `Venue-Estimator`, `Pool-Assignment`, `Court-Schedule-Sketch`, and `schedule_input.json` now all share the same explicit policy for `2` and `3`
