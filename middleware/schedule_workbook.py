@@ -5459,12 +5459,14 @@ class ScheduleWorkbookBuilder:
             if vg not in vg_to_min_rank or rank < vg_to_min_rank[vg]:
                 vg_to_min_rank[vg] = rank
 
-        # "Other" (fallback when venue_name is blank) sorts between EHS venues
-        # and any Orange/external venues by mapping its name component to
-        # "EHS~" which is lexicographically after all "EHS …" names.
+        # "Other" (fallback when venue_name is blank) sorts after all named
+        # venues regardless of its resource types, so it never splits two
+        # sport-related venue groups that should be adjacent (e.g. Tennis and
+        # Pickleball).  Named venues still sort by sport-type priority.
         def _vg_sort_key(vg: str) -> Tuple[int, str]:
-            name_key = "EHS~" if vg == "Other" else vg
-            return (vg_to_min_rank.get(vg, _UNRANKED), name_key)
+            if vg == "Other":
+                return (_UNRANKED, "Other")
+            return (vg_to_min_rank.get(vg, _UNRANKED), vg)
 
         def _label_sort_key(label: str) -> Tuple[str, int, str]:
             # Natural sort: split on the last run of digits so "Court-2" < "Court-10".
