@@ -2207,13 +2207,151 @@ class ScheduleWorkbookBuilder:
             )
 
     @classmethod
+    def _build_single_elim_playoff(
+        cls,
+        event_name: str,
+        prefix: str,
+        playoff_teams: int,
+        pool_game_ids: List[str],
+        extra_fields: Dict[str, Any],
+        include_third: bool,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Build single-elimination playoff games + precedence for a 4- or 8-team bracket.
+
+        Seed pairings (highest seed plays lowest):
+          4 teams: Semi-1 = Seed 1 vs Seed 4; Semi-2 = Seed 2 vs Seed 3
+          8 teams: QF-1=S1vS8, QF-2=S4vS5, QF-3=S2vS7, QF-4=S3vS6;
+                   Semi-1 = WIN-QF-1 vs WIN-QF-2; Semi-2 = WIN-QF-3 vs WIN-QF-4
+        Final = WIN-Semi-1 vs WIN-Semi-2; 3rd = LOS-Semi-1 vs LOS-Semi-2 (when
+        include_third).  Precedence wires Pool→QF (if any)→Semi→Final/3rd with a
+        one-slot gap between rounds.  Returns ([], []) for unsupported sizes.
+
+        ``extra_fields`` is merged into each generated game dict so callers can
+        attach sport-specific fields (resource_type, duration_minutes, solver_pool).
+        """
+        if playoff_teams not in (4, 8):
+            return [], []
+
+        games: List[Dict[str, Any]] = []
+        precedence: List[Dict[str, Any]] = []
+
+        semi_ids = [f"{prefix}-Semi-1", f"{prefix}-Semi-2"]
+
+        if playoff_teams == 8:
+            qf_ids = [f"{prefix}-QF-{i}" for i in range(1, 5)]
+            qf_seeds = [(1, 8), (4, 5), (2, 7), (3, 6)]
+            for qf_idx, (qf_id, (seed_a, seed_b)) in enumerate(
+                zip(qf_ids, qf_seeds), start=1
+            ):
+                qf_game = {
+                    "game_id": qf_id,
+                    "event": event_name,
+                    "stage": "QF",
+                    "pool_id": "",
+                    "round": qf_idx,
+                    "team_a_id": f"{prefix}-Seed-{seed_a}",
+                    "team_b_id": f"{prefix}-Seed-{seed_b}",
+                    "team_a_label": f"Seed {seed_a}",
+                    "team_b_label": f"Seed {seed_b}",
+                }
+                qf_game.update(extra_fields)
+                games.append(qf_game)
+            precedence.extend(
+                {"before_game_id": pid, "after_game_id": qid, "min_gap_slots": 1}
+                for pid in pool_game_ids for qid in qf_ids
+            )
+            precedence.extend(
+                {"before_game_id": qid, "after_game_id": sid, "min_gap_slots": 1}
+                for qid in qf_ids for sid in semi_ids
+            )
+            semi_team_pairs = [
+                (f"WIN-{qf_ids[0]}", f"WIN-{qf_ids[1]}", "Winner QF-1", "Winner QF-2"),
+                (f"WIN-{qf_ids[2]}", f"WIN-{qf_ids[3]}", "Winner QF-3", "Winner QF-4"),
+            ]
+        else:
+            semi_team_pairs = [
+                (f"{prefix}-Seed-1", f"{prefix}-Seed-4", "Seed 1", "Seed 4"),
+                (f"{prefix}-Seed-2", f"{prefix}-Seed-3", "Seed 2", "Seed 3"),
+            ]
+            precedence.extend(
+                {"before_game_id": pid, "after_game_id": sid, "min_gap_slots": 1}
+                for pid in pool_game_ids for sid in semi_ids
+            )
+
+        for semi_idx, (semi_id, (team_a, team_b, label_a, label_b)) in enumerate(
+            zip(semi_ids, semi_team_pairs), start=1
+        ):
+            semi_game = {
+                "game_id": semi_id,
+                "event": event_name,
+                "stage": "Semi",
+                "pool_id": "",
+                "round": semi_idx,
+                "team_a_id": team_a,
+                "team_b_id": team_b,
+                "team_a_label": label_a,
+                "team_b_label": label_b,
+            }
+            semi_game.update(extra_fields)
+            games.append(semi_game)
+
+        final_id = f"{prefix}-Final"
+        final_game = {
+            "game_id": final_id,
+            "event": event_name,
+            "stage": "Final",
+            "pool_id": "",
+            "round": 1,
+            "team_a_id": f"WIN-{semi_ids[0]}",
+            "team_b_id": f"WIN-{semi_ids[1]}",
+            "team_a_label": "Winner Semi 1",
+            "team_b_label": "Winner Semi 2",
+        }
+        final_game.update(extra_fields)
+        games.append(final_game)
+        precedence.extend(
+            {"before_game_id": sid, "after_game_id": final_id, "min_gap_slots": 1}
+            for sid in semi_ids
+        )
+
+        if include_third:
+            third_id = f"{prefix}-3rd"
+            third_game = {
+                "game_id": third_id,
+                "event": event_name,
+                "stage": "3rd",
+                "pool_id": "",
+                "round": 1,
+                "team_a_id": f"LOS-{semi_ids[0]}",
+                "team_b_id": f"LOS-{semi_ids[1]}",
+                "team_a_label": "Loser Semi 1",
+                "team_b_label": "Loser Semi 2",
+            }
+            third_game.update(extra_fields)
+            games.append(third_game)
+            precedence.extend(
+                {"before_game_id": sid, "after_game_id": third_id, "min_gap_slots": 1}
+                for sid in semi_ids
+            )
+
+        return games, precedence
+
+    @classmethod
     def _build_assigned_gym_game_objects(
         cls,
         roster_rows: List[Dict[str, Any]],
         pool_assignment_rows: List[Dict[str, Any]],
         allow_placeholder_fallback: bool = True,
-    ) -> List[Dict[str, Any]]:
-        """Return gym games using assigned real teams when pool assignments exist."""
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Return gym games (pool + auto-generated playoffs) plus precedence.
+
+        Pool games come from the seeded draw in ``pool_assignment_rows``.  Playoff
+        games (QF/Semi/Final/3rd) are auto-generated based on the playoff-team count
+        and wired into precedence so the solver can place them in any open slot.
+        Operators who want a specific game pinned to a court/time still do that
+        via the Playoff-Slots tab in venue_input.xlsx — those rows override the
+        auto-generated assignments via merge_playoff_slot_assignments.
+        """
         sport_defs = [
             (SPORT_TYPE["BASKETBALL"], "BBM", GYM_RESOURCE_TYPE_BASKETBALL),
             (SPORT_TYPE["VOLLEYBALL_MEN"], "VBM", GYM_RESOURCE_TYPE_VOLLEYBALL),
@@ -2221,6 +2359,7 @@ class ScheduleWorkbookBuilder:
         ]
         mpg = COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME
         games: List[Dict[str, Any]] = []
+        precedence: List[Dict[str, Any]] = []
         placeholder_map_by_event = cls._pool_assignment_placeholder_map(pool_assignment_rows)
 
         for event_name, prefix, resource_type in sport_defs:
@@ -2240,6 +2379,7 @@ class ScheduleWorkbookBuilder:
                 event_name, COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM
             )
             pool_pairs = cls._make_pool_game_pairs(prefix, n_teams, gpg)
+            sport_pool_game_ids: List[str] = []
             for pair_idx, (team_a_id, team_b_id, pool_id) in enumerate(pool_pairs, start=1):
                 team_a_meta = slot_map.get(team_a_id)
                 team_b_meta = slot_map.get(team_b_id)
@@ -2248,8 +2388,10 @@ class ScheduleWorkbookBuilder:
                         f"Pool-assignment map for event '{event_name}' is missing "
                         f"{team_a_id!r} or {team_b_id!r}; falling back to placeholders."
                     )
+                pool_game_id = f"{prefix}-{pair_idx:02d}"
+                sport_pool_game_ids.append(pool_game_id)
                 games.append({
-                    "game_id": f"{prefix}-{pair_idx:02d}",
+                    "game_id": pool_game_id,
                     "event": event_name,
                     "stage": "Pool",
                     "pool_id": pool_id,
@@ -2273,7 +2415,26 @@ class ScheduleWorkbookBuilder:
                     "latest_slot": None,
                 })
 
-        return games
+            playoff_teams = cls._get_playoff_teams_for_event(event_name, n_teams)
+            if playoff_teams >= 4:
+                playoff_games, playoff_precedence = cls._build_single_elim_playoff(
+                    event_name=event_name,
+                    prefix=prefix,
+                    playoff_teams=playoff_teams,
+                    pool_game_ids=sport_pool_game_ids,
+                    extra_fields={
+                        "duration_minutes": mpg,
+                        "resource_type": resource_type,
+                        "solver_pool": cls._GYM_CORE_SOLVER_POOL,
+                        "earliest_slot": None,
+                        "latest_slot": None,
+                    },
+                    include_third=COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME,
+                )
+                games.extend(playoff_games)
+                precedence.extend(playoff_precedence)
+
+        return games, precedence
 
     # ── Schedule-Input JSON builders ─────────────────────────────────────────
 
@@ -2854,7 +3015,7 @@ class ScheduleWorkbookBuilder:
             roster_rows,
             pool_assignment_path,
         )
-        gym_games = self._build_assigned_gym_game_objects(
+        gym_games, gym_precedence = self._build_assigned_gym_game_objects(
             roster_rows,
             pool_assignment_rows,
             allow_placeholder_fallback=(gym_resource_strategy == "fallback"),
@@ -2867,6 +3028,7 @@ class ScheduleWorkbookBuilder:
         pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
         all_games = gym_games + bc_games + soccer_games + pod_games
         team_conflicts = self._build_gym_team_conflicts(roster_rows, pool_assignment_rows)
+        precedence.extend(gym_precedence)
         precedence.extend(soccer_precedence)
 
         gym_allocation: Optional[Dict[str, Any]] = None

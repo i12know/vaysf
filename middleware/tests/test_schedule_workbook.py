@@ -2187,16 +2187,94 @@ def test_build_assigned_gym_game_objects_fallback_counts_team_order_units():
                     }
                 )
 
-    games = ScheduleWorkbookBuilder._build_assigned_gym_game_objects(
+    games, _precedence = ScheduleWorkbookBuilder._build_assigned_gym_game_objects(
         roster_rows,
         [],
         allow_placeholder_fallback=False,
     )
 
-    basketball_games = [
-        game for game in games if game["event"] == SPORT_TYPE["BASKETBALL"]
+    basketball_pool_games = [
+        game for game in games
+        if game["event"] == SPORT_TYPE["BASKETBALL"] and game.get("stage") == "Pool"
     ]
-    assert len(basketball_games) == 6
+    assert len(basketball_pool_games) == 6
+
+
+def test_build_assigned_gym_game_objects_auto_generates_playoffs_for_8_teams():
+    """8-team fallback should auto-generate QF/Semi/Final/3rd plus precedence."""
+    roster_rows = []
+    for church_code in ("RPC", "OCB", "ANH", "GLA", "TLC", "FVC", "PHX", "WAG"):
+        for participant_id in range(5):
+            roster_rows.append({
+                "Church Team": church_code,
+                "team_order": "A",
+                "sport_type": SPORT_TYPE["BASKETBALL"],
+                "sport_gender": "Men",
+                "sport_format": "Team",
+                "Participant ID (WP)": f"{church_code}-A-{participant_id}",
+            })
+
+    games, precedence = ScheduleWorkbookBuilder._build_assigned_gym_game_objects(
+        roster_rows,
+        [],
+        allow_placeholder_fallback=False,
+    )
+
+    bbm_games = [g for g in games if g["event"] == SPORT_TYPE["BASKETBALL"]]
+    stages = {g["game_id"]: g.get("stage") for g in bbm_games}
+
+    qf_ids = {gid for gid, st in stages.items() if st == "QF"}
+    semi_ids = {gid for gid, st in stages.items() if st == "Semi"}
+    final_ids = {gid for gid, st in stages.items() if st == "Final"}
+    third_ids = {gid for gid, st in stages.items() if st == "3rd"}
+
+    assert qf_ids == {"BBM-QF-1", "BBM-QF-2", "BBM-QF-3", "BBM-QF-4"}
+    assert semi_ids == {"BBM-Semi-1", "BBM-Semi-2"}
+    assert final_ids == {"BBM-Final"}
+    assert third_ids == {"BBM-3rd"}
+
+    # Final pulls winners of semis
+    final_game = next(g for g in bbm_games if g["game_id"] == "BBM-Final")
+    assert final_game["team_a_id"] == "WIN-BBM-Semi-1"
+    assert final_game["team_b_id"] == "WIN-BBM-Semi-2"
+
+    # Precedence covers Pool→QF, QF→Semi, Semi→Final, Semi→3rd
+    bbm_prec = {
+        (str(r["before_game_id"]), str(r["after_game_id"]))
+        for r in precedence
+        if str(r.get("before_game_id") or "").startswith("BBM-")
+    }
+    pool_ids = {gid for gid, st in stages.items() if st == "Pool"}
+    assert all((p, q) in bbm_prec for p in pool_ids for q in qf_ids)
+    assert all((q, s) in bbm_prec for q in qf_ids for s in semi_ids)
+    assert all((s, "BBM-Final") in bbm_prec for s in semi_ids)
+    assert all((s, "BBM-3rd") in bbm_prec for s in semi_ids)
+
+
+def test_build_assigned_gym_game_objects_4_team_bracket_skips_qf():
+    """4-team bracket should generate Semi/Final/3rd directly, no QFs."""
+    roster_rows = []
+    for church_code in ("RPC", "OCB", "ANH", "GLA"):
+        for participant_id in range(12):
+            roster_rows.append({
+                "Church Team": church_code,
+                "team_order": "A",
+                "sport_type": SPORT_TYPE["VOLLEYBALL_MEN"],
+                "sport_gender": "Men",
+                "sport_format": "Team",
+                "Participant ID (WP)": f"{church_code}-A-{participant_id}",
+            })
+
+    games, _precedence = ScheduleWorkbookBuilder._build_assigned_gym_game_objects(
+        roster_rows,
+        [],
+        allow_placeholder_fallback=False,
+    )
+
+    vbm_stages = {g["game_id"]: g.get("stage") for g in games if g["event"] == SPORT_TYPE["VOLLEYBALL_MEN"]}
+    assert not any(st == "QF" for st in vbm_stages.values())
+    assert {gid for gid, st in vbm_stages.items() if st == "Semi"} == {"VBM-Semi-1", "VBM-Semi-2"}
+    assert {gid for gid, st in vbm_stages.items() if st == "Final"} == {"VBM-Final"}
 
 
 def test_classmethod_schedule_helpers_do_not_instantiate_exporter_subclass():
@@ -3107,6 +3185,8 @@ def test_bc_schedule_input_adds_playoff_precedence(tmp_path):
     precedence_pairs = {
         (str(rule["before_game_id"]), str(rule["after_game_id"]))
         for rule in si["precedence"]
+        if str(rule.get("before_game_id") or "").startswith("BC-")
+           or str(rule.get("after_game_id") or "").startswith("BC-")
     }
     expected_pairs = {
         (pool_game_id, semi_id)
