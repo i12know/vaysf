@@ -70,7 +70,8 @@ _WEEKDAY_ORDER: dict[str, int] = {
     "Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3,
     "Fri": 4, "Sat": 5, "Sun": 6, "Day": 7,
 }
-_DEFAULT_TIMEOUT = float(os.getenv("SCHEDULE_SOLVER_TIMEOUT", "30.0"))
+_DEFAULT_TIMEOUT = float(os.getenv("SCHEDULE_SOLVER_TIMEOUT", "90.0"))
+_NUM_SEARCH_WORKERS = int(os.getenv("SCHEDULE_SOLVER_WORKERS", "4"))
 _OUTPUT_FILENAME = "schedule_output.json"
 
 STATUS_OPTIMAL    = "OPTIMAL"
@@ -1060,6 +1061,7 @@ def _solve_one_pool(
     # Solve
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = timeout_seconds
+    solver.parameters.num_search_workers = _NUM_SEARCH_WORKERS
     if SCHEDULE_SOLVER_RANDOM_SEED:
         solver.parameters.random_seed = SCHEDULE_SOLVER_RANDOM_SEED
     status_code = solver.Solve(model)
@@ -1564,7 +1566,7 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         return 1
 
     if result["status"] == STATUS_UNKNOWN:
-        timeout_used = os.getenv("SCHEDULE_SOLVER_TIMEOUT", "30")
+        timeout_used = os.getenv("SCHEDULE_SOLVER_TIMEOUT", "90")
         logger.warning(
             f"Solver timed out after {timeout_used}s without finding a solution. "
             "This is not proven infeasible — increase SCHEDULE_SOLVER_TIMEOUT and re-run. "
