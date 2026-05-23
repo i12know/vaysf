@@ -3056,6 +3056,26 @@ def test_bc_no_repeat_triplets_nine_teams():
     assert appearances == {chr(65 + i): 3 for i in range(9)}
 
 
+def test_bc_no_repeat_triplets_seeded_teams_never_share_game():
+    """Seeded teams must never appear in the same triplet; they should only
+    meet in playoffs.  Verified with 9 teams where A, B, C are seeded."""
+    rows = []
+    for i in range(9):
+        team_id = chr(65 + i)
+        seed = str(i + 1) if i < 3 else ""  # A=seed1, B=seed2, C=seed3
+        rows.append({"Pool ID": "P1", "Pool Slot": f"T{i+1}", "Team ID": team_id, "Seed": seed})
+
+    triplets = ScheduleWorkbookBuilder._bc_no_repeat_triplets(rows)
+    assert len(triplets) == 9
+
+    seeded_ids = {"A", "B", "C"}
+    for trio in triplets:
+        ids = {r["Team ID"] for r in trio}
+        seeded_in_game = ids & seeded_ids
+        assert len(seeded_in_game) <= 1, \
+            f"Two seeded teams appear in the same game: {ids}"
+
+
 def test_bc_schedule_input_adds_playoff_precedence(tmp_path):
     """Nine BC teams should keep all BC prelims ahead of semis, then semis ahead of the final."""
     builder = ScheduleWorkbookBuilder()

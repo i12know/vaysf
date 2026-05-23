@@ -1768,6 +1768,10 @@ class ScheduleWorkbookBuilder:
         No pair of teams is in more than one triplet (the "no same opponent twice"
         rule the user expects from traditional BC Jeopardy format).
 
+        Seeded teams (rows with a non-empty Seed value) are never placed in the
+        same triplet as another seeded team, preserving the convention that top
+        seeds meet each other only in the playoffs.
+
         Uses backtracking with a most-constrained-first pivot.  For n ≥ 7 with
         3 games/team a valid schedule always exists; for smaller n the constraint
         cannot be satisfied and the method returns [] with a warning.
@@ -1786,6 +1790,13 @@ class ScheduleWorkbookBuilder:
             return []
         n_games = (n * gpt) // COURT_ESTIMATE_BC_TEAMS_PER_GAME
 
+        # Track which indices correspond to seeded teams so the validity check
+        # can reject any triplet that pairs two seeded teams together.
+        seeded: set = {
+            i for i, r in enumerate(ordered)
+            if str(r.get("Seed") or "").strip() not in ("", "0")
+        }
+
         from itertools import combinations as _combinations
         all_triples: List[Tuple[int, int, int]] = list(_combinations(range(n), 3))
 
@@ -1797,8 +1808,11 @@ class ScheduleWorkbookBuilder:
             return (a, b) if a < b else (b, a)
 
         def _valid(a: int, b: int, c: int) -> bool:
+            # Seeded teams must not share a triplet with another seeded team.
+            seed_count = (a in seeded) + (b in seeded) + (c in seeded)
             return (
-                count[a] < gpt and count[b] < gpt and count[c] < gpt
+                seed_count <= 1
+                and count[a] < gpt and count[b] < gpt and count[c] < gpt
                 and _pair(a, b) not in used_pairs
                 and _pair(b, c) not in used_pairs
                 and _pair(a, c) not in used_pairs
