@@ -53,6 +53,14 @@
 ## Unreleased
 
 ### New Features
+- Auto-generate gym playoff game objects (QF/Semi/Final/3rd) for Basketball, VB Men, VB Women — closes [#132](https://github.com/i12know/vaysf/issues/132)
+  - `_build_assigned_gym_game_objects()` now returns pool games AND auto-generated single-elimination playoff games sized to the estimating-team count (4-team → Semi/Final/3rd; 8-team → QF/Semi/Final/3rd), matching the existing Soccer pattern
+  - Playoff games carry standard seed/winner/loser references (`BBM-Seed-1`, `WIN-BBM-QF-1`, `LOS-BBM-Semi-2`, etc.) so they appear in `schedule_input.json` without requiring any `Playoff-Slots` entries
+  - Precedence rules are auto-wired: Pool → QF → Semi → Final / 3rd with a one-slot gap between rounds
+  - Operators who still want to pin a specific game to a court/time can continue to do so via the `Playoff-Slots` tab in `venue_input.xlsx` — those rows override the solver assignment via `merge_playoff_slot_assignments()`
+  - New shared helper `_build_single_elim_playoff()` centralizes the bracket-generation logic so future sports can reuse it
+
+
 - Added first-class 2-game / 3-game team-sport pool policies
   - Core gym team sports no longer rely on the vague legacy fallback when `Target Pool Games/Team` is set to `3`
   - `Venue-Estimator`, `Pool-Assignment`, `Court-Schedule-Sketch`, and `schedule_input.json` now all share the same explicit policy for `2` and `3`

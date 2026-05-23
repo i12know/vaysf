@@ -3649,6 +3649,7 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_bc_no_repeat_triplets",
     "_build_assigned_bc_game_objects",
     "_build_assigned_soccer_game_objects",
+    "_build_single_elim_playoff",
     "_build_gym_game_objects",
     "_build_assigned_gym_game_objects",
     "_build_gym_team_conflicts",
