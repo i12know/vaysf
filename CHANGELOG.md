@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## Unreleased
+
+### Solver improvements — day spread + cross-pool conflict elimination
+
+- **Six-tier lexicographic objective** (scheduler.py) — upgraded from five tiers
+  - New **Tier 3 — Max-per-day spread**: when cross-pool avoidance is active, minimize the maximum number of games on any single day, distributing pool-play games evenly across both weekends instead of packing everything into the first Saturday/Sunday
+  - **Tier 5 — VB gender switches** promoted above **Tier 6 — sum of slot indices**: net-height changes between Men's VB and Women's VB now outrank the pack-early preference, reducing the "VBW game right after VBM on the same court" placement that previously occurred
+  - Sum-of-slot-indices demoted to Tier 6 (tiebreaker only)
+  - Updated weight construction in `scheduler.py` and objective table in `docs/SCHEDULING.md`
+
+- **C3x — cross-pool conflict constraint** (scheduler.py): pools are now solved in priority order (BC Station → Soccer Field → Tennis/Badminton/Pickleball/Table Tennis → Gym Core). After each pool is solved, team slot occupancies are collected. Cross-sport conflict edges in `team_conflicts` are used to identify gym-sport partner teams; those teams are forbidden from being assigned to any slot already claimed by their BC/Soccer counterpart in the same time window. This hard constraint eliminates the cross-sport pink rows (BBM/VBM/VBW vs BC, BBM/VBM/VBW vs Soccer) that the within-pool penalty alone could not fix. `max_games_per_day` is reported per pool in solver logs.
+
 ## Version 1.11 (2026-05-23)
 
 ### New Features
