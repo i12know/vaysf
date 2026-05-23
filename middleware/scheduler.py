@@ -71,7 +71,7 @@ _WEEKDAY_ORDER: dict[str, int] = {
     "Fri": 4, "Sat": 5, "Sun": 6, "Day": 7,
 }
 _DEFAULT_TIMEOUT = float(os.getenv("SCHEDULE_SOLVER_TIMEOUT", "90.0"))
-_NUM_SEARCH_WORKERS = int(os.getenv("SCHEDULE_SOLVER_WORKERS", "4"))
+_NUM_SEARCH_WORKERS = int(os.getenv("SCHEDULE_SOLVER_WORKERS", "0"))  # 0 = CP-SAT auto
 _OUTPUT_FILENAME = "schedule_output.json"
 
 STATUS_OPTIMAL    = "OPTIMAL"
@@ -1061,7 +1061,8 @@ def _solve_one_pool(
     # Solve
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = timeout_seconds
-    solver.parameters.num_search_workers = _NUM_SEARCH_WORKERS
+    if _NUM_SEARCH_WORKERS > 0:
+        solver.parameters.num_search_workers = _NUM_SEARCH_WORKERS
     if SCHEDULE_SOLVER_RANDOM_SEED:
         solver.parameters.random_seed = SCHEDULE_SOLVER_RANDOM_SEED
     status_code = solver.Solve(model)

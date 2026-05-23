@@ -1768,6 +1768,110 @@ def test_build_schedule_input_playoff_pinned_resource_rejects_implausible_ordina
     assert not any(r["resource_id"] == "GYM-Sun-2-99" for r in si["resources"])
 
 
+def test_build_schedule_input_qf_games_get_latest_slot_day_before_finals(tmp_path):
+    """BBM-QF-* games should receive a latest_slot pinning them to the day
+    before the pinned Final.  When BBM-Final is at Sun-2-14:00 and Sat-2 has
+    BB capacity with Last Start Time = 17 (→ close_time 18:00, 60-min slots),
+    each QF game's latest_slot must be 'Sat-2-17:00' (the last valid start)."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL
+    from openpyxl import Workbook
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    # All BB rows so the allocator has only one mode to consider — the
+    # spreading-pass round-robin between modes is not what's under test here.
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-1",
+         "2026-07-19", 8, 17, 60, None, "Main Gym", None, None, None],
+        # Sat-2 BB capacity for QFs — Last Start Time=17 → close 18:00, last start 17:00.
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sat-2",
+         "2026-07-25", 8, 17, 60, None, "Main Gym", None, None, None],
+        # Sun-2 marker so day_order includes the Finals day.
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sun-2",
+         "2026-07-26", 13, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 2, 0],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "resource_id", "slot"],
+        ["BBM-Final", "Basketball - Men Team", "Final", "GYM-Sun-2-1", "Sun-2-14:00"],
+    ]
+
+    path = tmp_path / "venue_input.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    for r, row in enumerate(rows, start=2):
+        for c, val in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=val)
+    gm = wb.create_sheet("Gym-Modes")
+    for r, row in enumerate(gym_modes, start=1):
+        for c, val in enumerate(row, start=1):
+            gm.cell(row=r, column=c, value=val)
+    ps = wb.create_sheet("Playoff-Slots")
+    for r, row in enumerate(playoff_rows, start=1):
+        for c, val in enumerate(row, start=1):
+            ps.cell(row=r, column=c, value=val)
+    wb.save(path)
+
+    builder = ScheduleWorkbookBuilder()
+    # 16 churches → enough BB demand to fill Sat-1 + Sun-1 in the demand pass.
+    si = builder._build_schedule_input(_make_gym_roster(n_churches=8), [], path)
+
+    qf_games = [g for g in si["games"] if g["stage"] == "QF" and g["event"] == "Basketball - Men Team"]
+    assert qf_games, "Expected at least one BBM-QF-* game in schedule input"
+    for qf in qf_games:
+        assert qf["latest_slot"] == "Sat-2-17:00", (
+            f"BBM QF game {qf['game_id']} expected latest_slot 'Sat-2-17:00', "
+            f"got {qf['latest_slot']!r}"
+        )
+
+    # Semi/Final games must NOT carry latest_slot (only QFs are constrained).
+    semi_final = [g for g in si["games"]
+                  if g["stage"] in ("Semi", "Final", "3rd")
+                  and g["event"] == "Basketball - Men Team"]
+    for g in semi_final:
+        assert g["latest_slot"] is None, (
+            f"{g['game_id']} (stage={g['stage']}) should not have latest_slot set"
+        )
+
+
+def test_last_slot_label_on_day_helper():
+    """The helper should return the last valid slot start time (close_time - slot_min)."""
+    resources = [
+        {"resource_type": "Basketball Court", "day": "Sat-2",
+         "close_time": "17:00", "slot_minutes": 60},
+        {"resource_type": "Basketball Court", "day": "Sat-2",
+         "close_time": "16:30", "slot_minutes": 30},  # earlier close
+        {"resource_type": "Volleyball Court", "day": "Sat-2",
+         "close_time": "21:00", "slot_minutes": 60},  # different type
+        {"resource_type": "Basketball Court", "day": "Sun-2",
+         "close_time": "18:00", "slot_minutes": 60},  # different day
+    ]
+    # Last BB start on Sat-2 = max(17:00-60, 16:30-30) = max(16:00, 16:00) = 16:00
+    label = ScheduleWorkbookBuilder._last_slot_label_on_day(
+        resources, "Basketball Court", "Sat-2"
+    )
+    assert label == "Sat-2-16:00"
+
+    # No matches → None
+    assert ScheduleWorkbookBuilder._last_slot_label_on_day(
+        resources, "Tennis Court", "Sat-2"
+    ) is None
+    assert ScheduleWorkbookBuilder._last_slot_label_on_day(
+        resources, "Basketball Court", "Fri-1"
+    ) is None
+
+
 def test_build_pod_game_objects_single_elimination():
     """With 3 entries in a division, 2 game placeholders are generated."""
     from config import POD_RESOURCE_EVENT_TYPE
