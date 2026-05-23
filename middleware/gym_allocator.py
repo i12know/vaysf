@@ -49,9 +49,9 @@ from config import SPORT_TYPE
 # ---------------------------------------------------------------------------
 
 # Maps every event name that may appear in venue_capacity_rows["Event"] to the
-# Gym-Modes resource_type that serves it. Events not listed here (Table Tennis,
-# Tennis, Bible Challenge, Soccer, Track & Field, etc.) are not subject to
-# gym-mode allocation in the current pipeline.
+# Gym-Modes resource_type that serves it. Events not listed here (Bible
+# Challenge, Soccer, Track & Field, etc.) are not subject to gym-mode
+# allocation in the current pipeline.
 EVENT_TO_MODE: Dict[str, str] = {
     SPORT_TYPE["BASKETBALL"]:       "Basketball Court",
     SPORT_TYPE["VOLLEYBALL_MEN"]:   "Volleyball Court",
@@ -59,6 +59,9 @@ EVENT_TO_MODE: Dict[str, str] = {
     SPORT_TYPE["BADMINTON"]:        "Badminton Court",
     SPORT_TYPE["PICKLEBALL"]:       "Pickleball Court",
     SPORT_TYPE["PICKLEBALL_35"]:    "Pickleball Court",
+    SPORT_TYPE["TENNIS"]:           "Tennis Court",
+    SPORT_TYPE["TABLE_TENNIS"]:     "Table Tennis Table",
+    SPORT_TYPE["TABLE_TENNIS_35"]:  "Table Tennis Table",
 }
 
 def _day_sort_key(day_label: str) -> tuple[int, int, str]:

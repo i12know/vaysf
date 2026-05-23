@@ -389,6 +389,17 @@ Resources section rather than guessing.
 
 Logical day keys are weekday-based (`Fri-1`, `Sat-1`, `Sun-1`, `Sat-2`, ...).
 
+Merge behavior at solve time:
+
+- if a `Playoff-Slots` row names a `game_id` that already exists in
+  `schedule_input.json["games"]`, the pinned row replaces the modeled
+  assignment for that game in the final output
+- if a `Playoff-Slots` row names a `game_id` that is not in `games`, it is
+  carried through as a manual playoff-only assignment
+
+This lets coordinators pin modeled finals such as `BC-Final` or `VBM-Final`
+to exact courts/times without editing the generated game list first.
+
 To specify the exact finale order (e.g. VB Women → VB Men → Basketball back-to-back),
 simply put those games in that row order with consecutive `slot` values.  No solver
 constraints are needed — the timetable is the authority.
@@ -593,10 +604,35 @@ games.
 
 Configurable timeout via `SCHEDULE_SOLVER_TIMEOUT` env var (default: 30 s).
 
-The primary solver objective is still "finish as early as possible." For
-`Volleyball Court` pools, the solver now adds a secondary tie-breaker that
-prefers same-court Men's/Women's volleyball blocks when multiple equally-early
-solutions exist, reducing net-height adjustments for coordinators.
+#### Solver objectives (five-tier lexicographic)
+
+The solver minimizes a single combined integer that encodes five goals in strict
+priority order.  Because each tier's weight exceeds the maximum possible total of
+all lower tiers combined, improving a higher-tier goal is **always** worth more
+than any improvement at lower tiers — the hierarchy is enforced by arithmetic,
+not policy.
+
+| Tier | Goal | What it means in practice |
+|------|------|--------------------------|
+| 1 | **Primary conflict penalty** | Two teams share an athlete whose *primary* sport is one of the two events. Example: a player whose primary sport is Basketball also registers for Bible Challenge — a BB vs BC same-slot collision is a primary conflict. The solver treats this as a near-hard constraint and will sacrifice any Tier 2–5 improvement to eliminate it. |
+| 2 | **Secondary conflict penalty** | Same shared-athlete collision, but the athlete's primary sport is a *third* event. Example: a Soccer-primary player who also plays Basketball and Bible Challenge. A BB vs BC clash is now a secondary conflict — still penalised, but slightly below Tier 1. |
+| 3 | **Latest slot index** (makespan) | After conflicts are settled, minimize the index of the *last occupied slot* across all games. This shrinks the right edge of the schedule: if all games fit in slots 0–20, the solver will not stretch to slot 30 even when those slots are available. |
+| 4 | **Sum of slot indices** (packing) | Even after Tier 3 fixes the horizon, games could scatter anywhere within that window at no extra cost. Tier 4 minimizes `sum(slot_index for each game)`, so a game in slot 2 contributes 2 and a game in slot 8 contributes 8. The solver now actively prefers filling slot 3 before slot 7, which keeps each sport concentrated on its designated day rather than drifting across the weekend. |
+| 5 | **Volleyball court switches** | On a court that alternates between Men's VB and Women's VB, each gender flip requires a net-height change and disrupts spectators. The solver counts back-to-back gender changes per court and minimizes that total — but only after all four higher-tier goals are already optimal. |
+
+Weight construction (from `scheduler.py`):
+
+```python
+vb_weight        = 1
+sum_slots_weight = vb_switch_max + 1                                   # beats any VB saving
+latest_weight    = sum_slots_max * sum_slots_weight + vb_switch_max + 1  # beats Tiers 4+5
+secondary_weight = latest_max * latest_weight + …                        # beats Tiers 3–5
+primary_weight   = secondary_penalty_max * secondary_weight + …          # beats Tiers 2–5
+```
+
+Day ordering for global slot indices follows weekday-then-cycle chronology
+(Fri-1 < Sat-1 < Sun-1 < Fri-2 < …), so the Tier 3/4 packing naturally
+prefers earlier dates in the weekend without any extra constraint.
 
 **Pool decomposition:** games are partitioned by `resource_type` and solved in
 independent CP-SAT models. A capacity shortage in one pool (e.g. Badminton Court)
@@ -720,6 +756,18 @@ they are pure planning artifacts built from the roster data and
 `schedule_input.json`.  When no `venue_input.xlsx` is supplied, the
 `Pod-Resource-Estimate` tab derives court availability directly from the
 `schedule_input.json` `resources` so an offline build stays self-consistent.
+
+`Venue-Estimator` has two intentionally different demand columns:
+
+- **`Estimating Teams/Entries`** â€” the operational count used for the current
+  schedule build
+- **`Potential Teams/Entries`** â€” a ceiling / contingency signal
+
+For racquet sports, `Potential Teams/Entries` is rule-aware: it is calculated
+from current registrations, includes incomplete doubles pairing where that
+still affects possible entries, and caps the result using the active 2026
+church entry limits. It is useful for court-capacity planning, but it is not
+the default number of racquet entries the current run will schedule.
 
 The `Pool-Assignment` tab is the editable Layer-1 seeding workspace for the
 current Phase 1 team sports (`BB`, `VBM`, `VBW`, `BC`, and `SOC` when

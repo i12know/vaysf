@@ -64,6 +64,15 @@ from config import (
 )
 from validation.name_matcher import normalized_name as _norm_name
 from validation.models import RulesManager
+from schedule_styles import (
+    SPORT_STYLES,
+    CATEGORY_STYLES,
+    sport_style,
+    category_style,
+    style_for_game,
+    category_prefix,
+    format_compact_label,
+)
 
 
 class ScheduleWorkbookBuilder:
@@ -1749,49 +1758,117 @@ class ScheduleWorkbookBuilder:
         return 0
 
     @classmethod
-    def _bc_pool_triplets(
+    def _bc_no_repeat_triplets(
         cls,
-        pool_rows: List[Dict[str, Any]],
+        all_rows: List[Dict[str, Any]],
     ) -> List[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]]:
-        """Return deterministic 3-team BC Jeopardy rounds for one assigned pool."""
-        ordered_rows = sorted(
-            pool_rows,
-            key=lambda row: (
-                cls._pool_numeric_suffix(str(row.get("Pool Slot") or ""), "T"),
-                str(row.get("Team ID") or ""),
+        """Generate BC round-robin triplets across all teams in one global pool.
+
+        Each team appears in exactly COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM triplets.
+        No pair of teams is in more than one triplet (the "no same opponent twice"
+        rule the user expects from traditional BC Jeopardy format).
+
+        Seeded teams (rows with a non-empty Seed value) are never placed in the
+        same triplet as another seeded team, preserving the convention that top
+        seeds meet each other only in the playoffs.
+
+        Uses backtracking with a most-constrained-first pivot.  For n ≥ 7 with
+        3 games/team a valid schedule always exists; for smaller n the constraint
+        cannot be satisfied and the method returns [] with a warning.
+        """
+        ordered = sorted(
+            all_rows,
+            key=lambda r: (
+                cls._pool_numeric_suffix(str(r.get("Pool ID") or ""), "P"),
+                cls._pool_numeric_suffix(str(r.get("Pool Slot") or ""), "T"),
+                str(r.get("Team ID") or ""),
             ),
         )
-        n_teams = len(ordered_rows)
-        if n_teams < COURT_ESTIMATE_BC_TEAMS_PER_GAME:
+        n = len(ordered)
+        gpt = COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM
+        if n < COURT_ESTIMATE_BC_TEAMS_PER_GAME:
             return []
-        if n_teams == 3:
-            trio = tuple(ordered_rows[:3])
-            return [trio, trio]
-        if n_teams == 4:
-            t1, t2, t3, t4 = ordered_rows
-            return [
-                (t1, t2, t4),
-                (t1, t3, t4),
-                (t2, t3, t4),
-            ]
-        if n_teams == 5:
-            t1, t2, t3, t4, t5 = ordered_rows
-            return [
-                (t1, t2, t4),
-                (t1, t3, t5),
-                (t2, t4, t5),
-                (t3, t4, t5),
-            ]
-        raise ValueError(
-            f"Unexpected BC pool size {n_teams}; expected 3, 4, or 5 teams."
-        )
+        n_games = (n * gpt) // COURT_ESTIMATE_BC_TEAMS_PER_GAME
+
+        # Track which indices correspond to seeded teams so the validity check
+        # can reject any triplet that pairs two seeded teams together.
+        seeded: set = {
+            i for i, r in enumerate(ordered)
+            if str(r.get("Seed") or "").strip() not in ("", "0")
+        }
+
+        from itertools import combinations as _combinations
+        all_triples: List[Tuple[int, int, int]] = list(_combinations(range(n), 3))
+
+        used_pairs: set = set()
+        count = [0] * n
+        chosen: List[Tuple[int, int, int]] = []
+
+        def _pair(a: int, b: int) -> Tuple[int, int]:
+            return (a, b) if a < b else (b, a)
+
+        def _valid(a: int, b: int, c: int) -> bool:
+            # Seeded teams must not share a triplet with another seeded team.
+            seed_count = (a in seeded) + (b in seeded) + (c in seeded)
+            return (
+                seed_count <= 1
+                and count[a] < gpt and count[b] < gpt and count[c] < gpt
+                and _pair(a, b) not in used_pairs
+                and _pair(b, c) not in used_pairs
+                and _pair(a, c) not in used_pairs
+            )
+
+        def _apply(a: int, b: int, c: int) -> None:
+            count[a] += 1; count[b] += 1; count[c] += 1
+            used_pairs.add(_pair(a, b))
+            used_pairs.add(_pair(b, c))
+            used_pairs.add(_pair(a, c))
+            chosen.append((a, b, c))
+
+        def _undo(a: int, b: int, c: int) -> None:
+            count[a] -= 1; count[b] -= 1; count[c] -= 1
+            used_pairs.discard(_pair(a, b))
+            used_pairs.discard(_pair(b, c))
+            used_pairs.discard(_pair(a, c))
+            chosen.pop()
+
+        def _solve() -> bool:
+            if len(chosen) == n_games:
+                return True
+            incomplete = [i for i in range(n) if count[i] < gpt]
+            pivot = min(incomplete, key=lambda i: count[i])
+            for a, b, c in all_triples:
+                if pivot not in (a, b, c):
+                    continue
+                if _valid(a, b, c):
+                    _apply(a, b, c)
+                    if _solve():
+                        return True
+                    _undo(a, b, c)
+            return False
+
+        if not _solve():
+            logger.warning(
+                "BC: no-repeat triplet schedule is not possible for %d teams "
+                "with %d games/team (need n ≥ 7 for 3 games/team). "
+                "BC pool games will be omitted.",
+                n, gpt,
+            )
+            return []
+
+        return [tuple(ordered[i] for i in t) for t in chosen]  # type: ignore[return-value]
 
     @classmethod
     def _build_assigned_bc_game_objects(
         cls,
         pool_assignment_rows: List[Dict[str, Any]],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Return BC queue games and precedence using the assigned BC pool draw."""
+        """Return BC queue games and precedence using the assigned BC pool draw.
+
+        All BC teams are treated as a single global pool.  Triplets are generated
+        by _bc_no_repeat_triplets so no pair of teams meets more than once before
+        the playoffs — equivalent to last year's manually-scheduled 16-team format.
+        """
         event_name = SPORT_TYPE["BIBLE_CHALLENGE"]
         prefix = cls._pool_assignment_event_prefix(event_name)
         bc_rows = [
@@ -1804,44 +1881,38 @@ class ScheduleWorkbookBuilder:
         if len(bc_rows) < COURT_ESTIMATE_BC_TEAMS_PER_GAME:
             return [], []
 
-        rows_by_pool: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        for row in bc_rows:
-            rows_by_pool[str(row.get("Pool ID") or "").strip()].append(row)
+        triplets = cls._bc_no_repeat_triplets(bc_rows)
+        if not triplets:
+            return [], []
 
         games: List[Dict[str, Any]] = []
         precedence: List[Dict[str, Any]] = []
-        global_round = 0
-        for pool_id in sorted(
-            rows_by_pool.keys(),
-            key=lambda value: cls._pool_numeric_suffix(value, "P"),
-        ):
-            for local_round, trio in enumerate(cls._bc_pool_triplets(rows_by_pool[pool_id]), start=1):
-                global_round += 1
-                solver_team_ids = [
-                    cls._solver_team_id(event_name, str(row.get("Team ID") or "").strip())
-                    for row in trio
-                ]
-                labels = [
-                    str(row.get("Team Label") or row.get("Team ID") or "").strip()
-                    for row in trio
-                ]
-                games.append({
-                    "game_id": f"{prefix}-{pool_id}-RR-{local_round}",
-                    "event": event_name,
-                    "stage": "Pool",
-                    "pool_id": pool_id,
-                    "round": global_round,
-                    "team_a_id": solver_team_ids[0],
-                    "team_b_id": solver_team_ids[1],
-                    "team_c_id": solver_team_ids[2],
-                    "team_a_label": labels[0],
-                    "team_b_label": labels[1],
-                    "team_c_label": labels[2],
-                    "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
-                    "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
-                    "earliest_slot": None,
-                    "latest_slot": None,
-                })
+        for game_num, trio in enumerate(triplets, start=1):
+            solver_team_ids = [
+                cls._solver_team_id(event_name, str(row.get("Team ID") or "").strip())
+                for row in trio
+            ]
+            labels = [
+                str(row.get("Team Label") or row.get("Team ID") or "").strip()
+                for row in trio
+            ]
+            games.append({
+                "game_id": f"{prefix}-RR-{game_num}",
+                "event": event_name,
+                "stage": "Pool",
+                "pool_id": "",
+                "round": game_num,
+                "team_a_id": solver_team_ids[0],
+                "team_b_id": solver_team_ids[1],
+                "team_c_id": solver_team_ids[2],
+                "team_a_label": labels[0],
+                "team_b_label": labels[1],
+                "team_c_label": labels[2],
+                "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+                "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                "earliest_slot": None,
+                "latest_slot": None,
+            })
 
         if len(bc_rows) >= COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF:
             pool_game_ids = [
@@ -2515,21 +2586,25 @@ class ScheduleWorkbookBuilder:
         return labels
 
     @classmethod
-    def _load_venue_input_rows(cls, venue_input_path: Path) -> List[Dict[str, Any]]:
+    def _load_venue_input_rows(cls, venue_input_path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
         """Expand venue_input.xlsx into per-resource objects for schedule_input.json.
 
         Each row with Quantity=N emits N resource objects labelled Court-1…N or
-        Table-1…N.  Returns an empty list if the file does not exist.
+        Table-1…N.
+
+        Returns (rows, day_order) where day_order is a list of unique day labels
+        in actual calendar date order (e.g. ['Sat-1', 'Sun-1', 'Fri-1', 'Sat-2',
+        'Sun-2']).  Both are empty when the file does not exist.
         """
         if not venue_input_path.exists():
-            return []
+            return [], []
         try:
             df = pd.read_excel(
                 venue_input_path, sheet_name="Venue-Input", engine="openpyxl"
             )
         except Exception as e:
             logger.warning(f"Could not read venue input rows from {venue_input_path}: {e}")
-            return []
+            return [], []
 
         rows: List[Dict[str, Any]] = []
         # Counter keyed by (resource_type, day) for day-aware resource IDs.
@@ -2595,7 +2670,11 @@ class ScheduleWorkbookBuilder:
             resource_counts[count_key] = rc
 
         logger.debug(f"Loaded {len(rows)} venue resource rows from {venue_input_path}")
-        return rows
+        # day_order preserves the insertion order from _derive_day_labels_from_dates,
+        # which sorts unique dates chronologically before assigning labels — so this
+        # list is in actual calendar order (e.g. Sat-1, Sun-1, Fri-1, Sat-2, Sun-2).
+        day_order: List[str] = list(dict.fromkeys(date_day_map.values()))
+        return rows, day_order
 
     @staticmethod
     def _load_playoff_slots(venue_input_path: Path) -> List[Dict[str, Any]]:
@@ -2673,11 +2752,13 @@ class ScheduleWorkbookBuilder:
         """
         # Maps a Gym-Modes column header to the resource_type it represents.
         mode_column_map = {
-            "Basketball Courts": "Basketball Court",
-            "Volleyball Courts": "Volleyball Court",
-            "Badminton Courts":  "Badminton Court",
-            "Pickleball Courts": "Pickleball Court",
-            "Soccer Fields":     "Soccer Field",
+            "Basketball Courts":   "Basketball Court",
+            "Volleyball Courts":   "Volleyball Court",
+            "Badminton Courts":    "Badminton Court",
+            "Pickleball Courts":   "Pickleball Court",
+            "Tennis Courts":       "Tennis Court",
+            "Table Tennis Tables": "Table Tennis Table",
+            "Soccer Fields":       "Soccer Field",
         }
         if not venue_input_path.exists():
             return {}
@@ -2750,7 +2831,7 @@ class ScheduleWorkbookBuilder:
             aggregate_demand_by_mode, extract_gym_blocks, allocate,
         )
         gym_modes = self._load_gym_modes(venue_input_path)
-        venue_rows = self._load_venue_input_rows(venue_input_path)
+        venue_rows, day_order = self._load_venue_input_rows(venue_input_path)
         playoff_slots = self._load_playoff_slots(venue_input_path)
         gym_blocks = extract_gym_blocks(venue_rows)
         explicit_gym_resource_types = {
@@ -3096,6 +3177,7 @@ class ScheduleWorkbookBuilder:
             "gym_allocation":     gym_allocation,
             "team_conflicts":     team_conflicts,
             "precedence":         precedence,
+            "day_order":          day_order,
         }
 
     @staticmethod
@@ -4625,8 +4707,10 @@ class ScheduleWorkbookBuilder:
             game = game_meta.get(gid, a)
             res  = res_meta.get(rid, {})
             time_part = slot.rsplit("-", maxsplit=1)[-1] if "-" in slot else slot
+            _, _, cat_code = style_for_game(game)
             rows.append({
                 "game_id":          gid,
+                "category":         cat_code,
                 "event":            game.get("event", ""),
                 "stage":            game.get("stage", ""),
                 "round":            game.get("round", ""),
@@ -4695,15 +4779,12 @@ class ScheduleWorkbookBuilder:
         left     = Alignment(horizontal="left",   vertical="center", wrap_text=True)
         red_fill = PatternFill(fgColor="FFC7CE", fill_type="solid")
 
-        _SPORT_COLORS: Dict[str, str] = {
-            SPORT_TYPE["BASKETBALL"]:       SCHEDULE_SKETCH_COLOR_BASKETBALL,
-            SPORT_TYPE["VOLLEYBALL_MEN"]:   SCHEDULE_SKETCH_COLOR_VB_MEN,
-            SPORT_TYPE["VOLLEYBALL_WOMEN"]: SCHEDULE_SKETCH_COLOR_VB_WOMEN,
-        }
         def _sport_fill(event: str) -> PatternFill:
-            return PatternFill(
-                fgColor=_SPORT_COLORS.get(event, "EBF1DE"), fill_type="solid"
-            )
+            return PatternFill(fgColor=sport_style(event).fill_color, fill_type="solid")
+
+        def _category_font(game: Dict[str, Any], bold: bool = False) -> Font:
+            _, cat_style, _ = style_for_game(game)
+            return Font(color=cat_style.text_color, bold=bold)
 
         def _slot_times(res: Dict[str, Any]) -> List[str]:
             o_h, o_m = map(int, res["open_time"].split(":"))
@@ -4719,16 +4800,21 @@ class ScheduleWorkbookBuilder:
             return times
 
         def _cell_text(game: Dict[str, Any]) -> str:
-            gid = game.get("game_id", "")
+            gid    = game.get("game_id", "")
+            event  = str(game.get("event") or "")
+            badge  = format_compact_label(event,
+                                          str(game.get("sport_format") or ""),
+                                          game.get("category"))
             a   = str(game.get("team_a_label") or game.get("team_a_id") or "")
             b   = str(game.get("team_b_label") or game.get("team_b_id") or "")
             c   = str(game.get("team_c_label") or game.get("team_c_id") or "")
-            # Show compact team labels when available; otherwise fall back to game_id only.
+            # Two-line layout: badge + gid on line 1, matchup on line 2 if compact.
+            header = f"{badge}  {gid}" if gid else badge
             if a and b and c and len(a) <= 12 and len(b) <= 12 and len(c) <= 12:
-                return f"{gid}\n{a} / {b} / {c}"
+                return f"{header}\n{a} / {b} / {c}"
             if a and b and len(a) <= 12 and len(b) <= 12:
-                return f"{gid}\n{a} vs {b}"
-            return gid
+                return f"{header}\n{a} vs {b}"
+            return header
 
         def _time_sort_key(hhmm: str) -> int:
             h, m = map(int, hhmm.split(":"))
@@ -4899,9 +4985,31 @@ class ScheduleWorkbookBuilder:
         c = ws1.cell(row=1, column=1, value="VAY Sports Fest — Schedule by Time")
         c.fill, c.font, c.alignment = hdr_fill, hdr_font, center
 
-        ws1.freeze_panes = "A2"
+        # Legend row: one chip per sport (fill color + abbrev) followed by
+        # one chip per category code (text color + prefix).  Keeps the
+        # schedule self-explanatory even when printed in black-and-white.
+        legend_row = 2
+        legend_col = 1
+        for event_name, style in SPORT_STYLES.items():
+            cell = ws1.cell(row=legend_row, column=legend_col, value=style.abbrev)
+            cell.fill = PatternFill(fgColor=style.fill_color, fill_type="solid")
+            cell.font = Font(bold=True)
+            cell.alignment = center
+            legend_col += 1
+            if legend_col > n_cols:
+                break
+        if legend_col <= n_cols:
+            for cat in CATEGORY_STYLES.values():
+                cell = ws1.cell(row=legend_row, column=legend_col, value=cat.prefix)
+                cell.font = Font(color=cat.text_color, bold=True)
+                cell.alignment = center
+                legend_col += 1
+                if legend_col > n_cols:
+                    break
 
-        cur_row = 3
+        ws1.freeze_panes = "A3"
+
+        cur_row = 4
         for group_key in sorted_group_keys:
             day_res = sorted(
                 resource_groups[group_key],
@@ -4952,6 +5060,7 @@ class ScheduleWorkbookBuilder:
                     if game:
                         cell.value = _cell_text(game)
                         cell.fill  = _sport_fill(game.get("event", ""))
+                        cell.font  = _category_font(game, bold=True)
                     cell.alignment = center
                 cur_row += 1
 
@@ -4969,6 +5078,7 @@ class ScheduleWorkbookBuilder:
         )
         col_defs = [
             ("game_id",          14),
+            ("category",          8),
             ("event",            28),
             ("stage",             8),
             ("round",             6),
@@ -4991,9 +5101,10 @@ class ScheduleWorkbookBuilder:
 
         for ri, row in enumerate(flat_rows, start=2):
             fill = _sport_fill(row.get("event", ""))
+            row_font = _category_font(row)
             for ci, col in enumerate(cols, start=1):
                 cell = ws2.cell(row=ri, column=ci, value=row.get(col, ""))
-                cell.fill, cell.alignment = fill, left
+                cell.fill, cell.alignment, cell.font = fill, left, row_font
 
         # Unscheduled section at bottom
         unscheduled = schedule_output.get("unscheduled", [])
@@ -5121,6 +5232,245 @@ class ScheduleWorkbookBuilder:
                 column=1,
                 value="No cross-sport conflict audit rows were produced for this schedule.",
             )
+
+        # ── Tab 4: Master-Schedule ───────────────────────────────────────────
+        # Grid: rows = time slots grouped by day; columns = physical courts/
+        # tables grouped by venue.  One column per (venue_group, label) pair
+        # so that multiple resource_ids on the same physical court (created by
+        # the gym allocator for different sports) collapse into one column.
+        ws4 = wb.create_sheet("Master-Schedule")
+
+        all_resources: List[Dict[str, Any]] = list(schedule_input.get("resources", []))
+
+        # Chronological day order — calendar-date-derived when available.
+        ms_day_order: List[str] = list(schedule_input.get("day_order") or [])
+        if not ms_day_order:
+            ms_day_order = sorted(
+                {str(r.get("day", "")) for r in all_resources if r.get("day")},
+                key=ScheduleWorkbookBuilder._day_sort_key,
+            )
+
+        def _ms_day_rank(day: str) -> int:
+            try:
+                return ms_day_order.index(day)
+            except ValueError:
+                return len(ms_day_order)
+
+        # Physical venue group label for a resource.
+        def _venue_group(res: Dict[str, Any]) -> str:
+            solver_pool = str(res.get("solver_pool") or "").strip()
+            if solver_pool == ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL:
+                return (
+                    str(res.get("exclusive_group") or "").strip()
+                    or str(res.get("venue_name") or "").strip()
+                    or "Other"
+                )
+            return str(res.get("venue_name") or "").strip() or "Other"
+
+        def _res_label(res: Dict[str, Any]) -> str:
+            rid = str(res.get("resource_id") or "").strip()
+            return str(res.get("label") or rid).strip()
+
+        # Sort by venue group then label for column ordering.
+        # "Other" (fallback when venue_name is blank) sorts between EHS venues
+        # and any Orange/external venues by mapping it to "EHS~" which is
+        # lexicographically after all "EHS …" names but before "Orange …".
+        def _vg_sort_key(vg: str) -> str:
+            return "EHS~" if vg == "Other" else vg
+
+        def _label_sort_key(label: str) -> Tuple[str, int, str]:
+            # Natural sort: split on the last run of digits so "Court-2" < "Court-10".
+            m = re.search(r"(\d+)(\D*)$", label)
+            if m:
+                prefix = label[: m.start()]
+                return (prefix, int(m.group(1)), m.group(2))
+            return (label, 0, "")
+
+        sorted_resources = sorted(
+            all_resources,
+            key=lambda r: (_vg_sort_key(_venue_group(r)), _label_sort_key(_res_label(r)), str(r.get("resource_id") or "")),
+        )
+
+        # Build one column per physical court = (venue_group, label) pair.
+        # Multiple resource_ids that share the same (venue_group, label) —
+        # e.g. the gym allocator creates separate IDs per sport on the same
+        # court — all map to the same column so no duplicate Court-N columns.
+        col_keys: List[Tuple[str, str]] = []       # ordered (vg, label) list
+        col_key_set: set = set()
+        rid_to_col_key: Dict[str, Tuple[str, str]] = {}  # resource_id → (vg, label)
+        for res in sorted_resources:
+            rid = str(res.get("resource_id") or "").strip()
+            key = (_venue_group(res), _res_label(res))
+            rid_to_col_key[rid] = key
+            if key not in col_key_set:
+                col_keys.append(key)
+                col_key_set.add(key)
+
+        # Drop columns that have no assignments — avoids empty Table-N columns
+        # for venues the solver left unused (e.g. EHS Practice Gym TT workaround).
+        active_col_keys: set = {
+            rid_to_col_key[rid]
+            for rid in (a["resource_id"] for a in schedule_output.get("assignments", []))
+            if rid in rid_to_col_key
+        }
+        col_keys = [k for k in col_keys if k in active_col_keys]
+
+        venue_groups_ordered: List[str] = list(dict.fromkeys(vg for vg, _ in col_keys))
+
+        # Columns start at 3 (col 1 = Day, col 2 = Time).
+        col_key_idx: Dict[Tuple[str, str], int] = {}
+        col_idx = 3
+        for key in col_keys:
+            col_key_idx[key] = col_idx
+            col_idx += 1
+
+        total_cols = max(col_idx - 1, 3)
+
+        # Compact cell text for Master-Schedule: game_id + matchup only.
+        # The sport badge from _cell_text() is redundant here because cells
+        # are already colour-coded by sport.
+        def _master_cell_text(game: Dict[str, Any]) -> str:
+            gid = str(game.get("game_id") or "")
+            a = str(game.get("team_a_label") or game.get("team_a_id") or "")
+            b = str(game.get("team_b_label") or game.get("team_b_id") or "")
+            c = str(game.get("team_c_label") or game.get("team_c_id") or "")
+            if a and b and c and len(a) <= 12 and len(b) <= 12 and len(c) <= 12:
+                return f"{gid} {a} / {b} / {c}"
+            if a and b and len(a) <= 12 and len(b) <= 12:
+                return f"{gid} {a} v {b}"
+            return gid
+
+        # ── Header rows ─────────────────────────────────────────────────────
+        ws4.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
+        c = ws4.cell(row=1, column=1, value="VAY Sports Fest — Master Schedule")
+        c.fill, c.font, c.alignment = hdr_fill, hdr_font, center
+
+        ws4.cell(row=2, column=1, value="Day").fill   = hdr_fill
+        ws4.cell(row=2, column=1).font                = hdr_font
+        ws4.cell(row=2, column=1).alignment           = center
+        ws4.cell(row=2, column=2, value="Time").fill  = hdr_fill
+        ws4.cell(row=2, column=2).font                = hdr_font
+        ws4.cell(row=2, column=2).alignment           = center
+
+        for vg in venue_groups_ordered:
+            vg_cols = [col_key_idx[k] for k in col_keys if k[0] == vg]
+            first_col, last_col = min(vg_cols), max(vg_cols)
+            if first_col < last_col:
+                ws4.merge_cells(
+                    start_row=2, start_column=first_col,
+                    end_row=2, end_column=last_col,
+                )
+            c = ws4.cell(row=2, column=first_col, value=vg)
+            c.fill, c.font, c.alignment = hdr_fill, hdr_font, center
+
+        ws4.cell(row=3, column=1, value="").fill = sec_fill
+        ws4.cell(row=3, column=2, value="").fill = sec_fill
+        for (vg, label), col in col_key_idx.items():
+            c = ws4.cell(row=3, column=col, value=label)
+            c.fill, c.font, c.alignment = sec_fill, bold_font, center
+
+        ws4.freeze_panes = "C4"
+
+        # ── Build unified time-slot grid ─────────────────────────────────────
+        slot_index: Dict[Tuple[int, int], Tuple[str, str]] = {}
+        for res in all_resources:
+            day = str(res.get("day") or "").strip()
+            if not day:
+                continue
+            day_rank = _ms_day_rank(day)
+            for t_str in _slot_times(res):
+                h, m = map(int, t_str.split(":"))
+                slot_index[(day_rank, h * 60 + m)] = (day, t_str)
+
+        sorted_slot_keys = sorted(slot_index.keys())
+
+        # Pre-compute which slot labels have at least one assignment so we can
+        # skip entirely empty rows (e.g. 12:30 half-hour gaps between games).
+        occupied_slots: set = {a["slot"] for a in schedule_output.get("assignments", [])}
+
+        # ── Data rows ────────────────────────────────────────────────────────
+        cur_row4 = 4
+        prev_day: str = ""
+        prev_day_display: str = ""
+        # Track whether we've written the day header yet; defer it until the
+        # first non-empty row so a day with all-empty slots is also suppressed.
+        pending_day_header: Optional[Tuple[str, str]] = None  # (day_display, day)
+
+        for day_rank, time_min in sorted_slot_keys:
+            day, t_str = slot_index[(day_rank, time_min)]
+            slot_label = f"{day}-{t_str}"
+
+            if slot_label not in occupied_slots:
+                # No game anywhere at this time — skip the row entirely.
+                if day != prev_day:
+                    day_display = ScheduleWorkbookBuilder._day_display_label(day)
+                    pending_day_header = (day_display, day)
+                continue
+
+            # Emit deferred day-section header now that we know a row follows.
+            if day != prev_day or pending_day_header is not None:
+                if pending_day_header is not None:
+                    day_display, _ = pending_day_header
+                    pending_day_header = None
+                else:
+                    day_display = ScheduleWorkbookBuilder._day_display_label(day)
+                ws4.merge_cells(
+                    start_row=cur_row4, start_column=1,
+                    end_row=cur_row4, end_column=total_cols,
+                )
+                c = ws4.cell(row=cur_row4, column=1, value=day_display)
+                c.fill, c.font, c.alignment = sec_fill, bold_font, center
+                cur_row4 += 1
+                prev_day = day
+                prev_day_display = day_display
+
+            day_cell = ws4.cell(row=cur_row4, column=1, value=prev_day_display)
+            day_cell.alignment = center
+            day_cell.font = Font(color="808080")
+
+            time_cell = ws4.cell(row=cur_row4, column=2, value=t_str)
+            time_cell.alignment = center
+
+            for res in all_resources:
+                rid = str(res.get("resource_id") or "").strip()
+                col_key = rid_to_col_key.get(rid)
+                if col_key is None or col_key not in col_key_idx:
+                    continue
+                col = col_key_idx[col_key]
+
+                res_day = str(res.get("day") or "").strip()
+                if res_day != day:
+                    continue
+
+                o_h, o_m = map(int, res["open_time"].split(":"))
+                c_h, c_m = map(int, res["close_time"].split(":"))
+                sm = int(res.get("slot_minutes") or 20)
+                open_min  = o_h * 60 + o_m
+                close_min = c_h * 60 + c_m
+                if not (open_min <= time_min and time_min + sm <= close_min):
+                    continue
+
+                game = assign_map.get((rid, slot_label))
+                if not game:
+                    continue
+
+                cell = ws4.cell(row=cur_row4, column=col)
+                cell.value     = _master_cell_text(game)
+                cell.fill      = _sport_fill(game.get("event", ""))
+                cell.font      = _category_font(game, bold=True)
+                cell.alignment = center
+
+            cur_row4 += 1
+
+        ws4.cell(row=cur_row4 + 1, column=1, value=snapshot)
+
+        ws4.column_dimensions["A"].width = 10
+        ws4.column_dimensions["B"].width = 7
+        for col in col_key_idx.values():
+            ws4.column_dimensions[get_column_letter(col)].width = 14
+
+        for row_num in range(4, cur_row4):
+            ws4.row_dimensions[row_num].height = 36
 
         wb.save(filepath)
         logger.info(f"Schedule output report written to: {filepath}")

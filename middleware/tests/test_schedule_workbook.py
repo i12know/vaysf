@@ -460,7 +460,7 @@ def test_write_schedule_output_workbook_creates_schedule_tabs(tmp_path):
     )
 
     wb = load_workbook(workbook_path)
-    assert wb.sheetnames == ["Schedule-by-Time", "Schedule-by-Sport", "Conflict-Audit"]
+    assert wb.sheetnames == ["Schedule-by-Time", "Schedule-by-Sport", "Conflict-Audit", "Master-Schedule"]
 
 
 def test_read_roster_validation_rows_missing_path_degrades():
@@ -1833,9 +1833,10 @@ def test_build_gym_resource_objects_include_blank_exclusive_group():
 
 
 def test_load_venue_input_rows_missing_file(tmp_path):
-    """Returns empty list when venue_input.xlsx does not exist."""
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(tmp_path / "missing.xlsx")
+    """Returns empty list (and empty day_order) when venue_input.xlsx does not exist."""
+    result, day_order = ScheduleWorkbookBuilder._load_venue_input_rows(tmp_path / "missing.xlsx")
     assert result == []
+    assert day_order == []
 
 
 def test_load_venue_input_rows_expands_quantity(tmp_path):
@@ -1862,7 +1863,7 @@ def test_load_venue_input_rows_expands_quantity(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     wb.save(path)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, day_order = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert len(result) == 2
     assert result[0]["resource_type"] == POD_RESOURCE_TYPE_TENNIS
     assert result[0]["label"] == "Court-1"
@@ -1895,7 +1896,7 @@ def test_load_venue_input_rows_table_label(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     wb.save(path)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, _ = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert len(result) == 3
     assert all(r["label"].startswith("Table-") for r in result)
 
@@ -1929,7 +1930,7 @@ def test_load_venue_input_rows_skips_blank_resource_rows(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     wb.save(path)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, _ = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert len(result) == 2
     assert all(r["resource_type"] == POD_RESOURCE_TYPE_TENNIS for r in result)
 
@@ -1950,7 +1951,7 @@ def test_load_venue_input_rows_reads_exclusive_group(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     _write_venue_input(path, headers, rows)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, _ = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert len(result) == 2
     assert all(r["exclusive_group"] == "Midsize Gym" for r in result)
     assert all(r["venue_name"] == "Midsize Gym" for r in result)
@@ -1972,7 +1973,7 @@ def test_load_venue_input_rows_blank_exclusive_group(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     _write_venue_input(path, headers, rows)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, _ = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert result[0]["exclusive_group"] == ""
     assert result[0]["venue_name"] == "Chapman"
 
@@ -1999,8 +2000,11 @@ def test_load_venue_input_rows_derives_day_labels_from_date_column(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     _write_venue_input(path, headers, rows)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, day_order = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert [r["day"] for r in result] == ["Fri-1", "Sat-1", "Sun-1", "Sat-2", "Sun-2"]
+    # day_order reflects actual calendar date order: Fri-1 is the first unique date
+    # (2026-07-17), then Sat-1 (07-18), Sun-1 (07-19), Sat-2 (07-25), Sun-2 (07-26).
+    assert day_order == ["Fri-1", "Sat-1", "Sun-1", "Sat-2", "Sun-2"]
 
 
 def test_load_venue_input_rows_normalizes_resource_types_and_prefixes(tmp_path):
@@ -2021,7 +2025,7 @@ def test_load_venue_input_rows_normalizes_resource_types_and_prefixes(tmp_path):
     path = tmp_path / "venue_input.xlsx"
     _write_venue_input(path, headers, rows)
 
-    result = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    result, _ = ScheduleWorkbookBuilder._load_venue_input_rows(path)
     assert [r["resource_type"] for r in result] == [
         "BC Station",
         "Soccer Field",
@@ -2107,7 +2111,7 @@ def test_build_schedule_input_keys(tmp_path):
     assert set(si.keys()) == {
         "generated_at", "gym_court_scenario", "game_count", "resource_count",
         "games", "resources", "playoff_slots", "gym_modes", "gym_allocation",
-        "team_conflicts", "precedence",
+        "team_conflicts", "precedence", "day_order",
     }
     assert si["game_count"] == len(si["games"])
     assert si["resource_count"] == len(si["resources"])
@@ -2825,13 +2829,13 @@ def test_bc_venue_estimator_rr_game_count_12_teams():
     bc_row = next(r for r in capacity_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"])
 
     assert bc_row["Estimating Teams/Entries"] == 12
-    assert bc_row["Pool Slots"] == 8                        # ceil(12*2/3)
-    assert bc_row["Actual Pool Games/Team"] == 2
+    assert bc_row["Pool Slots"] == 12                       # ceil(12*3/3)
+    assert bc_row["Actual Pool Games/Team"] == 3
     assert bc_row["Playoff Teams"] == COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF
     assert bc_row["Playoff Slots"] == COURT_ESTIMATE_BC_PLAYOFF_GAMES  # 4
-    assert bc_row["Total Court Slots"] == 12                # 8 RR + 4 playoff
+    assert bc_row["Total Court Slots"] == 16                # 12 RR + 4 playoff
     assert bc_row["Minutes Per Game"] == COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE  # 60
-    assert bc_row["Estimated Court Hours"] == 12.0          # 12 games × 60 min / 60
+    assert bc_row["Estimated Court Hours"] == 16.0          # 16 games × 60 min / 60
     assert bc_row["Third Place?"] == "No"
     assert "Sequential" in bc_row["Pool Composition"]
     assert "1 classroom" in bc_row["Pool Composition"]
@@ -2847,11 +2851,11 @@ def test_bc_venue_estimator_no_playoff_when_fewer_than_9_teams():
     bc_row = next(r for r in capacity_rows if r["Event"] == SPORT_TYPE["BIBLE_CHALLENGE"])
 
     assert bc_row["Estimating Teams/Entries"] == 8
-    assert bc_row["Pool Slots"] == 6                        # ceil(8*2/3) = ceil(5.33) = 6
-    assert bc_row["Actual Pool Games/Team"] == 2
+    assert bc_row["Pool Slots"] == 8                        # ceil(8*3/3) = 8
+    assert bc_row["Actual Pool Games/Team"] == 3
     assert bc_row["Playoff Teams"] == 0
     assert bc_row["Playoff Slots"] == 0
-    assert bc_row["Total Court Slots"] == 6
+    assert bc_row["Total Court Slots"] == 8
     assert f"< {COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF}" in bc_row["Pool Composition"]
 
 
@@ -2991,34 +2995,85 @@ def test_bc_cross_sport_conflict_edge_with_basketball(tmp_path):
 
 
 def test_bc_pool_assignment_creates_bc_station_games(tmp_path):
-    """BC pool-assignment rows should create sequential BC Station queue games."""
+    """BC pool games: all teams treated as one global pool.
+
+    For 9 teams: 9 pool games (n * 3 / 3 = n); each team appears exactly 3
+    times; no pair of teams meets in more than one game."""
     builder = ScheduleWorkbookBuilder()
-    bc_rows = _bc_roster(["RPC", "OCB", "ANH"], n_per_church=3)
 
-    si = builder._build_schedule_input(bc_rows, [], tmp_path / "no_venue.xlsx")
-    bc_games = [g for g in si.get("games", []) if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]]
-    assert len(bc_games) == 2
-    assert all(g["resource_type"] == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE for g in bc_games)
-    assert all(g["team_c_id"] for g in bc_games)
+    bc_rows_nine = _bc_roster(
+        ["RPC", "OCB", "ANH", "GLA", "TLC", "FVC", "MWC", "NSD", "WCC"], n_per_church=3
+    )
+    si_nine = builder._build_schedule_input(bc_rows_nine, [], tmp_path / "nine.xlsx")
+    bc_nine = [g for g in si_nine.get("games", []) if g.get("event") == SPORT_TYPE["BIBLE_CHALLENGE"]
+               and g.get("stage") == "Pool"]
+    assert len(bc_nine) == 9
+
+    # All pool game IDs follow the flat BC-RR-N scheme.
+    assert all(g["game_id"].startswith("BC-RR-") for g in bc_nine)
+
+    # Each of the 9 teams appears in exactly 3 pool games.
+    appearances: dict = {}
+    for g in bc_nine:
+        for key in ("team_a_id", "team_b_id", "team_c_id"):
+            appearances[g[key]] = appearances.get(g[key], 0) + 1
+    assert all(v == 3 for v in appearances.values()), appearances
+
+    # No pair of teams meets in more than one game.
+    seen_pairs: set = set()
+    for g in bc_nine:
+        ids = [g["team_a_id"], g["team_b_id"], g["team_c_id"]]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                pair = (min(ids[i], ids[j]), max(ids[i], ids[j]))
+                assert pair not in seen_pairs, \
+                    f"Pair {pair} appears in more than one BC game"
+                seen_pairs.add(pair)
 
 
-def test_bc_pool_of_four_assigns_extra_round_to_t4():
-    """A 4-team BC pool should give the third appearance to T4, not the top slots."""
-    pool_rows = [
-        {"Pool Slot": "T1", "Team ID": "A"},
-        {"Pool Slot": "T2", "Team ID": "B"},
-        {"Pool Slot": "T3", "Team ID": "C"},
-        {"Pool Slot": "T4", "Team ID": "D"},
+def test_bc_no_repeat_triplets_nine_teams():
+    """_bc_no_repeat_triplets produces 9 valid games for 9 teams: each team
+    plays 3 times and no pair meets twice."""
+    rows = [
+        {"Pool ID": "P1", "Pool Slot": f"T{i+1}", "Team ID": chr(65 + i)}
+        for i in range(9)
     ]
-    triplets = ScheduleWorkbookBuilder._bc_pool_triplets(pool_rows)
-    appearances = {}
-    for trio in triplets:
-        for row in trio:
-            team_id = row["Team ID"]
-            appearances[team_id] = appearances.get(team_id, 0) + 1
+    triplets = ScheduleWorkbookBuilder._bc_no_repeat_triplets(rows)
+    assert len(triplets) == 9
 
-    assert len(triplets) == 3
-    assert appearances == {"A": 2, "B": 2, "C": 2, "D": 3}
+    appearances: dict = {}
+    seen_pairs: set = set()
+    for trio in triplets:
+        ids = [r["Team ID"] for r in trio]
+        for team_id in ids:
+            appearances[team_id] = appearances.get(team_id, 0) + 1
+        for i in range(3):
+            for j in range(i + 1, 3):
+                pair = (min(ids[i], ids[j]), max(ids[i], ids[j]))
+                assert pair not in seen_pairs, f"Pair {pair} repeats"
+                seen_pairs.add(pair)
+
+    assert appearances == {chr(65 + i): 3 for i in range(9)}
+
+
+def test_bc_no_repeat_triplets_seeded_teams_never_share_game():
+    """Seeded teams must never appear in the same triplet; they should only
+    meet in playoffs.  Verified with 9 teams where A, B, C are seeded."""
+    rows = []
+    for i in range(9):
+        team_id = chr(65 + i)
+        seed = str(i + 1) if i < 3 else ""  # A=seed1, B=seed2, C=seed3
+        rows.append({"Pool ID": "P1", "Pool Slot": f"T{i+1}", "Team ID": team_id, "Seed": seed})
+
+    triplets = ScheduleWorkbookBuilder._bc_no_repeat_triplets(rows)
+    assert len(triplets) == 9
+
+    seeded_ids = {"A", "B", "C"}
+    for trio in triplets:
+        ids = {r["Team ID"] for r in trio}
+        seeded_in_game = ids & seeded_ids
+        assert len(seeded_in_game) <= 1, \
+            f"Two seeded teams appear in the same game: {ids}"
 
 
 def test_bc_schedule_input_adds_playoff_precedence(tmp_path):

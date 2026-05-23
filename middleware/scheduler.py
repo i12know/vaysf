@@ -25,10 +25,25 @@ Constraints implemented (per pool):
   C6  Minimum rest — no team plays in two adjacent global time slots.
   C7  Multi-slot games — a game whose duration > slot_minutes blocks consecutive slots.
 
-Objective (per pool): minimize the index of the latest occupied global slot.
-For Volleyball Court pools, a secondary tie-breaker minimizes adjacent
-same-court Men/Women switches so net-height changes are reduced when multiple
-equally-early schedules exist.
+Objective (per pool, five-tier lexicographic via integer dominance):
+  1. Minimize primary shared-athlete conflicts — two teams share an athlete
+     whose primary sport is one of the two events (near-hard constraint).
+  2. Minimize secondary shared-athlete conflicts — same collision but the
+     athlete's primary sport is a third event (soft penalty).
+  3. Minimize the index of the latest occupied global slot (makespan).
+  4. Minimize the sum of all games' global slot indices — packs games into
+     the earliest available slots so each sport stays concentrated on its
+     designated day rather than drifting across the weekend.
+  5. For Volleyball Court pools, minimize adjacent same-court Men/Women
+     switches so net-height changes are reduced.
+
+Each tier's weight exceeds the maximum possible total of all lower tiers
+combined, so the hierarchy is enforced by arithmetic.  See
+docs/SCHEDULING.md §"Solver objectives" for the full rationale and examples.
+
+Day ordering for global slots follows weekday-then-cycle chronology
+(Fri-1 < Sat-1 < Sun-1 < Fri-2 < ...), so the solver naturally prefers
+earlier dates.
 
 Out of scope (future work):
   - Cross-sport participant conflicts (a person in both Basketball and Badminton).
@@ -49,7 +64,10 @@ from loguru import logger
 
 from config import SCHEDULE_SOLVER_RANDOM_SEED
 
-_DAY_ORDER: dict[str, int] = {"Sat-1": 0, "Sun-1": 1, "Sat-2": 2, "Sun-2": 3}
+_WEEKDAY_ORDER: dict[str, int] = {
+    "Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3,
+    "Fri": 4, "Sat": 5, "Sun": 6, "Day": 7,
+}
 _DEFAULT_TIMEOUT = float(os.getenv("SCHEDULE_SOLVER_TIMEOUT", "30.0"))
 _OUTPUT_FILENAME = "schedule_output.json"
 
@@ -84,15 +102,43 @@ def _parse_time_minutes(time_str: str) -> int:
     return int(h) * 60 + int(m)
 
 
-def _slot_sort_key(label: str) -> tuple[int, int]:
-    """Sort key for slot labels: (day_order, time_in_minutes).
+def _day_chronological_key(day_label: str) -> tuple[int, int]:
+    """Return (cycle, weekday_order) for chronological day sorting.
+
+    Day labels follow 'Weekday-Cycle' (e.g. 'Fri-1', 'Sat-2', 'Sun-1').
+    Sort ordering is cycle-first, then weekday within each cycle so the
+    real-world chronology is preserved: Fri-1 < Sat-1 < Sun-1 < Fri-2 < ...
+    Labels without a recognizable shape sort to the end (99, 99).
+    Mirrors gym_allocator._day_sort_key.
+    """
+    cleaned = (day_label or "").strip()
+    if "-" not in cleaned:
+        return (99, 99)
+    prefix, suffix = cleaned.split("-", 1)
+    try:
+        cycle = int(suffix)
+    except ValueError:
+        return (99, 99)
+    return (cycle, _WEEKDAY_ORDER.get(prefix, 99))
+
+
+def _slot_sort_key(label: str) -> tuple[int, int, int]:
+    """Fallback sort key for slot labels using weekday-cycle arithmetic.
 
     Label format: '{day}-{HH:MM}', e.g. 'Sat-1-08:00' or 'Day-1-09:30'.
-    Unknown day labels are placed after known weekends (order 99).
+    Returns (cycle, weekday_order, time_in_minutes).
+
+    NOTE: This produces a reasonable ordering when all days in a cycle fall
+    in the same calendar week (Mon–Sun). It may not reflect actual chronology
+    when the schedule spans non-contiguous days (e.g. a tournament that uses
+    Sat-1/Sun-1 one weekend and Fri-1 the following weekend). For accurate
+    ordering, provide 'day_order' in schedule_input so the solver can use
+    real calendar dates instead.
     """
     day, time = _parse_slot_label(label)
     h, m = time.split(":")
-    return (_DAY_ORDER.get(day, 99), int(h) * 60 + int(m))
+    cycle, weekday = _day_chronological_key(day)
+    return (cycle, weekday, int(h) * 60 + int(m))
 
 
 _SLOT_LABEL_RE = re.compile(r"^(?P<day>.+)-(?P<time>\d{2}:\d{2})(?:-.+)?$")
@@ -373,6 +419,48 @@ def ensure_unique_assignment_slots(assignments: list[dict[str, Any]]) -> None:
         seen[key] = game_id
 
 
+def ensure_unique_assignment_game_ids(assignments: list[dict[str, Any]]) -> None:
+    """Raise when the same game_id appears more than once in the final output."""
+    seen: set[str] = set()
+    for assignment in assignments:
+        game_id = str(assignment.get("game_id") or "").strip()
+        if not game_id:
+            continue
+        if game_id in seen:
+            raise ValueError(
+                f"Duplicate assignment rows for game_id {game_id!r} were produced."
+            )
+        seen.add(game_id)
+
+
+def merge_playoff_slot_assignments(
+    assignments: list[dict[str, Any]],
+    playoff_slots: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Merge manual playoff slots into solver assignments, replacing same-game rows."""
+    merged = [dict(row) for row in assignments]
+    index_by_game_id = {
+        str(row.get("game_id") or "").strip(): idx
+        for idx, row in enumerate(merged)
+        if str(row.get("game_id") or "").strip()
+    }
+    replaced = 0
+    for playoff_slot in playoff_slots:
+        normalized = dict(playoff_slot)
+        game_id = str(normalized.get("game_id") or "").strip()
+        if not game_id:
+            merged.append(normalized)
+            continue
+        existing_idx = index_by_game_id.get(game_id)
+        if existing_idx is not None:
+            merged[existing_idx] = normalized
+            replaced += 1
+        else:
+            index_by_game_id[game_id] = len(merged)
+            merged.append(normalized)
+    return merged, replaced
+
+
 def build_infeasibility_diagnostics(schedule_input: dict[str, Any]) -> list[dict[str, Any]]:
     """Return lower-bound capacity diagnostics for operator-facing INFEASIBLE cases.
 
@@ -544,11 +632,27 @@ def _solve_one_pool(
     for r in resources:
         res_by_type.setdefault(r["resource_type"], []).append(r["resource_id"])
 
-    # Build global slot ordering for C6 (min rest)
+    # Build global slot ordering for C6 (min rest) and the objective.
+    # When schedule_input carries a 'day_order' list (derived from actual calendar
+    # dates), use it for accurate chronological ordering.  Fall back to weekday-
+    # cycle arithmetic via _slot_sort_key when day_order is absent (e.g. older
+    # files or test fixtures that don't include it).
+    _pool_day_order: list[str] = pool_input.get("day_order") or []
+    if _pool_day_order:
+        _day_idx: dict[str, int] = {d: i for i, d in enumerate(_pool_day_order)}
+        _n_days = len(_pool_day_order)
+
+        def _pool_slot_key(label: str) -> tuple[int, int]:
+            day, time = _parse_slot_label(label)
+            h, m = time.split(":")
+            return (_day_idx.get(day, _n_days), int(h) * 60 + int(m))
+    else:
+        _pool_slot_key = _slot_sort_key  # type: ignore[assignment]
+
     all_labels: set[str] = set()
     for slots in res_slots.values():
         all_labels.update(slots)
-    sorted_labels  = sorted(all_labels, key=_slot_sort_key)
+    sorted_labels  = sorted(all_labels, key=_pool_slot_key)
     slot_to_global = {lbl: i for i, lbl in enumerate(sorted_labels)}
     # Map global slot index → day prefix (e.g. "Sat-1") for C6 day-boundary guard
     global_to_day: dict[int, str] = {
@@ -827,10 +931,30 @@ def _solve_one_pool(
         secondary_penalty_max = sum(max(entry["secondary_weight"], 0) for entry in conflict_overlap_vars)
         latest_max = max(n_global - 1, 0)
         vb_switch_max = len(volleyball_switch_vars)
+        sum_slots_max = len(game_global_slot) * latest_max
 
-        latest_weight = vb_switch_max + 1
-        secondary_weight = latest_max * latest_weight + vb_switch_max + 1
-        primary_weight = secondary_penalty_max * secondary_weight + latest_max * latest_weight + vb_switch_max + 1
+        # Lexicographic objective via integer dominance.  Each higher-tier
+        # weight strictly exceeds the maximum possible contribution from all
+        # lower tiers, so the solver always settles a higher tier before
+        # spending degrees of freedom on a lower one.
+        #
+        # Tier ordering (highest priority first):
+        #   primary conflicts > secondary conflicts > latest slot
+        #     > sum of slot indices (chronological packing) > VB switches
+        vb_weight = 1
+        sum_slots_weight = vb_switch_max + 1
+        latest_weight = sum_slots_max * sum_slots_weight + vb_switch_max + 1
+        secondary_weight = (
+            latest_max * latest_weight
+            + sum_slots_max * sum_slots_weight
+            + vb_switch_max + 1
+        )
+        primary_weight = (
+            secondary_penalty_max * secondary_weight
+            + latest_max * latest_weight
+            + sum_slots_max * sum_slots_weight
+            + vb_switch_max + 1
+        )
 
         objective_terms: list[Any] = []
         if primary_conflict_terms:
@@ -838,8 +962,9 @@ def _solve_one_pool(
         if secondary_conflict_terms:
             objective_terms.append(sum(secondary_conflict_terms) * secondary_weight)
         objective_terms.append(latest * latest_weight)
+        objective_terms.append(sum(game_global_slot.values()) * sum_slots_weight)
         if volleyball_switch_vars:
-            objective_terms.append(sum(volleyball_switch_vars))
+            objective_terms.append(sum(volleyball_switch_vars) * vb_weight)
         model.Minimize(sum(objective_terms))
 
     # Solve
@@ -1039,13 +1164,16 @@ def solve(
     all_unscheduled:    list[str]            = []
     total_wall_seconds: float                = 0.0
 
+    day_order: list[str] = schedule_input.get("day_order") or []
+
     for pool_key in sorted(games_by_pool.keys()):
         pool_input = {
             "games":         games_by_pool[pool_key],
             "resources":     resources_by_pool.get(pool_key, []),
             "blocked_slots": blocked_slots_by_pool.get(pool_key, {}),
             "team_conflicts": team_conflicts_by_pool.get(pool_key, []),
-            "precedence": precedence_by_pool.get(pool_key, []),
+            "precedence":    precedence_by_pool.get(pool_key, []),
+            "day_order":     day_order,
         }
         result = _solve_one_pool(pool_input, timeout_seconds)
         result["resource_type"] = pool_key
@@ -1084,22 +1212,47 @@ def solve(
         top_status = STATUS_INFEASIBLE
 
     # Merge pre-assigned playoff slots from schedule_input into assignments.
+    replaced_playoff_assignments = 0
     if playoff_slots:
-        for ps in playoff_slots:
-            all_assignments.append(dict(ps))
-        logger.info(f"Merged {len(playoff_slots)} pre-assigned playoff slots into output.")
+        all_assignments, replaced_playoff_assignments = merge_playoff_slot_assignments(
+            all_assignments,
+            playoff_slots,
+        )
+        manual_only_count = len(playoff_slots) - replaced_playoff_assignments
+        logger.info(
+            f"Merged {len(playoff_slots)} pre-assigned playoff slots into output "
+            f"({replaced_playoff_assignments} replaced existing modeled assignments, "
+            f"{manual_only_count} manual-only rows)."
+        )
 
     ensure_unique_assignment_slots(all_assignments)
+    ensure_unique_assignment_game_ids(all_assignments)
 
     conflict_audit_summary, conflict_audit = build_conflict_audit(
         schedule_input,
         all_assignments,
     )
 
+    modeled_game_ids = {
+        str(game.get("game_id") or "").strip()
+        for game in games
+        if str(game.get("game_id") or "").strip()
+    }
+    assigned_game_ids = {
+        str(assignment.get("game_id") or "").strip()
+        for assignment in all_assignments
+        if str(assignment.get("game_id") or "").strip()
+    }
+    modeled_assigned_count = len(assigned_game_ids & modeled_game_ids)
+    manual_only_assignment_count = len(assigned_game_ids - modeled_game_ids)
+
     logger.info(
         f"Solver (all pools): status={top_status}, "
         f"wall_time={total_wall_seconds:.3f}s, "
-        f"assigned={len(all_assignments)}, unscheduled={len(all_unscheduled)}, "
+        f"assigned_modeled_games={modeled_assigned_count}, "
+        f"manual_playoff_only={manual_only_assignment_count}, "
+        f"output_rows={len(all_assignments)}, "
+        f"unscheduled={len(all_unscheduled)}, "
         f"pools={len(pool_results)}"
     )
 

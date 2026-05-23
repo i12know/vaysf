@@ -470,10 +470,10 @@ COURT_ESTIMATE_POOL_GAMES_PER_TEAM = {
 # Bible Challenge sequential-classroom estimator constants.
 # Format: Jeopardy — 3 church teams per game, games run sequentially in one
 # classroom throughout the event (never concurrent).
-# Round-robin: each team plays 2 games; total RR games = ceil(N * 2 / 3).
+# Round-robin: each team plays N games; total RR games = ceil(N_teams * N / 3).
 # Playoff: top 9 high-score teams → 3 semi-finals + 1 final = 4 games.
 COURT_ESTIMATE_BC_TEAMS_PER_GAME          = 3
-COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM      = 2
+COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM      = 3
 COURT_ESTIMATE_BC_PLAYOFF_GAMES           = 4   # 3 semis + 1 final
 COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF   = 9
 

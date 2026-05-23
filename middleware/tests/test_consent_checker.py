@@ -214,7 +214,8 @@ def test_check_consent_phone_plus_email_is_above_threshold(consent_checker, mock
     assert int(audit.loc[0, "Score"]) == 51
 
 
-def test_check_consent_birthdate_plus_name_stays_low_confidence(consent_checker, mocker):
+def test_check_consent_birthdate_plus_name_stays_low_confidence_for_self_signed(consent_checker, mocker):
+    """Self-signed form with only name+birthdate match (score 49) stays low_confidence."""
     checker, chm, wp, captured = consent_checker
     _mock_consent_export(
         mocker,
@@ -243,6 +244,45 @@ def test_check_consent_birthdate_plus_name_stays_low_confidence(consent_checker,
 
     audit = _read_audit(captured)
     assert audit.loc[0, "Action Taken"] == "low_confidence"
+    assert int(audit.loc[0, "Score"]) == 49
+
+
+def test_check_consent_guardian_name_birthdate_accepted_despite_contact_mismatch(consent_checker, mocker):
+    """Guardian-signed form with name+birthdate match (score 49) clears the guardian threshold.
+
+    This covers the Genesia/Keziah Davis bug: parents fill in their own contact
+    info in the athlete fields, so phone and email never match the participant's
+    ChM profile. Name + birthdate alone should be sufficient for guardian forms.
+    """
+    checker, chm, wp, captured = consent_checker
+    _mock_consent_export(
+        mocker,
+        [
+            {
+                "First Name": "Jerry",
+                "Last Name": "Phan",
+                "Athlete Mobile Phone": "9995550101",          # parent's phone, not Jerry's
+                "Athlete Email": "parent@example.com",          # parent's email, not Jerry's
+                "Athlete Birthdate": "2008-04-15",
+                "Select one:": "My child/minor is signing this Agreement and I am their parent or legal guardian.",
+                "Full Name of the parents or legal guardian": "Mary Phan",
+                "Email of the parents or legal guardian": "parent@example.com",
+                "Cell phone of the parents or legal guardian": "9995550101",
+                "Submission Date": "2026-05-08 10:00:00",
+            }
+        ],
+    )
+    wp.get_participants.side_effect = [[_make_wp_participant()], []]
+    chm.get_person.return_value = _make_chm_person()
+
+    summary = checker.run("consent.xlsx")
+
+    assert summary["low_confidence"] == 0
+    assert summary.get("checked", 0) == 1
+    chm.update_person.assert_called_once()
+
+    audit = _read_audit(captured)
+    assert audit.loc[0, "Action Taken"] == "checked"
     assert int(audit.loc[0, "Score"]) == 49
 
 
