@@ -5433,12 +5433,38 @@ class ScheduleWorkbookBuilder:
             rid = str(res.get("resource_id") or "").strip()
             return str(res.get("label") or rid).strip()
 
-        # Sort by venue group then label for column ordering.
+        # Sort venue groups by the priority of their dominant resource type so
+        # the column layout follows the sport order (Soccer → BC → Basketball →
+        # Volleyball → Tennis → Pickleball → Badminton → Table Tennis) rather
+        # than alphabetical venue names.  When a venue hosts multiple resource
+        # types (e.g. 4 Tennis + 4 Pickleball at EHS Tennis Court), it sorts by
+        # the lowest-numbered (highest priority) type it contains.
+        _resource_type_rank = {
+            "Soccer Field":        0,
+            "BC Station":          1,
+            "Basketball Court":    2,
+            "Volleyball Court":    3,
+            "Tennis Court":        4,
+            "Pickleball Court":    5,
+            "Badminton Court":     6,
+            "Table Tennis Table":  7,
+        }
+        _UNRANKED = 99
+
+        vg_to_min_rank: Dict[str, int] = {}
+        for res in all_resources:
+            vg = _venue_group(res)
+            rt = str(res.get("resource_type") or "").strip()
+            rank = _resource_type_rank.get(rt, _UNRANKED)
+            if vg not in vg_to_min_rank or rank < vg_to_min_rank[vg]:
+                vg_to_min_rank[vg] = rank
+
         # "Other" (fallback when venue_name is blank) sorts between EHS venues
-        # and any Orange/external venues by mapping it to "EHS~" which is
-        # lexicographically after all "EHS …" names but before "Orange …".
-        def _vg_sort_key(vg: str) -> str:
-            return "EHS~" if vg == "Other" else vg
+        # and any Orange/external venues by mapping its name component to
+        # "EHS~" which is lexicographically after all "EHS …" names.
+        def _vg_sort_key(vg: str) -> Tuple[int, str]:
+            name_key = "EHS~" if vg == "Other" else vg
+            return (vg_to_min_rank.get(vg, _UNRANKED), name_key)
 
         def _label_sort_key(label: str) -> Tuple[str, int, str]:
             # Natural sort: split on the last run of digits so "Court-2" < "Court-10".
