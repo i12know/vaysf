@@ -528,3 +528,114 @@ def test_allocate_prefers_gym_with_more_courts():
     # Orange Gym (6 courts × 4 h = 24 ch) satisfies demand on the first block.
     assert result.decisions[0].gym_name == "Orange Gym"
     assert result.mode_shortfall["Badminton Court"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Bug fixes: resource_types tracking and spreading pass
+# ---------------------------------------------------------------------------
+
+def _block_with_types(gym: str, resource_types, open_t: str = "08:00",
+                      close_t: str = "17:00", day: str = "Day-1",
+                      slot: int = 60) -> GymBlock:
+    return GymBlock(gym_name=gym, day=day, open_time=open_t, close_time=close_t,
+                    slot_minutes=slot, resource_types=frozenset(resource_types))
+
+
+def test_allocate_bd_prefers_own_block_over_bb_block():
+    """Regression: Badminton should claim its 13:00-17:00 block, not the 08:00-17:00
+    Basketball/Volleyball block that happens to be available in the same gym.
+
+    Before the fix: allocate() sorted blocks earliest-first so BD grabbed the
+    08:00-17:00 block (born from BB/VB rows) instead of its 13:00-17:00 block.
+    After the fix: resource_types-aware sort prefers the BD-native 13:00-17:00 block.
+    """
+    demand = {"Basketball Court": 100.0, "Badminton Court": 20.0}
+    gym_modes = {"EHS Main Gym": {"Basketball Court": 2, "Badminton Court": 6}}
+
+    # Block A: 08:00-17:00 — born from BB rows.  BD is not in its resource_types.
+    block_a = _block_with_types("EHS Main Gym", ["Basketball Court"],
+                                open_t="08:00", close_t="17:00", day="Sat-2")
+    # Block B: 13:00-17:00 — born from BD row.  BD IS in its resource_types.
+    block_b = _block_with_types("EHS Main Gym", ["Badminton Court"],
+                                open_t="13:00", close_t="17:00", day="Sat-2")
+
+    # Demand for BB is far above what either block provides; it will claim Block A.
+    # BD should then take Block B (its native block), not whatever is left.
+    result = allocate(demand, gym_modes, [block_a, block_b])
+
+    bd_decisions = [d for d in result.decisions if d.mode == "Badminton Court"]
+    assert len(bd_decisions) == 1
+    assert bd_decisions[0].open_time == "13:00", (
+        "BD should have claimed its native 13:00-17:00 block, not the BB 08:00-17:00 block"
+    )
+
+
+def test_allocate_spreading_pass_claims_sat2_bb_when_demand_met_by_earlier_days():
+    """Regression: when BB demand is satisfied by Sat-1+Sun-1 blocks, the allocator
+    should still claim explicitly-provided Sat-2 BB blocks via the spreading pass,
+    giving the CP-SAT solver extra layout capacity on Sat-2.
+    """
+    demand = {"Basketball Court": 8.0}  # exactly satisfied by Sat-1 alone
+    gym_modes = {"Main Gym": {"Basketball Court": 2}}
+
+    sat1_block = _block_with_types("Main Gym", ["Basketball Court"],
+                                   open_t="08:00", close_t="12:00", day="Sat-1")  # 2*4h=8 ch
+    sat2_block = _block_with_types("Main Gym", ["Basketball Court"],
+                                   open_t="08:00", close_t="17:00", day="Sat-2")
+
+    result = allocate(demand, gym_modes, [sat1_block, sat2_block])
+
+    days_allocated = {d.day for d in result.decisions}
+    assert "Sat-2" in days_allocated, (
+        "Spreading pass must claim Sat-2 block even when Sat-1 already satisfies demand"
+    )
+
+
+def test_allocate_spreading_pass_skips_excluded_days():
+    """Spreading pass must not claim blocks on days in spreading_excluded_days.
+
+    This prevents the spreading pass from pre-empting playoff-slot promotion on
+    Finals days (e.g. Sun-2), which creates narrow single-slot resources instead
+    of wide ones that would expose the Finals resource to pool-play scheduling.
+    """
+    demand = {"Basketball Court": 8.0}  # exactly satisfied by Sat-1 alone
+    gym_modes = {"Main Gym": {"Basketball Court": 2}}
+
+    sat1_block = _block_with_types("Main Gym", ["Basketball Court"],
+                                   open_t="08:00", close_t="12:00", day="Sat-1")
+    sun2_block = _block_with_types("Main Gym", ["Basketball Court"],
+                                   open_t="08:00", close_t="17:00", day="Sun-2")
+
+    result = allocate(demand, gym_modes, [sat1_block, sun2_block],
+                      spreading_excluded_days={"Sun-2"})
+
+    days_allocated = {d.day for d in result.decisions}
+    assert "Sun-2" not in days_allocated, (
+        "Spreading pass must skip Finals-day blocks listed in spreading_excluded_days"
+    )
+
+
+def test_extract_gym_blocks_records_resource_types():
+    """extract_gym_blocks must populate GymBlock.resource_types with all the
+    resource_type values from rows that were collapsed into that block.
+    """
+    rows = [
+        {"exclusive_group": "Main Gym", "day": "Sat-1", "open_time": "08:00",
+         "close_time": "17:00", "slot_minutes": 60, "resource_type": "Basketball Court"},
+        {"exclusive_group": "Main Gym", "day": "Sat-1", "open_time": "08:00",
+         "close_time": "17:00", "slot_minutes": 60, "resource_type": "Volleyball Court"},
+        {"exclusive_group": "Main Gym", "day": "Sat-1", "open_time": "13:00",
+         "close_time": "17:00", "slot_minutes": 60, "resource_type": "Badminton Court"},
+    ]
+    blocks = extract_gym_blocks(rows)
+
+    assert len(blocks) == 2, "Two unique (day, open_time, close_time) windows → two blocks"
+    morning = next(b for b in blocks if b.open_time == "08:00")
+    afternoon = next(b for b in blocks if b.open_time == "13:00")
+
+    assert "Basketball Court" in morning.resource_types
+    assert "Volleyball Court" in morning.resource_types
+    assert "Badminton Court" not in morning.resource_types
+
+    assert "Badminton Court" in afternoon.resource_types
+    assert "Basketball Court" not in afternoon.resource_types

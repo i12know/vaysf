@@ -3035,7 +3035,18 @@ class ScheduleWorkbookBuilder:
         if gym_resource_strategy == "allocator":
             venue_capacity_rows = self._build_venue_capacity_rows(roster_rows)
             demand = aggregate_demand_by_mode(venue_capacity_rows)
-            alloc_result = allocate(demand, gym_modes, gym_blocks)
+            # Days that carry pinned playoff slots are excluded from the
+            # spreading pass in allocate() — those blocks are handled by the
+            # playoff-slot promotion path below and must not be pre-empted.
+            _playoff_days: set = set()
+            for _ps in playoff_slots:
+                _slot = str(_ps.get("slot") or "").strip()
+                if _slot:
+                    _parts = _slot.rsplit("-", 1)
+                    if len(_parts) == 2:
+                        _playoff_days.add(_parts[0])
+            alloc_result = allocate(demand, gym_modes, gym_blocks,
+                                    spreading_excluded_days=_playoff_days)
             gym_resources = self._build_gym_resources_from_allocator(alloc_result.decisions)
             # Rows with no exclusive_group are standalone resources — include directly.
             # Rows whose exclusive_group has no Gym-Modes entry were not seen by the
