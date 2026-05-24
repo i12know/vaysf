@@ -95,6 +95,7 @@ class GymBlock:
     open_time: str   # "HH:MM"
     close_time: str  # "HH:MM"  (last_start + slot_min; last game ends here)
     slot_minutes: int
+    resource_types: frozenset = frozenset()  # resource_types from rows collapsed here
 
 
 @dataclass
@@ -131,26 +132,38 @@ def extract_gym_blocks(venue_rows: List[Dict]) -> List[GymBlock]:
     are deduplicated — the per-court Quantity expansion is irrelevant here; the
     allocator works at the block level, not the individual-court level.
 
+    Each GymBlock records the set of resource_types from the rows that were
+    collapsed into it.  The allocator uses this to prefer assigning a block to
+    the mode(s) that explicitly defined that time window, preventing a mode
+    from claiming a block that was authored for a different mode.
+
     Rows without an exclusive_group are skipped; those are standalone resources
     that are never subject to gym-mode allocation.
     """
-    seen: set = set()
-    blocks: List[GymBlock] = []
+    seen_order: List[tuple] = []
+    rt_map: dict = {}
     for row in venue_rows:
         grp = (row.get("exclusive_group") or "").strip()
         if not grp:
             continue
         key = (grp, row["day"], row["open_time"], row["close_time"], row["slot_minutes"])
-        if key not in seen:
-            seen.add(key)
-            blocks.append(GymBlock(
-                gym_name=grp,
-                day=row["day"],
-                open_time=row["open_time"],
-                close_time=row["close_time"],
-                slot_minutes=row["slot_minutes"],
-            ))
-    return blocks
+        if key not in rt_map:
+            seen_order.append(key)
+            rt_map[key] = set()
+        rt = (row.get("resource_type") or "").strip()
+        if rt:
+            rt_map[key].add(rt)
+    return [
+        GymBlock(
+            gym_name=key[0],
+            day=key[1],
+            open_time=key[2],
+            close_time=key[3],
+            slot_minutes=key[4],
+            resource_types=frozenset(rt_map[key]),
+        )
+        for key in seen_order
+    ]
 
 
 def aggregate_demand_by_mode(venue_capacity_rows: List[Dict]) -> Dict[str, float]:
@@ -183,6 +196,7 @@ def allocate(
     demand: Dict[str, float],
     gym_modes: Dict[str, Dict[str, int]],
     blocks: List[GymBlock],
+    spreading_excluded_days: Optional[set] = None,
 ) -> AllocationResult:
     """Greedy priority gym mode allocator.
 
@@ -249,14 +263,30 @@ def allocate(
             if remaining <= 0:
                 break
 
-            # Claim unallocated blocks in this gym, earliest-first (contiguous).
+            # Claim unallocated blocks in this gym. Blocks whose resource_types
+            # explicitly include this mode are preferred (sort key 0) over blocks
+            # that were authored for a different mode but happen to share the same
+            # (gym, day) window (sort key 1). Within each tier: earliest day first,
+            # then earliest open_time.
             gym_blocks = sorted(
                 [b for b in available if b.gym_name == gym_name],
-            key=lambda b: (_day_sort_key(b.day), b.open_time),
+                key=lambda b: (
+                    0 if mode in b.resource_types else 1,
+                    _day_sort_key(b.day),
+                    b.open_time,
+                ),
             )
             for block in gym_blocks:
                 if remaining <= 0:
                     break
+                # Honour the user's intent: if the block was explicitly authored
+                # for specific modes (resource_types is non-empty) and this mode
+                # is not among them, skip it.  This prevents, e.g., a large BB
+                # demand from consuming a 13:00-17:00 block that the user defined
+                # exclusively for Badminton.  Falls back to claiming any block
+                # when resource_types is empty (legacy rows without type tracking).
+                if block.resource_types and mode not in block.resource_types:
+                    continue
                 ch = _court_hours(block, courts)
                 if ch <= 0:
                     continue
@@ -272,6 +302,53 @@ def allocate(
                 ))
                 mode_supply[mode] += ch
                 remaining -= ch
+
+    # Spreading pass: claim any blocks still unclaimed after the demand-driven
+    # pass.  This happens when demand for a mode was already met by earlier days
+    # (e.g. BB/VB satisfied by Sat-1+Sun-1) but the user's venue_input also
+    # defines capacity for that mode on a later day (e.g. Sat-2).  Providing
+    # those extra resources costs nothing — the solver simply won't fill unused
+    # slots — but it gives the CP-SAT pool more layout options, improving
+    # convergence speed and solution quality.
+    #
+    # Days in spreading_excluded_days (typically Finals days with pinned playoff
+    # slots) are skipped: those blocks are handled by the playoff-slot promotion
+    # path in schedule_workbook.py and must not be pre-empted here.
+    #
+    # Only claim a block for a mode that explicitly defined it (mode in
+    # block.resource_types) to avoid cross-contamination between modes.
+    _skip_days = spreading_excluded_days or set()
+    # Track blocks each mode has received in this pass for round-robin fairness.
+    _spread_blocks_per_mode: Dict[str, int] = dict.fromkeys(sorted_modes, 0)
+    for block in sorted(available, key=lambda b: (_day_sort_key(b.day), b.open_time)):
+        if block.day in _skip_days:
+            continue
+        # Rank candidate modes: fewer spreading-pass blocks first (fairness), then
+        # higher court count (efficiency), then original demand-priority order.
+        candidates = [
+            (mode, gym_modes.get(block.gym_name, {}).get(mode, 0))
+            for mode in sorted_modes
+            if gym_modes.get(block.gym_name, {}).get(mode, 0) > 0
+            and mode in block.resource_types
+        ]
+        if not candidates:
+            continue
+        best_mode, best_courts = min(
+            candidates,
+            key=lambda mc: (_spread_blocks_per_mode[mc[0]], -mc[1], sorted_modes.index(mc[0])),
+        )
+        available.discard(block)
+        decisions.append(AllocationDecision(
+            gym_name=block.gym_name,
+            day=block.day,
+            open_time=block.open_time,
+            close_time=block.close_time,
+            mode=best_mode,
+            courts=best_courts,
+            slot_minutes=block.slot_minutes,
+        ))
+        mode_supply[best_mode] += _court_hours(block, best_courts)
+        _spread_blocks_per_mode[best_mode] += 1
 
     return AllocationResult(
         decisions=decisions,

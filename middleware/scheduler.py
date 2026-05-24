@@ -70,7 +70,8 @@ _WEEKDAY_ORDER: dict[str, int] = {
     "Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3,
     "Fri": 4, "Sat": 5, "Sun": 6, "Day": 7,
 }
-_DEFAULT_TIMEOUT = float(os.getenv("SCHEDULE_SOLVER_TIMEOUT", "30.0"))
+_DEFAULT_TIMEOUT = float(os.getenv("SCHEDULE_SOLVER_TIMEOUT", "90.0"))
+_NUM_SEARCH_WORKERS = int(os.getenv("SCHEDULE_SOLVER_WORKERS", "0"))  # 0 = CP-SAT auto
 _OUTPUT_FILENAME = "schedule_output.json"
 
 STATUS_OPTIMAL    = "OPTIMAL"
@@ -675,6 +676,10 @@ def _solve_one_pool(
         resource_type = game["resource_type"]
         duration      = game["duration_minutes"]
         compatible    = res_by_type.get(resource_type, [])
+        earliest_slot = str(game.get("earliest_slot") or "").strip()
+        latest_slot   = str(game.get("latest_slot") or "").strip()
+        earliest_key  = _pool_slot_key(earliest_slot) if earliest_slot else None
+        latest_key    = _pool_slot_key(latest_slot) if latest_slot else None
 
         game_vars[gid] = {}
         for rid in compatible:
@@ -683,6 +688,12 @@ def _solve_one_pool(
             # C7 — multi-slot: game occupies ceil(duration/slot_min) consecutive slots
             n_slots  = max(1, math.ceil(duration / slot_min))
             for t in range(len(slots) - n_slots + 1):
+                start_label = slots[t]
+                start_key = _pool_slot_key(start_label)
+                if earliest_key is not None and start_key < earliest_key:
+                    continue
+                if latest_key is not None and start_key > latest_key:
+                    continue
                 occupied_labels = slots[t : t + n_slots]
                 if any(
                     label in blocked_slots.get(rid, set())
@@ -804,7 +815,14 @@ def _solve_one_pool(
             model.Add(
                 game_global_slot[before_game_id] <= pinned_idx - min_gap_slots
             )
-        # Skip if "before" is pinned (can't constrain a pinned game) or both unknown.
+        elif before_game_id in pinned_game_global and after_game_id in game_global_slot:
+            # "Before" is pinned; "after" is solver-assigned. Solver must place the
+            # "after" game at or after the pinned "before" + min_gap.
+            pinned_idx = pinned_game_global[before_game_id]
+            model.Add(
+                game_global_slot[after_game_id] >= pinned_idx + min_gap_slots
+            )
+        # Skip if both are pinned (validated at merge time) or both are unknown.
 
     for team, by_idx in team_global_assignments.items():
         for g_idx, vars_at_g in by_idx.items():
@@ -1053,6 +1071,8 @@ def _solve_one_pool(
     # Solve
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = timeout_seconds
+    if _NUM_SEARCH_WORKERS > 0:
+        solver.parameters.num_search_workers = _NUM_SEARCH_WORKERS
     if SCHEDULE_SOLVER_RANDOM_SEED:
         solver.parameters.random_seed = SCHEDULE_SOLVER_RANDOM_SEED
     status_code = solver.Solve(model)
@@ -1176,14 +1196,8 @@ def solve(
         resources,
     )
 
-    # Partition games/resources by logical solver pool. Most pools still line up
-    # 1:1 with resource_type; the core gym sports may opt into a shared pool via
-    # schedule_input["solver_pool"] so cross-sport conflicts can be optimized
-    # together without mixing their actual court types.
-    games_by_pool: dict[str, list[dict]] = {}
-    for game in games:
-        games_by_pool.setdefault(_solver_pool_key(game), []).append(game)
-
+    # Partition resources by logical solver pool first so resource_pool_by_id is
+    # available when we classify pinned playoff games below.
     resources_by_pool: dict[str, list[dict]] = {}
     for resource in resources:
         resources_by_pool.setdefault(_solver_pool_key(resource), []).append(resource)
@@ -1192,6 +1206,32 @@ def solve(
         resource["resource_id"]: _solver_pool_key(resource)
         for resource in resources
     }
+
+    # Partition games by logical solver pool. Most pools still line up 1:1 with
+    # resource_type; the core gym sports may opt into a shared pool via
+    # schedule_input["solver_pool"] so cross-sport conflicts can be optimized
+    # together without mixing their actual court types.
+    #
+    # pinned_game_id_to_pool: maps each game_id that appears in playoff_slots to
+    # its pool key (derived from the resource_id of the pin).  Games in this set are
+    # excluded from the solver model — they are treated as fixed reference points so
+    # that merge_playoff_slot_assignments cannot silently overwrite a solver-chosen
+    # slot with a manual pin that violates precedence.
+    pinned_game_id_to_pool: dict[str, str] = {}
+    for _ps in playoff_slots:
+        _gid = str(_ps.get("game_id") or "").strip()
+        _rid  = str(_ps.get("resource_id") or "").strip()
+        if _gid and _rid:
+            _pk = resource_pool_by_id.get(_rid, "")
+            if _pk:
+                pinned_game_id_to_pool[_gid] = _pk
+
+    games_by_pool: dict[str, list[dict]] = {}
+    for game in games:
+        gid = str(game.get("game_id") or "").strip()
+        if gid in pinned_game_id_to_pool:
+            continue  # pinned games are fixed references, not solver-modeled
+        games_by_pool.setdefault(_solver_pool_key(game), []).append(game)
     blocked_slots_by_pool: dict[str, dict[str, set[str]]] = defaultdict(dict)
     for resource_type, blocked_by_resource in blocked_slots_by_type.items():
         for resource_id, slots in blocked_by_resource.items():
@@ -1221,6 +1261,10 @@ def solve(
             game_id = str(game.get("game_id") or "").strip()
             if game_id:
                 game_pool_by_id[game_id] = pool_key
+    # Also register pinned games so precedence rules involving them are routed
+    # to the correct pool and not silently dropped.
+    for _gid, _pk in pinned_game_id_to_pool.items():
+        game_pool_by_id.setdefault(_gid, _pk)
     if team_conflicts:
         game_pool_by_team: dict[str, str] = {}
         for pool_key, pool_games in games_by_pool.items():
@@ -1533,7 +1577,7 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         return 1
 
     if result["status"] == STATUS_UNKNOWN:
-        timeout_used = os.getenv("SCHEDULE_SOLVER_TIMEOUT", "30")
+        timeout_used = os.getenv("SCHEDULE_SOLVER_TIMEOUT", "90")
         logger.warning(
             f"Solver timed out after {timeout_used}s without finding a solution. "
             "This is not proven infeasible — increase SCHEDULE_SOLVER_TIMEOUT and re-run. "

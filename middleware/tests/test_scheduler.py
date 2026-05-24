@@ -663,6 +663,48 @@ def test_solve_min_rest_between_games():
     )
 
 
+def test_solve_respects_latest_slot_bound():
+    """A game whose latest start is before all available starts must stay unscheduled."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_INFEASIBLE
+
+    si = _minimal_schedule_input(
+        games=[{
+            **_gym_game("G1", "T1", "T2"),
+            "latest_slot": "Sat-2-16:00",
+        }],
+        resources=[_gym_resource("GYM-Sun-2-1", day="Sun-2", open_time="12:00", close_time="14:00")],
+    )
+    si["day_order"] = ["Sat-2", "Sun-2"]
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_INFEASIBLE
+    assert result["assignments"] == []
+    assert "G1" in result["unscheduled"]
+
+
+def test_solve_respects_earliest_slot_bound():
+    """A game whose earliest start is after all available starts must stay unscheduled."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_INFEASIBLE
+
+    si = _minimal_schedule_input(
+        games=[{
+            **_gym_game("G1", "T1", "T2"),
+            "earliest_slot": "Sun-2-12:00",
+        }],
+        resources=[_gym_resource("GYM-Sat-2-1", day="Sat-2", open_time="12:00", close_time="14:00")],
+    )
+    si["day_order"] = ["Sat-2", "Sun-2"]
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_INFEASIBLE
+    assert result["assignments"] == []
+    assert "G1" in result["unscheduled"]
+
+
 def test_solve_empty_input():
     """An input with no games produces OPTIMAL with empty assignments."""
     pytest.importorskip("ortools")
@@ -1476,3 +1518,75 @@ def test_solve_duplicate_playoff_slot_raises():
     ]
     with pytest.raises(ValueError, match="Duplicate playoff slot reservation"):
         solve(si, timeout_seconds=10.0)
+
+
+def test_solve_pinned_final_cannot_precede_solver_semis():
+    """Regression: pinned playoff Final must not appear before solver-assigned Semis.
+
+    When a game exists in both games[] (auto-generated) and playoff_slots (manually
+    pinned), the old code let the solver assign it freely, then silently overwrote
+    the result with the manual pin — breaking Semi → Final precedence.  The fix
+    excludes pinned games from the solver model and treats them as fixed reference
+    points, so the solver constrains Semi to finish before the pinned Final time.
+    """
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL, STATUS_INFEASIBLE
+
+    def _semi_game(gid, ta, tb):
+        return {
+            "game_id": gid, "event": "Basketball - Men Team",
+            "stage": "Semi", "pool_id": "", "round": 1,
+            "team_a_id": ta, "team_b_id": tb,
+            "duration_minutes": 60, "resource_type": "Gym Court",
+            "earliest_slot": None, "latest_slot": None,
+        }
+
+    def _final_game(gid, ta, tb):
+        return {
+            "game_id": gid, "event": "Basketball - Men Team",
+            "stage": "Final", "pool_id": "", "round": 1,
+            "team_a_id": ta, "team_b_id": tb,
+            "duration_minutes": 60, "resource_type": "Gym Court",
+            "earliest_slot": None, "latest_slot": None,
+        }
+
+    precedence = [
+        {"before_game_id": "VBM-Semi-1", "after_game_id": "VBM-Final", "min_gap_slots": 1},
+        {"before_game_id": "VBM-Semi-2", "after_game_id": "VBM-Final", "min_gap_slots": 1},
+    ]
+    resources = [
+        _gym_resource("GYM-1", day="Sun-1", open_time="12:00", close_time="17:00"),
+        _gym_resource("GYM-2", day="Sun-1", open_time="12:00", close_time="17:00"),
+    ]
+
+    # Case A: valid pin — Final at 15:00 leaves room for both Semis before it
+    si = _minimal_schedule_input(
+        games=[
+            _semi_game("VBM-Semi-1", "TA", "TB"),
+            _semi_game("VBM-Semi-2", "TC", "TD"),
+            _final_game("VBM-Final", "WIN-1", "WIN-2"),
+        ],
+        resources=resources,
+    )
+    si["precedence"] = precedence
+    si["playoff_slots"] = [
+        {"game_id": "VBM-Final", "event": "Basketball - Men Team", "stage": "Final",
+         "resource_id": "GYM-1", "slot": "Sun-1-15:00"},
+    ]
+    result = solve(si, timeout_seconds=10.0)
+    assert result["status"] == STATUS_OPTIMAL
+    slot_by_game = {a["game_id"]: a["slot"] for a in result["assignments"]}
+    assert slot_by_game["VBM-Final"] == "Sun-1-15:00"
+    assert slot_by_game["VBM-Semi-1"] < "Sun-1-15:00", "Semi-1 must precede pinned Final"
+    assert slot_by_game["VBM-Semi-2"] < "Sun-1-15:00", "Semi-2 must precede pinned Final"
+
+    # Case B: impossible pin — Final at 12:00 with no prior slots for Semis; must be INFEASIBLE
+    si2 = {**si}
+    si2["playoff_slots"] = [
+        {"game_id": "VBM-Final", "event": "Basketball - Men Team", "stage": "Final",
+         "resource_id": "GYM-1", "slot": "Sun-1-12:00"},
+    ]
+    result2 = solve(si2, timeout_seconds=10.0)
+    assert result2["status"] == STATUS_INFEASIBLE, (
+        "Solver must reject an impossible pin where Final precedes Semis"
+    )

@@ -2260,10 +2260,12 @@ class ScheduleWorkbookBuilder:
                 {"before_game_id": pid, "after_game_id": qid, "min_gap_slots": 1}
                 for pid in pool_game_ids for qid in qf_ids
             )
-            precedence.extend(
-                {"before_game_id": qid, "after_game_id": sid, "min_gap_slots": 1}
-                for qid in qf_ids for sid in semi_ids
-            )
+            precedence.extend([
+                {"before_game_id": qf_ids[0], "after_game_id": semi_ids[0], "min_gap_slots": 1},
+                {"before_game_id": qf_ids[1], "after_game_id": semi_ids[0], "min_gap_slots": 1},
+                {"before_game_id": qf_ids[2], "after_game_id": semi_ids[1], "min_gap_slots": 1},
+                {"before_game_id": qf_ids[3], "after_game_id": semi_ids[1], "min_gap_slots": 1},
+            ])
             semi_team_pairs = [
                 (f"WIN-{qf_ids[0]}", f"WIN-{qf_ids[1]}", "Winner QF-1", "Winner QF-2"),
                 (f"WIN-{qf_ids[2]}", f"WIN-{qf_ids[3]}", "Winner QF-3", "Winner QF-4"),
@@ -2899,6 +2901,38 @@ class ScheduleWorkbookBuilder:
         return day, time_part
 
     @staticmethod
+    def _last_slot_label_on_day(
+        resources: List[Dict[str, Any]],
+        court_type: str,
+        day: str,
+    ) -> Optional[str]:
+        """Return the last valid slot label (e.g. 'Sat-2-16:00') for the given
+        court_type on the given day, derived from close_time and slot_minutes
+        of all matching resources.  Returns None if no matching resource exists.
+        """
+        best: Optional[str] = None
+        for r in resources:
+            if str(r.get("resource_type") or "").strip() != court_type:
+                continue
+            if str(r.get("day") or "").strip() != day:
+                continue
+            close_text = str(r.get("close_time") or "").strip()
+            if ":" not in close_text:
+                continue
+            try:
+                close_h, close_m = (int(x) for x in close_text.split(":"))
+            except ValueError:
+                continue
+            slot_min = int(r.get("slot_minutes") or 60)
+            last_start = close_h * 60 + close_m - slot_min
+            if last_start < 0:
+                continue
+            label = f"{day}-{last_start // 60:02d}:{last_start % 60:02d}"
+            if best is None or label > best:
+                best = label
+        return best
+
+    @staticmethod
     def _load_gym_modes(venue_input_path: Path) -> Dict[str, Dict[str, int]]:
         """Load per-gym mode capacities from the Gym-Modes tab in venue_input.xlsx.
 
@@ -3035,7 +3069,18 @@ class ScheduleWorkbookBuilder:
         if gym_resource_strategy == "allocator":
             venue_capacity_rows = self._build_venue_capacity_rows(roster_rows)
             demand = aggregate_demand_by_mode(venue_capacity_rows)
-            alloc_result = allocate(demand, gym_modes, gym_blocks)
+            # Days that carry pinned playoff slots are excluded from the
+            # spreading pass in allocate() — those blocks are handled by the
+            # playoff-slot promotion path below and must not be pre-empted.
+            _playoff_days: set = set()
+            for _ps in playoff_slots:
+                _slot = str(_ps.get("slot") or "").strip()
+                if _slot:
+                    _parts = _slot.rsplit("-", 1)
+                    if len(_parts) == 2:
+                        _playoff_days.add(_parts[0])
+            alloc_result = allocate(demand, gym_modes, gym_blocks,
+                                    spreading_excluded_days=_playoff_days)
             gym_resources = self._build_gym_resources_from_allocator(alloc_result.decisions)
             # Rows with no exclusive_group are standalone resources — include directly.
             # Rows whose exclusive_group has no Gym-Modes entry were not seen by the
@@ -3326,6 +3371,48 @@ class ScheduleWorkbookBuilder:
                 GYM_RESOURCE_TYPE_VOLLEYBALL,
             ):
                 resource["solver_pool"] = self._GYM_CORE_SOLVER_POOL
+
+        # Constrain QF games to end no later than the last slot on the day
+        # BEFORE the Finals pinned day for that sport.  When the user pins a
+        # Final to e.g. Sun-2-14:00, they almost always intend QFs to run the
+        # day before (Sat-2) — that's why Sat-2 capacity exists in venue_input.
+        # Without this constraint, CP-SAT can FEASIBLY (but undesirably) push
+        # a QF onto the Finals day next to its Semi/Final.
+        finals_day_by_event: Dict[str, str] = {}
+        for ps in playoff_slots:
+            if str(ps.get("stage") or "").strip().lower() != "final":
+                continue
+            slot = str(ps.get("slot") or "").strip()
+            event_label = str(ps.get("event") or "").strip()
+            if not slot or not event_label:
+                continue
+            day, _ = self._split_slot_label(slot)
+            if day:
+                finals_day_by_event[event_label] = day
+
+        if finals_day_by_event:
+            for game in all_games:
+                if str(game.get("stage") or "").strip() not in ("QF", "Semi"):
+                    continue
+                event_label = str(game.get("event") or "").strip()
+                finals_day = finals_day_by_event.get(event_label)
+                if not finals_day:
+                    continue
+                try:
+                    finals_idx = day_order.index(finals_day)
+                except ValueError:
+                    continue
+                if finals_idx <= 0:
+                    continue
+                day_before = day_order[finals_idx - 1]
+                court_type = str(game.get("resource_type") or "").strip()
+                if not court_type:
+                    continue
+                latest = ScheduleWorkbookBuilder._last_slot_label_on_day(
+                    all_resources, court_type, day_before,
+                )
+                if latest:
+                    game["latest_slot"] = latest
 
         return {
             "generated_at":       datetime.now().isoformat(timespec="seconds"),

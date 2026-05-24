@@ -2886,20 +2886,29 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                 # schedule_input.json — consumed by solve-schedule and build-schedule-workbook.
                 # Scheduling tabs live in Schedule_Workbook_*.xlsx (build-schedule-workbook).
+                # Isolated try/except: if schedule_input generation fails (bad venue file,
+                # bug in _build_schedule_input, etc.) we still want the sport-specific tabs
+                # below to be written into the Church_Team_Status workbook.
                 if include_venue_capacity:
-                    venue_input_path = DATA_DIR / VENUE_INPUT_FILENAME
-                    schedule_input = self.write_schedule_input_json(
-                        roster_rows,
-                        validation_rows,
-                        venue_input_path,
-                        filepath.parent / "schedule_input.json",
-                        pool_assignment_path=filepath.parent / "pool_assignments.json",
-                    )
-                    json_path = filepath.parent / "schedule_input.json"
-                    logger.info(
-                        f"schedule_input.json: {schedule_input['game_count']} games, "
-                        f"{schedule_input['resource_count']} resources → {json_path}"
-                    )
+                    try:
+                        venue_input_path = DATA_DIR / VENUE_INPUT_FILENAME
+                        schedule_input = self.write_schedule_input_json(
+                            roster_rows,
+                            validation_rows,
+                            venue_input_path,
+                            filepath.parent / "schedule_input.json",
+                            pool_assignment_path=filepath.parent / "pool_assignments.json",
+                        )
+                        json_path = filepath.parent / "schedule_input.json"
+                        logger.info(
+                            f"schedule_input.json: {schedule_input['game_count']} games, "
+                            f"{schedule_input['resource_count']} resources → {json_path}"
+                        )
+                    except Exception as _si_exc:
+                        logger.error(
+                            f"schedule_input.json generation failed (sport tabs will still be written): {_si_exc}",
+                            exc_info=True,
+                        )
 
                 # Add yellow note to Photo column in Roster sheet
                 if not df_roster.empty:
