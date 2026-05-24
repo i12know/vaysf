@@ -1872,6 +1872,78 @@ def test_last_slot_label_on_day_helper():
     ) is None
 
 
+def test_build_schedule_input_via_church_teams_exporter_does_not_raise(tmp_path):
+    """Regression: _build_schedule_input is copied onto ChurchTeamsExporter via
+    setattr at the bottom of church_teams_export.py, but _last_slot_label_on_day
+    is NOT in that copy list.  The QF latest_slot patching code must therefore
+    invoke the helper via the class name (ScheduleWorkbookBuilder), not via
+    self, otherwise running export-church-teams raises
+    `AttributeError: 'ChurchTeamsExporter' object has no attribute
+    '_last_slot_label_on_day'` and the schedule_input.json is never written —
+    leaving the solver to consume a stale file from a previous run."""
+    from church_teams_export import ChurchTeamsExporter
+    from config import GYM_RESOURCE_TYPE_BASKETBALL
+    from openpyxl import Workbook
+
+    headers = [
+        "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+        "Date", "Start Time", "Last Start Time", "Slot Minutes",
+        "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+    ]
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-1",
+         "2026-07-19", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sat-2",
+         "2026-07-25", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sun-2",
+         "2026-07-26", 13, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 2, 0],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "resource_id", "slot"],
+        ["BBM-Final", "Basketball - Men Team", "Final", "GYM-Sun-2-1", "Sun-2-14:00"],
+    ]
+
+    path = tmp_path / "venue_input.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    for c, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=c, value=h)
+    for r, row in enumerate(rows, start=2):
+        for c, val in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=val)
+    gm = wb.create_sheet("Gym-Modes")
+    for r, row in enumerate(gym_modes, start=1):
+        for c, val in enumerate(row, start=1):
+            gm.cell(row=r, column=c, value=val)
+    ps = wb.create_sheet("Playoff-Slots")
+    for r, row in enumerate(playoff_rows, start=1):
+        for c, val in enumerate(row, start=1):
+            ps.cell(row=r, column=c, value=val)
+    wb.save(path)
+
+    # The exporter does NOT inherit ScheduleWorkbookBuilder — its methods are
+    # injected via setattr.  This call would raise AttributeError before the fix.
+    exporter = ChurchTeamsExporter()
+    si = exporter._build_schedule_input(_make_gym_roster(n_churches=8), [], path)
+
+    qf_games = [g for g in si["games"]
+                if g["stage"] == "QF" and g["event"] == "Basketball - Men Team"]
+    assert qf_games, "Expected BBM-QF-* games to be generated"
+    for qf in qf_games:
+        assert qf["latest_slot"] == "Sat-2-17:00", (
+            f"BBM QF game {qf['game_id']} expected latest_slot 'Sat-2-17:00', "
+            f"got {qf['latest_slot']!r} — the QF latest_slot patch must work when "
+            f"_build_schedule_input is invoked through a ChurchTeamsExporter instance"
+        )
+
+
 def test_build_pod_game_objects_single_elimination():
     """With 3 entries in a division, 2 game placeholders are generated."""
     from config import POD_RESOURCE_EVENT_TYPE

@@ -3406,7 +3406,7 @@ class ScheduleWorkbookBuilder:
                 court_type = str(game.get("resource_type") or "").strip()
                 if not court_type:
                     continue
-                latest = self._last_slot_label_on_day(
+                latest = ScheduleWorkbookBuilder._last_slot_label_on_day(
                     all_resources, court_type, day_before,
                 )
                 if latest:
