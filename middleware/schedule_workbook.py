@@ -2260,10 +2260,12 @@ class ScheduleWorkbookBuilder:
                 {"before_game_id": pid, "after_game_id": qid, "min_gap_slots": 1}
                 for pid in pool_game_ids for qid in qf_ids
             )
-            precedence.extend(
-                {"before_game_id": qid, "after_game_id": sid, "min_gap_slots": 1}
-                for qid in qf_ids for sid in semi_ids
-            )
+            precedence.extend([
+                {"before_game_id": qf_ids[0], "after_game_id": semi_ids[0], "min_gap_slots": 1},
+                {"before_game_id": qf_ids[1], "after_game_id": semi_ids[0], "min_gap_slots": 1},
+                {"before_game_id": qf_ids[2], "after_game_id": semi_ids[1], "min_gap_slots": 1},
+                {"before_game_id": qf_ids[3], "after_game_id": semi_ids[1], "min_gap_slots": 1},
+            ])
             semi_team_pairs = [
                 (f"WIN-{qf_ids[0]}", f"WIN-{qf_ids[1]}", "Winner QF-1", "Winner QF-2"),
                 (f"WIN-{qf_ids[2]}", f"WIN-{qf_ids[3]}", "Winner QF-3", "Winner QF-4"),

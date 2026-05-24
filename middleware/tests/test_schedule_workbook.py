@@ -2425,7 +2425,14 @@ def test_build_assigned_gym_game_objects_auto_generates_playoffs_for_8_teams():
     }
     pool_ids = {gid for gid, st in stages.items() if st == "Pool"}
     assert all((p, q) in bbm_prec for p in pool_ids for q in qf_ids)
-    assert all((q, s) in bbm_prec for q in qf_ids for s in semi_ids)
+    assert ("BBM-QF-1", "BBM-Semi-1") in bbm_prec
+    assert ("BBM-QF-2", "BBM-Semi-1") in bbm_prec
+    assert ("BBM-QF-3", "BBM-Semi-2") in bbm_prec
+    assert ("BBM-QF-4", "BBM-Semi-2") in bbm_prec
+    assert ("BBM-QF-1", "BBM-Semi-2") not in bbm_prec
+    assert ("BBM-QF-2", "BBM-Semi-2") not in bbm_prec
+    assert ("BBM-QF-3", "BBM-Semi-1") not in bbm_prec
+    assert ("BBM-QF-4", "BBM-Semi-1") not in bbm_prec
     assert all((s, "BBM-Final") in bbm_prec for s in semi_ids)
     assert all((s, "BBM-3rd") in bbm_prec for s in semi_ids)
 

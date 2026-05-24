@@ -663,6 +663,48 @@ def test_solve_min_rest_between_games():
     )
 
 
+def test_solve_respects_latest_slot_bound():
+    """A game whose latest start is before all available starts must stay unscheduled."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_INFEASIBLE
+
+    si = _minimal_schedule_input(
+        games=[{
+            **_gym_game("G1", "T1", "T2"),
+            "latest_slot": "Sat-2-16:00",
+        }],
+        resources=[_gym_resource("GYM-Sun-2-1", day="Sun-2", open_time="12:00", close_time="14:00")],
+    )
+    si["day_order"] = ["Sat-2", "Sun-2"]
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_INFEASIBLE
+    assert result["assignments"] == []
+    assert "G1" in result["unscheduled"]
+
+
+def test_solve_respects_earliest_slot_bound():
+    """A game whose earliest start is after all available starts must stay unscheduled."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_INFEASIBLE
+
+    si = _minimal_schedule_input(
+        games=[{
+            **_gym_game("G1", "T1", "T2"),
+            "earliest_slot": "Sun-2-12:00",
+        }],
+        resources=[_gym_resource("GYM-Sat-2-1", day="Sat-2", open_time="12:00", close_time="14:00")],
+    )
+    si["day_order"] = ["Sat-2", "Sun-2"]
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_INFEASIBLE
+    assert result["assignments"] == []
+    assert "G1" in result["unscheduled"]
+
+
 def test_solve_empty_input():
     """An input with no games produces OPTIMAL with empty assignments."""
     pytest.importorskip("ortools")

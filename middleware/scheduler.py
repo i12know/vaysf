@@ -676,6 +676,10 @@ def _solve_one_pool(
         resource_type = game["resource_type"]
         duration      = game["duration_minutes"]
         compatible    = res_by_type.get(resource_type, [])
+        earliest_slot = str(game.get("earliest_slot") or "").strip()
+        latest_slot   = str(game.get("latest_slot") or "").strip()
+        earliest_key  = _pool_slot_key(earliest_slot) if earliest_slot else None
+        latest_key    = _pool_slot_key(latest_slot) if latest_slot else None
 
         game_vars[gid] = {}
         for rid in compatible:
@@ -684,6 +688,12 @@ def _solve_one_pool(
             # C7 — multi-slot: game occupies ceil(duration/slot_min) consecutive slots
             n_slots  = max(1, math.ceil(duration / slot_min))
             for t in range(len(slots) - n_slots + 1):
+                start_label = slots[t]
+                start_key = _pool_slot_key(start_label)
+                if earliest_key is not None and start_key < earliest_key:
+                    continue
+                if latest_key is not None and start_key > latest_key:
+                    continue
                 occupied_labels = slots[t : t + n_slots]
                 if any(
                     label in blocked_slots.get(rid, set())
