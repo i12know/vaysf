@@ -3390,7 +3390,7 @@ class ScheduleWorkbookBuilder:
 
         if finals_day_by_event:
             for game in all_games:
-                if str(game.get("stage") or "").strip() != "QF":
+                if str(game.get("stage") or "").strip() not in ("QF", "Semi"):
                     continue
                 event_label = str(game.get("event") or "").strip()
                 finals_day = finals_day_by_event.get(event_label)

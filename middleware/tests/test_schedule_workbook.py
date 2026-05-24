@@ -1827,19 +1827,21 @@ def test_build_schedule_input_qf_games_get_latest_slot_day_before_finals(tmp_pat
     # 16 churches → enough BB demand to fill Sat-1 + Sun-1 in the demand pass.
     si = builder._build_schedule_input(_make_gym_roster(n_churches=8), [], path)
 
-    qf_games = [g for g in si["games"] if g["stage"] == "QF" and g["event"] == "Basketball - Men Team"]
-    assert qf_games, "Expected at least one BBM-QF-* game in schedule input"
-    for qf in qf_games:
-        assert qf["latest_slot"] == "Sat-2-17:00", (
-            f"BBM QF game {qf['game_id']} expected latest_slot 'Sat-2-17:00', "
-            f"got {qf['latest_slot']!r}"
+    # QF and Semi games should both be constrained to the day before Finals.
+    constrained = [g for g in si["games"]
+                   if g["stage"] in ("QF", "Semi") and g["event"] == "Basketball - Men Team"]
+    assert constrained, "Expected BBM-QF-* and BBM-Semi-* games in schedule input"
+    for g in constrained:
+        assert g["latest_slot"] == "Sat-2-17:00", (
+            f"BBM {g['stage']} game {g['game_id']} expected latest_slot 'Sat-2-17:00', "
+            f"got {g['latest_slot']!r}"
         )
 
-    # Semi/Final games must NOT carry latest_slot (only QFs are constrained).
-    semi_final = [g for g in si["games"]
-                  if g["stage"] in ("Semi", "Final", "3rd")
-                  and g["event"] == "Basketball - Men Team"]
-    for g in semi_final:
+    # Final and 3rd-place games must NOT carry latest_slot.
+    unconstrained = [g for g in si["games"]
+                     if g["stage"] in ("Final", "3rd")
+                     and g["event"] == "Basketball - Men Team"]
+    for g in unconstrained:
         assert g["latest_slot"] is None, (
             f"{g['game_id']} (stage={g['stage']}) should not have latest_slot set"
         )
@@ -1933,13 +1935,14 @@ def test_build_schedule_input_via_church_teams_exporter_does_not_raise(tmp_path)
     exporter = ChurchTeamsExporter()
     si = exporter._build_schedule_input(_make_gym_roster(n_churches=8), [], path)
 
-    qf_games = [g for g in si["games"]
-                if g["stage"] == "QF" and g["event"] == "Basketball - Men Team"]
-    assert qf_games, "Expected BBM-QF-* games to be generated"
-    for qf in qf_games:
-        assert qf["latest_slot"] == "Sat-2-17:00", (
-            f"BBM QF game {qf['game_id']} expected latest_slot 'Sat-2-17:00', "
-            f"got {qf['latest_slot']!r} — the QF latest_slot patch must work when "
+    # Both QF and Semi games should be constrained to the day before Finals.
+    constrained = [g for g in si["games"]
+                   if g["stage"] in ("QF", "Semi") and g["event"] == "Basketball - Men Team"]
+    assert constrained, "Expected BBM-QF-* and BBM-Semi-* games to be generated"
+    for g in constrained:
+        assert g["latest_slot"] == "Sat-2-17:00", (
+            f"BBM {g['stage']} game {g['game_id']} expected latest_slot 'Sat-2-17:00', "
+            f"got {g['latest_slot']!r} — the latest_slot patch must work when "
             f"_build_schedule_input is invoked through a ChurchTeamsExporter instance"
         )
 
