@@ -1590,3 +1590,57 @@ def test_solve_pinned_final_cannot_precede_solver_semis():
     assert result2["status"] == STATUS_INFEASIBLE, (
         "Solver must reject an impossible pin where Final precedes Semis"
     )
+
+
+def test_solve_qf_semi_gap_enforced():
+    """Semi must start at least 2 slots after QF — min_gap_slots=2 enforces a 1-hour rest buffer.
+
+    With slot_minutes=60 and min_gap_slots=2:
+      QF at slot N → Semi must be at slot >= N+2 (one empty slot = 1 hour rest).
+    Verify this is enforced by the solver: give 4 courts spanning 4 slots each
+    (08:00–12:00), schedule two QF games and one Semi with min_gap_slots=2,
+    and assert the Semi slot index is at least 2 greater than both QF slot indices.
+    """
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL, _slot_sort_key, build_resource_slots
+
+    resources = [
+        _gym_resource("GYM-1", day="Sat-1", open_time="08:00", close_time="12:00"),
+        _gym_resource("GYM-2", day="Sat-1", open_time="08:00", close_time="12:00"),
+        _gym_resource("GYM-3", day="Sat-1", open_time="08:00", close_time="12:00"),
+        _gym_resource("GYM-4", day="Sat-1", open_time="08:00", close_time="12:00"),
+    ]
+    si = _minimal_schedule_input(
+        games=[
+            {**_gym_game("BBM-QF-1", "T1", "T2"), "latest_slot": None, "earliest_slot": None},
+            {**_gym_game("BBM-QF-2", "T3", "T4"), "latest_slot": None, "earliest_slot": None},
+            {**_gym_game("BBM-Semi-1", "WIN-QF1", "WIN-QF2"), "latest_slot": None, "earliest_slot": None},
+        ],
+        resources=resources,
+    )
+    si["precedence"] = [
+        {"before_game_id": "BBM-QF-1", "after_game_id": "BBM-Semi-1", "min_gap_slots": 2},
+        {"before_game_id": "BBM-QF-2", "after_game_id": "BBM-Semi-1", "min_gap_slots": 2},
+    ]
+
+    result = solve(si, timeout_seconds=15.0)
+    assert result["status"] == STATUS_OPTIMAL
+    assert result["unscheduled"] == []
+
+    slot_by_game = {a["game_id"]: a["slot"] for a in result["assignments"]}
+    all_labels = sorted(
+        {s for sl in build_resource_slots(resources).values() for s in sl},
+        key=_slot_sort_key,
+    )
+    slot_idx = {s: i for i, s in enumerate(all_labels)}
+
+    qf1_idx = slot_idx[slot_by_game["BBM-QF-1"]]
+    qf2_idx = slot_idx[slot_by_game["BBM-QF-2"]]
+    semi_idx = slot_idx[slot_by_game["BBM-Semi-1"]]
+
+    assert semi_idx >= qf1_idx + 2, (
+        f"Semi-1 at slot {semi_idx} is too close to QF-1 at slot {qf1_idx} (need gap >= 2)"
+    )
+    assert semi_idx >= qf2_idx + 2, (
+        f"Semi-1 at slot {semi_idx} is too close to QF-2 at slot {qf2_idx} (need gap >= 2)"
+    )

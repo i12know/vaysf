@@ -2363,10 +2363,10 @@ class ScheduleWorkbookBuilder:
                 for pid in pool_game_ids for qid in qf_ids
             )
             precedence.extend([
-                {"before_game_id": qf_ids[0], "after_game_id": semi_ids[0], "min_gap_slots": 1},
-                {"before_game_id": qf_ids[1], "after_game_id": semi_ids[0], "min_gap_slots": 1},
-                {"before_game_id": qf_ids[2], "after_game_id": semi_ids[1], "min_gap_slots": 1},
-                {"before_game_id": qf_ids[3], "after_game_id": semi_ids[1], "min_gap_slots": 1},
+                {"before_game_id": qf_ids[0], "after_game_id": semi_ids[0], "min_gap_slots": 2},
+                {"before_game_id": qf_ids[1], "after_game_id": semi_ids[0], "min_gap_slots": 2},
+                {"before_game_id": qf_ids[2], "after_game_id": semi_ids[1], "min_gap_slots": 2},
+                {"before_game_id": qf_ids[3], "after_game_id": semi_ids[1], "min_gap_slots": 2},
             ])
             semi_team_pairs = [
                 (f"WIN-{qf_ids[0]}", f"WIN-{qf_ids[1]}", "Winner QF-1", "Winner QF-2"),
@@ -2414,7 +2414,7 @@ class ScheduleWorkbookBuilder:
         final_game.update(extra_fields)
         games.append(final_game)
         precedence.extend(
-            {"before_game_id": sid, "after_game_id": final_id, "min_gap_slots": 1}
+            {"before_game_id": sid, "after_game_id": final_id, "min_gap_slots": 2}
             for sid in semi_ids
         )
 
@@ -2434,7 +2434,7 @@ class ScheduleWorkbookBuilder:
             third_game.update(extra_fields)
             games.append(third_game)
             precedence.extend(
-                {"before_game_id": sid, "after_game_id": third_id, "min_gap_slots": 1}
+                {"before_game_id": sid, "after_game_id": third_id, "min_gap_slots": 2}
                 for sid in semi_ids
             )
 

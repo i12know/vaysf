@@ -2453,6 +2453,20 @@ def test_build_assigned_gym_game_objects_auto_generates_playoffs_for_8_teams():
     assert all((s, "BBM-Final") in bbm_prec for s in semi_ids)
     assert all((s, "BBM-3rd") in bbm_prec for s in semi_ids)
 
+    # QF→Semi, Semi→Final, Semi→3rd all require a 1-hour rest buffer (min_gap_slots=2)
+    qf_semi_rules = [
+        r for r in precedence
+        if str(r.get("before_game_id") or "").startswith("BBM-QF-")
+        and str(r.get("after_game_id") or "").startswith("BBM-Semi-")
+    ]
+    semi_final_rules = [
+        r for r in precedence
+        if str(r.get("before_game_id") or "").startswith("BBM-Semi-")
+        and str(r.get("after_game_id") or "") in ("BBM-Final", "BBM-3rd")
+    ]
+    assert all(r["min_gap_slots"] == 2 for r in qf_semi_rules), "QF→Semi must require 2-slot gap"
+    assert all(r["min_gap_slots"] == 2 for r in semi_final_rules), "Semi→Final/3rd must require 2-slot gap"
+
 
 def test_build_assigned_gym_game_objects_4_team_bracket_skips_qf():
     """4-team bracket should generate Semi/Final/3rd directly, no QFs."""
@@ -3464,7 +3478,12 @@ def test_bc_schedule_input_adds_playoff_precedence(tmp_path):
         for semi_id in semi_ids
     }
     assert precedence_pairs == expected_pairs
-    assert all(int(rule.get("min_gap_slots") or 0) == 1 for rule in si["precedence"])
+    bc_rules = [
+        r for r in si["precedence"]
+        if str(r.get("before_game_id") or "").startswith("BC-")
+        or str(r.get("after_game_id") or "").startswith("BC-")
+    ]
+    assert all(int(rule.get("min_gap_slots") or 0) == 1 for rule in bc_rules)
 
 
 def test_bc_event_in_pool_assignment_defs():
