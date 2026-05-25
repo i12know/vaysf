@@ -3277,6 +3277,15 @@ def test_master_schedule_first_write_wins_on_exclusive_group_double_booking(tmp_
     assert conflict_cell.comment is not None, "Conflict cell must carry a Note"
     assert "SCHEDULING CONFLICT" in conflict_cell.comment.text
 
+    # Verify the VML was patched so the comment is always visible (not hidden).
+    import zipfile, re as _re
+    with zipfile.ZipFile(out, "r") as zf:
+        vml_files = [n for n in zf.namelist() if n.startswith("xl/drawings/") and n.endswith(".vml")]
+        assert vml_files, "VML file must exist"
+        vml_text = zf.read(vml_files[0]).decode("utf-8")
+    assert "visibility:hidden" not in vml_text, "VML must not contain visibility:hidden after patch"
+    assert "visibility:visible" in vml_text, "VML must contain visibility:visible after patch"
+
 
 # ---------------------------------------------------------------------------
 # Bible Challenge Venue-Estimator tests (Issue #118)
