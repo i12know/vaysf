@@ -3272,8 +3272,8 @@ def test_master_schedule_first_write_wins_on_exclusive_group_double_booking(tmp_
         None,
     )
     assert conflict_cell is not None
-    assert conflict_cell.fill.fgColor.rgb.endswith("FFC7CE"), "Conflict cell must have red fill"
-    assert conflict_cell.font.color.rgb == "00FFFF00", "Conflict cell must have yellow text"
+    assert conflict_cell.fill.fgColor.rgb.endswith("FFCC00"), "Conflict cell must have yellow fill"
+    assert conflict_cell.font.color.rgb.endswith("FF2400"), "Conflict cell must have red text"
     assert conflict_cell.comment is not None, "Conflict cell must carry a Note"
     assert "SCHEDULING CONFLICT" in conflict_cell.comment.text
 
