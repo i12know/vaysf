@@ -3018,6 +3018,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         adjusted_width = min(max_length + 2, 50)  # Max width of 50
                         worksheet.column_dimensions[column_letter].width = adjusted_width
 
+                ScheduleWorkbookBuilder._stamp_known_tab_statuses(
+                    writer.book,
+                    default_unknown=ScheduleWorkbookBuilder._SPORT_EXPORT_TAB_STATUS,
+                )
+
             logger.info(f"Successfully wrote Excel report: {filepath}")
         except Exception as e:
             logger.error(f"Failed to write Excel file {filepath}: {e}", exc_info=True)

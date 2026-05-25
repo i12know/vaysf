@@ -701,6 +701,7 @@ def generate_venue_template(output_path: Optional[Path] = None) -> bool:
     from openpyxl import Workbook
     from openpyxl.styles import PatternFill, Font, Alignment
     from openpyxl.utils import get_column_letter
+    from schedule_workbook import ScheduleWorkbookBuilder
     from config import (
         DATA_DIR, VENUE_TEMPLATE_FILENAME,
         POD_RESOURCE_TYPE_TENNIS, POD_RESOURCE_TYPE_PICKLEBALL,
@@ -832,6 +833,7 @@ def generate_venue_template(output_path: Optional[Path] = None) -> bool:
     )
 
     try:
+        ScheduleWorkbookBuilder._stamp_known_tab_statuses(wb)
         wb.save(output_path)
         logger.info(f"Venue input template written to: {output_path}")
         return True

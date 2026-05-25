@@ -42,6 +42,33 @@ So after editing `venue_input.xlsx`, you usually rerun
 
 ---
 
+## Tab Status Map
+
+Generated workbooks now include a status banner near the top-right of each
+important tab. The banner is intentionally outside the data table so it does
+not move headers or break imports.
+
+Use this map when deciding whether to edit a sheet:
+
+| Workbook | Tab | Status | What to do |
+|----------|-----|--------|------------|
+| `venue_input.xlsx` | `Venue-Input` | `EDITABLE INPUT` | Edit booked resource blocks here, then rerun `export-church-teams`. |
+| `venue_input.xlsx` | `Gym-Modes` | `EDITABLE INPUT` | Edit physical gym mode capacities here. |
+| `venue_input.xlsx` | `Playoff-Slots` | `EDITABLE OVERRIDE INPUT` | Optional playoff pins; copy exact `game_id`, `resource_id`, and `slot` values from `Schedule-Input`. |
+| `Church_Team_Status_ALL_*.xlsx` | `Summary`, `Contacts-Status`, sport tabs | `READ-ONLY OUTPUT` | Review only; rerun `export-church-teams` after source data changes. |
+| `Church_Team_Status_ALL_*.xlsx` | `Roster`, `Validation-Issues` | `GENERATED DATA SOURCE` | Scheduling reads these tabs; fix source data upstream instead of editing cells. |
+| `Schedule_Workbook_*.xlsx` | `Summary`, `Pod-Divisions` | `READ-ONLY OUTPUT` | Generated planning context. |
+| `Schedule_Workbook_*.xlsx` | `Venue-Estimator`, `Court-Schedule-Sketch` | `READ-ONLY PLANNING OUTPUT` | Use for planning; edit `venue_input.xlsx` for capacity changes. |
+| `Schedule_Workbook_*.xlsx` | `Pod-Entries-Review` | `READ-ONLY REVIEW OUTPUT` | Review pod entries; fix roster/source data upstream. |
+| `Schedule_Workbook_*.xlsx` | `Pod-Resource-Estimate` | `READ-ONLY CAPACITY CHECK` | Compare demand to venue capacity; edit `venue_input.xlsx` if capacity is wrong. |
+| `Schedule_Workbook_*.xlsx` | `Schedule-Input` | `GENERATED LOOKUP / MACHINE CONTRACT VIEW` | Copy exact IDs and slots from here; do not hand-edit. |
+| `Schedule_Workbook_*.xlsx` | `Pool-Assignment` | `TEMPORARY EDIT SURFACE` | Edit seeds/pool placements here, then rerun `assign-pools --workbook`. |
+| `Schedule_Workbook_*.xlsx` | `Gym-Allocation` | `READ-ONLY ALLOCATION AUDIT` | Review gym-mode allocation; change venue inputs and rerun the workflow if needed. |
+| `VAYSF_Schedule_*.xlsx` | `Schedule-by-Time`, `Schedule-by-Sport`, `Master-Schedule` | `FINAL OUTPUT` | Publish/review only; rerun the scheduler if inputs change. |
+| `VAYSF_Schedule_*.xlsx` | `Conflict-Audit` | `AUDIT OUTPUT` | Check conflicts and warnings before publishing. |
+
+---
+
 ## Workflow Map
 
 ```mermaid
