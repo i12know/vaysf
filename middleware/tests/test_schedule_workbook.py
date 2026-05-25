@@ -3261,6 +3261,22 @@ def test_master_schedule_first_write_wins_on_exclusive_group_double_booking(tmp_
     bad_texts = [v for v in string_values if "BAD-Men-Doubles-01" in v]
     assert not bad_texts, "Badminton game must not overwrite Basketball in shared column"
 
+    # The conflicted cell must be marked red with yellow text and carry a Note.
+    conflict_cell = next(
+        (
+            ws.cell(row=r, column=c)
+            for r in range(1, ws.max_row + 1)
+            for c in range(1, ws.max_column + 1)
+            if "BBM-Semi-1" in str(ws.cell(row=r, column=c).value or "")
+        ),
+        None,
+    )
+    assert conflict_cell is not None
+    assert conflict_cell.fill.fgColor.rgb.endswith("FFC7CE"), "Conflict cell must have red fill"
+    assert conflict_cell.font.color.rgb == "00FFFF00", "Conflict cell must have yellow text"
+    assert conflict_cell.comment is not None, "Conflict cell must carry a Note"
+    assert "SCHEDULING CONFLICT" in conflict_cell.comment.text
+
 
 # ---------------------------------------------------------------------------
 # Bible Challenge Venue-Estimator tests (Issue #118)
