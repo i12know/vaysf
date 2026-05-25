@@ -323,3 +323,49 @@ def test_clear_team_groups_requires_execute_for_live_mode(mock_connector, mocker
 
     assert result is False
     mock_connector.authenticate.assert_not_called()
+
+
+def test_assign_other_routed_to_lost_and_found(mock_connector, mocker, tmp_path):
+    """Person with church_code 'Other' is assigned to the Lost and Found group."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    mock_connector.get_people.return_value = [_make_person("501", "Other")]
+    mock_connector.get_groups.return_value = [
+        {"id": "999001", "name": "Lost and Found"},
+        {"id": "870578", "name": "Team RPC"},
+    ]
+    mock_connector.get_group_people.return_value = []
+
+    result = assign_people_to_church_team_groups(dry_run=False)
+
+    assert result is True
+    mock_connector.add_person_to_group.assert_called_once_with("999001", "501")
+
+    audit_file = tmp_path / "church_team_assignments.xlsx"
+    assert audit_file.exists()
+    df = __import__("pandas").read_excel(audit_file)
+    assert df.iloc[0]["Target Group"] == "Lost and Found"
+    assert df.iloc[0]["Outcome"] == "added"
+
+
+def test_assign_other_missing_lost_and_found_group_warns_and_skips(mock_connector, mocker, tmp_path):
+    """Person with church_code 'Other' but no Lost and Found group → warning + skip, no API call."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    mock_connector.get_people.return_value = [_make_person("502", "Other")]
+    mock_connector.get_groups.return_value = [
+        {"id": "870578", "name": "Team RPC"},
+        # "Lost and Found" intentionally absent
+    ]
+    mock_connector.get_group_people.return_value = []
+
+    result = assign_people_to_church_team_groups(dry_run=False)
+
+    # missing_group is not an API failure — returns True
+    assert result is True
+    mock_connector.add_person_to_group.assert_not_called()
+
+    audit_file = tmp_path / "church_team_assignments.xlsx"
+    assert audit_file.exists()
+    df = __import__("pandas").read_excel(audit_file)
+    assert df.iloc[0]["Outcome"] == "missing_group"

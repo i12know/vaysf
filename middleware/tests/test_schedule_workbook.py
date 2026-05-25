@@ -2453,6 +2453,20 @@ def test_build_assigned_gym_game_objects_auto_generates_playoffs_for_8_teams():
     assert all((s, "BBM-Final") in bbm_prec for s in semi_ids)
     assert all((s, "BBM-3rd") in bbm_prec for s in semi_ids)
 
+    # QF→Semi, Semi→Final, Semi→3rd all require a 1-hour rest buffer (min_gap_slots=2)
+    qf_semi_rules = [
+        r for r in precedence
+        if str(r.get("before_game_id") or "").startswith("BBM-QF-")
+        and str(r.get("after_game_id") or "").startswith("BBM-Semi-")
+    ]
+    semi_final_rules = [
+        r for r in precedence
+        if str(r.get("before_game_id") or "").startswith("BBM-Semi-")
+        and str(r.get("after_game_id") or "") in ("BBM-Final", "BBM-3rd")
+    ]
+    assert all(r["min_gap_slots"] == 2 for r in qf_semi_rules), "QF→Semi must require 2-slot gap"
+    assert all(r["min_gap_slots"] == 2 for r in semi_final_rules), "Semi→Final/3rd must require 2-slot gap"
+
 
 def test_build_assigned_gym_game_objects_4_team_bracket_skips_qf():
     """4-team bracket should generate Semi/Final/3rd directly, no QFs."""
@@ -3145,6 +3159,125 @@ def test_write_schedule_output_report_labels_allocator_badminton_by_gym(tmp_path
     assert ws.cell(row=3, column=3).value == "Court-1"
 
 
+def test_master_schedule_first_write_wins_on_exclusive_group_double_booking(tmp_path):
+    """When two resources share the same physical column (exclusive_group double-booking),
+    the first assignment (Basketball) must stay visible; the cell turns red but is not
+    overwritten by the second resource (Badminton). Reproduces the BBM-Semi-1 hidden
+    bug where Badminton overwrote Basketball on the same physical court."""
+    import openpyxl
+
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "BBM-Semi-1",
+                "event": "Basketball - Men Team",
+                "stage": "Semi",
+                "pool_id": "",
+                "round": 1,
+                "team_a_id": "WIN-BBM-QF-1",
+                "team_b_id": "WIN-BBM-QF-2",
+                "team_a_label": "Winner QF-1",
+                "team_b_label": "Winner QF-2",
+                "duration_minutes": 60,
+                "resource_type": "Basketball Court",
+                "solver_pool": "Gym Core",
+                "earliest_slot": None,
+                "latest_slot": None,
+            },
+            {
+                "game_id": "BAD-Men-Doubles-01",
+                "event": "Badminton",
+                "stage": "R1",
+                "pool_id": "",
+                "round": 1,
+                "team_a_id": None,
+                "team_b_id": None,
+                "duration_minutes": 60,
+                "resource_type": "Badminton Court",
+                "solver_pool": None,
+                "earliest_slot": None,
+                "latest_slot": None,
+            },
+        ],
+        "resources": [
+            # Basketball Court-1: open all day, Gym Core pool
+            {
+                "resource_id": "GYM-Sat-2-1",
+                "resource_type": "Basketball Court",
+                "label": "Court-1",
+                "day": "Sat-2",
+                "open_time": "08:00",
+                "close_time": "17:00",
+                "slot_minutes": 60,
+                "solver_pool": "Gym Core",
+                "venue_name": "EHS Main Gym",
+                "exclusive_group": "EHS Main Gym",
+            },
+            # Badminton Court-1: same physical court, afternoon only, no pool
+            {
+                "resource_id": "GYM-Sat-2-6",
+                "resource_type": "Badminton Court",
+                "label": "Court-1",
+                "day": "Sat-2",
+                "open_time": "13:00",
+                "close_time": "17:00",
+                "slot_minutes": 60,
+                "solver_pool": None,
+                "venue_name": "EHS Main Gym",
+                "exclusive_group": "EHS Main Gym",
+            },
+        ],
+        "day_order": ["Sat-2"],
+        "precedence": [],
+    }
+    schedule_output = {
+        "solved_at": "2026-05-25T09:00:00",
+        "status": "OPTIMAL",
+        "solver_wall_seconds": 0.1,
+        "assignments": [
+            # Basketball placed at 13:00 (same slot as Badminton — double-booking)
+            {"game_id": "BBM-Semi-1",        "resource_id": "GYM-Sat-2-1", "slot": "Sat-2-13:00"},
+            {"game_id": "BAD-Men-Doubles-01", "resource_id": "GYM-Sat-2-6", "slot": "Sat-2-13:00"},
+        ],
+        "unscheduled": [],
+        "pool_results": [],
+    }
+
+    out = tmp_path / "sched.xlsx"
+    ScheduleWorkbookBuilder._write_schedule_output_report(out, schedule_output, schedule_input)
+    ws = openpyxl.load_workbook(out)["Master-Schedule"]
+
+    # Collect all Master-Schedule cell values
+    all_values = [
+        ws.cell(row=r, column=c).value
+        for r in range(1, ws.max_row + 1)
+        for c in range(1, ws.max_column + 1)
+    ]
+    string_values = [str(v) for v in all_values if v is not None]
+
+    # BBM-Semi-1 MUST appear (first write wins)
+    assert any("BBM-Semi-1" in v for v in string_values), "BBM-Semi-1 should appear in Master-Schedule"
+    # BAD-Men-Doubles-01 must NOT overwrite the basketball cell
+    bad_texts = [v for v in string_values if "BAD-Men-Doubles-01" in v]
+    assert not bad_texts, "Badminton game must not overwrite Basketball in shared column"
+
+    # The conflicted cell must be marked red with yellow text and carry a Note.
+    conflict_cell = next(
+        (
+            ws.cell(row=r, column=c)
+            for r in range(1, ws.max_row + 1)
+            for c in range(1, ws.max_column + 1)
+            if "BBM-Semi-1" in str(ws.cell(row=r, column=c).value or "")
+        ),
+        None,
+    )
+    assert conflict_cell is not None
+    assert conflict_cell.fill.fgColor.rgb.endswith("FFCC00"), "Conflict cell must have yellow fill"
+    assert conflict_cell.font.color.rgb.endswith("FF2400"), "Conflict cell must have red text"
+    assert conflict_cell.comment is not None, "Conflict cell must carry a Note"
+    assert "SCHEDULING CONFLICT" in conflict_cell.comment.text
+
+
 # ---------------------------------------------------------------------------
 # Bible Challenge Venue-Estimator tests (Issue #118)
 # ---------------------------------------------------------------------------
@@ -3464,7 +3597,12 @@ def test_bc_schedule_input_adds_playoff_precedence(tmp_path):
         for semi_id in semi_ids
     }
     assert precedence_pairs == expected_pairs
-    assert all(int(rule.get("min_gap_slots") or 0) == 1 for rule in si["precedence"])
+    bc_rules = [
+        r for r in si["precedence"]
+        if str(r.get("before_game_id") or "").startswith("BC-")
+        or str(r.get("after_game_id") or "").startswith("BC-")
+    ]
+    assert all(int(rule.get("min_gap_slots") or 0) == 1 for rule in bc_rules)
 
 
 def test_bc_event_in_pool_assignment_defs():

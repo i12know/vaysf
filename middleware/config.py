@@ -662,6 +662,7 @@ class Config:
     SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", 60))
     BATCH_SIZE = int(os.getenv("BATCH_SIZE", 50))
     TEAM_PREFIX = os.getenv("TEAM_PREFIX", "Team")
+    LOST_AND_FOUND_GROUP_NAME = os.getenv("LOST_AND_FOUND_GROUP_NAME", "Lost and Found")
     SPORTS_FEST_DATE = os.getenv("SPORTS_FEST_DATE", DEFAULT_SPORTS_FEST_DATE)
 
     @classmethod

@@ -158,6 +158,17 @@ def assign_people_to_church_team_groups(
         # Build name → id lookup for fast group resolution
         team_group_by_name = {g["name"]: str(g["id"]) for g in team_groups}
 
+        # Resolve Lost and Found group for "Other" church applicants
+        laf_group = next(
+            (g for g in all_groups if g.get("name") == Config.LOST_AND_FOUND_GROUP_NAME),
+            None,
+        )
+        laf_group_id: Optional[str] = str(laf_group["id"]) if laf_group else None
+        people_in_laf: set = set()
+        if laf_group_id:
+            for p in chm_connector.get_group_people(laf_group_id):
+                people_in_laf.add(str(p.get("person_id")))
+
         # Build set of people already in a team group
         people_in_teams = set()
         for group in team_groups:
@@ -178,10 +189,25 @@ def assign_people_to_church_team_groups(
 
             # Check if they have a church code
             church_code = additional_fields.get(CHM_FIELDS["CHURCH_TEAM"], "").strip().upper()
-            if church_code and source_rows is not None:
+            if not church_code:
+                continue
+            if source_rows is not None:
                 if not _person_matches_source_export(person, church_code, source_rows):
                     continue
-            if church_code:
+
+            if church_code == "OTHER":
+                # Route to Lost and Found instead of a normal team group
+                if person_id in people_in_laf:
+                    continue  # already there — idempotent
+                people_for_assignment.append({
+                    "person_id": person_id,
+                    "first_name": person.get("first_name", ""),
+                    "last_name": person.get("last_name", ""),
+                    "email": person.get("email", ""),
+                    "church_code": church_code,
+                    "target_group": Config.LOST_AND_FOUND_GROUP_NAME,
+                })
+            else:
                 people_for_assignment.append({
                     "person_id": person_id,
                     "first_name": person.get("first_name", ""),
@@ -205,9 +231,38 @@ def assign_people_to_church_team_groups(
 
         for person in people_for_assignment:
             target_group_name = person["target_group"]
-            group_id = team_group_by_name.get(target_group_name)
-
-            if group_id is None:
+            is_laf = target_group_name == Config.LOST_AND_FOUND_GROUP_NAME
+            if is_laf:
+                group_id = laf_group_id
+                if group_id is None:
+                    logger.warning(
+                        f"Lost and Found group '{Config.LOST_AND_FOUND_GROUP_NAME}' not found "
+                        f"in ChMeetings — skipping {person['first_name']} {person['last_name']} "
+                        f"(id={person['person_id']}). Create the group in ChMeetings first."
+                    )
+                    missing_group += 1
+                    outcome = "missing_group"
+                elif dry_run:
+                    logger.info(
+                        f"[dry-run] Would add {person['first_name']} {person['last_name']} "
+                        f"(id={person['person_id']}) to '{target_group_name}' [REVIEW NEEDED]"
+                    )
+                    outcome = "dry_run"
+                else:
+                    ok = chm_connector.add_person_to_group(group_id, person["person_id"])
+                    time.sleep(0.2)
+                    if ok:
+                        logger.info(
+                            f"[REVIEW NEEDED] Added {person['first_name']} {person['last_name']} "
+                            f"(id={person['person_id']}) to '{Config.LOST_AND_FOUND_GROUP_NAME}' "
+                            f"— submitted church/team: Other"
+                        )
+                        added += 1
+                        outcome = "added"
+                    else:
+                        failed += 1
+                        outcome = "failed"
+            elif team_group_by_name.get(target_group_name) is None:
                 logger.warning(
                     f"Group '{target_group_name}' not found in ChMeetings - "
                     f"skipping {person['first_name']} {person['last_name']} "
@@ -222,6 +277,7 @@ def assign_people_to_church_team_groups(
                 )
                 outcome = "dry_run"
             else:
+                group_id = team_group_by_name[target_group_name]
                 ok = chm_connector.add_person_to_group(group_id, person["person_id"])
                 time.sleep(0.2)  # 200 ms between calls — avoids 429 rate limit
                 if ok:

@@ -2363,10 +2363,10 @@ class ScheduleWorkbookBuilder:
                 for pid in pool_game_ids for qid in qf_ids
             )
             precedence.extend([
-                {"before_game_id": qf_ids[0], "after_game_id": semi_ids[0], "min_gap_slots": 1},
-                {"before_game_id": qf_ids[1], "after_game_id": semi_ids[0], "min_gap_slots": 1},
-                {"before_game_id": qf_ids[2], "after_game_id": semi_ids[1], "min_gap_slots": 1},
-                {"before_game_id": qf_ids[3], "after_game_id": semi_ids[1], "min_gap_slots": 1},
+                {"before_game_id": qf_ids[0], "after_game_id": semi_ids[0], "min_gap_slots": 2},
+                {"before_game_id": qf_ids[1], "after_game_id": semi_ids[0], "min_gap_slots": 2},
+                {"before_game_id": qf_ids[2], "after_game_id": semi_ids[1], "min_gap_slots": 2},
+                {"before_game_id": qf_ids[3], "after_game_id": semi_ids[1], "min_gap_slots": 2},
             ])
             semi_team_pairs = [
                 (f"WIN-{qf_ids[0]}", f"WIN-{qf_ids[1]}", "Winner QF-1", "Winner QF-2"),
@@ -2414,7 +2414,7 @@ class ScheduleWorkbookBuilder:
         final_game.update(extra_fields)
         games.append(final_game)
         precedence.extend(
-            {"before_game_id": sid, "after_game_id": final_id, "min_gap_slots": 1}
+            {"before_game_id": sid, "after_game_id": final_id, "min_gap_slots": 2}
             for sid in semi_ids
         )
 
@@ -2434,7 +2434,7 @@ class ScheduleWorkbookBuilder:
             third_game.update(extra_fields)
             games.append(third_game)
             precedence.extend(
-                {"before_game_id": sid, "after_game_id": third_id, "min_gap_slots": 1}
+                {"before_game_id": sid, "after_game_id": third_id, "min_gap_slots": 2}
                 for sid in semi_ids
             )
 
@@ -5208,7 +5208,8 @@ class ScheduleWorkbookBuilder:
         bold_font = Font(bold=True)
         center   = Alignment(horizontal="center", vertical="center", wrap_text=True)
         left     = Alignment(horizontal="left",   vertical="center", wrap_text=True)
-        red_fill = PatternFill(fgColor="FFC7CE", fill_type="solid")
+        red_fill      = PatternFill(fgColor="FFC7CE", fill_type="solid")
+        conflict_fill = PatternFill(fgColor="FFCC00", fill_type="solid")
 
         def _sport_fill(event: str) -> PatternFill:
             return PatternFill(fgColor=sport_style(event).fill_color, fill_type="solid")
@@ -5914,6 +5915,29 @@ class ScheduleWorkbookBuilder:
                     continue
 
                 cell = ws4.cell(row=cur_row4, column=col)
+                if cell.value is not None:
+                    # Two resources share the same physical column at this slot
+                    # (exclusive_group double-booking across solver pools).
+                    # First write wins; yellow fill + red text + always-visible Note.
+                    from openpyxl.comments import Comment
+                    from openpyxl.styles import Font as _Font
+                    conflict_text = _master_cell_text(game)
+                    note_text = (
+                        f"SCHEDULING CONFLICT\n"
+                        f"This court is double-booked at {slot_label}.\n"
+                        f"Showing: {cell.value}\n"
+                        f"Also assigned: {conflict_text}\n\n"
+                        f"Fix: adjust Venue_Input.xlsx so only one sport\n"
+                        f"uses this court at this time."
+                    )
+                    cell.fill = conflict_fill
+                    cell.font = _Font(color="FF2400", bold=True)
+                    if cell.comment is None:
+                        c = Comment(note_text, "VAYSF Scheduler")
+                        c.visible = True
+                        cell.comment = c
+                    continue
+
                 cell.value     = _master_cell_text(game)
                 cell.fill      = _sport_fill(game.get("event", ""))
                 cell.font      = _category_font(game, bold=True)
