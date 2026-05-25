@@ -5914,6 +5914,13 @@ class ScheduleWorkbookBuilder:
                     continue
 
                 cell = ws4.cell(row=cur_row4, column=col)
+                if cell.value is not None:
+                    # Two resources share the same physical column at this slot
+                    # (exclusive_group double-booking across solver pools).
+                    # First write wins; mark red so staff investigates.
+                    cell.fill = red_fill
+                    continue
+
                 cell.value     = _master_cell_text(game)
                 cell.fill      = _sport_fill(game.get("event", ""))
                 cell.font      = _category_font(game, bold=True)
