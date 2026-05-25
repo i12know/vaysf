@@ -5933,9 +5933,7 @@ class ScheduleWorkbookBuilder:
                     cell.fill = conflict_fill
                     cell.font = _Font(color="FF2400", bold=True)
                     if cell.comment is None:
-                        c = Comment(note_text, "VAYSF Scheduler")
-                        c.visible = True
-                        cell.comment = c
+                        cell.comment = Comment(note_text, "VAYSF Scheduler")
                     continue
 
                 cell.value     = _master_cell_text(game)
@@ -5957,9 +5955,46 @@ class ScheduleWorkbookBuilder:
 
         ScheduleWorkbookBuilder._stamp_known_tab_statuses(wb)
         wb.save(filepath)
+        ScheduleWorkbookBuilder._vml_make_comments_visible(filepath)
         logger.info(f"Schedule output report written to: {filepath}")
 
     # ── ALL-workbook readers (build-schedule-workbook input) ─────────────────
+
+    @staticmethod
+    def _vml_make_comments_visible(filepath: Path) -> None:
+        """Patch VML inside a saved xlsx to make all comments permanently visible.
+
+        openpyxl 3.x hardcodes visibility:hidden in its shape writer and ignores
+        Comment.visible, so we fix the generated zip in-place after wb.save().
+        We also inject <Visible/> into each ClientData element so Excel honours
+        the always-shown state through File → Save round-trips.
+        """
+        import zipfile, shutil, re
+        tmp = filepath.with_suffix(".vml_patch.xlsx")
+        try:
+            with zipfile.ZipFile(filepath, "r") as zin, \
+                 zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if (item.filename.startswith("xl/drawings/")
+                            and item.filename.endswith(".vml")):
+                        text = data.decode("utf-8")
+                        # 1. Make the shape visible by default.
+                        text = text.replace("visibility:hidden", "visibility:visible")
+                        # 2. Inject <Visible/> inside each ClientData so Excel
+                        #    keeps the comment shown after a File→Save round-trip.
+                        text = re.sub(
+                            r"(<[^/]*:ClientData\b[^>]*>)",
+                            r"\1<Visible xmlns='urn:schemas-microsoft-com:office:excel'/>",
+                            text,
+                        )
+                        data = text.encode("utf-8")
+                    zout.writestr(item, data)
+            shutil.move(str(tmp), str(filepath))
+        except Exception:
+            if tmp.exists():
+                tmp.unlink()
+            raise
 
     @staticmethod
     def _read_xlsx_sheet_rows(xlsx_path: Path, sheet_name: str) -> List[Dict[str, Any]]:
