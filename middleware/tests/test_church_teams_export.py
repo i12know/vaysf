@@ -4,11 +4,21 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+from openpyxl import load_workbook
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from church_teams_export import ChurchTeamsExporter, CHM_FIELDS, MEMBERSHIP_QUESTION
 from config import Config, SPORT_TYPE
+
+
+def _status_banner_values(ws) -> set[str]:
+    return {
+        str(cell.value)
+        for row in ws.iter_rows(min_row=1, max_row=2)
+        for cell in row
+        if cell.value is not None
+    }
 
 
 @pytest.fixture()
@@ -550,6 +560,11 @@ def test_write_excel_report_adds_validation_issues_tab(mock_connectors, tmp_path
     assert validation_df.loc[0, "Issue Type"] == "doubles_non_member_limit"
     assert "Open_TEAM_Issue_Count (WP)" in roster_df.columns
     assert int(roster_df.loc[0, "Open_TEAM_Issue_Count (WP)"]) == 1
+    wb = load_workbook(filepath)
+    assert "STATUS: READ-ONLY OUTPUT" in _status_banner_values(wb["Summary"])
+    assert "STATUS: GENERATED DATA SOURCE" in _status_banner_values(wb["Roster"])
+    assert "STATUS: GENERATED DATA SOURCE" in _status_banner_values(wb["Validation-Issues"])
+    assert "STATUS: READ-ONLY OUTPUT" in _status_banner_values(wb["Badminton"])
 
 
 def test_validation_issue_rows_add_reverse_partner_suggestion(mock_connectors):

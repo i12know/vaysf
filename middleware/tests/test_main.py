@@ -15,6 +15,15 @@ def _run_main_expect_exit(expected_code: int) -> None:
     assert exc.value.code == expected_code
 
 
+def _status_banner_values(ws) -> set[str]:
+    return {
+        str(cell.value)
+        for row in ws.iter_rows(min_row=1, max_row=2)
+        for cell in row
+        if cell.value is not None
+    }
+
+
 def _minimal_schedule_input() -> dict:
     return {
         "generated_at": "2026-05-15T00:00:00",
@@ -324,6 +333,9 @@ def test_generate_venue_template_example_dates_match_day_labels(tmp_path):
     assert ws["F2"].value == "2026-07-18"
     assert ws["E4"].value == "Sun-1"
     assert ws["F4"].value == "2026-07-19"
+    assert "STATUS: EDITABLE INPUT" in _status_banner_values(wb["Venue-Input"])
+    assert "STATUS: EDITABLE INPUT" in _status_banner_values(wb["Gym-Modes"])
+    assert "STATUS: EDITABLE OVERRIDE INPUT" in _status_banner_values(wb["Playoff-Slots"])
 
 
 def test_main_solve_schedule_uses_default_paths(mocker, monkeypatch, tmp_path):

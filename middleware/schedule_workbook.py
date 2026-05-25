@@ -94,6 +94,108 @@ class ScheduleWorkbookBuilder:
         pass
 
     _GYM_CORE_SOLVER_POOL = "Gym Core"
+    _TAB_STATUS_GUIDE: Dict[str, Tuple[str, str, str]] = {
+        "Venue-Input": (
+            "EDITABLE INPUT",
+            "Edit booked venue resource blocks here, then rerun export-church-teams.",
+            "D9EAD3",
+        ),
+        "Gym-Modes": (
+            "EDITABLE INPUT",
+            "Edit physical gym mode capacities here when a gym can switch sports.",
+            "D9EAD3",
+        ),
+        "Playoff-Slots": (
+            "EDITABLE OVERRIDE INPUT",
+            "Optional pinned playoff overrides. Copy exact resource_id and slot values from Schedule-Input.",
+            "FCE5CD",
+        ),
+        "Summary": (
+            "READ-ONLY OUTPUT",
+            "Generated guide or status summary. Do not edit; rerun the source command instead.",
+            "D9EAF7",
+        ),
+        "Contacts-Status": (
+            "READ-ONLY OUTPUT",
+            "Generated church contact and approval snapshot. Do not edit this tab.",
+            "D9EAF7",
+        ),
+        "Roster": (
+            "GENERATED DATA SOURCE",
+            "Generated roster source for scheduling. Fix source data, then rerun export-church-teams.",
+            "D9EAF7",
+        ),
+        "Validation-Issues": (
+            "GENERATED DATA SOURCE",
+            "Generated validation source for scheduling. Resolve issues upstream, then rerun export-church-teams.",
+            "D9EAF7",
+        ),
+        "Venue-Estimator": (
+            "READ-ONLY PLANNING OUTPUT",
+            "Use for capacity planning only. Change venue capacity in venue_input.xlsx.",
+            "D9EAF7",
+        ),
+        "Court-Schedule-Sketch": (
+            "READ-ONLY PLANNING OUTPUT",
+            "Layer-1 planning sketch. Rerun build-schedule-workbook after changing inputs.",
+            "D9EAF7",
+        ),
+        "Pod-Divisions": (
+            "READ-ONLY OUTPUT",
+            "Generated pod division planning view. Do not edit this tab.",
+            "D9EAF7",
+        ),
+        "Pod-Entries-Review": (
+            "READ-ONLY REVIEW OUTPUT",
+            "Review pod entries here, but fix roster data upstream instead of editing cells.",
+            "D9EAF7",
+        ),
+        "Pod-Resource-Estimate": (
+            "READ-ONLY CAPACITY CHECK",
+            "Use to compare pod demand against venue capacity. Edit venue_input.xlsx for changes.",
+            "D9EAF7",
+        ),
+        "Schedule-Input": (
+            "GENERATED LOOKUP / MACHINE CONTRACT VIEW",
+            "Copy exact resource_id, slot, and game_id values from here; do not hand-edit.",
+            "D9EAF7",
+        ),
+        "Pool-Assignment": (
+            "TEMPORARY EDIT SURFACE",
+            "Edit seeds or pool placements here, then rerun assign-pools --workbook.",
+            "FFF2CC",
+        ),
+        "Gym-Allocation": (
+            "READ-ONLY ALLOCATION AUDIT",
+            "Generated gym-mode allocation audit. Change venue inputs, then rerun the workflow.",
+            "D9EAF7",
+        ),
+        "Schedule-by-Time": (
+            "FINAL OUTPUT",
+            "Final schedule view by time. Do not edit; rerun the scheduler if inputs change.",
+            "D9EAD3",
+        ),
+        "Schedule-by-Sport": (
+            "FINAL OUTPUT",
+            "Final schedule view by sport. Do not edit; rerun the scheduler if inputs change.",
+            "D9EAD3",
+        ),
+        "Master-Schedule": (
+            "FINAL OUTPUT",
+            "Final master grid. Do not edit; rerun the scheduler if inputs change.",
+            "D9EAD3",
+        ),
+        "Conflict-Audit": (
+            "AUDIT OUTPUT",
+            "Audit conflicts and warnings here before publishing the final schedule.",
+            "F4CCCC",
+        ),
+    }
+    _SPORT_EXPORT_TAB_STATUS: Tuple[str, str, str] = (
+        "READ-ONLY OUTPUT",
+        "Generated sport-specific roster view. Do not edit; rerun export-church-teams.",
+        "D9EAF7",
+    )
 
     _POOL_ASSIGNMENT_COLUMNS: List[str] = [
         "Event",
@@ -3564,6 +3666,85 @@ class ScheduleWorkbookBuilder:
         cell.comment = Comment(note, "VAYSF")
 
     @classmethod
+    def _stamp_tab_status_banner(
+        cls,
+        ws,
+        status: str,
+        guidance: str,
+        *,
+        fill_color: str,
+    ) -> None:
+        """Add a non-disruptive tab role banner outside the data table."""
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.utils import get_column_letter
+
+        start_col = max(ws.max_column or 1, 1) + 2
+        end_col = start_col + 3
+        ws.merge_cells(
+            start_row=1,
+            start_column=start_col,
+            end_row=1,
+            end_column=end_col,
+        )
+        ws.merge_cells(
+            start_row=2,
+            start_column=start_col,
+            end_row=2,
+            end_column=end_col,
+        )
+
+        title_cell = ws.cell(row=1, column=start_col, value=f"STATUS: {status}")
+        body_cell = ws.cell(row=2, column=start_col, value=guidance)
+        fill = PatternFill("solid", fgColor=fill_color)
+        border = Border(
+            left=Side(style="thin", color="999999"),
+            right=Side(style="thin", color="999999"),
+            top=Side(style="thin", color="999999"),
+            bottom=Side(style="thin", color="999999"),
+        )
+        for row_idx in (1, 2):
+            for col_idx in range(start_col, end_col + 1):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                cell.fill = fill
+                cell.border = border
+                cell.alignment = Alignment(
+                    horizontal="center",
+                    vertical="center",
+                    wrap_text=True,
+                )
+
+        title_cell.font = Font(bold=True, color="1F1F1F")
+        body_cell.font = Font(italic=True, color="1F1F1F")
+        ws.row_dimensions[1].height = max(ws.row_dimensions[1].height or 0, 22)
+        ws.row_dimensions[2].height = max(ws.row_dimensions[2].height or 0, 36)
+        for col_idx in range(start_col, end_col + 1):
+            col_letter = get_column_letter(col_idx)
+            ws.column_dimensions[col_letter].width = 18
+        ws.sheet_properties.tabColor = fill_color
+
+    @classmethod
+    def _stamp_known_tab_statuses(
+        cls,
+        wb,
+        *,
+        default_unknown: Optional[Tuple[str, str, str]] = None,
+    ) -> None:
+        """Stamp known workbook sheets with operator-facing role guidance."""
+        for ws in wb.worksheets:
+            guide = cls._TAB_STATUS_GUIDE.get(ws.title)
+            if guide is None:
+                guide = default_unknown
+            if guide is None:
+                continue
+            status, guidance, fill_color = guide
+            cls._stamp_tab_status_banner(
+                ws,
+                status,
+                guidance,
+                fill_color=fill_color,
+            )
+
+    @classmethod
     def _annotate_header_row(
         cls,
         ws,
@@ -5749,6 +5930,7 @@ class ScheduleWorkbookBuilder:
         for row_num in range(4, cur_row4):
             ws4.row_dimensions[row_num].height = 36
 
+        ScheduleWorkbookBuilder._stamp_known_tab_statuses(wb)
         wb.save(filepath)
         logger.info(f"Schedule output report written to: {filepath}")
 
@@ -5981,6 +6163,7 @@ class ScheduleWorkbookBuilder:
             # Summary tab (openpyxl native — operator guide / command cheat sheet)
             summary_ws = writer.book.create_sheet(title="Summary", index=0)
             self._write_summary_tab(summary_ws)
+            self._stamp_known_tab_statuses(writer.book)
 
         logger.info(f"Schedule workbook written to: {output_path}")
 

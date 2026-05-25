@@ -42,6 +42,15 @@ def _sheet_rows(ws) -> list[dict]:
     return rows
 
 
+def _status_banner_values(ws) -> set[str]:
+    return {
+        str(cell.value)
+        for row in ws.iter_rows(min_row=1, max_row=2)
+        for cell in row
+        if cell.value is not None
+    }
+
+
 def _make_gym_roster(n_churches: int = 8) -> list[dict]:
     """Return minimal Basketball-Men roster rows for n_churches churches."""
     codes = ["RPC", "ANH", "FVC", "GAC", "NSD", "TLC", "GLA", "ORN"][:n_churches]
@@ -238,6 +247,12 @@ def test_write_schedule_workbook_creates_planning_tabs(tmp_path):
     assert "run-schedule.bat" in summary_text
     assert "assign-pools" in summary_text
     assert "BB/VBM/VBW/BC/SOC" in summary_text
+    assert "STATUS: READ-ONLY OUTPUT" in _status_banner_values(summary_ws)
+    assert "STATUS: TEMPORARY EDIT SURFACE" in _status_banner_values(wb["Pool-Assignment"])
+    assert "STATUS: GENERATED LOOKUP / MACHINE CONTRACT VIEW" in _status_banner_values(
+        wb["Schedule-Input"]
+    )
+    assert "STATUS: READ-ONLY ALLOCATION AUDIT" in _status_banner_values(wb["Gym-Allocation"])
     venue_ws = wb["Venue-Estimator"]
     assert venue_ws["A1"].comment is not None
     assert "Canonical event name" in venue_ws["A1"].comment.text
@@ -461,6 +476,8 @@ def test_write_schedule_output_workbook_creates_schedule_tabs(tmp_path):
 
     wb = load_workbook(workbook_path)
     assert wb.sheetnames == ["Schedule-by-Time", "Schedule-by-Sport", "Conflict-Audit", "Master-Schedule"]
+    assert "STATUS: FINAL OUTPUT" in _status_banner_values(wb["Schedule-by-Time"])
+    assert "STATUS: AUDIT OUTPUT" in _status_banner_values(wb["Conflict-Audit"])
 
 
 def test_read_roster_validation_rows_missing_path_degrades():
