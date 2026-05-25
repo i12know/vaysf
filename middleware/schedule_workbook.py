@@ -5917,8 +5917,22 @@ class ScheduleWorkbookBuilder:
                 if cell.value is not None:
                     # Two resources share the same physical column at this slot
                     # (exclusive_group double-booking across solver pools).
-                    # First write wins; mark red so staff investigates.
+                    # First write wins; mark red + yellow text + cell Note.
+                    from openpyxl.comments import Comment
+                    from openpyxl.styles import Font as _Font
+                    conflict_text = _master_cell_text(game)
+                    note_text = (
+                        f"SCHEDULING CONFLICT\n"
+                        f"This court is double-booked at {slot_label}.\n"
+                        f"Showing: {cell.value}\n"
+                        f"Also assigned: {conflict_text}\n\n"
+                        f"Fix: adjust Venue_Input.xlsx so only one sport\n"
+                        f"uses this court at this time."
+                    )
                     cell.fill = red_fill
+                    cell.font = _Font(color="FFFF00", bold=True)
+                    if cell.comment is None:
+                        cell.comment = Comment(note_text, "VAYSF Scheduler")
                     continue
 
                 cell.value     = _master_cell_text(game)
