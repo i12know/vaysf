@@ -5208,7 +5208,8 @@ class ScheduleWorkbookBuilder:
         bold_font = Font(bold=True)
         center   = Alignment(horizontal="center", vertical="center", wrap_text=True)
         left     = Alignment(horizontal="left",   vertical="center", wrap_text=True)
-        red_fill = PatternFill(fgColor="FFC7CE", fill_type="solid")
+        red_fill      = PatternFill(fgColor="FFC7CE", fill_type="solid")
+        conflict_fill = PatternFill(fgColor="FFCC00", fill_type="solid")
 
         def _sport_fill(event: str) -> PatternFill:
             return PatternFill(fgColor=sport_style(event).fill_color, fill_type="solid")
@@ -5917,7 +5918,7 @@ class ScheduleWorkbookBuilder:
                 if cell.value is not None:
                     # Two resources share the same physical column at this slot
                     # (exclusive_group double-booking across solver pools).
-                    # First write wins; mark red + yellow text + cell Note.
+                    # First write wins; yellow fill + red text + always-visible Note.
                     from openpyxl.comments import Comment
                     from openpyxl.styles import Font as _Font
                     conflict_text = _master_cell_text(game)
@@ -5929,10 +5930,12 @@ class ScheduleWorkbookBuilder:
                         f"Fix: adjust Venue_Input.xlsx so only one sport\n"
                         f"uses this court at this time."
                     )
-                    cell.fill = red_fill
-                    cell.font = _Font(color="FFFF00", bold=True)
+                    cell.fill = conflict_fill
+                    cell.font = _Font(color="FF2400", bold=True)
                     if cell.comment is None:
-                        cell.comment = Comment(note_text, "VAYSF Scheduler")
+                        c = Comment(note_text, "VAYSF Scheduler")
+                        c.visible = True
+                        cell.comment = c
                     continue
 
                 cell.value     = _master_cell_text(game)
