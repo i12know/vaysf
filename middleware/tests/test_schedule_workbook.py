@@ -3081,6 +3081,70 @@ def test_write_schedule_output_report_merges_gym_core_day_sections(tmp_path):
     assert any("VBW-01" in v for v in string_values)
 
 
+def test_write_schedule_output_report_labels_allocator_badminton_by_gym(tmp_path):
+    """Allocator-created non-Gym-Core resources should still show their gym name."""
+    import openpyxl
+    from types import SimpleNamespace
+
+    resources = ScheduleWorkbookBuilder._build_gym_resources_from_allocator(
+        [
+            SimpleNamespace(
+                gym_name="EHS Main Gym",
+                day="Sat-2",
+                open_time="13:00",
+                close_time="17:00",
+                mode="Badminton Court",
+                courts=2,
+                slot_minutes=60,
+            )
+        ]
+    )
+    assert all(resource["venue_name"] == "EHS Main Gym" for resource in resources)
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "BAD-Men-Doubles-01",
+                "event": "Badminton - Men Doubles",
+                "stage": "Pool",
+                "pool_id": "P1",
+                "round": 1,
+                "team_a_id": "BAD::RPC",
+                "team_b_id": "BAD::TLC",
+                "duration_minutes": 60,
+                "resource_type": "Badminton Court",
+            }
+        ],
+        "resources": resources,
+        "day_order": ["Sat-2"],
+    }
+    schedule_output = {
+        "solved_at": "2026-05-25T09:00:00",
+        "status": "OPTIMAL",
+        "solver_wall_seconds": 0.1,
+        "assignments": [
+            {
+                "game_id": "BAD-Men-Doubles-01",
+                "resource_id": "GYM-Sat-2-1",
+                "slot": "Sat-2-13:00",
+            }
+        ],
+        "unscheduled": [],
+        "pool_results": [],
+    }
+
+    out = tmp_path / "sched.xlsx"
+    ScheduleWorkbookBuilder._write_schedule_output_report(out, schedule_output, schedule_input)
+    ws = openpyxl.load_workbook(out)["Master-Schedule"]
+    header_values = [
+        ws.cell(row=2, column=col).value
+        for col in range(1, ws.max_column + 1)
+    ]
+
+    assert "EHS Main Gym" in header_values
+    assert "Other" not in header_values
+    assert ws.cell(row=3, column=3).value == "Court-1"
+
+
 # ---------------------------------------------------------------------------
 # Bible Challenge Venue-Estimator tests (Issue #118)
 # ---------------------------------------------------------------------------

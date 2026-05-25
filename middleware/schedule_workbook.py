@@ -2712,6 +2712,7 @@ class ScheduleWorkbookBuilder:
                     "open_time":       decision.open_time,
                     "close_time":      decision.close_time,
                     "slot_minutes":    decision.slot_minutes,
+                    "venue_name":      decision.gym_name,
                     "exclusive_group": decision.gym_name,
                 })
         return resources
