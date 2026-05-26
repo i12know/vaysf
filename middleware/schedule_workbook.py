@@ -6,6 +6,7 @@
 # ChurchTeamsExporter.  One-way dependency: church_teams_export.py may import
 # from here; this module must NOT import from church_teams_export.
 import json
+import os
 import pandas as pd
 from pathlib import Path
 from loguru import logger
@@ -14,6 +15,7 @@ from datetime import datetime
 from collections import defaultdict, deque
 import random
 import re
+import zipfile
 from math import ceil
 
 from config import (
@@ -3666,6 +3668,77 @@ class ScheduleWorkbookBuilder:
 
         cell.comment = Comment(note, "VAYSF")
 
+    @staticmethod
+    def _make_excel_note_shapes_visible(xlsx_path: Path) -> bool:
+        """Patch openpyxl's hidden VML note shapes so Excel opens them by default.
+
+        openpyxl writes comments as legacy VML notes and currently ignores
+        Comment.visible.  The workbook XML is otherwise valid, so we patch only
+        the generated VML note shapes after save, preserving openpyxl's existing
+        Excel namespace prefix instead of injecting a conflicting namespace.
+        """
+        xlsx_path = Path(xlsx_path)
+        excel_ns = "urn:schemas-microsoft-com:office:excel"
+        patched_any = False
+        tmp_path = xlsx_path.with_suffix(f"{xlsx_path.suffix}.tmp")
+
+        try:
+            with zipfile.ZipFile(xlsx_path, "r") as zin, zipfile.ZipFile(
+                tmp_path, "w", compression=zipfile.ZIP_DEFLATED
+            ) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if (
+                        item.filename.startswith("xl/drawings/")
+                        and item.filename.endswith(".vml")
+                        and b'ObjectType="Note"' in data
+                    ):
+                        text = data.decode("utf-8")
+                        prefix_match = re.search(
+                            rf'xmlns:([A-Za-z_][\w.-]*)="{re.escape(excel_ns)}"',
+                            text,
+                        )
+                        if prefix_match:
+                            excel_prefix = prefix_match.group(1)
+                            client_data_re = re.compile(
+                                rf"(<{re.escape(excel_prefix)}:ClientData\b"
+                                rf"(?=[^>]*\bObjectType=\"Note\")[^>]*>)"
+                                rf"(.*?)"
+                                rf"(</{re.escape(excel_prefix)}:ClientData>)",
+                                re.DOTALL,
+                            )
+
+                            def _show_note(match: re.Match) -> str:
+                                nonlocal patched_any
+                                body = match.group(2)
+                                if f"<{excel_prefix}:Visible" not in body:
+                                    patched_any = True
+                                    body = f"{body}<{excel_prefix}:Visible />"
+                                return f"{match.group(1)}{body}{match.group(3)}"
+
+                            text = client_data_re.sub(_show_note, text)
+
+                        visible_text = re.sub(
+                            r"visibility\s*:\s*hidden",
+                            "visibility:visible",
+                            text,
+                        )
+                        if visible_text != text:
+                            patched_any = True
+                        data = visible_text.encode("utf-8")
+
+                    zout.writestr(item, data)
+
+            if patched_any:
+                os.replace(tmp_path, xlsx_path)
+            else:
+                tmp_path.unlink(missing_ok=True)
+            return patched_any
+        except Exception as exc:
+            tmp_path.unlink(missing_ok=True)
+            logger.warning(f"Could not patch Excel note visibility in {xlsx_path}: {exc}")
+            return False
+
     @classmethod
     def _stamp_tab_status_banner(
         cls,
@@ -5957,6 +6030,7 @@ class ScheduleWorkbookBuilder:
 
         ScheduleWorkbookBuilder._stamp_known_tab_statuses(wb)
         wb.save(filepath)
+        ScheduleWorkbookBuilder._make_excel_note_shapes_visible(filepath)
         logger.info(f"Schedule output report written to: {filepath}")
 
     # ── ALL-workbook readers (build-schedule-workbook input) ─────────────────
