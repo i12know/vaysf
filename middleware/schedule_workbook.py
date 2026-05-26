@@ -5259,6 +5259,7 @@ class ScheduleWorkbookBuilder:
         audit = diagnostics.get("audit", {}) or {}
         supply = diagnostics.get("supply", {}) or {}
         control = diagnostics.get("control", {}) or {}
+        resource_contract = diagnostics.get("resource_contract", {}) or {}
 
         header_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_HEADER, fill_type="solid")
         section_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_SECTION, fill_type="solid")
@@ -5318,6 +5319,41 @@ class ScheduleWorkbookBuilder:
             ws.cell(row=row, column=1, value=label).font = bold_font
             ws.cell(row=row, column=2, value=value)
             row += 1
+
+        if resource_contract:
+            row += 1
+            row = _section(row, "Resource Contract")
+            row = _headers(row, ["Status", "Source", "Exclusive groups", "Gym-Modes", "Issue count"])
+            contract_status = str(resource_contract.get("status") or "")
+            issue_count = len(resource_contract.get("issues", []) or [])
+            fill = high_fill if contract_status == "error" else warn_fill if contract_status == "warn" else good_fill
+            values = [
+                contract_status,
+                str(resource_contract.get("allocation_source") or ""),
+                resource_contract.get("exclusive_group_count", 0),
+                resource_contract.get("gym_modes_count", 0),
+                issue_count,
+            ]
+            for col_idx, value in enumerate(values, start=1):
+                cell = ws.cell(row=row, column=col_idx, value=value)
+                cell.fill = fill
+                cell.alignment = left
+            row += 1
+            if issue_count:
+                row = _headers(row, ["Severity", "Code", "Message"])
+                for issue in resource_contract.get("issues", []) or []:
+                    severity = str(issue.get("severity") or "")
+                    fill = _severity_fill(severity)
+                    values = [
+                        severity,
+                        str(issue.get("code") or ""),
+                        str(issue.get("message") or ""),
+                    ]
+                    for col_idx, value in enumerate(values, start=1):
+                        cell = ws.cell(row=row, column=col_idx, value=value)
+                        cell.fill = fill
+                        cell.alignment = left
+                    row += 1
 
         row += 1
         row = _section(row, "Next Actions")

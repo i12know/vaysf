@@ -2946,6 +2946,8 @@ def test_write_schedule_output_report_adds_diagnostics_tab(tmp_path):
     ]
     assert "VAY Sports Fest - Schedule Diagnostics" in all_values
     assert "DIAGNOSTIC OUTPUT" in "".join(all_values)
+    assert "Resource Contract" in all_values
+    assert "clean" in all_values
     assert "capacity note" in all_values
     assert any("but all games were scheduled" in value for value in all_values)
 
@@ -2989,6 +2991,8 @@ def test_write_schedule_output_report_diagnostics_tab_flags_physical_overlaps(tm
         for col in range(1, ws.max_column + 1)
     ]
     assert "Physical Venue Overlaps" in all_values
+    assert "Resource Contract" in all_values
+    assert "physical_mode_overlap" in all_values
     assert "EHS Main Gym" in all_values
     assert any("one physical gym is in only one mode" in value for value in all_values)
 

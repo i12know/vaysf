@@ -161,6 +161,125 @@ def _find_exclusive_group_overlaps(resources: list[dict[str, Any]]) -> list[dict
     )
 
 
+def _summarize_resource_contract(
+    schedule_input: dict[str, Any],
+    supply: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate the operator contract between Venue-Input, Gym-Modes, and resources."""
+    resources = schedule_input.get("resources", []) or []
+    gym_modes = schedule_input.get("gym_modes", {}) or {}
+    gym_allocation = schedule_input.get("gym_allocation", {}) or {}
+    allocation_source = str(gym_allocation.get("source") or "unknown")
+
+    grouped_resources = [
+        resource for resource in resources
+        if str(resource.get("exclusive_group") or "").strip()
+    ]
+    grouped_names = {
+        str(resource.get("exclusive_group") or "").strip()
+        for resource in grouped_resources
+    }
+    gym_mode_names = {
+        str(name).strip()
+        for name in gym_modes.keys()
+        if str(name).strip()
+    }
+    issues: list[dict[str, Any]] = []
+
+    for overlap in supply.get("exclusive_group_overlaps", []) or []:
+        issues.append(
+            {
+                "severity": "high",
+                "code": "physical_mode_overlap",
+                "message": (
+                    f"{overlap['exclusive_group']} on {overlap['day']} has overlapping "
+                    f"{overlap['first_resource_type']} "
+                    f"{overlap['first_open_time']}-{overlap['first_close_time']} and "
+                    f"{overlap['second_resource_type']} "
+                    f"{overlap['second_open_time']}-{overlap['second_close_time']} windows."
+                ),
+            }
+        )
+
+    if allocation_source == "direct_venue_input" and grouped_names:
+        reason = str(gym_allocation.get("reason") or "")
+        if reason == "grouped_rows_without_gym_modes":
+            message = (
+                "Venue-Input has Exclusive Venue Group rows but Gym-Modes was not used; "
+                "physical gym mutual exclusivity is not enforced."
+            )
+        else:
+            message = (
+                "Grouped venue rows are being used directly; confirm each physical gym "
+                "has only one sport mode at a time."
+            )
+        issues.append(
+            {
+                "severity": "medium",
+                "code": "direct_grouped_resources",
+                "message": message,
+            }
+        )
+
+    if allocation_source == "allocator":
+        uncovered_groups = sorted(grouped_names - gym_mode_names)
+        if uncovered_groups:
+            issues.append(
+                {
+                    "severity": "medium",
+                    "code": "exclusive_group_without_gym_modes",
+                    "message": (
+                        "Exclusive venue group(s) are present in resources but missing from "
+                        f"Gym-Modes coverage: {', '.join(uncovered_groups)}."
+                    ),
+                }
+            )
+
+        direct_covered_resources = sorted(
+            str(resource.get("resource_id") or "")
+            for resource in grouped_resources
+            if str(resource.get("exclusive_group") or "").strip() in gym_mode_names
+            and not str(resource.get("resource_id") or "").startswith("GYM-")
+            and not resource.get("playoff_pinned")
+        )
+        if direct_covered_resources:
+            issues.append(
+                {
+                    "severity": "high",
+                    "code": "direct_resource_in_allocator_group",
+                    "message": (
+                        "Allocator-covered gym group contains direct non-GYM resources; "
+                        "these can bypass mode exclusivity: "
+                        f"{', '.join(direct_covered_resources[:5])}."
+                    ),
+                }
+            )
+
+    if gym_mode_names and not grouped_names:
+        issues.append(
+            {
+                "severity": "info",
+                "code": "gym_modes_without_grouped_resources",
+                "message": (
+                    "Gym-Modes exists, but no resources carry Exclusive Venue Group metadata; "
+                    "the allocator has no physical gym blocks to split."
+                ),
+            }
+        )
+
+    severity_rank = {"high": 3, "medium": 2, "info": 1}
+    max_rank = max((severity_rank.get(issue["severity"], 0) for issue in issues), default=0)
+    status = "error" if max_rank >= 3 else "warn" if max_rank >= 2 else "clean"
+
+    return {
+        "status": status,
+        "allocation_source": allocation_source,
+        "exclusive_group_count": len(grouped_names),
+        "gym_modes_count": len(gym_mode_names),
+        "issues": issues,
+    }
+
+
 def _summarize_demand(schedule_input: dict[str, Any]) -> dict[str, Any]:
     games = schedule_input.get("games", []) or []
     resources = schedule_input.get("resources", []) or []
@@ -358,6 +477,7 @@ def _suggest_next_actions(
     control = diagnostics["control"]
     audit = diagnostics["audit"]
     supply = diagnostics["supply"]
+    resource_contract = diagnostics.get("resource_contract", {}) or {}
 
     for overlap in supply.get("exclusive_group_overlaps", []):
         suggestions.append(
@@ -372,6 +492,17 @@ def _suggest_next_actions(
                     f"{overlap['second_open_time']}-{overlap['second_close_time']} windows. "
                     "Split or narrow venue rows so one physical gym is in only one mode at a time."
                 ),
+            }
+        )
+
+    for issue in resource_contract.get("issues", []) or []:
+        if issue.get("code") == "physical_mode_overlap":
+            continue
+        suggestions.append(
+            {
+                "vector": "resource contract",
+                "severity": str(issue.get("severity") or "info"),
+                "message": str(issue.get("message") or ""),
             }
         )
 
@@ -526,6 +657,10 @@ def build_schedule_diagnostics(
         "capacity_pressure": capacity,
         "audit": _summarize_audit(schedule_input, schedule_output),
     }
+    diagnostics["resource_contract"] = _summarize_resource_contract(
+        schedule_input,
+        diagnostics["supply"],
+    )
     diagnostics["next_actions"] = _suggest_next_actions(diagnostics, capacity)
     return diagnostics
 
@@ -546,6 +681,21 @@ def format_schedule_diagnostics(diagnostics: dict[str, Any]) -> list[str]:
             f"Audit: status={audit.get('status')}, assigned={audit.get('assigned_count')}, "
             f"unscheduled={audit.get('unscheduled_count')}."
         )
+    contract = diagnostics.get("resource_contract", {}) or {}
+    if contract:
+        lines.append(
+            "Resource contract: "
+            f"status={contract.get('status')}, "
+            f"source={contract.get('allocation_source')}, "
+            f"exclusive_groups={contract.get('exclusive_group_count', 0)}, "
+            f"gym_modes={contract.get('gym_modes_count', 0)}, "
+            f"issues={len(contract.get('issues', []) or [])}."
+        )
+        for issue in contract.get("issues", []) or []:
+            lines.append(
+                f"Resource contract issue [{issue.get('severity')}/{issue.get('code')}]: "
+                f"{issue.get('message')}"
+            )
     for action in diagnostics.get("next_actions", []):
         lines.append(
             f"Next action [{action['severity']}/{action['vector']}]: {action['message']}"
