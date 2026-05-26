@@ -40,6 +40,30 @@ The most important dependency to remember:
 So after editing `venue_input.xlsx`, you usually rerun
 `export-church-teams` first.
 
+There are two different success levels:
+
+- **Feasible schedule**: every required game can be placed legally.
+- **Reasonable master schedule**: every game can be placed legally, and the
+  result makes human sense for directors, athletes, and venue staff.
+
+When a run fails or looks strange, treat the next step as a vector diagnosis
+rather than a one-shot retry. The main vectors are demand, supply, gym modes,
+pool assignment, fixed playoff pins, precedence, shared-athlete conflicts, and
+quality preferences.
+
+Use the diagnostic command any time you want a compact "what should I adjust
+next?" report:
+
+```text
+python main.py diagnose-schedule
+python main.py diagnose-schedule --output data/schedule_diagnostics.json
+python main.py diagnose-schedule --input data/schedule_input.json --schedule-output data/schedule_output.json
+```
+
+The report summarizes game demand, resource supply, overlapping physical gym
+mode windows, playoff pins, precedence, gym allocation, unscheduled games,
+conflict audit status, and next-action suggestions.
+
 ---
 
 ## Tab Status Map
@@ -84,9 +108,10 @@ flowchart TD
     F -- No --> I{"Did Playoff-Slots change?"}
     I -- Yes --> J["Edit Playoff-Slots tab in venue_input.xlsx"]
     J --> B
-    I -- No --> K["run-schedule.bat"]
-    B --> K
-    K --> L["VAYSF_Schedule_*.xlsx"]
+    I -- No --> K["python main.py diagnose-schedule"]
+    K --> L["run-schedule.bat"]
+    B --> L
+    L --> M["VAYSF_Schedule_*.xlsx"]
 ```
 
 ---

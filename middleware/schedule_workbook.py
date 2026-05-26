@@ -3673,7 +3673,7 @@ class ScheduleWorkbookBuilder:
         """Patch openpyxl's hidden VML note shapes so Excel opens them by default.
 
         openpyxl writes comments as legacy VML notes and currently ignores
-        Comment.visible.  The workbook XML is otherwise valid, so we patch only
+        Comment.visible. The workbook XML is otherwise valid, so we patch only
         the generated VML note shapes after save, preserving openpyxl's existing
         Excel namespace prefix instead of injecting a conflicting namespace.
         """

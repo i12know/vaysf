@@ -171,6 +171,27 @@ def parse_args() -> argparse.Namespace:
         help="Path for schedule_output.json (default: DATA_DIR/schedule_output.json)",
     )
 
+    # Diagnose-schedule command
+    diagnose_schedule_parser = subparsers.add_parser(
+        "diagnose-schedule",
+        help="Explain demand/supply/control/audit pressure for a schedule attempt",
+    )
+    diagnose_schedule_parser.add_argument(
+        "--input",
+        default=None,
+        help="Path to schedule_input.json (default: EXPORT_DIR/schedule_input.json)",
+    )
+    diagnose_schedule_parser.add_argument(
+        "--schedule-output",
+        default=None,
+        help="Optional path to schedule_output.json (default: EXPORT_DIR/schedule_output.json if it exists)",
+    )
+    diagnose_schedule_parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional path for diagnostics JSON",
+    )
+
     # Produce-schedule command
     produce_schedule_parser = subparsers.add_parser(
         "produce-schedule",
@@ -360,6 +381,15 @@ def _resolve_pool_assignments_sidecar_path(
     return ScheduleWorkbookBuilder._pool_assignments_sidecar_path(
         Path(workbook_or_output_path).parent
     )
+
+
+def _default_schedule_json_path(filename: str) -> Path:
+    """Return the default runtime schedule JSON path.
+
+    run-schedule.bat uses EXPORT_DIR when it is configured, so the interactive
+    CLI should point at the same schedule_input/output files.
+    """
+    return Path(EXPORT_DIR) / filename if EXPORT_DIR else DATA_DIR / filename
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str] = None,
@@ -999,6 +1029,21 @@ def main() -> None:
         input_path = Path(args.input) if args.input else DATA_DIR / "schedule_input.json"
         output_path = Path(args.output) if args.output else DATA_DIR / "schedule_output.json"
         exit_code = run_solve_schedule(input_path, output_path)
+        sys.exit(exit_code)
+    elif args.command == "diagnose-schedule":
+        from schedule_diagnostics import run_diagnose_schedule
+        input_path = Path(args.input) if args.input else _default_schedule_json_path("schedule_input.json")
+        if args.schedule_output:
+            schedule_output_path = Path(args.schedule_output)
+        else:
+            default_output = _default_schedule_json_path("schedule_output.json")
+            schedule_output_path = default_output if default_output.exists() else None
+        diagnostics_path = Path(args.output) if args.output else None
+        exit_code = run_diagnose_schedule(
+            input_path,
+            schedule_output_path=schedule_output_path,
+            output_path=diagnostics_path,
+        )
         sys.exit(exit_code)
     elif args.command == "produce-schedule":
         from schedule_workbook import ScheduleWorkbookBuilder
