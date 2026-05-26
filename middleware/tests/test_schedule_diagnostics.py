@@ -152,10 +152,96 @@ def test_build_schedule_diagnostics_flags_exclusive_group_mode_overlap():
     assert overlaps[0]["first_resource_type"] == "Badminton Court"
     assert overlaps[0]["second_resource_type"] == "Basketball Court"
     assert overlaps[0]["overlapping_resource_pairs"] == 1
+    assert diagnostics["resource_contract"]["status"] == "error"
+    assert diagnostics["resource_contract"]["issues"][0]["code"] == "physical_mode_overlap"
     assert any(
         action["severity"] == "high"
         and action["vector"] == "supply"
         and "EHS Main Gym on Sat-2" in action["message"]
+        for action in diagnostics["next_actions"]
+    )
+
+
+def test_build_schedule_diagnostics_flags_direct_grouped_rows_without_gym_modes():
+    schedule_input = _diagnostic_schedule_input()
+    schedule_input["gym_modes"] = {}
+    schedule_input["gym_allocation"] = {
+        "source": "direct_venue_input",
+        "reason": "grouped_rows_without_gym_modes",
+    }
+    schedule_input["resources"] = [
+        {
+            "resource_id": "BB-Sat-2-1",
+            "resource_type": "Basketball Court",
+            "label": "Court-1",
+            "day": "Sat-2",
+            "open_time": "08:00",
+            "close_time": "12:00",
+            "slot_minutes": 60,
+            "exclusive_group": "EHS Main Gym",
+        }
+    ]
+
+    diagnostics = build_schedule_diagnostics(schedule_input)
+
+    contract = diagnostics["resource_contract"]
+    assert contract["status"] == "warn"
+    assert contract["allocation_source"] == "direct_venue_input"
+    assert contract["issues"][0]["code"] == "direct_grouped_resources"
+    assert any(
+        action["vector"] == "resource contract"
+        and "mutual exclusivity is not enforced" in action["message"]
+        for action in diagnostics["next_actions"]
+    )
+
+
+def test_build_schedule_diagnostics_flags_allocator_contract_gaps():
+    schedule_input = _diagnostic_schedule_input()
+    schedule_input["gym_modes"] = {"EHS Main Gym": {"Basketball Court": 2}}
+    schedule_input["gym_allocation"] = {"source": "allocator", "mode_shortfall": {}}
+    schedule_input["resources"] = [
+        {
+            "resource_id": "GYM-Sat-2-1",
+            "resource_type": "Basketball Court",
+            "label": "Court-1",
+            "day": "Sat-2",
+            "open_time": "08:00",
+            "close_time": "12:00",
+            "slot_minutes": 60,
+            "exclusive_group": "EHS Main Gym",
+        },
+        {
+            "resource_id": "BB-Sat-2-direct",
+            "resource_type": "Basketball Court",
+            "label": "Court-2",
+            "day": "Sat-2",
+            "open_time": "08:00",
+            "close_time": "12:00",
+            "slot_minutes": 60,
+            "exclusive_group": "EHS Main Gym",
+        },
+        {
+            "resource_id": "BAD-Sat-2-uncovered",
+            "resource_type": "Badminton Court",
+            "label": "Court-1",
+            "day": "Sat-2",
+            "open_time": "13:00",
+            "close_time": "17:00",
+            "slot_minutes": 60,
+            "exclusive_group": "Uncovered Gym",
+        },
+    ]
+
+    diagnostics = build_schedule_diagnostics(schedule_input)
+
+    contract = diagnostics["resource_contract"]
+    assert contract["status"] == "error"
+    codes = {issue["code"] for issue in contract["issues"]}
+    assert "exclusive_group_without_gym_modes" in codes
+    assert "direct_resource_in_allocator_group" in codes
+    assert any(
+        action["vector"] == "resource contract"
+        and "Allocator-covered gym group contains direct non-GYM resources" in action["message"]
         for action in diagnostics["next_actions"]
     )
 
@@ -206,6 +292,7 @@ def test_format_schedule_diagnostics_includes_compact_next_action_lines():
     lines = format_schedule_diagnostics(diagnostics)
 
     assert lines[0].startswith("Schedule diagnostics:")
+    assert any(line.startswith("Resource contract:") for line in lines)
     assert any("Next action" in line for line in lines)
 
 

@@ -61,8 +61,13 @@ python main.py diagnose-schedule --input data/schedule_input.json --schedule-out
 ```
 
 The report summarizes game demand, resource supply, overlapping physical gym
-mode windows, playoff pins, precedence, gym allocation, unscheduled games,
-conflict audit status, and next-action suggestions.
+mode windows, the Venue-Input/Gym-Modes resource contract, playoff pins,
+precedence, gym allocation, unscheduled games, conflict audit status, and
+next-action suggestions.
+
+The resource contract section answers: did grouped physical venues flow through
+Gym-Modes, did any direct venue rows bypass allocator coverage, and is any
+physical gym exposed as more than one sport mode at the same time?
 
 If a solved schedule is `OPTIMAL` or `FEASIBLE`, has zero unscheduled games,
 and has no physical gym overlap warnings, gym-mode shortfalls are shown as
