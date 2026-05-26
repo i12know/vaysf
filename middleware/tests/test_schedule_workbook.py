@@ -3165,6 +3165,7 @@ def test_master_schedule_first_write_wins_on_exclusive_group_double_booking(tmp_
     overwritten by the second resource (Badminton). Reproduces the BBM-Semi-1 hidden
     bug where Badminton overwrote Basketball on the same physical court."""
     import openpyxl
+    import zipfile
 
     schedule_input = {
         "games": [
@@ -3276,6 +3277,16 @@ def test_master_schedule_first_write_wins_on_exclusive_group_double_booking(tmp_
     assert conflict_cell.font.color.rgb.endswith("FF2400"), "Conflict cell must have red text"
     assert conflict_cell.comment is not None, "Conflict cell must carry a Note"
     assert "SCHEDULING CONFLICT" in conflict_cell.comment.text
+
+    # Excel stores comment visibility in VML. openpyxl can read the workbook
+    # after our post-save patch, and the VML should request an open note.
+    with zipfile.ZipFile(out) as zf:
+        vml_names = [name for name in zf.namelist() if name.endswith(".vml")]
+        assert vml_names
+        vml_text = "\n".join(zf.read(name).decode("utf-8") for name in vml_names)
+    assert "visibility:visible" in vml_text
+    assert ":Visible" in vml_text
+    assert 'xmlns="urn:schemas-microsoft-com:office:excel"' not in vml_text
 
 
 # ---------------------------------------------------------------------------

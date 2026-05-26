@@ -83,6 +83,15 @@ def test_parse_args_solve_schedule_defaults(monkeypatch):
     assert args.output is None
 
 
+def test_parse_args_diagnose_schedule_defaults(monkeypatch):
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "diagnose-schedule"])
+    args = main.parse_args()
+    assert args.command == "diagnose-schedule"
+    assert args.input is None
+    assert args.schedule_output is None
+    assert args.output is None
+
+
 def test_parse_args_produce_schedule_aliases(monkeypatch):
     monkeypatch.setattr(
         main.sys,
@@ -352,6 +361,30 @@ def test_main_solve_schedule_uses_default_paths(mocker, monkeypatch, tmp_path):
     mock_run.assert_called_once_with(
         tmp_path / "schedule_input.json",
         tmp_path / "schedule_output.json",
+    )
+
+
+def test_main_diagnose_schedule_uses_default_paths(mocker, monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "EXPORT_DIR", tmp_path)
+    (tmp_path / "schedule_output.json").write_text("{}", encoding="utf-8")
+    mock_run = mocker.patch("schedule_diagnostics.run_diagnose_schedule", return_value=0)
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="diagnose-schedule",
+            input=None,
+            schedule_output=None,
+            output=None,
+        ),
+    )
+
+    _run_main_expect_exit(0)
+
+    mock_run.assert_called_once_with(
+        tmp_path / "schedule_input.json",
+        schedule_output_path=tmp_path / "schedule_output.json",
+        output_path=None,
     )
 
 
