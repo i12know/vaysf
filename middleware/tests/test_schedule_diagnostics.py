@@ -160,6 +160,46 @@ def test_build_schedule_diagnostics_flags_exclusive_group_mode_overlap():
     )
 
 
+def test_build_schedule_diagnostics_downgrades_shortfall_when_solution_is_healthy():
+    schedule_input = _diagnostic_schedule_input()
+    schedule_input["resources"] = [
+        {
+            "resource_id": "BAD-Sat-1-A",
+            "resource_type": "Badminton Court",
+            "label": "Court-1",
+            "day": "Sat-2",
+            "open_time": "08:00",
+            "close_time": "11:00",
+            "slot_minutes": 30,
+            "exclusive_group": "EHS Main Gym",
+        }
+    ]
+    schedule_output = {
+        "status": "FEASIBLE",
+        "assignments": [
+            {"game_id": "BAD-01", "resource_id": "BAD-Sat-1-A", "slot": "Sat-2-08:00"},
+            {"game_id": "BAD-02", "resource_id": "BAD-Sat-1-A", "slot": "Sat-2-08:30"},
+            {"game_id": "BAD-03", "resource_id": "BAD-Sat-1-A", "slot": "Sat-2-09:00"},
+        ],
+        "unscheduled": [],
+        "pool_results": [{"resource_type": "Badminton Court", "status": "FEASIBLE"}],
+        "conflict_audit_summary": {},
+    }
+
+    diagnostics = build_schedule_diagnostics(schedule_input, schedule_output)
+
+    assert any(
+        action["severity"] == "info"
+        and action["vector"] == "capacity note"
+        and "but all games were scheduled" in action["message"]
+        for action in diagnostics["next_actions"]
+    )
+    assert not any(
+        action["vector"] == "gym modes" and action["severity"] == "medium"
+        for action in diagnostics["next_actions"]
+    )
+
+
 def test_format_schedule_diagnostics_includes_compact_next_action_lines():
     diagnostics = build_schedule_diagnostics(_diagnostic_schedule_input())
 
