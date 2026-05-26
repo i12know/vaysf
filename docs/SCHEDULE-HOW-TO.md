@@ -64,6 +64,11 @@ The report summarizes game demand, resource supply, overlapping physical gym
 mode windows, playoff pins, precedence, gym allocation, unscheduled games,
 conflict audit status, and next-action suggestions.
 
+If a solved schedule is `OPTIMAL` or `FEASIBLE`, has zero unscheduled games,
+and has no physical gym overlap warnings, gym-mode shortfalls are shown as
+informational capacity notes. They mean the rough venue estimate is tight or
+conservative, not that a game failed to schedule.
+
 ---
 
 ## Tab Status Map

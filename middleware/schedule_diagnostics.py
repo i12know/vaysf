@@ -400,9 +400,33 @@ def _suggest_next_actions(
                 }
             )
 
+    output_status = str(audit.get("status") or "")
+    has_bad_output = bool(output_status and output_status not in SOLVED_STATUSES)
+    has_unscheduled = _as_int(audit.get("unscheduled_count"), 0) > 0
+    has_physical_overlaps = bool(supply.get("exclusive_group_overlaps"))
+    has_healthy_solution = (
+        audit.get("available")
+        and output_status in SOLVED_STATUSES
+        and not has_unscheduled
+        and not has_physical_overlaps
+    )
+
     gym_shortfall = control.get("gym_allocation", {}).get("mode_shortfall", {}) or {}
     for mode, shortfall in sorted(gym_shortfall.items()):
-        if _as_int(shortfall, 0) > 0:
+        if _as_int(shortfall, 0) <= 0:
+            continue
+        if has_healthy_solution:
+            suggestions.append(
+                {
+                    "vector": "capacity note",
+                    "severity": "info",
+                    "message": (
+                        f"{mode} estimated demand exceeds allocator supply by "
+                        f"{shortfall} slot(s), but all games were scheduled."
+                    ),
+                }
+            )
+        else:
             suggestions.append(
                 {
                     "vector": "gym modes",
@@ -414,9 +438,6 @@ def _suggest_next_actions(
                 }
             )
 
-    output_status = str(audit.get("status") or "")
-    has_bad_output = bool(output_status and output_status not in SOLVED_STATUSES)
-    has_unscheduled = _as_int(audit.get("unscheduled_count"), 0) > 0
     if (has_bad_output or has_unscheduled) and control.get("playoff_slots_count", 0):
         suggestions.append(
             {
