@@ -464,7 +464,7 @@ def test_refresh_pool_assignments_flags_duplicate_seeds(tmp_path):
 
 
 def test_write_schedule_output_workbook_creates_schedule_tabs(tmp_path):
-    """The output-workbook entry point should produce the two renderer tabs."""
+    """The output-workbook entry point should produce the renderer and audit tabs."""
     schedule_output, schedule_input = _make_schedule_pair()
     workbook_path = tmp_path / "schedule_output.xlsx"
 
@@ -475,9 +475,16 @@ def test_write_schedule_output_workbook_creates_schedule_tabs(tmp_path):
     )
 
     wb = load_workbook(workbook_path)
-    assert wb.sheetnames == ["Schedule-by-Time", "Schedule-by-Sport", "Conflict-Audit", "Master-Schedule"]
+    assert wb.sheetnames == [
+        "Schedule-by-Time",
+        "Schedule-by-Sport",
+        "Conflict-Audit",
+        "Schedule-Diagnostics",
+        "Master-Schedule",
+    ]
     assert "STATUS: FINAL OUTPUT" in _status_banner_values(wb["Schedule-by-Time"])
     assert "STATUS: AUDIT OUTPUT" in _status_banner_values(wb["Conflict-Audit"])
+    assert "STATUS: DIAGNOSTIC OUTPUT" in _status_banner_values(wb["Schedule-Diagnostics"])
 
 
 def test_read_roster_validation_rows_missing_path_degrades():
@@ -2917,6 +2924,77 @@ def test_write_schedule_output_report_tab3_planning_only_conflict_audit(tmp_path
     ws = openpyxl.load_workbook(out)["Conflict-Audit"]
     assert "Planning-only" in str(ws.cell(row=3, column=2).value)
     assert ws.cell(row=7, column=8).value == "PlanningOnly"
+
+
+def test_write_schedule_output_report_adds_diagnostics_tab(tmp_path):
+    """Schedule-Diagnostics should surface diagnose-schedule next actions."""
+    import openpyxl
+
+    so, si = _make_schedule_pair()
+    si["gym_allocation"] = {
+        "source": "allocator",
+        "mode_shortfall": {"Badminton Court": 13.0},
+    }
+
+    out = tmp_path / "sched.xlsx"
+    ScheduleWorkbookBuilder._write_schedule_output_report(out, so, si)
+    ws = openpyxl.load_workbook(out)["Schedule-Diagnostics"]
+    all_values = [
+        str(ws.cell(row=row, column=col).value or "")
+        for row in range(1, ws.max_row + 1)
+        for col in range(1, ws.max_column + 1)
+    ]
+    assert "VAY Sports Fest - Schedule Diagnostics" in all_values
+    assert "DIAGNOSTIC OUTPUT" in "".join(all_values)
+    assert "Resource Contract" in all_values
+    assert "clean" in all_values
+    assert "capacity note" in all_values
+    assert any("but all games were scheduled" in value for value in all_values)
+
+
+def test_write_schedule_output_report_diagnostics_tab_flags_physical_overlaps(tmp_path):
+    """Physical venue overlaps should be visible in the generated workbook."""
+    import openpyxl
+
+    so, si = _make_schedule_pair()
+    si["resources"].extend(
+        [
+            {
+                "resource_id": "EHS-Main-Gym-BAD-1",
+                "resource_type": "Badminton Court",
+                "label": "Court-1",
+                "day": "Sat-2",
+                "open_time": "13:00",
+                "close_time": "17:00",
+                "slot_minutes": 60,
+                "exclusive_group": "EHS Main Gym",
+            },
+            {
+                "resource_id": "EHS-Main-Gym-BBM-1",
+                "resource_type": "Basketball Court",
+                "label": "Court-1",
+                "day": "Sat-2",
+                "open_time": "08:00",
+                "close_time": "17:00",
+                "slot_minutes": 60,
+                "exclusive_group": "EHS Main Gym",
+            },
+        ]
+    )
+
+    out = tmp_path / "sched.xlsx"
+    ScheduleWorkbookBuilder._write_schedule_output_report(out, so, si)
+    ws = openpyxl.load_workbook(out)["Schedule-Diagnostics"]
+    all_values = [
+        str(ws.cell(row=row, column=col).value or "")
+        for row in range(1, ws.max_row + 1)
+        for col in range(1, ws.max_column + 1)
+    ]
+    assert "Physical Venue Overlaps" in all_values
+    assert "Resource Contract" in all_values
+    assert "physical_mode_overlap" in all_values
+    assert "EHS Main Gym" in all_values
+    assert any("one physical gym is in only one mode" in value for value in all_values)
 
 
 def test_write_schedule_output_report_unscheduled_section(tmp_path):
