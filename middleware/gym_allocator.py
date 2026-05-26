@@ -290,7 +290,7 @@ def allocate(
                 ch = _court_hours(block, courts)
                 if ch <= 0:
                     continue
-                available.discard(block)
+                _claim_physical_gym_window(available, block)
                 decisions.append(AllocationDecision(
                     gym_name=gym_name,
                     day=block.day,
@@ -337,7 +337,7 @@ def allocate(
             candidates,
             key=lambda mc: (_spread_blocks_per_mode[mc[0]], -mc[1], sorted_modes.index(mc[0])),
         )
-        available.discard(block)
+        _claim_physical_gym_window(available, block)
         decisions.append(AllocationDecision(
             gym_name=block.gym_name,
             day=block.day,
@@ -376,6 +376,58 @@ def _court_hours(block: GymBlock, courts: int) -> float:
     """Court-hours a block provides at a given court count."""
     duration = max(0.0, _parse_time(block.close_time) - _parse_time(block.open_time))
     return courts * duration
+
+
+def _blocks_overlap_same_gym(left: GymBlock, right: GymBlock) -> bool:
+    """Return True when two blocks consume the same physical gym time."""
+    if left.gym_name != right.gym_name or left.day != right.day:
+        return False
+    return (
+        _parse_time(left.open_time) < _parse_time(right.close_time)
+        and _parse_time(right.open_time) < _parse_time(left.close_time)
+    )
+
+
+def _claim_physical_gym_window(available: set[GymBlock], block: GymBlock) -> None:
+    """Remove the claimed window while preserving non-overlapping fragments."""
+    replacements: set[GymBlock] = set()
+    for candidate in list(available):
+        if not _blocks_overlap_same_gym(block, candidate):
+            continue
+        available.discard(candidate)
+        if candidate == block:
+            continue
+
+        candidate_open = _parse_time(candidate.open_time)
+        candidate_close = _parse_time(candidate.close_time)
+        claim_open = _parse_time(block.open_time)
+        claim_close = _parse_time(block.close_time)
+
+        if candidate_open < claim_open:
+            before = GymBlock(
+                gym_name=candidate.gym_name,
+                day=candidate.day,
+                open_time=candidate.open_time,
+                close_time=block.open_time,
+                slot_minutes=candidate.slot_minutes,
+                resource_types=candidate.resource_types,
+            )
+            if _court_hours(before, 1) * 60 >= candidate.slot_minutes:
+                replacements.add(before)
+
+        if claim_close < candidate_close:
+            after = GymBlock(
+                gym_name=candidate.gym_name,
+                day=candidate.day,
+                open_time=block.close_time,
+                close_time=candidate.close_time,
+                slot_minutes=candidate.slot_minutes,
+                resource_types=candidate.resource_types,
+            )
+            if _court_hours(after, 1) * 60 >= candidate.slot_minutes:
+                replacements.add(after)
+
+    available.update(replacements)
 
 
 def _last_mode_in_gym(gym_name: str, decisions: List[AllocationDecision]) -> Optional[str]:

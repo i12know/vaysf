@@ -3289,7 +3289,6 @@ def test_master_schedule_first_write_wins_on_exclusive_group_double_booking(tmp_
     assert 'xmlns="urn:schemas-microsoft-com:office:excel"' not in vml_text
 
 
-
 # ---------------------------------------------------------------------------
 # Bible Challenge Venue-Estimator tests (Issue #118)
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from gym_allocator import (
     aggregate_demand_by_mode,
     allocate,
     _court_hours,
+    _blocks_overlap_same_gym,
     _switch_penalty,
     _count_switches,
 )
@@ -541,13 +542,13 @@ def _block_with_types(gym: str, resource_types, open_t: str = "08:00",
                     slot_minutes=slot, resource_types=frozenset(resource_types))
 
 
-def test_allocate_bd_prefers_own_block_over_bb_block():
-    """Regression: Badminton should claim its 13:00-17:00 block, not the 08:00-17:00
-    Basketball/Volleyball block that happens to be available in the same gym.
+def test_allocate_overlapping_same_gym_blocks_are_mutually_exclusive():
+    """A physical gym cannot be Basketball 08:00-17:00 and Badminton 13:00-17:00.
 
-    Before the fix: allocate() sorted blocks earliest-first so BD grabbed the
-    08:00-17:00 block (born from BB/VB rows) instead of its 13:00-17:00 block.
-    After the fix: resource_types-aware sort prefers the BD-native 13:00-17:00 block.
+    The earlier resource-types fix made Badminton prefer its native 13:00 block.
+    That still left a physical double-booking when Basketball had already claimed
+    the wider 08:00-17:00 window. Claiming one block must remove overlapping
+    same-gym windows from later allocation.
     """
     demand = {"Basketball Court": 100.0, "Badminton Court": 20.0}
     gym_modes = {"EHS Main Gym": {"Basketball Court": 2, "Badminton Court": 6}}
@@ -560,13 +561,73 @@ def test_allocate_bd_prefers_own_block_over_bb_block():
                                 open_t="13:00", close_t="17:00", day="Sat-2")
 
     # Demand for BB is far above what either block provides; it will claim Block A.
-    # BD should then take Block B (its native block), not whatever is left.
+    # BD must not also take Block B because the two windows overlap physically.
     result = allocate(demand, gym_modes, [block_a, block_b])
 
+    assert _blocks_overlap_same_gym(block_a, block_b)
+    bb_decisions = [d for d in result.decisions if d.mode == "Basketball Court"]
     bd_decisions = [d for d in result.decisions if d.mode == "Badminton Court"]
-    assert len(bd_decisions) == 1
-    assert bd_decisions[0].open_time == "13:00", (
-        "BD should have claimed its native 13:00-17:00 block, not the BB 08:00-17:00 block"
+    assert len(bb_decisions) == 1
+    assert bd_decisions == []
+    assert result.mode_shortfall["Badminton Court"] == pytest.approx(20.0)
+
+
+def test_allocate_non_overlapping_same_gym_blocks_can_switch_modes():
+    """Back-to-back windows in the same gym are still valid mode switches."""
+    demand = {"Basketball Court": 8.0, "Badminton Court": 24.0}
+    gym_modes = {"EHS Main Gym": {"Basketball Court": 2, "Badminton Court": 6}}
+
+    bb_block = _block_with_types("EHS Main Gym", ["Basketball Court"],
+                                 open_t="08:00", close_t="12:00", day="Sat-2")
+    bad_block = _block_with_types("EHS Main Gym", ["Badminton Court"],
+                                  open_t="13:00", close_t="17:00", day="Sat-2")
+
+    result = allocate(demand, gym_modes, [bb_block, bad_block])
+
+    assert not _blocks_overlap_same_gym(bb_block, bad_block)
+    assert {(d.mode, d.open_time, d.close_time) for d in result.decisions} == {
+        ("Basketball Court", "08:00", "12:00"),
+        ("Badminton Court", "13:00", "17:00"),
+    }
+    assert result.mode_shortfall["Basketball Court"] == pytest.approx(0.0)
+    assert result.mode_shortfall["Badminton Court"] == pytest.approx(0.0)
+
+
+def test_allocate_claimed_window_preserves_non_overlapping_residual():
+    """A 13:00-17:00 Badminton claim should leave Basketball 08:00-13:00."""
+    demand = {"Basketball Court": 8.0, "Badminton Court": 24.0}
+    gym_modes = {"EHS Main Gym": {"Basketball Court": 2, "Badminton Court": 6}}
+    bb_wide = _block_with_types("EHS Main Gym", ["Basketball Court"],
+                                open_t="08:00", close_t="17:00", day="Sat-2")
+    bad_afternoon = _block_with_types("EHS Main Gym", ["Badminton Court"],
+                                      open_t="13:00", close_t="17:00", day="Sat-2")
+
+    result = allocate(demand, gym_modes, [bb_wide, bad_afternoon])
+
+    assert {(d.mode, d.open_time, d.close_time) for d in result.decisions} == {
+        ("Badminton Court", "13:00", "17:00"),
+        ("Basketball Court", "08:00", "13:00"),
+    }
+    assert result.mode_shortfall["Basketball Court"] == pytest.approx(0.0)
+    assert result.mode_shortfall["Badminton Court"] == pytest.approx(0.0)
+
+
+def test_allocate_spreading_pass_does_not_claim_overlapping_leftover_block():
+    """The spreading pass must not reintroduce an overlap after demand is met."""
+    demand = {"Basketball Court": 18.0, "Badminton Court": 0.0}
+    gym_modes = {"EHS Main Gym": {"Basketball Court": 2, "Badminton Court": 6}}
+    block_a = _block_with_types("EHS Main Gym", ["Basketball Court"],
+                                open_t="08:00", close_t="17:00", day="Sat-2")
+    block_b = _block_with_types("EHS Main Gym", ["Badminton Court"],
+                                open_t="13:00", close_t="17:00", day="Sat-2")
+
+    result = allocate(demand, gym_modes, [block_a, block_b])
+
+    assert [(d.mode, d.open_time, d.close_time) for d in result.decisions] == [
+        ("Basketball Court", "08:00", "17:00")
+    ], (
+        "Spreading pass must not add the overlapping Badminton block after "
+        "Basketball claims the physical gym window"
     )
 
 
