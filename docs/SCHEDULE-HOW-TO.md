@@ -95,6 +95,7 @@ Use this map when deciding whether to edit a sheet:
 | `Schedule_Workbook_*.xlsx` | `Gym-Allocation` | `READ-ONLY ALLOCATION AUDIT` | Review gym-mode allocation; change venue inputs and rerun the workflow if needed. |
 | `VAYSF_Schedule_*.xlsx` | `Schedule-by-Time`, `Schedule-by-Sport`, `Master-Schedule` | `FINAL OUTPUT` | Publish/review only; rerun the scheduler if inputs change. |
 | `VAYSF_Schedule_*.xlsx` | `Conflict-Audit` | `AUDIT OUTPUT` | Check conflicts and warnings before publishing. |
+| `VAYSF_Schedule_*.xlsx` | `Schedule-Diagnostics` | `DIAGNOSTIC OUTPUT` | Review the same next-action hints as `diagnose-schedule` without leaving Excel. |
 
 ---
 

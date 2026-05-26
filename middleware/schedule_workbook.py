@@ -192,6 +192,11 @@ class ScheduleWorkbookBuilder:
             "Audit conflicts and warnings here before publishing the final schedule.",
             "F4CCCC",
         ),
+        "Schedule-Diagnostics": (
+            "DIAGNOSTIC OUTPUT",
+            "Review suggested next actions before changing venue inputs or rerunning the scheduler.",
+            "FCE5CD",
+        ),
     }
     _SPORT_EXPORT_TAB_STATUS: Tuple[str, str, str] = (
         "READ-ONLY OUTPUT",
@@ -5238,6 +5243,190 @@ class ScheduleWorkbookBuilder:
         return rows
 
     @staticmethod
+    def _write_schedule_diagnostics_tab(
+        ws,
+        schedule_output: Dict[str, Any],
+        schedule_input: Dict[str, Any],
+    ) -> None:
+        """Render the operator-facing diagnose-schedule summary into Excel."""
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        from schedule_diagnostics import build_schedule_diagnostics
+
+        diagnostics = build_schedule_diagnostics(schedule_input, schedule_output)
+        summary = diagnostics.get("summary", {}) or {}
+        audit = diagnostics.get("audit", {}) or {}
+        supply = diagnostics.get("supply", {}) or {}
+        control = diagnostics.get("control", {}) or {}
+
+        header_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_HEADER, fill_type="solid")
+        section_fill = PatternFill(fgColor=SCHEDULE_SKETCH_COLOR_SECTION, fill_type="solid")
+        good_fill = PatternFill(fgColor="D9EAD3", fill_type="solid")
+        warn_fill = PatternFill(fgColor="FFF2CC", fill_type="solid")
+        high_fill = PatternFill(fgColor="F4CCCC", fill_type="solid")
+        info_fill = PatternFill(fgColor="D9EAF7", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        bold_font = Font(bold=True)
+        center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        left = Alignment(horizontal="left", vertical="top", wrap_text=True)
+
+        def _severity_fill(severity: str) -> PatternFill:
+            if severity == "high":
+                return high_fill
+            if severity == "medium":
+                return warn_fill
+            return info_fill
+
+        def _section(row: int, title: str, width: int = 5) -> int:
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=width)
+            cell = ws.cell(row=row, column=1, value=title)
+            cell.fill = section_fill
+            cell.font = bold_font
+            cell.alignment = center
+            return row + 1
+
+        def _headers(row: int, columns: List[str]) -> int:
+            for col_idx, value in enumerate(columns, start=1):
+                cell = ws.cell(row=row, column=col_idx, value=value)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = center
+            return row + 1
+
+        ws.title = "Schedule-Diagnostics"
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=5)
+        title_cell = ws.cell(row=1, column=1, value="VAY Sports Fest - Schedule Diagnostics")
+        title_cell.fill = header_fill
+        title_cell.font = header_font
+        title_cell.alignment = center
+        ws.freeze_panes = "A8"
+
+        row = 3
+        row = _section(row, "Summary")
+        row = _headers(row, ["Metric", "Value"])
+        summary_rows = [
+            ("Generated at", summary.get("generated_at") or ""),
+            ("Schedule output", "yes" if summary.get("has_schedule_output") else "no"),
+            ("Games", summary.get("game_count", 0)),
+            ("Resources", summary.get("resource_count", 0)),
+            ("Solver status", audit.get("status") or ""),
+            ("Assigned", audit.get("assigned_count", 0)),
+            ("Unscheduled", audit.get("unscheduled_count", 0)),
+        ]
+        for label, value in summary_rows:
+            ws.cell(row=row, column=1, value=label).font = bold_font
+            ws.cell(row=row, column=2, value=value)
+            row += 1
+
+        row += 1
+        row = _section(row, "Next Actions")
+        row = _headers(row, ["Severity", "Vector", "Message"])
+        actions = diagnostics.get("next_actions", []) or []
+        for action in actions:
+            severity = str(action.get("severity") or "")
+            fill = _severity_fill(severity)
+            values = [
+                severity,
+                str(action.get("vector") or ""),
+                str(action.get("message") or ""),
+            ]
+            for col_idx, value in enumerate(values, start=1):
+                cell = ws.cell(row=row, column=col_idx, value=value)
+                cell.fill = fill
+                cell.alignment = left
+            row += 1
+        if not actions:
+            ws.cell(row=row, column=1, value="No suggested next actions.")
+            row += 1
+
+        overlaps = supply.get("exclusive_group_overlaps", []) or []
+        if overlaps:
+            row += 1
+            row = _section(row, "Physical Venue Overlaps")
+            row = _headers(
+                row,
+                ["Venue", "Day", "First window", "Second window", "Example resources"],
+            )
+            for overlap in overlaps:
+                values = [
+                    overlap.get("exclusive_group", ""),
+                    overlap.get("day", ""),
+                    (
+                        f"{overlap.get('first_resource_type', '')} "
+                        f"{overlap.get('first_open_time', '')}-{overlap.get('first_close_time', '')}"
+                    ),
+                    (
+                        f"{overlap.get('second_resource_type', '')} "
+                        f"{overlap.get('second_open_time', '')}-{overlap.get('second_close_time', '')}"
+                    ),
+                    "; ".join(
+                        " + ".join(pair)
+                        for pair in overlap.get("example_resource_ids", []) or []
+                    ),
+                ]
+                for col_idx, value in enumerate(values, start=1):
+                    cell = ws.cell(row=row, column=col_idx, value=value)
+                    cell.fill = high_fill
+                    cell.alignment = left
+                row += 1
+
+        gym_shortfall = (
+            control.get("gym_allocation", {}).get("mode_shortfall", {}) or {}
+        )
+        if gym_shortfall:
+            row += 1
+            row = _section(row, "Gym Mode Capacity Notes")
+            row = _headers(row, ["Mode", "Shortfall slots"])
+            for mode, shortfall in sorted(gym_shortfall.items()):
+                ws.cell(row=row, column=1, value=mode)
+                ws.cell(row=row, column=2, value=shortfall)
+                row += 1
+
+        capacity_rows = diagnostics.get("capacity_pressure", []) or []
+        if capacity_rows:
+            row += 1
+            row = _section(row, "Capacity Pressure")
+            row = _headers(
+                row,
+                [
+                    "Resource type",
+                    "Required slots",
+                    "Available slots",
+                    "Shortage slots",
+                    "Missing events",
+                ],
+            )
+            for capacity in capacity_rows:
+                missing = "; ".join(
+                    (
+                        f"{item.get('event', '')} "
+                        f"({item.get('game_count', 0)} game(s))"
+                    )
+                    for item in capacity.get("missing_resource_events", []) or []
+                )
+                shortage = capacity.get("shortage_slots", 0)
+                fill = high_fill if shortage else good_fill
+                values = [
+                    capacity.get("resource_type", ""),
+                    capacity.get("required_slots", 0),
+                    capacity.get("available_slots", 0),
+                    shortage,
+                    missing,
+                ]
+                for col_idx, value in enumerate(values, start=1):
+                    cell = ws.cell(row=row, column=col_idx, value=value)
+                    cell.fill = fill
+                    cell.alignment = left
+                row += 1
+
+        widths = [24, 18, 78, 34, 42]
+        for col_idx, width in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+        for row_idx in range(1, ws.max_row + 1):
+            ws.row_dimensions[row_idx].height = 24
+
+    @staticmethod
     def _write_schedule_output_report(
         filepath: Path,
         schedule_output: Dict[str, Any],
@@ -5739,6 +5928,16 @@ class ScheduleWorkbookBuilder:
             )
 
         # ── Tab 4: Master-Schedule ───────────────────────────────────────────
+        # Diagnostic summary tab: same signal as diagnose-schedule, embedded in
+        # the generated workbook so operators do not need to inspect JSON first.
+        ws_diag = wb.create_sheet("Schedule-Diagnostics")
+        ScheduleWorkbookBuilder._write_schedule_diagnostics_tab(
+            ws_diag,
+            schedule_output,
+            schedule_input,
+        )
+
+        # Tab 5: Master-Schedule
         # Grid: rows = time slots grouped by day; columns = physical courts/
         # tables grouped by venue.  One column per (venue_group, label) pair
         # so that multiple resource_ids on the same physical court (created by
