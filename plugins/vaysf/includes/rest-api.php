@@ -255,6 +255,24 @@ class VAYSF_REST_API {
 				'permission_callback' => array($this, 'check_api_permission'),
 			),
 		));
+
+		// Insurance upload endpoints (Issue #154) - public, no API key.
+		// Security rests on the per-church token, not on an API key.
+		register_rest_route(self::API_NAMESPACE, '/insurance/request-link', array(
+			array(
+				'methods' => WP_REST_Server::CREATABLE,
+				'callback' => array($this, 'request_insurance_link'),
+				'permission_callback' => '__return_true',
+			),
+		));
+
+		register_rest_route(self::API_NAMESPACE, '/insurance/upload', array(
+			array(
+				'methods' => WP_REST_Server::CREATABLE,
+				'callback' => array($this, 'upload_insurance'),
+				'permission_callback' => '__return_true',
+			),
+		));
     }
 
 	/**
@@ -308,8 +326,255 @@ public function send_email($request) {
 }
 
 	/**
+	 * Maximum accepted insurance upload size in bytes (10 MB).
+	 */
+	const INSURANCE_MAX_BYTES = 10485760;
+
+	/**
+	 * Request a one-time insurance upload link (Issue #154, Path 1).
+	 *
+	 * Public endpoint. Always returns the same generic 200 response so that a
+	 * caller cannot use it to enumerate which church codes or rep emails exist.
+	 *
+	 * @param WP_REST_Request $request Request object
+	 * @return WP_REST_Response Response object
+	 */
+	public function request_insurance_link($request) {
+		global $wpdb;
+
+		$params = $request->get_params();
+		$church_code = isset($params['church_code']) ? strtoupper(sanitize_text_field($params['church_code'])) : '';
+		$email = isset($params['email']) ? sanitize_email($params['email']) : '';
+
+		// Generic response used for every outcome (found, not found, wrong email).
+		$generic = rest_ensure_response(array(
+			'message' => esc_html__('If we found your church, an email is on its way.', 'vaysf'),
+		));
+
+		if (empty($church_code) || empty($email)) {
+			return $generic;
+		}
+
+		$table_churches = vaysf_get_table_name('churches');
+		$church = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM $table_churches WHERE church_code = %s",
+				$church_code
+			),
+			ARRAY_A
+		);
+
+		// Only proceed when the church exists and the email matches the
+		// registered church rep (case-insensitive). Do not reveal the outcome.
+		if ($church && !empty($church['church_rep_email'])
+			&& strcasecmp(trim($email), trim($church['church_rep_email'])) === 0) {
+
+			$token = bin2hex(random_bytes(32)); // 64 hex chars, fits VARCHAR(64)
+			$expiry_hours = absint(get_option('vaysf_insurance_token_expiry_hours', 48));
+			if ($expiry_hours < 1) {
+				$expiry_hours = 48;
+			}
+			$expiry = date('Y-m-d H:i:s', current_time('timestamp') + ($expiry_hours * HOUR_IN_SECONDS));
+
+			$wpdb->update(
+				$table_churches,
+				array(
+					'insurance_token'        => $token,
+					'insurance_token_expiry' => $expiry,
+					'updated_at'             => current_time('mysql'),
+				),
+				array('church_code' => $church_code),
+				array('%s', '%s', '%s'),
+				array('%s')
+			);
+
+			vaysf_send_insurance_link_email($church, $token, $expiry);
+		}
+
+		return $generic;
+	}
+
+	/**
+	 * Accept a proof-of-insurance PDF upload via a one-time token (Issue #154).
+	 *
+	 * Public endpoint guarded by the per-church token. Validates the token and
+	 * the uploaded file, stores the PDF under wp-content/uploads/vaysf/insurance/,
+	 * and advances insurance_status to 'submitted'.
+	 *
+	 * @param WP_REST_Request $request Request object
+	 * @return WP_REST_Response|WP_Error Response object or error
+	 */
+	public function upload_insurance($request) {
+		global $wpdb;
+
+		$params = $request->get_params();
+		$token = isset($params['token']) ? sanitize_text_field($params['token']) : '';
+
+		if (empty($token)) {
+			return new WP_Error(
+				'rest_missing_token',
+				esc_html__('Missing upload token.', 'vaysf'),
+				array('status' => 410)
+			);
+		}
+
+		$table_churches = vaysf_get_table_name('churches');
+		$church = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM $table_churches WHERE insurance_token = %s",
+				$token
+			),
+			ARRAY_A
+		);
+
+		// Treat an unknown token the same as an expired one (410) so the page
+		// can offer to request a fresh link without leaking token validity.
+		if (!$church) {
+			return new WP_Error(
+				'rest_invalid_token',
+				esc_html__('This link has expired.', 'vaysf'),
+				array('status' => 410)
+			);
+		}
+
+		// Expiry check.
+		if (empty($church['insurance_token_expiry'])
+			|| strtotime($church['insurance_token_expiry']) < current_time('timestamp')) {
+			return new WP_Error(
+				'rest_token_expired',
+				esc_html__('This link has expired.', 'vaysf'),
+				array('status' => 410)
+			);
+		}
+
+		// Fetch the uploaded file.
+		$files = $request->get_file_params();
+		if (empty($files['file']) || !isset($files['file']['tmp_name'])) {
+			return new WP_Error(
+				'rest_no_file',
+				esc_html__('No file was uploaded.', 'vaysf'),
+				array('status' => 400)
+			);
+		}
+
+		$file = $files['file'];
+
+		if (!empty($file['error']) && $file['error'] !== UPLOAD_ERR_OK) {
+			return new WP_Error(
+				'rest_upload_error',
+				esc_html__('The file could not be uploaded. Please try again.', 'vaysf'),
+				array('status' => 400)
+			);
+		}
+
+		// Size check (before anything is moved/stored).
+		if (!isset($file['size']) || $file['size'] <= 0 || $file['size'] > self::INSURANCE_MAX_BYTES) {
+			return new WP_Error(
+				'rest_file_too_large',
+				esc_html__('The file must be a PDF no larger than 10 MB.', 'vaysf'),
+				array('status' => 422)
+			);
+		}
+
+		// Type check: declared MIME, extension, and magic bytes must all say PDF.
+		$declared_type = isset($file['type']) ? strtolower($file['type']) : '';
+		$name_ext = strtolower(pathinfo(isset($file['name']) ? $file['name'] : '', PATHINFO_EXTENSION));
+		$magic = '';
+		if (is_readable($file['tmp_name'])) {
+			$handle = fopen($file['tmp_name'], 'rb');
+			if ($handle) {
+				$magic = fread($handle, 5);
+				fclose($handle);
+			}
+		}
+
+		$is_pdf = ($declared_type === 'application/pdf')
+			&& ($name_ext === 'pdf')
+			&& (strpos((string) $magic, '%PDF-') === 0);
+
+		if (!$is_pdf) {
+			return new WP_Error(
+				'rest_invalid_file_type',
+				esc_html__('Only PDF files are accepted.', 'vaysf'),
+				array('status' => 422)
+			);
+		}
+
+		// Build the destination path under wp-content/uploads/vaysf/insurance/.
+		$upload_dir = wp_upload_dir();
+		$insurance_dir = trailingslashit($upload_dir['basedir']) . 'vaysf/insurance';
+		if (!file_exists($insurance_dir)) {
+			wp_mkdir_p($insurance_dir);
+		}
+
+		$filename = sanitize_file_name($church['church_code'] . '_' . current_time('YmdHis') . '.pdf');
+		$dest_path = trailingslashit($insurance_dir) . $filename;
+		$dest_url = trailingslashit($upload_dir['baseurl']) . 'vaysf/insurance/' . $filename;
+
+		// Move the uploaded file. Fall back to copy() for non-HTTP-upload
+		// contexts (e.g. automated tests) where move_uploaded_file() is unsafe.
+		$moved = @move_uploaded_file($file['tmp_name'], $dest_path);
+		if (!$moved) {
+			$moved = @copy($file['tmp_name'], $dest_path);
+		}
+
+		if (!$moved) {
+			return new WP_Error(
+				'rest_storage_failed',
+				esc_html__('The file could not be saved. Please try again.', 'vaysf'),
+				array('status' => 500)
+			);
+		}
+
+		// Advance status to 'submitted' unless already approved (no downgrade).
+		$new_status = ($church['insurance_status'] === 'approved')
+			? 'approved'
+			: 'submitted';
+
+		$wpdb->update(
+			$table_churches,
+			array(
+				'insurance_file_url'     => $dest_url,
+				'insurance_uploaded_at'  => current_time('mysql'),
+				'insurance_status'       => $new_status,
+				'insurance_token'        => null,
+				'insurance_token_expiry' => null,
+				'updated_at'             => current_time('mysql'),
+			),
+			array('church_code' => $church['church_code']),
+			array('%s', '%s', '%s', '%s', '%s', '%s'),
+			array('%s')
+		);
+
+		// Confirmation + optional admin notification.
+		vaysf_send_insurance_confirmation_email($church);
+
+		if (get_option('vaysf_insurance_admin_notify', false)) {
+			$admin_email = sanitize_email(get_option('vaysf_email_from', get_option('admin_email')));
+			if (!empty($admin_email)) {
+				$subject = sprintf(
+					esc_html__('Insurance uploaded: %s', 'vaysf'),
+					$church['church_name']
+				);
+				$message = '<p>' . sprintf(
+					esc_html__('%1$s (%2$s) has uploaded a proof-of-insurance document.', 'vaysf'),
+					esc_html($church['church_name']),
+					esc_html($church['church_code'])
+				) . '</p>';
+				$message .= '<p><a href="' . esc_url($dest_url) . '">' . esc_html__('Download PDF', 'vaysf') . '</a></p>';
+				vaysf_send_email($admin_email, $subject, $message);
+			}
+		}
+
+		return rest_ensure_response(array(
+			'success' => true,
+			'message' => esc_html__('Thank you. Your proof of insurance has been received.', 'vaysf'),
+		));
+	}
+
+	/**
 	 * Verify API key from request header
-	 * 
+	 *
 	 * @param WP_REST_Request $request Request object
 	 * @return bool True if API key is valid
 	 */
@@ -620,7 +885,25 @@ public function send_email($request) {
             $data['insurance_status'] = sanitize_text_field($params['insurance_status']);
             $format[] = '%s';
         }
-        
+
+        // Insurance file fields written by the middleware sync path (Issue #154,
+        // Path 2). Token columns are intentionally NOT writable through this
+        // API-key endpoint - they are managed only by the public upload flow.
+        if (isset($params['insurance_file_url'])) {
+            $data['insurance_file_url'] = esc_url_raw($params['insurance_file_url']);
+            $format[] = '%s';
+        }
+
+        if (isset($params['insurance_uploaded_at'])) {
+            $uploaded_at = sanitize_text_field($params['insurance_uploaded_at']);
+            if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $uploaded_at)) {
+                $data['insurance_uploaded_at'] = $uploaded_at;
+                $format[] = '%s';
+            } else {
+                return new WP_Error('invalid_datetime', 'Invalid insurance_uploaded_at format', array('status' => 400));
+            }
+        }
+
         if (isset($params['payment_status'])) {
             $data['payment_status'] = sanitize_text_field($params['payment_status']);
             $format[] = '%s';

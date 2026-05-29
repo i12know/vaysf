@@ -766,3 +766,98 @@ function vaysf_resend_approval_email($approval) {
     
     return $pastor_result;
 }
+
+/**
+ * Format an insurance status into an admin status badge.
+ *
+ * @param string $status Insurance status (pending|submitted|approved|rejected)
+ * @return string HTML badge
+ */
+function vaysf_format_insurance_status($status) {
+    switch ($status) {
+        case 'approved':
+            return '<span class="approval-status status-approved">' . esc_html__('Approved', 'vaysf') . '</span>';
+        case 'rejected':
+            return '<span class="approval-status status-denied">' . esc_html__('Rejected', 'vaysf') . '</span>';
+        case 'submitted':
+            return '<span class="approval-status status-validated">' . esc_html__('Submitted', 'vaysf') . '</span>';
+        case 'pending':
+        default:
+            return '<span class="approval-status status-pending">' . esc_html__('Pending', 'vaysf') . '</span>';
+    }
+}
+
+/**
+ * Send the one-time proof-of-insurance upload link to a church rep (Issue #154).
+ *
+ * @param array  $church Church row (associative)
+ * @param string $token  One-time upload token
+ * @param string $expiry MySQL datetime when the token expires
+ * @return bool True if the email was sent
+ */
+function vaysf_send_insurance_link_email($church, $token, $expiry) {
+    $rep_email = isset($church['church_rep_email']) ? $church['church_rep_email'] : '';
+    if (empty($rep_email)) {
+        return false;
+    }
+
+    $rep_name = !empty($church['church_rep_name']) ? $church['church_rep_name'] : esc_html__('Church Representative', 'vaysf');
+    $upload_link = site_url('insurance-upload') . '?token=' . urlencode($token);
+    $expiry_display = date_i18n('F j, Y \a\t g:i A', strtotime($expiry));
+
+    $subject = sprintf(
+        esc_html__('Sports Fest: Upload Proof of Insurance for %s', 'vaysf'),
+        $church['church_name']
+    );
+
+    $message  = '<p>' . sprintf(esc_html__('Dear %s,', 'vaysf'), esc_html($rep_name)) . '</p>';
+    $message .= '<p>' . sprintf(
+        esc_html__('Please use the secure link below to upload your church\'s proof of insurance (PDF, max 10 MB) for %s.', 'vaysf'),
+        esc_html($church['church_name'])
+    ) . '</p>';
+    $message .= '<div style="margin: 20px 0; text-align: center;">';
+    $message .= '<a href="' . esc_url($upload_link) . '" style="display: inline-block; padding: 12px 24px; background-color: #2271b1; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">' . esc_html__('Upload Proof of Insurance', 'vaysf') . '</a>';
+    $message .= '</div>';
+    $message .= '<p><strong>' . esc_html__('Important:', 'vaysf') . '</strong> ' . sprintf(
+        esc_html__('This link will expire on %s. If it expires, you can request a new one from the upload page.', 'vaysf'),
+        esc_html($expiry_display)
+    ) . '</p>';
+    $message .= '<p>' . esc_html__('Thank you for your help with Sports Fest!', 'vaysf') . '</p>';
+    $message .= '<p>VAY Sports Ministry</p>';
+
+    $from_email = get_option('vaysf_email_from', get_option('admin_email'));
+
+    return vaysf_send_email($rep_email, $subject, $message, array('from' => $from_email));
+}
+
+/**
+ * Send a confirmation email after a successful insurance upload (Issue #154).
+ *
+ * @param array $church Church row (associative)
+ * @return bool True if the email was sent
+ */
+function vaysf_send_insurance_confirmation_email($church) {
+    $rep_email = isset($church['church_rep_email']) ? $church['church_rep_email'] : '';
+    if (empty($rep_email)) {
+        return false;
+    }
+
+    $rep_name = !empty($church['church_rep_name']) ? $church['church_rep_name'] : esc_html__('Church Representative', 'vaysf');
+
+    $subject = sprintf(
+        esc_html__('Sports Fest: Proof of Insurance Received for %s', 'vaysf'),
+        $church['church_name']
+    );
+
+    $message  = '<p>' . sprintf(esc_html__('Dear %s,', 'vaysf'), esc_html($rep_name)) . '</p>';
+    $message .= '<p>' . sprintf(
+        esc_html__('We have received the proof-of-insurance document for %s. No further action is needed unless our staff contact you.', 'vaysf'),
+        esc_html($church['church_name'])
+    ) . '</p>';
+    $message .= '<p>' . esc_html__('Thank you for your help with Sports Fest!', 'vaysf') . '</p>';
+    $message .= '<p>VAY Sports Ministry</p>';
+
+    $from_email = get_option('vaysf_email_from', get_option('admin_email'));
+
+    return vaysf_send_email($rep_email, $subject, $message, array('from' => $from_email));
+}

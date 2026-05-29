@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.10
+ * Version: 1.0.11
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -14,16 +14,16 @@ if (!defined('ABSPATH')) {
 }
 
 class VAYSF_Integration {
-    
+
     /**
      * Plugin version
      */
-    const VERSION = '1.0.10';
-    
+    const VERSION = '1.0.11';
+
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.3';  // Incremented due to schema change
+    const DB_VERSION = '1.0.4';  // Incremented due to schema change (insurance upload columns)
     
     /**
      * Database version option name
@@ -143,10 +143,18 @@ class VAYSF_Integration {
 			'index.php?vaysf_pastor_approval=1',
 			'top'
 		);
+
+		// Add rewrite rule for the public insurance upload page (Issue #154)
+		add_rewrite_rule(
+			'insurance-upload/?$',
+			'index.php?vaysf_insurance_upload=1',
+			'top'
+		);
 	}
 
 	public function register_query_vars($vars) {
 		$vars[] = 'vaysf_pastor_approval';
+		$vars[] = 'vaysf_insurance_upload';
 		return $vars;
 	}
 
@@ -160,6 +168,16 @@ class VAYSF_Integration {
 			} else {
 				// Fallback if template doesn't exist
 				wp_die('Pastor approval template not found. Please contact the site administrator.');
+			}
+		}
+
+		if (get_query_var('vaysf_insurance_upload')) {
+			$template_path = plugin_dir_path(__FILE__) . 'templates/insurance-upload.php';
+			if (file_exists($template_path)) {
+				include_once($template_path);
+				exit;
+			} else {
+				wp_die('Insurance upload template not found. Please contact the site administrator.');
 			}
 		}
 	}
@@ -253,6 +271,19 @@ class VAYSF_Integration {
             'default' => '2026-07-18',
             'sanitize_callback' => 'sanitize_text_field'
         ));
+
+        // Insurance upload settings (Issue #154)
+        register_setting('vaysf_settings', 'vaysf_insurance_token_expiry_hours', array(
+            'type' => 'integer',
+            'default' => 48,
+            'sanitize_callback' => 'absint'
+        ));
+
+        register_setting('vaysf_settings', 'vaysf_insurance_admin_notify', array(
+            'type' => 'boolean',
+            'default' => false,
+            'sanitize_callback' => 'rest_sanitize_boolean'
+        ));
     }
     
     /**
@@ -264,6 +295,8 @@ class VAYSF_Integration {
         add_option('vaysf_approval_email_subject', 'Sports Fest 2025: Approval Request');
         add_option('vaysf_sports_fest_date', '2026-07-18');
 		add_option('vaysf_api_key', '');
+        add_option('vaysf_insurance_token_expiry_hours', 48);
+        add_option('vaysf_insurance_admin_notify', false);
     }
     
     /**
@@ -277,11 +310,22 @@ class VAYSF_Integration {
         if (!file_exists($vaysf_dir)) {
             wp_mkdir_p($vaysf_dir);
         }
-        
+
         // Create an index.php file in the directory
         $index_file = $vaysf_dir . '/index.php';
         if (!file_exists($index_file)) {
             file_put_contents($index_file, '<?php // Silence is golden');
+        }
+
+        // Create the insurance upload directory (Issue #154)
+        $insurance_dir = $vaysf_dir . '/insurance';
+        if (!file_exists($insurance_dir)) {
+            wp_mkdir_p($insurance_dir);
+        }
+
+        $insurance_index = $insurance_dir . '/index.php';
+        if (!file_exists($insurance_index)) {
+            file_put_contents($insurance_index, '<?php // Silence is golden');
         }
     }
     
@@ -310,11 +354,16 @@ class VAYSF_Integration {
 			sports_ministry_level TINYINT UNSIGNED DEFAULT 1,
 			registration_status VARCHAR(50) DEFAULT 'pending',
 			insurance_status VARCHAR(50) DEFAULT 'pending',
+			insurance_file_url VARCHAR(500) DEFAULT NULL,
+			insurance_uploaded_at DATETIME DEFAULT NULL,
+			insurance_token VARCHAR(64) DEFAULT NULL,
+			insurance_token_expiry DATETIME DEFAULT NULL,
 			payment_status VARCHAR(50) DEFAULT 'pending',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY  (church_id),
-			UNIQUE KEY church_code (church_code)
+			UNIQUE KEY church_code (church_code),
+			KEY insurance_token (insurance_token)
 		) $charset_collate;";
 		dbDelta($sql_churches);
         
@@ -523,6 +572,23 @@ class VAYSF_Integration {
                 "ADD COLUMN membership_claim_at_approval TINYINT(1) NULL DEFAULT NULL AFTER is_church_member"
             );
             error_log('Added membership_claim_at_approval column to sf_participants table');
+        }
+
+        // Insurance upload columns on sf_churches (Issue #154).
+        // dbDelta above adds these for fresh installs; ALTER covers upgrades from
+        // an older schema where the columns did not yet exist.
+        $insurance_columns = array(
+            'insurance_file_url'     => "ADD COLUMN insurance_file_url VARCHAR(500) DEFAULT NULL AFTER insurance_status",
+            'insurance_uploaded_at'  => "ADD COLUMN insurance_uploaded_at DATETIME DEFAULT NULL AFTER insurance_file_url",
+            'insurance_token'        => "ADD COLUMN insurance_token VARCHAR(64) DEFAULT NULL AFTER insurance_uploaded_at",
+            'insurance_token_expiry' => "ADD COLUMN insurance_token_expiry DATETIME DEFAULT NULL AFTER insurance_token",
+        );
+        foreach ($insurance_columns as $column => $alter) {
+            $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_churches} LIKE '{$column}'");
+            if (empty($check_column)) {
+                $wpdb->query("ALTER TABLE {$table_churches} {$alter}");
+                error_log("Added {$column} column to sf_churches table");
+            }
         }
 
         // Update version after any fallback migrations run

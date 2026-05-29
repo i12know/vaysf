@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Proof-of-insurance upload — public token link + Church Application Form sync — closes [#154](https://github.com/i12know/vaysf/issues/154)
+
+- **WordPress plugin 1.0.11 / DB 1.0.4**: added four columns to `sf_churches` (`insurance_file_url`, `insurance_uploaded_at`, `insurance_token`, `insurance_token_expiry`) via `dbDelta` plus fallback `ALTER` migrations for upgrades
+- **Self-service upload (Path 1)**: new public `/insurance-upload/` page with a two-state template (`templates/insurance-upload.php`)
+  - State A: church rep enters Church Code + Email; a one-time 64-char token (48 h default expiry, configurable via `vaysf_insurance_token_expiry_hours`) is emailed only when the email matches `church_rep_email`. The response is always the same generic message to prevent church/email enumeration
+  - State B (`?token=`): validates the token; shows the PDF upload form when valid, or an expiry notice with a "Request a New Link" path when expired/unknown
+  - Upload validates PDF type (declared MIME + `.pdf` extension + `%PDF-` magic bytes) and ≤ 10 MB before storing to `wp-content/uploads/vaysf/insurance/{church_code}_{YmdHis}.pdf`, then sets `insurance_file_url`/`insurance_uploaded_at`, advances `insurance_status` to `submitted` (never downgrading `approved`), invalidates the token, and emails a confirmation. Optional admin notification via the `vaysf_insurance_admin_notify` toggle
+- **New public REST endpoints** (no API key — guarded by the per-church token): `POST /vaysf/v1/insurance/request-link` and `POST /vaysf/v1/insurance/upload`
+- **`PUT /vaysf/v1/churches/{code}`** now accepts `insurance_file_url` and `insurance_uploaded_at` from the middleware; token columns remain server-managed and are not writable through the API-key endpoint
+- **Admin Churches table**: insurance column now shows a status badge, upload timestamp, and admin-only Download PDF link; rows in `submitted` status are highlighted for staff attention
+- **Middleware (Path 2)**: `sync/churches.py` maps the Church Application Form attachment column (named constant `INSURANCE_ATTACHMENT_COLUMN = "Proof of Insurance"`) to `insurance_file_url`, advancing `pending` → `submitted` when a URL is present and never downgrading `approved`. The column is optional, so existing forms without it sync unchanged
+- Added `tests/test_sync_churches_insurance.py` covering URL mapping, no-downgrade, blank/NaN cells, and missing-column backward compatibility; rebuilt `plugins/vaysf.zip`
+
 ### Solver improvements — day spread + cross-pool conflict elimination
 
 - **Six-tier lexicographic objective** (scheduler.py) — upgraded from five tiers

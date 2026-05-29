@@ -471,11 +471,17 @@ class VAYSF_Admin {
                 <tbody>
                     <?php if (empty($churches)) : ?>
                         <tr>
-                            <td colspan="7">No churches found.</td>
+                            <td colspan="9">No churches found.</td>
                         </tr>
                     <?php else : ?>
                         <?php foreach ($churches as $church) : ?>
-                            <tr>
+                            <?php
+                            // Highlight rows awaiting staff attention (Issue #154).
+                            $row_style = ($church['insurance_status'] === 'submitted')
+                                ? ' style="background-color:#fff3cd;"'
+                                : '';
+                            ?>
+                            <tr<?php echo $row_style; ?>>
 								<td><?php echo esc_html($church['church_id']); ?></td>
 								<td><?php echo esc_html($church['church_code']); ?></td>
                                 <td><?php echo esc_html($church['church_name']); ?></td>
@@ -488,7 +494,15 @@ class VAYSF_Admin {
                                     <small><?php echo esc_html($church['church_rep_email']); ?></small>
                                 </td>
                                 <td><?php echo esc_html(ucfirst($church['registration_status'])); ?></td>
-                                <td><?php echo esc_html(ucfirst($church['insurance_status'])); ?></td>
+                                <td>
+                                    <?php echo vaysf_format_insurance_status($church['insurance_status']); ?>
+                                    <?php if (!empty($church['insurance_uploaded_at'])) : ?>
+                                        <br><small><?php echo esc_html(date_i18n('M j, Y g:i A', strtotime($church['insurance_uploaded_at']))); ?></small>
+                                    <?php endif; ?>
+                                    <?php if (!empty($church['insurance_file_url'])) : ?>
+                                        <br><a href="<?php echo esc_url($church['insurance_file_url']); ?>" target="_blank" rel="noopener noreferrer">Download PDF</a>
+                                    <?php endif; ?>
+                                </td>
                                 <td><?php echo esc_html(ucfirst($church['payment_status'])); ?></td>
                                 <td>
                                     <a href="<?php echo admin_url('admin.php?page=vaysf-churches&action=edit&id=' . $church['church_id']); ?>" class="button button-small">Edit</a>
