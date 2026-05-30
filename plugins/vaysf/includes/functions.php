@@ -863,3 +863,36 @@ function vaysf_send_insurance_confirmation_email($church) {
 
     return vaysf_send_email($rep_email, $subject, $message, array('from' => $from_email));
 }
+
+/**
+ * Send a confirmation email after staff approve a proof-of-insurance document.
+ *
+ * @param array $church Church row (associative)
+ * @return bool True if the email was sent
+ */
+function vaysf_send_insurance_approved_email($church) {
+    $rep_email = isset($church['church_rep_email']) ? $church['church_rep_email'] : '';
+    if (empty($rep_email)) {
+        return false;
+    }
+
+    $rep_name = !empty($church['church_rep_name']) ? $church['church_rep_name'] : esc_html__('Church Representative', 'vaysf');
+
+    $subject = sprintf(
+        esc_html__('Sports Fest: Proof of Insurance Approved for %s', 'vaysf'),
+        $church['church_name']
+    );
+
+    $message  = '<p>' . sprintf(esc_html__('Dear %s,', 'vaysf'), esc_html($rep_name)) . '</p>';
+    $message .= '<p>' . sprintf(
+        esc_html__('Our staff has reviewed and approved the proof-of-insurance document for %s.', 'vaysf'),
+        esc_html($church['church_name'])
+    ) . '</p>';
+    $message .= '<p>' . esc_html__('No further action is needed for your church\'s proof of insurance at this time.', 'vaysf') . '</p>';
+    $message .= '<p>' . esc_html__('Thank you for your help with Sports Fest!', 'vaysf') . '</p>';
+    $message .= '<p>VAY Sports Ministry</p>';
+
+    $from_email = get_option('vaysf_email_from', get_option('admin_email'));
+
+    return vaysf_send_email($rep_email, $subject, $message, array('from' => $from_email));
+}

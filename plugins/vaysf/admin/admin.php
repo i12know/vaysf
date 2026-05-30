@@ -450,7 +450,7 @@ class VAYSF_Admin {
             } else {
                 $church = $wpdb->get_row(
                     $wpdb->prepare(
-                        "SELECT church_id, church_name, insurance_status, insurance_file_url FROM $table_name WHERE church_id = %d",
+                        "SELECT church_id, church_name, church_rep_name, church_rep_email, insurance_status, insurance_file_url FROM $table_name WHERE church_id = %d",
                         $church_id
                     ),
                     ARRAY_A
@@ -477,7 +477,17 @@ class VAYSF_Admin {
                     if ($updated === false) {
                         echo '<div class="notice notice-error"><p>Could not approve insurance. Please try again.</p></div>';
                     } else {
-                        echo '<div class="notice notice-success"><p>Insurance approved for ' . esc_html($church['church_name']) . '.</p></div>';
+                        $email_sent = function_exists('vaysf_send_insurance_approved_email')
+                            ? vaysf_send_insurance_approved_email($church)
+                            : false;
+
+                        if ($email_sent) {
+                            echo '<div class="notice notice-success"><p>Insurance approved for ' . esc_html($church['church_name']) . ', and the Church Rep was notified by email.</p></div>';
+                        } elseif (!empty($church['church_rep_email'])) {
+                            echo '<div class="notice notice-warning"><p>Insurance approved for ' . esc_html($church['church_name']) . ', but the approval email could not be sent.</p></div>';
+                        } else {
+                            echo '<div class="notice notice-warning"><p>Insurance approved for ' . esc_html($church['church_name']) . ', but no Church Rep email is on file.</p></div>';
+                        }
                     }
                 }
             }
