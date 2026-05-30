@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## WordPress Plugin 1.0.14 (2026-05-30)
+
+- **Admin insurance approval email**: clicking **Approve Insurance** now automatically emails the Church Rep that staff reviewed and approved the church's COI.
+- Rebuilt `plugins/vaysf.zip` with plugin header/version `1.0.14`; database version remains `1.0.4`.
+
+## WordPress Plugin 1.0.13 (2026-05-30)
+
+- **Admin Churches table**: added a nonce-protected **Approve Insurance** button for submitted PDFs, restricted to users with `manage_options`.
+- Rebuilt `plugins/vaysf.zip` with plugin header/version `1.0.13`; database version remains `1.0.4`.
+
 ### Proof-of-insurance upload — public token link + Church Application Form sync — closes [#154](https://github.com/i12know/vaysf/issues/154)
 
 - **WordPress plugin 1.0.12 / DB 1.0.4**: added four columns to `sf_churches` (`insurance_file_url`, `insurance_uploaded_at`, `insurance_token`, `insurance_token_expiry`) via `dbDelta` plus fallback `ALTER` migrations for upgrades

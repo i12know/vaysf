@@ -439,6 +439,57 @@ class VAYSF_Admin {
 				echo '<div class="notice notice-error"><p>Error logging sync request for churches.</p></div>';
 			}
 		}
+
+		if (isset($_GET['action']) && $_GET['action'] === 'approve_insurance') {
+			$church_id = isset($_GET['id']) ? absint($_GET['id']) : 0;
+
+			if (!current_user_can('manage_options')) {
+				echo '<div class="notice notice-error"><p>You are not allowed to approve insurance documents.</p></div>';
+			} elseif (!$church_id || !isset($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'vaysf_approve_insurance_' . $church_id)) {
+				echo '<div class="notice notice-error"><p>Invalid insurance approval request.</p></div>';
+			} else {
+				$church = $wpdb->get_row(
+					$wpdb->prepare(
+						"SELECT church_id, church_name, church_rep_name, church_rep_email, insurance_status, insurance_file_url FROM $table_name WHERE church_id = %d",
+						$church_id
+					),
+					ARRAY_A
+				);
+
+				if (!$church) {
+					echo '<div class="notice notice-error"><p>Church not found.</p></div>';
+				} elseif ($church['insurance_status'] !== 'submitted') {
+					echo '<div class="notice notice-warning"><p>Insurance can only be approved after a PDF has been submitted.</p></div>';
+				} elseif (empty($church['insurance_file_url'])) {
+					echo '<div class="notice notice-warning"><p>Insurance can only be approved after a PDF has been uploaded.</p></div>';
+				} else {
+					$updated = $wpdb->update(
+						$table_name,
+						array(
+							'insurance_status' => 'approved',
+							'updated_at' => current_time('mysql'),
+						),
+						array('church_id' => $church_id),
+						array('%s', '%s'),
+						array('%d')
+					);
+
+					if ($updated === false) {
+						echo '<div class="notice notice-error"><p>Could not approve insurance. Please try again.</p></div>';
+					} else {
+						$email_sent = vaysf_send_insurance_approved_email($church);
+
+						if ($email_sent) {
+							echo '<div class="notice notice-success"><p>Insurance approved for ' . esc_html($church['church_name']) . ', and the Church Rep was notified by email.</p></div>';
+						} elseif (!empty($church['church_rep_email'])) {
+							echo '<div class="notice notice-warning"><p>Insurance approved for ' . esc_html($church['church_name']) . ', but the approval email could not be sent.</p></div>';
+						} else {
+							echo '<div class="notice notice-warning"><p>Insurance approved for ' . esc_html($church['church_name']) . ', but no Church Rep email is on file.</p></div>';
+						}
+					}
+				}
+			}
+		}
 		
         // Get churches
         $churches = $wpdb->get_results("SELECT * FROM $table_name ORDER BY church_name", ARRAY_A);
@@ -501,6 +552,15 @@ class VAYSF_Admin {
                                     <?php endif; ?>
                                     <?php if (!empty($church['insurance_file_url'])) : ?>
                                         <br><a href="<?php echo esc_url($church['insurance_file_url']); ?>" target="_blank" rel="noopener noreferrer">Download PDF</a>
+                                    <?php endif; ?>
+                                    <?php if ($church['insurance_status'] === 'submitted' && !empty($church['insurance_file_url'])) : ?>
+                                        <?php
+                                        $approve_url = wp_nonce_url(
+                                            admin_url('admin.php?page=vaysf-churches&action=approve_insurance&id=' . $church['church_id']),
+                                            'vaysf_approve_insurance_' . $church['church_id']
+                                        );
+                                        ?>
+                                        <br><a href="<?php echo esc_url($approve_url); ?>" class="button button-small button-primary" onclick="return confirm('Approve this proof of insurance?');">Approve Insurance</a>
                                     <?php endif; ?>
                                 </td>
                                 <td><?php echo esc_html(ucfirst($church['payment_status'])); ?></td>
