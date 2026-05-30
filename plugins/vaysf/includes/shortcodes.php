@@ -120,6 +120,7 @@ class VAYSF_Shortcodes {
             'orderby' => 'church_name',
             'order' => 'ASC',
             'status' => '',
+            'insurance_status' => '',
         ), $atts);
         
         // Get churches
@@ -135,7 +136,8 @@ class VAYSF_Shortcodes {
             echo '<thead><tr>';
             echo '<th>Church</th>';
             echo '<th>Pastor</th>';
-            echo '<th>Status</th>';
+            echo '<th>Registration</th>';
+            echo '<th>Insurance</th>';
             echo '</tr></thead>';
             echo '<tbody>';
             
@@ -144,6 +146,16 @@ class VAYSF_Shortcodes {
                 echo '<td>' . esc_html($church['church_name']) . ' (' . esc_html($church['church_code']) . ')</td>';
                 echo '<td>' . esc_html($church['pastor_name']) . '</td>';
                 echo '<td>' . esc_html(ucfirst($church['registration_status'])) . '</td>';
+                echo '<td>';
+                if (function_exists('vaysf_format_insurance_status')) {
+                    echo vaysf_format_insurance_status($church['insurance_status']);
+                } else {
+                    echo esc_html(ucfirst($church['insurance_status']));
+                }
+                if (!empty($church['insurance_uploaded_at'])) {
+                    echo '<br><small>' . esc_html(date_i18n('M j, Y', strtotime($church['insurance_uploaded_at']))) . '</small>';
+                }
+                echo '</td>';
                 echo '</tr>';
             }
             

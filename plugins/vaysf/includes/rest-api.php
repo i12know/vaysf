@@ -345,6 +345,15 @@ public function send_email($request) {
 		$params = $request->get_params();
 		$church_code = isset($params['church_code']) ? strtoupper(sanitize_text_field($params['church_code'])) : '';
 		$email = isset($params['email']) ? sanitize_email($params['email']) : '';
+		$upload_page_url = isset($params['upload_page_url']) ? esc_url_raw($params['upload_page_url']) : '';
+
+		if (!empty($upload_page_url)) {
+			$home_host = wp_parse_url(home_url(), PHP_URL_HOST);
+			$page_host = wp_parse_url($upload_page_url, PHP_URL_HOST);
+			if (empty($page_host) || strcasecmp($home_host, $page_host) !== 0) {
+				$upload_page_url = '';
+			}
+		}
 
 		// Generic response used for every outcome (found, not found, wrong email).
 		$generic = rest_ensure_response(array(
@@ -388,7 +397,7 @@ public function send_email($request) {
 				array('%s')
 			);
 
-			vaysf_send_insurance_link_email($church, $token, $expiry);
+			vaysf_send_insurance_link_email($church, $token, $expiry, $upload_page_url);
 		}
 
 		return $generic;
@@ -765,6 +774,19 @@ public function send_email($request) {
 			'created_at' => current_time('mysql'),
 			'updated_at' => current_time('mysql')
 		);        
+
+		if (isset($params['insurance_file_url'])) {
+			$data['insurance_file_url'] = esc_url_raw($params['insurance_file_url']);
+		}
+
+		if (isset($params['insurance_uploaded_at'])) {
+			$uploaded_at = sanitize_text_field($params['insurance_uploaded_at']);
+			if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $uploaded_at)) {
+				$data['insurance_uploaded_at'] = $uploaded_at;
+			} else {
+				return new WP_Error('invalid_datetime', 'Invalid insurance_uploaded_at format', array('status' => 400));
+			}
+		}
         
         // Insert church
         $result = $wpdb->insert($table_name, $data);

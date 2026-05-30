@@ -793,16 +793,18 @@ function vaysf_format_insurance_status($status) {
  * @param array  $church Church row (associative)
  * @param string $token  One-time upload token
  * @param string $expiry MySQL datetime when the token expires
+ * @param string $upload_page_url Optional page URL to receive the token
  * @return bool True if the email was sent
  */
-function vaysf_send_insurance_link_email($church, $token, $expiry) {
+function vaysf_send_insurance_link_email($church, $token, $expiry, $upload_page_url = '') {
     $rep_email = isset($church['church_rep_email']) ? $church['church_rep_email'] : '';
     if (empty($rep_email)) {
         return false;
     }
 
     $rep_name = !empty($church['church_rep_name']) ? $church['church_rep_name'] : esc_html__('Church Representative', 'vaysf');
-    $upload_link = site_url('insurance-upload') . '?token=' . urlencode($token);
+    $upload_base_url = !empty($upload_page_url) ? $upload_page_url : site_url('insurance-upload');
+    $upload_link = add_query_arg('token', $token, $upload_base_url);
     $expiry_display = date_i18n('F j, Y \a\t g:i A', strtotime($expiry));
 
     $subject = sprintf(

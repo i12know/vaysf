@@ -70,6 +70,7 @@ class VAYSF_Statistics {
             'orderby' => 'church_name',
             'order' => 'ASC',
             'status' => '',
+            'insurance_status' => '',
         );
         
         $args = wp_parse_args($args, $defaults);
@@ -82,6 +83,11 @@ class VAYSF_Statistics {
         if (!empty($args['status'])) {
             $where[] = "registration_status = %s";
             $where_args[] = $args['status'];
+        }
+
+        if (!empty($args['insurance_status'])) {
+            $where[] = "insurance_status = %s";
+            $where_args[] = $args['insurance_status'];
         }
         
         if (!empty($where)) {

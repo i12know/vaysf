@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.11
+ * Version: 1.0.12
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,7 +18,7 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.11';
+    const VERSION = '1.0.12';
 
     /**
      * Database version
@@ -627,6 +627,15 @@ function vaysf_test_shortcode() {
     return '<p style="color:red;">Shortcode test successful!</p>';
 }
 add_shortcode('vaysf_test', 'vaysf_test_shortcode');
+
+function insurance_upload_shortcode($atts) {
+	ob_start();
+	$GLOBALS['vaysf_rendering_insurance_shortcode'] = true;
+	include plugin_dir_path(__FILE__) . 'templates/insurance-upload.php';
+	unset($GLOBALS['vaysf_rendering_insurance_shortcode']);
+	return ob_get_clean();
+}
+add_shortcode('insurance_upload', 'insurance_upload_shortcode');
 
 // Start the plugin
 VAYSF_Integration_init();

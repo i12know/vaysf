@@ -18,7 +18,11 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-get_header();
+$vaysf_rendering_shortcode = !empty($GLOBALS['vaysf_rendering_insurance_shortcode']);
+
+if (!$vaysf_rendering_shortcode) {
+    get_header();
+}
 
 $token = isset($_GET['token']) ? sanitize_text_field(wp_unslash($_GET['token'])) : '';
 
@@ -119,6 +123,7 @@ $max_bytes = 10485760;
 (function () {
     var requestUrl = <?php echo wp_json_encode($request_link_url); ?>;
     var uploadUrl = <?php echo wp_json_encode($upload_url); ?>;
+    var uploadPageUrl = window.location.href.split('?')[0];
     var maxBytes = <?php echo (int) $max_bytes; ?>;
     var box = document.getElementById('vaysf-insurance-message');
 
@@ -137,7 +142,7 @@ $max_bytes = 10485760;
             fetch(requestUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ church_code: code, email: email })
+                body: JSON.stringify({ church_code: code, email: email, upload_page_url: uploadPageUrl })
             }).then(function (r) {
                 return r.json();
             }).then(function (data) {
@@ -187,4 +192,6 @@ $max_bytes = 10485760;
 </script>
 
 <?php
-get_footer();
+if (!$vaysf_rendering_shortcode) {
+    get_footer();
+}
