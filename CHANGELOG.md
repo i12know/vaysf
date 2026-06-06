@@ -8,6 +8,8 @@
   `middleware/data/`.
 - Documented the dedicated Windows Chrome debugging profile, first-run VAY SM
   login, export command, output filenames, and 15-minute per-form timeout.
+- Added `middleware/daily-run.bat` for fail-fast nightly form export, group
+  assignment, synchronization, validation, report generation, and scheduling.
 
 ## WordPress Plugin 1.0.14 (2026-05-30)
 
