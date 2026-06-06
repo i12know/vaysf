@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added `middleware/chrome_export_vaysf_forms.py`, an operator helper that
+  attaches to an authenticated Chrome debugging session and concurrently exports
+  the Consent Form and Individual Application Form to stable files under
+  `middleware/data/`.
+- Documented the dedicated Windows Chrome debugging profile, first-run VAY SM
+  login, export command, output filenames, and 15-minute per-form timeout.
+- Added `middleware/daily-run.bat` for fail-fast nightly form export, group
+  assignment, synchronization, validation, report generation, and scheduling.
+
 ## WordPress Plugin 1.0.14 (2026-05-30)
 
 - **Admin insurance approval email**: clicking **Approve Insurance** now automatically emails the Church Rep that staff reviewed and approved the church's COI.

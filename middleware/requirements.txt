@@ -6,6 +6,7 @@ loguru>=0.6.0
 pydantic>=2.0,<3
 pandas>=1.5.1
 openpyxl>=3.0.10
+playwright>=1.52.0
 tqdm>=4.64.1
 schedule>=1.1.0
 tenacity>=8.1.0

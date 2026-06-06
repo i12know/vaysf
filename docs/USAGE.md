@@ -12,6 +12,7 @@ This guide provides instructions for using the Sports Fest ChMeetings Integratio
 - [Windows Middleware](#windows-middleware)
   - [Running Synchronization Tasks](#running-synchronization-tasks)
   - [Exporting Church Team Reports](#exporting-church-team-reports)
+  - [Exporting VAYSF Forms from ChMeetings](#exporting-vaysf-forms-from-chmeetings)
   - [Processing Consent Forms](#processing-consent-forms)
   - [Investigating Consent 404s](#investigating-consent-404s)
   - [Season Reset (Year-End Archive and Field Clear)](#season-reset-year-end-archive-and-field-clear)
@@ -323,6 +324,55 @@ python main.py export-church-teams --force-resend-validate2 (no review yet - no 
 ##### Resend to specific church
 python main.py export-church-teams --church-code TLC --force-resend-pending
 
+### Exporting VAYSF Forms from ChMeetings
+
+ChMeetings does not currently expose these form-submission exports through the
+public API. The `chrome_export_vaysf_forms.py` operator helper attaches to a
+dedicated, already-authenticated Chrome session and exports both forms in
+parallel:
+
+- Consent Form
+- Individual Application Form
+
+This is a browser-based fallback for obtaining the source workbooks. It is not
+part of the scheduled API synchronization path.
+
+From Command Prompt, start a dedicated Chrome debugging profile:
+
+```cmd
+"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="S:\MyPrj\vay\vaysf\middleware\temp\chrome-profile"
+```
+
+Do not enable Chrome Sync for this profile. On the first run, sign in to the VAY
+SM tenant at `https://vay.chmeetings.com/` and leave that Chrome window open.
+The dedicated profile preserves the ChMeetings login between runs without
+placing Chrome profile files in `middleware/data/`.
+
+Install the middleware requirements if needed:
+
+```cmd
+cd /d S:\MyPrj\vay\vaysf\middleware
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Run both exports:
+
+```cmd
+cd /d S:\MyPrj\vay\vaysf\middleware
+.venv\Scripts\python.exe chrome_export_vaysf_forms.py
+```
+
+The script opens two temporary tabs, starts both exports, waits up to 15 minutes
+for each download, and then closes those tabs. It writes:
+
+```text
+middleware\data\consent_forms.xlsx
+middleware\data\individual_application_forms.xlsx
+```
+
+Existing files with those names are replaced. Keep the debugging Chrome window
+open until both `File saved to:` messages appear.
+
 ### Processing Consent Forms
 
 Participants receive a link to the Consent Form in their registration confirmation email. Once the church rep has exported completed consent form responses from ChMeetings, the middleware can match each response to a participant record and automatically check the consent checklist box (Box 6) on their ChMeetings profile.
@@ -330,19 +380,19 @@ Participants receive a link to the Consent Form in their registration confirmati
 **Basic usage - process all churches:**
 
 ```bash
-python main.py check-consent --file "data/Consent Form Export.xlsx"
+python main.py check-consent --file "data/consent_forms.xlsx"
 ```
 
 **Dry run - preview matches and write audit file without updating ChMeetings:**
 
 ```bash
-python main.py check-consent --file "data/Consent Form Export.xlsx" --dry-run
+python main.py check-consent --file "data/consent_forms.xlsx" --dry-run
 ```
 
 **Limit to one church:**
 
 ```bash
-python main.py check-consent --file "data/Consent Form Export.xlsx" --church-code RPC
+python main.py check-consent --file "data/consent_forms.xlsx" --church-code RPC
 ```
 
 The command writes an audit workbook (`data/consent_check_audit.xlsx`) on every run, including both matched and unmatched rows so you can investigate any gaps.
@@ -587,7 +637,7 @@ python main.py assign-groups --dry-run
 python main.py assign-groups
 
 # Limit the run to the current-season Individual Application export
-python main.py assign-groups --file "data/Individual Application Form.xlsx" --dry-run
+python main.py assign-groups --file "data/individual_application_forms.xlsx" --dry-run
 ```
 
 This command:
