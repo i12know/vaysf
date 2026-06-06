@@ -170,7 +170,7 @@ NOTE: At this point, Admin manually create the new season group ("2026 Sports Fe
 
 16. **Run group assignments** periodically to add new registrants to their Team groups:
     ```bash
-    python main.py assign-groups --file "data/Individual Application Form.xlsx"
+    python main.py assign-groups --file "data/individual_application_forms.xlsx"
     ```
     This now uses the API directly and writes `church_team_assignments.xlsx` as an audit log. No manual ChMeetings import is needed. If older ChMeetings people still retain stale team fields after reset, use the current-season Individual Application export as the source filter for this command.
 
@@ -223,7 +223,7 @@ Current 2026 lesson to preserve:
 - **How to verify** - on 2026-05-02, `python main.py sync --type participants --chm-id 3139537` created Timmy Ho in WordPress with two rosters and one `missing_consent` validation issue, leaving `approval_status=validated`; after checking Box 2 (and the other required Boxes 1, 3, and 4 if ready), rerun the same single-participant sync and confirm the participant advances to `pending_approval` with the consent warning cleared
 
 - **When it applies** - after clearing old `Team XXX` memberships and before church reps begin checklist review for the new season
-- **What to do** - run `python main.py assign-groups --file "data/Individual Application Form.xlsx"` using a current-season Individual Application export as the source filter
+- **What to do** - run `python main.py assign-groups --file "data/individual_application_forms.xlsx"` using a current-season Individual Application export as the source filter
 - **Why it matters** - a tenant-wide ChMeetings scan can still see historical people records with stale `Church Team` values even after the 2025 reset; the current-season export limits assignment to the actual new registrants while still letting the middleware resolve the real ChMeetings person IDs by name/email/phone
 - **How to verify** - on 2026-05-02, a dry run with a 3-row export for Sam Le, Thomas Chau, and Timmy Ho found only those 3 people, and the live run added all 3 to `Team RPC` with HTTP `201` responses
 
