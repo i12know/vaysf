@@ -1304,6 +1304,7 @@ def solve(
                 "remaining_secondary_overlap_penalty": 0,
             },
             "conflict_audit": [],
+            "pod_unprotected_entries": schedule_input.get("pod_unprotected_entries", []) or [],
         }
 
     pool_results:       list[dict[str, Any]] = []
@@ -1313,17 +1314,21 @@ def solve(
 
     day_order: list[str] = schedule_input.get("day_order") or []
 
-    # Solve smaller/quicker pools first so their slot assignments can be passed
-    # to larger pools as cross-pool avoidance constraints (C3x).  Gym Core is
-    # solved last because it benefits most from knowing where BC/Soccer landed.
+    # Pool solve order governs cross-pool avoidance (C3x): a pool that solves
+    # later keeps its games off the slots already taken by its conflict partners
+    # in earlier-solved pools.  Team sports are scheduled first; racquet/pod
+    # pools solve LAST so a shared athlete's racquet game adapts around the
+    # already-placed team-sport slots (Issue #158, Decision 5).  Within the
+    # team tier, BC and Soccer still solve before Gym Core (default 99) so Gym
+    # Core adapts to them.
     _POOL_SOLVE_PRIORITY: dict[str, int] = {
         "BC Station":          0,
         "Soccer Field":        1,
-        "Tennis Court":        2,
-        "Table Tennis Table":  3,
-        "Badminton Court":     4,
-        "Pickleball Court":    5,
-        # "Gym Core" and individual court types sort to 99 (last)
+        # "Gym Core" and individual court types sort to 99 (after BC/Soccer).
+        "Tennis Court":        100,
+        "Table Tennis Table":  101,
+        "Badminton Court":     102,
+        "Pickleball Court":    103,
     }
 
     def _pool_sort_key(pk: str) -> tuple[int, str]:
@@ -1492,6 +1497,7 @@ def solve(
         "pool_results":        pool_results,
         "conflict_audit_summary": conflict_audit_summary,
         "conflict_audit":      conflict_audit,
+        "pod_unprotected_entries": schedule_input.get("pod_unprotected_entries", []) or [],
     }
 
 

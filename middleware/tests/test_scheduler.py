@@ -946,6 +946,58 @@ def test_solve_core_gym_pool_prioritizes_primary_conflicts_over_secondary():
     assert result["conflict_audit_summary"]["remaining_secondary_overlap_penalty"] == 1
 
 
+def test_solve_racquet_pool_solves_after_gym_and_avoids_shared_athlete_slot():
+    """Decision 5 (Issue #158): team sports schedule first; a racquet game with a
+    shared athlete adapts onto a different slot than the fixed gym game."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = {
+        "games": [
+            _core_gym_game(
+                "BBM-01", "Basketball - Men Team",
+                "BBM::OCB", "BBM::ANH", "Basketball Court",
+            ),
+            {
+                "game_id": "BAD-Men-Doubles-01", "event": "Badminton",
+                "stage": "R1", "pool_id": "", "round": 1,
+                "team_a_id": "BAD-Men-Doubles-E01", "team_b_id": "BAD-Men-Doubles-E02",
+                "duration_minutes": 60, "resource_type": "Badminton Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+        ],
+        "resources": [
+            # Gym court with a single slot: BBM-01 is pinned to Sat-1-08:00.
+            {**_core_gym_resource("BB-1", "Basketball Court"), "close_time": "09:00"},
+            # Badminton court with two slots so the racquet game can move.
+            {
+                "resource_id": "BAD-1", "resource_type": "Badminton Court",
+                "label": "BAD-1", "day": "Sat-1",
+                "open_time": "08:00", "close_time": "10:00", "slot_minutes": 60,
+            },
+        ],
+        "team_conflicts": [
+            {
+                "team_a_id": "BBM::OCB", "team_a_label": "OCB",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "BAD-Men-Doubles-E01", "team_b_label": "E01",
+                "event_b": "Badminton",
+                "shared_count": 1, "primary_overlap_count": 1,
+                "secondary_only_count": 0, "shared_participant_names": ["Sang"],
+            }
+        ],
+    }
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    slots = {a["game_id"]: a["slot"] for a in result["assignments"]}
+    assert slots["BBM-01"] == "Sat-1-08:00"  # team sport fixed first
+    assert slots["BAD-Men-Doubles-01"] == "Sat-1-09:00"  # racquet adapts around it
+    assert result["conflict_audit_summary"]["separated_edges"] == 1
+    assert result["conflict_audit_summary"]["overlapping_edges"] == 0
+
+
 def test_build_infeasibility_diagnostics_reports_slot_shortage():
     """Capacity diagnostics summarize required vs available slots by resource type."""
     from scheduler import build_infeasibility_diagnostics

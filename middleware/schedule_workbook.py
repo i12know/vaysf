@@ -1175,6 +1175,102 @@ class ScheduleWorkbookBuilder:
 
         return entry_rows
 
+    def _resolve_pod_doubles(
+        self,
+        roster_rows: List[Dict[str, Any]],
+        validation_rows: List[Dict[str, Any]],
+    ) -> Tuple[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
+        """Resolve racquet DOUBLES entries for conflict modeling (Issue #158).
+
+        Reuses the reciprocal-partner pairing in `_build_pod_entries_review_rows`
+        so confirmed pairs are resolved exactly once and never diverge.  Returns
+        a tuple:
+
+          confirmed_by_division: {division_id: [entry, ...]} where each entry is
+            a confirmed doubles pair carrying a stable ``entry_id`` of the form
+            ``{division_id}-E{nn}`` (e.g. ``BAD-Men-Doubles-E01``), the pair's
+            participant IDs/names, and each member's normalized primary sport.
+            Entries are sorted by participant IDs so the IDs are reproducible
+            across re-runs of the same roster.
+          unprotected: [{division_id, participant_name, reason, notes}] for
+            UnresolvedDoubles entries — flagged but not conflict-protected
+            because their membership is unknown.
+
+        Singles are intentionally ignored (Decision 3: doubles first).
+        """
+        # division_id -> (sport_type, sport_gender) for doubles divisions only.
+        div_meta: Dict[str, Tuple[str, str]] = {}
+        # participant_id -> {name, primary_sport} across all racquet entries.
+        pid_info: Dict[str, Dict[str, str]] = {}
+        for r in roster_rows:
+            sport_type = str(r.get("sport_type") or "").strip()
+            if sport_type not in RACQUET_SPORTS:
+                continue
+            sport_gender = str(r.get("sport_gender") or "").strip()
+            pid = str(r.get("Participant ID (WP)") or r.get("ChMeetings ID") or "").strip()
+            if pid:
+                full_name = (
+                    f"{str(r.get('First Name') or '').strip()} "
+                    f"{str(r.get('Last Name') or '').strip()}"
+                ).strip()
+                pid_info[pid] = {
+                    "name": full_name or pid,
+                    "primary_sport": self._normalize_primary_sport_name(
+                        r.get("participant_primary_sport")
+                    ),
+                }
+            if self._pod_format_class(str(r.get("sport_format") or "")) == "doubles":
+                division_id = self._make_division_id(sport_type, sport_gender, "doubles")
+                div_meta[division_id] = (sport_type, sport_gender)
+
+        confirmed_by_division: Dict[str, List[Dict[str, Any]]] = {}
+        unprotected: List[Dict[str, Any]] = []
+        for row in self._build_pod_entries_review_rows(roster_rows, validation_rows):
+            division_id = str(row.get("division_id") or "").strip()
+            if row.get("entry_type") == "DoublesPair":
+                pids = [
+                    p.strip()
+                    for p in str(row.get("source_participant_ids") or "").split(",")
+                    if p.strip()
+                ]
+                pair_names = [
+                    str(row.get("participant_1_name") or "").strip(),
+                    str(row.get("participant_2_name") or "").strip(),
+                ]
+                sport_type, sport_gender = div_meta.get(division_id, ("", ""))
+                confirmed_by_division.setdefault(division_id, []).append({
+                    "division_id": division_id,
+                    "sport_type": sport_type,
+                    "sport_gender": sport_gender,
+                    "participant_ids": pids,
+                    "participant_names": {
+                        pid: pid_info.get(pid, {}).get("name", pid) for pid in pids
+                    },
+                    "primary_sports": {
+                        pid: pid_info.get(pid, {}).get("primary_sport", "") for pid in pids
+                    },
+                    "pair_names": pair_names,
+                })
+            elif row.get("entry_type") == "UnresolvedDoubles":
+                unprotected.append({
+                    "division_id": division_id,
+                    "participant_name": str(row.get("participant_1_name") or "").strip(),
+                    "reason": str(row.get("partner_status") or "Unresolved").strip(),
+                    "notes": str(row.get("notes") or "").strip(),
+                })
+
+        # Assign deterministic, reproducible entry IDs per division.
+        for division_id, entries in confirmed_by_division.items():
+            entries.sort(key=lambda e: (tuple(sorted(e["participant_ids"])), tuple(e["pair_names"])))
+            for idx, entry in enumerate(entries, start=1):
+                entry["entry_id"] = f"{division_id}-E{idx:02d}"
+                pair_label = " / ".join(n for n in entry["pair_names"] if n)
+                entry["label"] = (
+                    f"{entry['entry_id']} ({pair_label})" if pair_label else entry["entry_id"]
+                )
+
+        return confirmed_by_division, unprotected
+
     # ── Venue capacity ───────────────────────────────────────────────────────
 
     def _build_venue_capacity_rows(self, roster_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1803,57 +1899,146 @@ class ScheduleWorkbookBuilder:
             [key for key in team_lookup.keys() if key in assigned_rows],
             key=lambda item: (cls._event_sort_index(item[0]), item[1]),
         )
+        units = {key: cls._team_state_to_unit(team_lookup[key]) for key in ordered_keys}
 
         conflicts: List[Dict[str, Any]] = []
         for idx, key_a in enumerate(ordered_keys):
-            team_a = team_lookup[key_a]
-            ids_a = team_a["participant_ids"]
-            if not ids_a:
+            unit_a = units[key_a]
+            if not unit_a["participant_ids"]:
                 continue
-
             for key_b in ordered_keys[idx + 1:]:
                 if key_a[0] == key_b[0]:
                     continue
-                team_b = team_lookup[key_b]
-                shared_ids = sorted(ids_a & team_b["participant_ids"])
-                if not shared_ids:
-                    continue
-
-                primary_overlap_count = 0
-                shared_names: List[str] = []
-                for participant_id in shared_ids:
-                    primary_sport = (
-                        team_a["primary_sports"].get(participant_id)
-                        or team_b["primary_sports"].get(participant_id)
-                        or ""
-                    )
-                    if primary_sport and primary_sport.casefold() in {
-                        str(team_a["event"]).casefold(),
-                        str(team_b["event"]).casefold(),
-                    }:
-                        primary_overlap_count += 1
-                    shared_names.append(
-                        team_a["participant_names"].get(
-                            participant_id,
-                            team_b["participant_names"].get(participant_id, participant_id),
-                        )
-                    )
-
-                conflicts.append({
-                    "team_a_id": team_a["solver_team_id"],
-                    "team_a_label": team_a["display_label"],
-                    "event_a": team_a["event"],
-                    "team_b_id": team_b["solver_team_id"],
-                    "team_b_label": team_b["display_label"],
-                    "event_b": team_b["event"],
-                    "shared_participant_ids": shared_ids,
-                    "shared_participant_names": shared_names,
-                    "shared_count": len(shared_ids),
-                    "primary_overlap_count": primary_overlap_count,
-                    "secondary_only_count": len(shared_ids) - primary_overlap_count,
-                })
+                edge = cls._make_shared_athlete_edge(unit_a, units[key_b])
+                if edge:
+                    conflicts.append(edge)
 
         return conflicts
+
+    @staticmethod
+    def _team_state_to_unit(team_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize a gym team-lookup entry into a shared-athlete conflict unit."""
+        return {
+            "unit_id": team_state["solver_team_id"],
+            "label": team_state["display_label"],
+            "event": team_state["event"],
+            "participant_ids": team_state["participant_ids"],
+            "participant_names": team_state["participant_names"],
+            "primary_sports": team_state["primary_sports"],
+        }
+
+    @staticmethod
+    def _make_shared_athlete_edge(
+        unit_a: Dict[str, Any],
+        unit_b: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Return one shared-athlete conflict edge, or None when no athlete overlaps.
+
+        A unit is any scheduling entity with a roster: a gym team (Basketball,
+        Volleyball, BC, Soccer) or a racquet doubles pair.  The edge dict shape
+        is identical for every conflict class so the solver and Conflict-Audit
+        tab consume team↔team, team↔racquet, and racquet↔racquet edges the same
+        way.  A shared athlete is counted as a *primary* overlap when their
+        declared primary sport matches one of the two units' events; otherwise
+        it is *secondary* (their primary sport is a third event).
+        """
+        shared_ids = sorted(set(unit_a["participant_ids"]) & set(unit_b["participant_ids"]))
+        if not shared_ids:
+            return None
+
+        primary_overlap_count = 0
+        shared_names: List[str] = []
+        for participant_id in shared_ids:
+            primary_sport = (
+                unit_a["primary_sports"].get(participant_id)
+                or unit_b["primary_sports"].get(participant_id)
+                or ""
+            )
+            if primary_sport and primary_sport.casefold() in {
+                str(unit_a["event"]).casefold(),
+                str(unit_b["event"]).casefold(),
+            }:
+                primary_overlap_count += 1
+            shared_names.append(
+                unit_a["participant_names"].get(
+                    participant_id,
+                    unit_b["participant_names"].get(participant_id, participant_id),
+                )
+            )
+
+        return {
+            "team_a_id": unit_a["unit_id"],
+            "team_a_label": unit_a["label"],
+            "event_a": unit_a["event"],
+            "team_b_id": unit_b["unit_id"],
+            "team_b_label": unit_b["label"],
+            "event_b": unit_b["event"],
+            "shared_participant_ids": shared_ids,
+            "shared_participant_names": shared_names,
+            "shared_count": len(shared_ids),
+            "primary_overlap_count": primary_overlap_count,
+            "secondary_only_count": len(shared_ids) - primary_overlap_count,
+        }
+
+    def _build_cross_sport_conflicts(
+        self,
+        roster_rows: List[Dict[str, Any]],
+        pool_assignment_rows: List[Dict[str, Any]],
+        validation_rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Return team↔racquet and racquet↔racquet shared-athlete edges (Issue #158).
+
+        Covers the two conflict classes the gym-only builder misses:
+          (b) a participant in a team sport and a racquet doubles event, and
+          (c) a participant in two racquet doubles events.
+        Only confirmed doubles pairs participate — singles is a follow-up
+        (Decision 3) and UnresolvedDoubles cannot be protected because their
+        membership is unknown.  Edges reference the same stable racquet entry
+        IDs that `_build_pod_game_objects` assigns to R1 games, so the solver's
+        cross-pool avoidance can act on them.
+        """
+        # Gym units: team-sport teams actually assigned to a pool.
+        team_lookup = self._build_core_gym_team_lookup(roster_rows)
+        assigned_rows = {
+            (str(row.get("Event") or "").strip(), str(row.get("Team ID") or "").strip())
+            for row in pool_assignment_rows
+            if str(row.get("Pool ID") or "").strip() and str(row.get("Pool Slot") or "").strip()
+        }
+        gym_units = [
+            self._team_state_to_unit(team_lookup[key])
+            for key in team_lookup
+            if key in assigned_rows
+        ]
+
+        # Racquet units: confirmed doubles pairs with stable entry IDs.
+        confirmed_by_div, _unprotected = self._resolve_pod_doubles(roster_rows, validation_rows)
+        racquet_units: List[Dict[str, Any]] = []
+        for entries in confirmed_by_div.values():
+            for entry in entries:
+                racquet_units.append({
+                    "unit_id": entry["entry_id"],
+                    "label": entry["label"],
+                    "event": entry["sport_type"],
+                    "participant_ids": set(entry["participant_ids"]),
+                    "participant_names": entry["participant_names"],
+                    "primary_sports": entry["primary_sports"],
+                })
+
+        edges: List[Dict[str, Any]] = []
+        # (b) team ↔ racquet
+        for gym_unit in gym_units:
+            for racquet_unit in racquet_units:
+                edge = self._make_shared_athlete_edge(gym_unit, racquet_unit)
+                if edge:
+                    edges.append(edge)
+        # (c) racquet ↔ racquet (distinct entries; same player double-entered in
+        # one division produces no overlap and is naturally skipped).
+        for idx, unit_a in enumerate(racquet_units):
+            for unit_b in racquet_units[idx + 1:]:
+                edge = self._make_shared_athlete_edge(unit_a, unit_b)
+                if edge:
+                    edges.append(edge)
+        return edges
 
     @staticmethod
     def _pool_numeric_suffix(value: str, prefix: str) -> int:
@@ -2618,8 +2803,17 @@ class ScheduleWorkbookBuilder:
         Uses planning_entries (confirmed + provisional) from Pod-Divisions.
         Number of games per division = planning_entries − 1 (single elimination).
         Divisions with fewer than 2 planning entries are skipped.
+
+        For doubles divisions, the first ``floor(c / 2)`` games (where ``c`` is
+        the number of *confirmed* pairs) are real Round-1 matchups carrying the
+        stable entry IDs from `_resolve_pod_doubles`, so the solver can keep a
+        shared athlete's R1 game off another sport's slot (Issue #158,
+        Decision 1).  Later-round games and any games beyond the confirmed
+        matchups keep ``team_a_id``/``team_b_id`` of ``None`` because their
+        participants are not knowable until earlier rounds are played.
         """
         div_rows = self._build_pod_divisions_rows(roster_rows, validation_rows)
+        confirmed_by_div, _unprotected = self._resolve_pod_doubles(roster_rows, validation_rows)
         games: List[Dict[str, Any]] = []
         for div in div_rows:
             if div["division_status"] in ("Empty", "AnomalyOnly"):
@@ -2631,15 +2825,27 @@ class ScheduleWorkbookBuilder:
             sport_type = div["sport_type"]
             resource_type = div["resource_type"]
             mpg = div["minutes_per_game"]
+
+            # Round-1 matchups for confirmed doubles pairs (E01 vs E02, ...).
+            r1_matchups: List[Tuple[str, str]] = []
+            if self._pod_format_class(str(div.get("sport_format") or "")) == "doubles":
+                entries = confirmed_by_div.get(division_id, [])
+                for k in range(0, len(entries) - 1, 2):
+                    r1_matchups.append((entries[k]["entry_id"], entries[k + 1]["entry_id"]))
+
             for i in range(1, n_entries):  # n_entries - 1 games
+                if i - 1 < len(r1_matchups):
+                    team_a_id, team_b_id = r1_matchups[i - 1]
+                else:
+                    team_a_id, team_b_id = None, None
                 games.append({
                     "game_id": f"{division_id}-{i:02d}",
                     "event": sport_type,
                     "stage": "R1",
                     "pool_id": "",
                     "round": i,
-                    "team_a_id": None,
-                    "team_b_id": None,
+                    "team_a_id": team_a_id,
+                    "team_b_id": team_b_id,
                     "duration_minutes": mpg,
                     "resource_type": resource_type,
                     "earliest_slot": None,
@@ -3172,6 +3378,12 @@ class ScheduleWorkbookBuilder:
         pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
         all_games = gym_games + bc_games + soccer_games + pod_games
         team_conflicts = self._build_gym_team_conflicts(roster_rows, pool_assignment_rows)
+        team_conflicts += self._build_cross_sport_conflicts(
+            roster_rows, pool_assignment_rows, validation_rows
+        )
+        _confirmed_pods, pod_unprotected_entries = self._resolve_pod_doubles(
+            roster_rows, validation_rows
+        )
         precedence.extend(gym_precedence)
         precedence.extend(soccer_precedence)
 
@@ -3535,6 +3747,7 @@ class ScheduleWorkbookBuilder:
             "gym_modes":          gym_modes,
             "gym_allocation":     gym_allocation,
             "team_conflicts":     team_conflicts,
+            "pod_unprotected_entries": pod_unprotected_entries,
             "precedence":         precedence,
             "day_order":          day_order,
         }
@@ -5962,6 +6175,31 @@ class ScheduleWorkbookBuilder:
                 column=1,
                 value="No cross-sport conflict audit rows were produced for this schedule.",
             )
+
+        # Unprotected racquet doubles entries (Issue #158): UnresolvedDoubles
+        # have unknown membership, so they cannot be conflict-protected.  List
+        # them so operators can chase down the missing/non-reciprocal partners.
+        unprotected = schedule_output.get("pod_unprotected_entries", []) or []
+        if unprotected:
+            section_row = header_row + 1 + max(len(conflict_rows), 1) + 2
+            note_cell = ws3.cell(
+                row=section_row,
+                column=1,
+                value="Unprotected Racquet Doubles (UnresolvedDoubles — not conflict-protected)",
+            )
+            note_cell.font = bold_font
+            note_cell.fill = PatternFill(fgColor="FFF2CC", fill_type="solid")
+            unprotected_headers = ["division_id", "participant_name", "reason", "notes"]
+            head_r = section_row + 1
+            for ci, col in enumerate(unprotected_headers, start=1):
+                cell = ws3.cell(row=head_r, column=ci, value=col)
+                cell.fill, cell.font, cell.alignment = hdr_fill, hdr_font, center
+            warn_fill = PatternFill(fgColor="FFF2CC", fill_type="solid")
+            for ri, entry in enumerate(unprotected, start=head_r + 1):
+                for ci, col in enumerate(unprotected_headers, start=1):
+                    cell = ws3.cell(row=ri, column=ci, value=entry.get(col, ""))
+                    cell.fill = warn_fill
+                    cell.alignment = left
 
         # ── Tab 4: Master-Schedule ───────────────────────────────────────────
         # Diagnostic summary tab: same signal as diagnose-schedule, embedded in

@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Racquet (pod) cross-sport conflict modeling — closes [#158](https://github.com/i12know/vaysf/issues/158)
+
+- Extended shared-athlete conflict modeling beyond team sports to racquet
+  **doubles** entries, covering the two classes the gym-only builder missed:
+  **team ↔ racquet** (e.g. Basketball + Badminton) and **racquet ↔ racquet**
+  (e.g. Badminton + Pickleball). Singles remain a follow-up (Decision 3).
+- Added `_resolve_pod_doubles()`, which reuses the reciprocal-partner pairing in
+  `_build_pod_entries_review_rows()` to resolve confirmed doubles pairs and
+  assign each a stable, reproducible ID (`{division_id}-E{nn}`, e.g.
+  `BAD-Men-Doubles-E01`); entries are sorted by participant ID so IDs are
+  identical across re-runs.
+- `_build_pod_game_objects()` now attaches those IDs to each division's
+  **Round-1** games. Only R1 is protected — later single-elimination rounds keep
+  `team_a_id`/`team_b_id` of `null` because their participants are unknowable
+  until earlier rounds are played (Decision 1); byes are likewise unprotected.
+- Added `_build_cross_sport_conflicts()` plus the shared
+  `_make_shared_athlete_edge()` / `_team_state_to_unit()` helpers (the gym
+  builder was refactored onto the same edge helper). Edges keep the existing
+  primary/secondary-overlap protection so the solver and `Conflict-Audit` tab
+  consume every conflict class identically.
+- **Solve order (Decision 5):** racquet/pod pools now solve **after** the team
+  sports in `scheduler.py` (`_POOL_SOLVE_PRIORITY`), so a shared athlete's
+  racquet game adapts around the already-placed team-sport slots via cross-pool
+  avoidance (C3x) rather than the team game moving.
+- `UnresolvedDoubles` (missing/non-reciprocal partner) cannot be protected;
+  they are surfaced in a new `pod_unprotected_entries` field, passed through the
+  solver, and listed in the `Conflict-Audit` tab rather than silently dropped.
+- Added tests covering stable-ID assignment, R1 team-ID attachment,
+  team↔racquet and racquet↔racquet edge generation, unprotected-entry
+  reporting, and the racquet-after-gym solve order with cross-pool avoidance.
+- Updated `docs/SCHEDULING.md` Phase 2 section.
+
 - Added `middleware/chrome_export_vaysf_forms.py`, an operator helper that
   attaches to an authenticated Chrome debugging session and concurrently exports
   the Consent Form and Individual Application Form to stable files under
