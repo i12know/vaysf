@@ -105,6 +105,47 @@ def _parse_time_minutes(time_str: str) -> int:
     return int(h) * 60 + int(m)
 
 
+def _slot_label_to_interval(slot_label: str, duration_min: int) -> tuple[str, int, int]:
+    """Parse '{day}-HH:MM' → (day, start_min, start_min + duration_min)."""
+    day = slot_label[:-6]
+    start = _parse_time_minutes(slot_label[-5:])
+    return (day, start, start + duration_min)
+
+
+def _slot_overlaps_any(slot_label: str, slot_min: int, intervals: set[tuple]) -> bool:
+    """True if slot starting at slot_label for slot_min minutes overlaps any (day,start,end)."""
+    day = slot_label[:-6]
+    start = _parse_time_minutes(slot_label[-5:])
+    end = start + slot_min
+    return any(
+        day == av_day and start < av_end and end > av_start
+        for (av_day, av_start, av_end) in intervals
+    )
+
+
+def _racquet_pool_entry_count(pool_games: list[dict[str, Any]]) -> int:
+    """Return total planned entries across the active divisions in a racquet pool."""
+    entries_by_division: dict[str, int] = {}
+    for game in pool_games:
+        division_id = str(game.get("division_id") or "").strip()
+        try:
+            entry_count = int(game.get("division_entry_count") or 0)
+        except (TypeError, ValueError):
+            entry_count = 0
+        if division_id and entry_count > 0:
+            entries_by_division[division_id] = max(
+                entries_by_division.get(division_id, 0),
+                entry_count,
+            )
+
+    if entries_by_division:
+        return sum(entries_by_division.values())
+
+    # Backward compatibility for schedule_input.json files generated before
+    # division entry metadata was added.
+    return len(pool_games)
+
+
 def _day_chronological_key(day_label: str) -> tuple[int, int]:
     """Return (cycle, weekday_order) for chronological day sorting.
 
@@ -262,6 +303,7 @@ def build_conflict_audit(
             "event": game.get("event", ""),
             "slot": assignment.get("slot", ""),
             "resource_id": assignment.get("resource_id", ""),
+            "duration_minutes": int(game.get("duration_minutes") or 60),
         }
         for team_id in _game_team_ids(game):
             games_by_team[team_id].append(entry)
@@ -285,10 +327,15 @@ def build_conflict_audit(
         overlap_pairs: list[str] = []
         for game_a in team_a_games:
             for game_b in team_b_games:
-                if game_a["slot"] and game_a["slot"] == game_b["slot"]:
-                    overlap_pairs.append(
-                        f"{game_a['game_id']} vs {game_b['game_id']} @ {game_a['slot']}"
-                    )
+                if game_a["slot"] and game_b["slot"]:
+                    iv_a = _slot_label_to_interval(game_a["slot"], game_a["duration_minutes"])
+                    iv_b = _slot_label_to_interval(game_b["slot"], game_b["duration_minutes"])
+                    day_a, start_a, end_a = iv_a
+                    day_b, start_b, end_b = iv_b
+                    if day_a == day_b and start_a < end_b and start_b < end_a:
+                        overlap_pairs.append(
+                            f"{game_a['game_id']} vs {game_b['game_id']} @ {game_a['slot']}"
+                        )
 
         if event_a not in events_with_games or event_b not in events_with_games:
             status = "PlanningOnly"
@@ -746,9 +793,9 @@ def _solve_one_pool(
 
     # C3x — cross-pool: forbid placing a game at any slot that a cross-pool
     # conflict partner is already assigned to in a previously-solved pool.
-    # pool_input["cross_pool_avoidance"] = {team_id: {slot_label, ...}} where
-    # the slots come from other pools' solved assignments.
-    cross_pool_avoidance: dict[str, set[str]] = pool_input.get("cross_pool_avoidance") or {}
+    # pool_input["cross_pool_avoidance"] = {team_id: {(day, start_min, end_min), ...}}
+    # Interval-based so 60-min basketball at 08:00 blocks badminton at 08:30 as well.
+    cross_pool_avoidance: dict[str, set[tuple]] = pool_input.get("cross_pool_avoidance") or {}
     if cross_pool_avoidance:
         for gid, vd in game_vars.items():
             game  = game_meta[gid]
@@ -758,7 +805,10 @@ def _solve_one_pool(
                 slot_min = res_by_id[rid]["slot_minutes"]
                 n_slots  = max(1, math.ceil(duration / slot_min))
                 if any(
-                    res_slots[rid][s] in cross_pool_avoidance.get(team, set())
+                    _slot_overlaps_any(
+                        res_slots[rid][s], slot_min,
+                        cross_pool_avoidance.get(team, set()),
+                    )
                     for s in range(t, t + n_slots)
                     for team in teams
                 ):
@@ -1304,6 +1354,7 @@ def solve(
                 "remaining_secondary_overlap_penalty": 0,
             },
             "conflict_audit": [],
+            "pod_unprotected_entries": schedule_input.get("pod_unprotected_entries", []) or [],
         }
 
     pool_results:       list[dict[str, Any]] = []
@@ -1313,21 +1364,39 @@ def solve(
 
     day_order: list[str] = schedule_input.get("day_order") or []
 
-    # Solve smaller/quicker pools first so their slot assignments can be passed
-    # to larger pools as cross-pool avoidance constraints (C3x).  Gym Core is
-    # solved last because it benefits most from knowing where BC/Soccer landed.
-    _POOL_SOLVE_PRIORITY: dict[str, int] = {
-        "BC Station":          0,
-        "Soccer Field":        1,
-        "Tennis Court":        2,
-        "Table Tennis Table":  3,
-        "Badminton Court":     4,
-        "Pickleball Court":    5,
-        # "Gym Core" and individual court types sort to 99 (last)
+    # Pool solve order governs cross-pool avoidance (C3x): a pool that solves
+    # later keeps its games off the slots already taken by its conflict partners
+    # in earlier-solved pools.  Team sports are scheduled first; racquet/pod
+    # pools solve LAST so a shared athlete's racquet game adapts around the
+    # already-placed team-sport slots (Issue #158, Decision 5).  Within the
+    # team tier, BC and Soccer still solve before Gym Core (default 99) so Gym
+    # Core adapts to them.  Within the racquet tier (100+), more-entry pools
+    # solve first (more constrained); ties broken alphabetically.
+    _POOL_SOLVE_PRIORITY_FIXED: dict[str, int] = {
+        "BC Station":    0,
+        "Soccer Field":  1,
+        # All other gym resource types fall through to 99.
+    }
+    _RACQUET_RESOURCE_TYPES: frozenset[str] = frozenset({
+        "Tennis Court",
+        "Table Tennis Table",
+        "Badminton Court",
+        "Pickleball Court",
+    })
+    _racquet_pools_present = sorted(
+        [pk for pk in games_by_pool if pk in _RACQUET_RESOURCE_TYPES],
+        key=lambda pk: (-_racquet_pool_entry_count(games_by_pool[pk]), pk),
+    )
+    _RACQUET_PRIORITY: dict[str, int] = {
+        pk: 100 + i for i, pk in enumerate(_racquet_pools_present)
     }
 
     def _pool_sort_key(pk: str) -> tuple[int, str]:
-        return (_POOL_SOLVE_PRIORITY.get(pk, 99), pk)
+        if pk in _POOL_SOLVE_PRIORITY_FIXED:
+            return (_POOL_SOLVE_PRIORITY_FIXED[pk], pk)
+        if pk in _RACQUET_PRIORITY:
+            return (_RACQUET_PRIORITY[pk], pk)
+        return (99, pk)
 
     # Build cross-pool conflict mapping:
     # cross_pool_partners[pool_key][team_id] = {partner_team_ids in other pools}
@@ -1348,15 +1417,17 @@ def solve(
             cross_pool_partners[pool_a][ta].add(tb)
             cross_pool_partners[pool_b][tb].add(ta)
 
-    # Slots assigned in already-solved pools, keyed by team_id
-    team_occupied_slots: dict[str, set[str]] = defaultdict(set)
+    # Time intervals occupied by already-solved pools, keyed by team_id.
+    # Each entry is (day, start_min, end_min); interval-based so cross-pool
+    # avoidance works across resource types with different slot_minutes.
+    team_occupied_slots: dict[str, set[tuple]] = defaultdict(set)
 
     for pool_key in sorted(games_by_pool.keys(), key=_pool_sort_key):
-        # Build cross-pool avoidance for this pool's teams: slots where their
+        # Build cross-pool avoidance for this pool's teams: intervals where their
         # cross-pool conflict partners are already assigned in solved pools.
-        cross_pool_avoidance: dict[str, set[str]] = {}
+        cross_pool_avoidance: dict[str, set[tuple]] = {}
         for team_id, partner_ids in cross_pool_partners.get(pool_key, {}).items():
-            avoided: set[str] = set()
+            avoided: set[tuple] = set()
             for partner_id in partner_ids:
                 avoided.update(team_occupied_slots.get(partner_id, set()))
             if avoided:
@@ -1365,7 +1436,7 @@ def solve(
             logger.debug(
                 f"Pool {pool_key!r}: C3x avoidance for "
                 f"{len(cross_pool_avoidance)} teams across "
-                f"{sum(len(s) for s in cross_pool_avoidance.values())} slot-team pairs"
+                f"{sum(len(s) for s in cross_pool_avoidance.values())} interval-team pairs"
             )
 
         pool_input = {
@@ -1385,10 +1456,9 @@ def solve(
         all_unscheduled.extend(result["unscheduled"])
         total_wall_seconds += result["solver_wall_seconds"]
 
-        # Record every slot this pool's teams occupy, for subsequent pools' C3x.
+        # Record the time interval each team occupies for subsequent pools' C3x.
         _pool_game_meta = {g["game_id"]: g for g in games_by_pool[pool_key]}
         _pool_res = {r["resource_id"]: r for r in resources_by_pool.get(pool_key, [])}
-        _pool_res_slots = build_resource_slots(resources_by_pool.get(pool_key, []))
         for _asgn in result["assignments"]:
             _gm = _pool_game_meta.get(str(_asgn.get("game_id") or ""), {})
             _slot = str(_asgn.get("slot") or "")
@@ -1398,15 +1468,9 @@ def solve(
             _res = _pool_res.get(_rid, {})
             _slot_min = int(_res.get("slot_minutes") or 60)
             _dur = int(_gm.get("duration_minutes") or _slot_min)
-            _n   = max(1, math.ceil(_dur / _slot_min))
-            _slot_list = _pool_res_slots.get(_rid, [])
-            try:
-                _si = _slot_list.index(_slot)
-                _occupied = _slot_list[_si : _si + _n]
-            except ValueError:
-                _occupied = [_slot]
+            _interval = _slot_label_to_interval(_slot, _dur)
             for _team in _game_team_ids(_gm):
-                team_occupied_slots[_team].update(_occupied)
+                team_occupied_slots[_team].add(_interval)
         extra_metrics = ""
         if result.get("max_games_per_day") is not None:
             extra_metrics += f", max_games_per_day={result['max_games_per_day']}"
@@ -1492,6 +1556,7 @@ def solve(
         "pool_results":        pool_results,
         "conflict_audit_summary": conflict_audit_summary,
         "conflict_audit":      conflict_audit,
+        "pod_unprotected_entries": schedule_input.get("pod_unprotected_entries", []) or [],
     }
 
 
