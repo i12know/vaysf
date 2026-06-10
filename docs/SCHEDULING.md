@@ -269,6 +269,52 @@ Goal:
 - model doubles first, then singles, while preserving the same primary-sport
   protection rules and cross-sport conflict reduction priorities
 
+#### Doubles cross-sport conflicts (Issue #158, shipped)
+
+The first slice of Phase 2 extends shared-athlete conflict modeling — which
+previously covered only team sports (Basketball, Volleyball, Bible Challenge,
+Soccer) — to racquet **doubles** entries. It closes the two gaps the gym-only
+builder missed:
+
+- **team ↔ racquet** — a participant on a team-sport roster and in a racquet
+  doubles pair (e.g. Basketball + Badminton), and
+- **racquet ↔ racquet** — a participant in two racquet doubles events
+  (e.g. Badminton + Pickleball).
+
+How it works:
+
+- `_resolve_pod_doubles()` reuses the reciprocal-partner pairing from
+  `_build_pod_entries_review_rows()` to resolve **confirmed** doubles pairs and
+  assigns each a stable, reproducible ID of the form `{division_id}-E{nn}`
+  (e.g. `BAD-Men-Doubles-E01`). IDs are stable across re-runs because entries
+  are sorted by participant ID before numbering.
+- `_build_pod_game_objects()` attaches those entry IDs to the division's
+  **Round-1** games (`E01` vs `E02`, …). Only R1 is protected: in single
+  elimination, later-round participants are not knowable until earlier rounds
+  are played, so deeper games keep `team_a_id`/`team_b_id` of `null`. Entries
+  with a bye (odd entry counts) are likewise unprotected for their first match.
+- `_build_cross_sport_conflicts()` emits the team↔racquet and racquet↔racquet
+  edges in the same dict shape as the gym builder, so the solver and the
+  `Conflict-Audit` tab consume every conflict class identically. A shared
+  athlete is a *primary* overlap when their declared primary sport matches one
+  of the two events, otherwise *secondary* — the same protection rule team
+  sports already use.
+- **Solve order (Decision 5):** team sports are scheduled first; racquet/pod
+  pools solve **last** (`_POOL_SOLVE_PRIORITY` puts the racquet court types
+  after Gym Core). A shared athlete's racquet game adapts around the
+  already-placed team-sport slots via cross-pool avoidance (C3x), rather than
+  the team game moving.
+- **Unprotected entries:** `UnresolvedDoubles` (missing / non-reciprocal
+  partner) have unknown membership and cannot be protected. They are surfaced
+  in `pod_unprotected_entries` and listed in the `Conflict-Audit` tab so
+  operators can chase down the missing partner, never silently dropped.
+
+Still future work within Phase 2:
+
+- **Singles** conflict protection (this slice is doubles-only).
+- Coarse division-level windowing to approximate **later-round** coverage
+  beyond R1 without pretending to know bracket winners.
+
 ### Phase 3 - Audit, overrides, and operator polish
 
 Scope:
