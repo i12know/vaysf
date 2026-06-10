@@ -3890,6 +3890,35 @@ def test_pod_game_objects_assigns_r1_team_ids_for_confirmed_doubles():
     assert any(g["team_a_id"] is None and g["team_b_id"] is None for g in games)
 
 
+def test_pod_game_objects_r1_matchups_are_bye_aware():
+    """P2 fix: bye-aware bracket math — N=5 yields 1 R1 match (not 2).
+
+    Standard single-elimination: P=8, byes=3, R1 games = (5-3)/2 = 1.
+    The two lowest-seeded entries (E04, E05) play; E01-E03 get byes.
+    """
+    builder = ScheduleWorkbookBuilder()
+    roster = _badminton_doubles_pair("Men", [
+        ("11", "Anh", "12", "Binh", "Badminton", "Badminton"),
+        ("13", "Cuong", "14", "Dung", "Badminton", "Badminton"),
+        ("15", "Em", "16", "Phuc", "Badminton", "Badminton"),
+        ("17", "Giang", "18", "Hai", "Badminton", "Badminton"),
+        ("19", "Kiet", "20", "Long", "Badminton", "Badminton"),
+    ])
+    games = builder._build_pod_game_objects(roster, [])
+    assert len(games) == 4  # 5 - 1
+
+    r1_with_teams = [g for g in games if g["team_a_id"] and g["team_b_id"]]
+    # Only 1 R1 matchup for N=5 (not 2 as the old floor(N/2) formula produced)
+    assert len(r1_with_teams) == 1
+    matched_ids = {r1_with_teams[0]["team_a_id"], r1_with_teams[0]["team_b_id"]}
+    # The matched entries must be E04 and E05 (the two without byes)
+    assert matched_ids == {"BAD-Men-Doubles-E04", "BAD-Men-Doubles-E05"}
+    # E01–E03 appear nowhere as team_a_id/team_b_id in R1
+    bye_ids = {f"BAD-Men-Doubles-E0{i}" for i in range(1, 4)}
+    r1_participants = {r1_with_teams[0]["team_a_id"], r1_with_teams[0]["team_b_id"]}
+    assert bye_ids.isdisjoint(r1_participants)
+
+
 def test_pod_doubles_cross_sport_conflict_edge_with_basketball(tmp_path):
     """A player on a BB team and in a Badminton doubles pair → team↔racquet edge."""
     builder = ScheduleWorkbookBuilder()

@@ -34,6 +34,32 @@
   reporting, and the racquet-after-gym solve order with cross-pool avoidance.
 - Updated `docs/SCHEDULING.md` Phase 2 section.
 
+### Post-review fixes for #158
+
+- **[P1] Partial time-overlap detection in C3x and `build_conflict_audit()`:**
+  `team_occupied_slots` now stores `(day, start_min, end_min)` intervals instead
+  of slot labels; `cross_pool_avoidance` carries the same tuples. The C3x
+  constraint in `_solve_one_pool` and the audit overlap check both use
+  interval-intersection logic (`start_a < end_b and start_b < end_a`) so a
+  60-min basketball game at 08:00 correctly blocks a 30-min badminton slot at
+  08:30, which shared an athlete but different slot labels. New helper functions
+  `_slot_label_to_interval()` and `_slot_overlaps_any()` in `scheduler.py`.
+  New regression test `test_cross_pool_avoidance_detects_partial_time_overlap`.
+
+- **[P2] Bye-aware R1 bracket math in `_build_pod_game_objects()`:**
+  Replaced `floor(N/2)` with standard single-elimination bracket math:
+  bracket size `P = 2^ceil(log2(N))`, byes `= P - N`, R1 games `= (N - byes) / 2`.
+  For N=5 this correctly produces 1 R1 match (E04 vs E05) with E01–E03 on byes,
+  instead of the previous 2 matches. New test `test_pod_game_objects_r1_matchups_are_bye_aware`.
+
+- **[P2] Dynamic racquet pool solve order:**
+  Removed hardcoded priorities 100–103 for specific court names. Racquet pools
+  (Tennis Court, Table Tennis Table, Badminton Court, Pickleball Court) are now
+  sorted dynamically: descending by game count (more entries → more constrained →
+  solve first), with alphabetical tiebreaking. Refactored `_POOL_SOLVE_PRIORITY`
+  into `_POOL_SOLVE_PRIORITY_FIXED` (BC/Soccer only) + `_RACQUET_PRIORITY` (computed
+  at solve time from `games_by_pool`).
+
 - Added `middleware/chrome_export_vaysf_forms.py`, an operator helper that
   attaches to an authenticated Chrome debugging session and concurrently exports
   the Consent Form and Individual Application Form to stable files under

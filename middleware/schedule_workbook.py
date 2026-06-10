@@ -2826,12 +2826,26 @@ class ScheduleWorkbookBuilder:
             resource_type = div["resource_type"]
             mpg = div["minutes_per_game"]
 
-            # Round-1 matchups for confirmed doubles pairs (E01 vs E02, ...).
+            # Round-1 matchups for confirmed doubles pairs using standard
+            # single-elimination bracket math: for N entries, the bracket
+            # size P is the smallest power of 2 >= N; byes = P - N entries
+            # advance directly to R2.  Only the lowest-seeded 2*(N-byes)
+            # entries play in R1.
             r1_matchups: List[Tuple[str, str]] = []
             if self._pod_format_class(str(div.get("sport_format") or "")) == "doubles":
                 entries = confirmed_by_div.get(division_id, [])
-                for k in range(0, len(entries) - 1, 2):
-                    r1_matchups.append((entries[k]["entry_id"], entries[k + 1]["entry_id"]))
+                n = len(entries)
+                if n >= 2:
+                    p = 1
+                    while p < n:
+                        p <<= 1
+                    byes = p - n
+                    r1_match_count = (n - byes) // 2
+                    r1_starters = entries[n - 2 * r1_match_count:]
+                    for k in range(0, 2 * r1_match_count, 2):
+                        r1_matchups.append(
+                            (r1_starters[k]["entry_id"], r1_starters[k + 1]["entry_id"])
+                        )
 
             for i in range(1, n_entries):  # n_entries - 1 games
                 if i - 1 < len(r1_matchups):

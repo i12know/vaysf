@@ -998,6 +998,63 @@ def test_solve_racquet_pool_solves_after_gym_and_avoids_shared_athlete_slot():
     assert result["conflict_audit_summary"]["overlapping_edges"] == 0
 
 
+def test_cross_pool_avoidance_detects_partial_time_overlap():
+    """P1 fix: 60-min basketball at 08:00 must block badminton's 08:30 slot too.
+
+    Before the fix, C3x used exact slot-label matching; Badminton's 08:30 slot
+    label was not in the basketball team's occupied-slot set, so the constraint
+    was silently skipped.  After the fix, interval-based comparison catches it.
+    """
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    si = {
+        "games": [
+            _core_gym_game(
+                "BBM-01", "Basketball - Men Team",
+                "BBM::OCB", "BBM::ANH", "Basketball Court",
+            ),
+            {
+                "game_id": "BAD-Men-Doubles-01", "event": "Badminton",
+                "stage": "R1", "pool_id": "", "round": 1,
+                "team_a_id": "BAD-Men-Doubles-E01", "team_b_id": "BAD-Men-Doubles-E02",
+                "duration_minutes": 30, "resource_type": "Badminton Court",
+                "earliest_slot": None, "latest_slot": None,
+            },
+        ],
+        "resources": [
+            # Basketball: 60-min slot, only one slot (08:00–09:00)
+            {**_core_gym_resource("BB-1", "Basketball Court"), "close_time": "09:00"},
+            # Badminton: 30-min slots at 08:00, 08:30, 09:00 — three choices
+            {
+                "resource_id": "BAD-1", "resource_type": "Badminton Court",
+                "label": "BAD-1", "day": "Sat-1",
+                "open_time": "08:00", "close_time": "09:30", "slot_minutes": 30,
+            },
+        ],
+        "team_conflicts": [
+            {
+                "team_a_id": "BBM::OCB", "team_a_label": "OCB",
+                "event_a": "Basketball - Men Team",
+                "team_b_id": "BAD-Men-Doubles-E01", "team_b_label": "E01",
+                "event_b": "Badminton",
+                "shared_count": 1, "primary_overlap_count": 1,
+                "secondary_only_count": 0, "shared_participant_names": ["Sang"],
+            }
+        ],
+    }
+
+    result = solve(si, timeout_seconds=10.0)
+
+    assert result["status"] == STATUS_OPTIMAL
+    slots = {a["game_id"]: a["slot"] for a in result["assignments"]}
+    assert slots["BBM-01"] == "Sat-1-08:00"
+    # Badminton must land at 09:00, NOT at 08:30 (which partially overlaps 08:00-09:00)
+    assert slots["BAD-Men-Doubles-01"] == "Sat-1-09:00"
+    assert result["conflict_audit_summary"]["separated_edges"] == 1
+    assert result["conflict_audit_summary"]["overlapping_edges"] == 0
+
+
 def test_build_infeasibility_diagnostics_reports_slot_shortage():
     """Capacity diagnostics summarize required vs available slots by resource type."""
     from scheduler import build_infeasibility_diagnostics
