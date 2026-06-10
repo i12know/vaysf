@@ -10,6 +10,8 @@
   login, export command, output filenames, and 15-minute per-form timeout.
 - Added `middleware/daily-run.bat` for fail-fast nightly form export, group
   assignment, synchronization, validation, report generation, and scheduling.
+- Chrome form exports now append progress, success, and traceback-backed failure
+  messages to the normal daily `middleware/logs/sportsfest_YYYYMMDD.log` file.
 
 ## WordPress Plugin 1.0.14 (2026-05-30)
 
