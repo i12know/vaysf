@@ -123,6 +123,29 @@ def _slot_overlaps_any(slot_label: str, slot_min: int, intervals: set[tuple]) ->
     )
 
 
+def _racquet_pool_entry_count(pool_games: list[dict[str, Any]]) -> int:
+    """Return total planned entries across the active divisions in a racquet pool."""
+    entries_by_division: dict[str, int] = {}
+    for game in pool_games:
+        division_id = str(game.get("division_id") or "").strip()
+        try:
+            entry_count = int(game.get("division_entry_count") or 0)
+        except (TypeError, ValueError):
+            entry_count = 0
+        if division_id and entry_count > 0:
+            entries_by_division[division_id] = max(
+                entries_by_division.get(division_id, 0),
+                entry_count,
+            )
+
+    if entries_by_division:
+        return sum(entries_by_division.values())
+
+    # Backward compatibility for schedule_input.json files generated before
+    # division entry metadata was added.
+    return len(pool_games)
+
+
 def _day_chronological_key(day_label: str) -> tuple[int, int]:
     """Return (cycle, weekday_order) for chronological day sorting.
 
@@ -1347,7 +1370,7 @@ def solve(
     # pools solve LAST so a shared athlete's racquet game adapts around the
     # already-placed team-sport slots (Issue #158, Decision 5).  Within the
     # team tier, BC and Soccer still solve before Gym Core (default 99) so Gym
-    # Core adapts to them.  Within the racquet tier (100+), more-game pools
+    # Core adapts to them.  Within the racquet tier (100+), more-entry pools
     # solve first (more constrained); ties broken alphabetically.
     _POOL_SOLVE_PRIORITY_FIXED: dict[str, int] = {
         "BC Station":    0,
@@ -1362,7 +1385,7 @@ def solve(
     })
     _racquet_pools_present = sorted(
         [pk for pk in games_by_pool if pk in _RACQUET_RESOURCE_TYPES],
-        key=lambda pk: (-len(games_by_pool[pk]), pk),
+        key=lambda pk: (-_racquet_pool_entry_count(games_by_pool[pk]), pk),
     )
     _RACQUET_PRIORITY: dict[str, int] = {
         pk: 100 + i for i, pk in enumerate(_racquet_pools_present)

@@ -60,6 +60,13 @@
   into `_POOL_SOLVE_PRIORITY_FIXED` (BC/Soccer only) + `_RACQUET_PRIORITY` (computed
   at solve time from `games_by_pool`).
 
+- Follow-up review fixes now carry each pod game's `division_id` and
+  `division_entry_count` into `schedule_input.json`. Racquet solve priority
+  aggregates planned entries across active divisions, rather than using game
+  count as a proxy. Bye placement likewise uses all planned doubles entries;
+  unresolved entries occupy anonymous draw positions and affect R1/byes without
+  receiving false conflict-protection IDs.
+
 - Added `middleware/chrome_export_vaysf_forms.py`, an operator helper that
   attaches to an authenticated Chrome debugging session and concurrently exports
   the Consent Form and Individual Application Form to stable files under

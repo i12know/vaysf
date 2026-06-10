@@ -3919,6 +3919,44 @@ def test_pod_game_objects_r1_matchups_are_bye_aware():
     assert bye_ids.isdisjoint(r1_participants)
 
 
+def test_pod_game_objects_byes_include_unresolved_planned_entries():
+    """Unresolved entries affect bye math without receiving false team IDs."""
+    builder = ScheduleWorkbookBuilder()
+    roster = _badminton_doubles_pair("Men", [
+        ("11", "Anh", "12", "Binh", "Badminton", "Badminton"),
+        ("13", "Cuong", "14", "Dung", "Badminton", "Badminton"),
+        ("15", "Em", "16", "Phuc", "Badminton", "Badminton"),
+        ("17", "Giang", "18", "Hai", "Badminton", "Badminton"),
+    ])
+    roster.extend([
+        {
+            "sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Men",
+            "sport_format": "Men Doubles", "Participant ID (WP)": "90",
+            "First Name": "Unknown", "Last Name": "One",
+            "partner_name": "Missing One", "Church Team": "RPC",
+            "participant_primary_sport": SPORT_TYPE["BADMINTON"],
+        },
+        {
+            "sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Men",
+            "sport_format": "Men Doubles", "Participant ID (WP)": "91",
+            "First Name": "Unknown", "Last Name": "Two",
+            "partner_name": "Missing Two", "Church Team": "RPC",
+            "participant_primary_sport": SPORT_TYPE["BADMINTON"],
+        },
+    ])
+
+    games = builder._build_pod_game_objects(roster, [])
+
+    assert len(games) == 4  # five planned entries
+    identified_r1 = [g for g in games if g["team_a_id"] or g["team_b_id"]]
+    assert len(identified_r1) == 1
+    assert {
+        identified_r1[0]["team_a_id"],
+        identified_r1[0]["team_b_id"],
+    } == {"BAD-Men-Doubles-E04", None}
+    assert all(g["division_entry_count"] == 5 for g in games)
+
+
 def test_pod_doubles_cross_sport_conflict_edge_with_basketball(tmp_path):
     """A player on a BB team and in a Badminton doubles pair → team↔racquet edge."""
     builder = ScheduleWorkbookBuilder()

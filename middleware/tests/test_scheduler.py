@@ -1055,6 +1055,66 @@ def test_cross_pool_avoidance_detects_partial_time_overlap():
     assert result["conflict_audit_summary"]["overlapping_edges"] == 0
 
 
+def test_racquet_pool_order_uses_entry_count_across_divisions(monkeypatch):
+    """Eight entries across four divisions solve before seven entries in one division."""
+    from scheduler import solve, STATUS_OPTIMAL
+    import scheduler
+
+    solve_order = []
+
+    def fake_solve_one_pool(pool_input, timeout_seconds):
+        solve_order.append(pool_input["resources"][0]["resource_type"])
+        return {
+            "status": STATUS_OPTIMAL,
+            "solver_wall_seconds": 0.0,
+            "assignments": [],
+            "unscheduled": [],
+        }
+
+    monkeypatch.setattr(scheduler, "_solve_one_pool", fake_solve_one_pool)
+
+    games = []
+    for index in range(6):
+        games.append({
+            "game_id": f"BAD-Men-Doubles-{index + 1:02d}",
+            "division_id": "BAD-Men-Doubles",
+            "division_entry_count": 7,
+            "event": "Badminton", "stage": "R1", "pool_id": "",
+            "round": index + 1, "team_a_id": None, "team_b_id": None,
+            "duration_minutes": 60, "resource_type": "Badminton Court",
+            "earliest_slot": None, "latest_slot": None,
+        })
+    for division_index in range(4):
+        division_id = f"PCK-D{division_index + 1}"
+        games.append({
+            "game_id": f"{division_id}-01",
+            "division_id": division_id,
+            "division_entry_count": 2,
+            "event": "Pickleball", "stage": "R1", "pool_id": "",
+            "round": 1, "team_a_id": None, "team_b_id": None,
+            "duration_minutes": 30, "resource_type": "Pickleball Court",
+            "earliest_slot": None, "latest_slot": None,
+        })
+
+    solve({
+        "games": games,
+        "resources": [
+            {
+                "resource_id": "BAD-1", "resource_type": "Badminton Court",
+                "day": "Sat-1", "open_time": "08:00", "close_time": "18:00",
+                "slot_minutes": 60,
+            },
+            {
+                "resource_id": "PCK-1", "resource_type": "Pickleball Court",
+                "day": "Sat-1", "open_time": "08:00", "close_time": "18:00",
+                "slot_minutes": 30,
+            },
+        ],
+    }, timeout_seconds=1.0)
+
+    assert solve_order == ["Pickleball Court", "Badminton Court"]
+
+
 def test_build_infeasibility_diagnostics_reports_slot_shortage():
     """Capacity diagnostics summarize required vs available slots by resource type."""
     from scheduler import build_infeasibility_diagnostics

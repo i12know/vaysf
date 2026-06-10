@@ -2826,26 +2826,29 @@ class ScheduleWorkbookBuilder:
             resource_type = div["resource_type"]
             mpg = div["minutes_per_game"]
 
-            # Round-1 matchups for confirmed doubles pairs using standard
+            # Round-1 matchups for planned doubles entries using standard
             # single-elimination bracket math: for N entries, the bracket
             # size P is the smallest power of 2 >= N; byes = P - N entries
-            # advance directly to R2.  Only the lowest-seeded 2*(N-byes)
-            # entries play in R1.
-            r1_matchups: List[Tuple[str, str]] = []
+            # advance directly to R2. Unknown/unresolved entries occupy
+            # anonymous draw positions so they affect bye placement without
+            # being falsely conflict-protected.
+            r1_matchups: List[Tuple[Optional[str], Optional[str]]] = []
             if self._pod_format_class(str(div.get("sport_format") or "")) == "doubles":
                 entries = confirmed_by_div.get(division_id, [])
-                n = len(entries)
+                n = n_entries
                 if n >= 2:
                     p = 1
                     while p < n:
                         p <<= 1
                     byes = p - n
                     r1_match_count = (n - byes) // 2
-                    r1_starters = entries[n - 2 * r1_match_count:]
+                    planned_entry_ids: List[Optional[str]] = [
+                        entry["entry_id"] for entry in entries[:n]
+                    ]
+                    planned_entry_ids.extend([None] * (n - len(planned_entry_ids)))
+                    r1_starters = planned_entry_ids[n - 2 * r1_match_count:]
                     for k in range(0, 2 * r1_match_count, 2):
-                        r1_matchups.append(
-                            (r1_starters[k]["entry_id"], r1_starters[k + 1]["entry_id"])
-                        )
+                        r1_matchups.append((r1_starters[k], r1_starters[k + 1]))
 
             for i in range(1, n_entries):  # n_entries - 1 games
                 if i - 1 < len(r1_matchups):
@@ -2854,6 +2857,8 @@ class ScheduleWorkbookBuilder:
                     team_a_id, team_b_id = None, None
                 games.append({
                     "game_id": f"{division_id}-{i:02d}",
+                    "division_id": division_id,
+                    "division_entry_count": n_entries,
                     "event": sport_type,
                     "stage": "R1",
                     "pool_id": "",
