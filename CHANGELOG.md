@@ -42,14 +42,28 @@ scheduling.
   `test_team_validator_compact_spacing_both_sides_warned` (now expects 2 issues);
   `test_team_validator_partial_partner_name_suggests_full_name` updated to expect
   2 issues (Dean PartnerNotFound + Janice NonReciprocal T1).
-- **New `middleware/tests/test_doubles_resolver.py`** — 20 tests covering exact
+- **Same-church rule enforced** — `resolve_doubles()` now filters candidates to
+  `c.church_code == sel.church_code` in both Phase 1 (`peers_unconfirmed`) and
+  Phase 2 (`all_peers`). Cross-church declarations are always `PartnerNotFound` or
+  `NonReciprocal` unresolved records, never confirmed pairs. This ensures the
+  per-church `TeamValidator` and the all-roster schedule workbook produce the same
+  confirmed/unresolved split when given the same data.
+- **Bug fix — multi-event participant skip:** confirmation tracking changed from
+  `confirmed_ids: set[str]` to `confirmed_gkpids: set[tuple[str, str]]`
+  (`(group_key, participant_id)`), so a participant confirmed in Badminton doubles
+  is not incorrectly skipped in a second event (e.g. Pickleball doubles).
+- **Bug fix — duplicate participant_id rows:** added
+  `c.participant_id != sel.participant_id` guard (when participant_id is non-empty)
+  to prevent two data rows for the same person from forming a spurious pair.
+- **New `middleware/tests/test_doubles_resolver.py`** — 24 tests covering exact
   reciprocal, T2 initial-abbreviation, self-pairing, missing partner,
   NonReciprocal (T1 and T2), PartnerNotFound with 0/1/2+ T3 suggestions,
-  AmbiguousPartner, group isolation, cross-church pairing, already-confirmed
-  exclusion, and group_key override.
+  AmbiguousPartner, group isolation, same-church confirmation, cross-church
+  rejection, already-confirmed exclusion, multi-event independence, duplicate-ID
+  guard, and group_key override.
 - **New tests in `test_schedule_workbook.py`:** self-paired entry flags as
   `SelfPaired` in POD review rows; enriched `pod_unprotected_entries` fields
-  verified.
+  verified; cross-church pair stays unresolved in the scheduler path.
 
 ### Racquet (pod) cross-sport conflict modeling — closes [#158](https://github.com/i12know/vaysf/issues/158)
 
