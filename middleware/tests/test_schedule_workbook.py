@@ -1097,7 +1097,7 @@ def test_build_pod_entries_review_doubles_reciprocal():
          "partner_name": "Binh Tran", "Church Team": "RPC"},
         {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Double",
          "Participant ID (WP)": "41", "First Name": "Binh", "Last Name": "Tran",
-         "partner_name": "Anh Nguyen", "Church Team": "TLC"},
+         "partner_name": "Anh Nguyen", "Church Team": "RPC"},
     ]
     rows = builder._build_pod_entries_review_rows(roster_rows, [])
 
@@ -1108,8 +1108,26 @@ def test_build_pod_entries_review_doubles_reciprocal():
     assert pair["review_status"] == "OK"
     assert "Anh Nguyen" in pair["participant_1_name"] or "Binh Tran" in pair["participant_1_name"]
     assert "Anh Nguyen" in pair["participant_2_name"] or "Binh Tran" in pair["participant_2_name"]
-    # cross-church pair shows both church codes
-    assert "RPC" in pair["church_team"] and "TLC" in pair["church_team"]
+    assert pair["church_team"] == "RPC"
+
+
+def test_build_pod_entries_review_doubles_cross_church_unresolved():
+    """Cross-church partner declarations must not confirm; both stay unresolved."""
+    builder = ScheduleWorkbookBuilder()
+    roster_rows = [
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "40", "First Name": "Anh", "Last Name": "Nguyen",
+         "partner_name": "Binh Tran", "Church Team": "RPC"},
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "41", "First Name": "Binh", "Last Name": "Tran",
+         "partner_name": "Anh Nguyen", "Church Team": "TLC"},
+    ]
+    rows = builder._build_pod_entries_review_rows(roster_rows, [])
+
+    assert len(rows) == 2
+    types = {r["entry_type"] for r in rows}
+    assert types == {"UnresolvedDoubles"}
+    assert all(r["partner_status"] != "Confirmed" for r in rows)
 
 
 def test_build_pod_entries_review_doubles_missing_partner():

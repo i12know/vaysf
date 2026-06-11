@@ -117,13 +117,14 @@ def resolve_doubles(
         if partner_norm == sel.norm_name:
             continue  # SelfPaired — handled in Phase 2
 
-        # Exclude: same object, same non-empty participant_id, or already confirmed
-        # in this event group.
+        # Exclude: same object, same non-empty participant_id, already confirmed
+        # in this event group, or different church (cross-church pairs are never valid).
         peers_unconfirmed = [
             c for c in by_group.get(gk, [])
             if c is not sel
             and (not sel.participant_id or c.participant_id != sel.participant_id)
             and (gk, c.participant_id) not in confirmed_gkpids
+            and c.church_code == sel.church_code
         ]
 
         # T1: exact normalized_name lookup.
@@ -187,12 +188,13 @@ def resolve_doubles(
             ))
             continue
 
-        # Use all peers (including confirmed) for accurate diagnosis, but still
-        # exclude rows with the same non-empty participant_id (duplicate rows).
+        # Use all same-church peers (including confirmed) for accurate diagnosis,
+        # but still exclude rows with the same non-empty participant_id (duplicate rows).
         all_peers = [
             c for c in by_group.get(gk, [])
             if c is not sel
             and (not sel.participant_id or c.participant_id != sel.participant_id)
+            and c.church_code == sel.church_code
         ]
 
         # T1 diagnosis.

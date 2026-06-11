@@ -271,18 +271,31 @@ def test_different_sport_formats_do_not_interfere():
     assert len(unresolved) == 2
 
 
-# ── Cross-church confirmation ──────────────────────────────────────────────────
+# ── Cross-church rejection ────────────────────────────────────────────────────
 
-def test_confirmed_pair_records_both_churches():
-    """Confirmed cross-church pair carries both church codes."""
+def test_cross_church_pair_is_rejected():
+    """Cross-church partners are never confirmed; both stay unresolved."""
     sels = [
         _sel(1, "Andy Nguyen", partner="Brian Tran", church="RPC"),
         _sel(2, "Brian Tran", partner="Andy Nguyen", church="TLC"),
     ]
-    pairs, _ = resolve_doubles(sels)
+    pairs, unresolved = resolve_doubles(sels)
+    assert pairs == []
+    assert len(unresolved) == 2
+    ids = {r.participant_id for r in unresolved}
+    assert ids == {"1", "2"}
+
+
+def test_same_church_pair_is_confirmed():
+    """Same-church reciprocal pair confirms and records the church code."""
+    sels = [
+        _sel(1, "Andy Nguyen", partner="Brian Tran", church="RPC"),
+        _sel(2, "Brian Tran", partner="Andy Nguyen", church="RPC"),
+    ]
+    pairs, unresolved = resolve_doubles(sels)
     assert len(pairs) == 1
-    assert "RPC" in pairs[0].churches
-    assert "TLC" in pairs[0].churches
+    assert unresolved == []
+    assert pairs[0].churches == ["RPC"]
 
 
 # ── Already-confirmed exclusion in Phase 1 ───────────────────────────────────
