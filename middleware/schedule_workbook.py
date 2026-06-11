@@ -21,6 +21,7 @@ from math import ceil
 from config import (
     SPORT_TYPE,
     SPORT_FORMAT,
+    FORMAT_MAPPINGS,
     SOCCER_ENABLED,
     RACQUET_SPORTS,
     is_racquet_sport,
@@ -64,6 +65,7 @@ from config import (
     POD_FIT_COLOR_RED,
     POD_FIT_YELLOW_MAX,
 )
+from validation.doubles_resolver import Selection as _DblSelection, resolve_doubles as _resolve_dbl
 from validation.name_matcher import normalized_name as _norm_name
 from validation.models import RulesManager
 from schedule_styles import (
@@ -1048,8 +1050,7 @@ class ScheduleWorkbookBuilder:
                 "notes": "",
             })
 
-        # Doubles — attempt reciprocal pairing within each division.
-        # Group by (sport_type, sport_gender) across all churches.
+        # Doubles — use canonical resolver grouped by division (sport_type + sport_gender).
         doubles_by_div: Dict[tuple, List[Dict[str, Any]]] = {}
         for r in doubles_rows:
             sport_type = str(r.get("sport_type") or "").strip()
@@ -1058,101 +1059,84 @@ class ScheduleWorkbookBuilder:
 
         for (sport_type, sport_gender), div_rows in sorted(doubles_by_div.items()):
             division_id = self._make_division_id(sport_type, sport_gender, "doubles")
-            name_to_rows: Dict[str, List[Dict[str, Any]]] = {}
-            for r in div_rows:
-                key = _norm_name(_full_name(r))
-                if key:
-                    name_to_rows.setdefault(key, []).append(r)
 
-            paired_pids: set = set()
-
-            for r in div_rows:
-                pid_a = _pid(r)
-                if pid_a and pid_a in paired_pids:
-                    continue
-
-                name_a = _full_name(r)
+            # Build Selection objects; use index-scoped synthetic IDs when PID is absent.
+            row_by_sel_id: Dict[str, Dict[str, Any]] = {}
+            sel_objs: List[_DblSelection] = []
+            for i, r in enumerate(div_rows):
+                pid = _pid(r)
+                sel_id = pid if pid else f"_div_{division_id}_idx_{i}"
+                name = _full_name(r)
                 partner_decl = str(r.get("partner_name") or "").strip()
+                sel_objs.append(_DblSelection(
+                    participant_id=sel_id,
+                    name=name,
+                    norm_name=_norm_name(name),
+                    partner_name=partner_decl,
+                    partner_norm_name=_norm_name(partner_decl),
+                    sport_type=sport_type,
+                    sport_format=str(r.get("sport_format") or "").strip(),
+                    church_code=str(r.get("Church Team") or "").strip(),
+                    group_key=division_id,
+                ))
+                row_by_sel_id[sel_id] = r
 
-                if not partner_decl:
-                    entry_counter += 1
-                    entry_rows.append({
-                        "entry_id": entry_counter,
-                        "division_id": division_id,
-                        "entry_type": "UnresolvedDoubles",
-                        "participant_1_name": name_a,
-                        "participant_2_name": "",
-                        "source_participant_ids": pid_a,
-                        "church_team": str(r.get("Church Team") or ""),
-                        "partner_status": "MissingPartner",
-                        "review_status": "NeedsReview",
-                        "notes": "No partner declared",
-                    })
-                    if pid_a:
-                        paired_pids.add(pid_a)
-                    continue
+            confirmed_pairs, unresolved_recs = _resolve_dbl(sel_objs)
 
-                partner_key = _norm_name(partner_decl)
-                candidates = name_to_rows.get(partner_key, [])
-
-                # Look for a reciprocal candidate not yet paired.
-                name_a_key = _norm_name(name_a)
-                reciprocal = next(
-                    (
-                        c for c in candidates
-                        if _pid(c) not in paired_pids
-                        and _norm_name(str(c.get("partner_name") or "")) == name_a_key
-                    ),
-                    None,
+            for pair in confirmed_pairs:
+                pid_a, pid_b = pair.participant_ids
+                r_a = row_by_sel_id.get(pid_a)
+                r_b = row_by_sel_id.get(pid_b)
+                both_ok = bool(
+                    r_a and not _has_error(r_a)
+                    and r_b and not _has_error(r_b)
                 )
+                churches = ", ".join(c for c in sorted({
+                    str((r_a or {}).get("Church Team") or ""),
+                    str((r_b or {}).get("Church Team") or ""),
+                }) if c)
+                entry_counter += 1
+                entry_rows.append({
+                    "entry_id": entry_counter,
+                    "division_id": division_id,
+                    "entry_type": "DoublesPair",
+                    "participant_1_name": pair.participant_names.get(pid_a, ""),
+                    "participant_2_name": pair.participant_names.get(pid_b, ""),
+                    "source_participant_ids": ", ".join(filter(None, [pid_a, pid_b])),
+                    "church_team": churches,
+                    "partner_status": "Confirmed",
+                    "sport_format": pair.sport_format,
+                    "review_status": "OK" if both_ok else "NeedsReview",
+                    "notes": "",
+                })
 
-                if reciprocal:
-                    pid_b = _pid(reciprocal)
-                    entry_counter += 1
-                    both_ok = not _has_error(r) and not _has_error(reciprocal)
-                    churches = ", ".join(sorted({
-                        str(r.get("Church Team") or ""),
-                        str(reciprocal.get("Church Team") or ""),
-                    }))
-                    entry_rows.append({
-                        "entry_id": entry_counter,
-                        "division_id": division_id,
-                        "entry_type": "DoublesPair",
-                        "participant_1_name": name_a,
-                        "participant_2_name": _full_name(reciprocal),
-                        "source_participant_ids": ", ".join(filter(None, [pid_a, pid_b])),
-                        "church_team": churches,
-                        "partner_status": "Confirmed",
-                        "review_status": "OK" if both_ok else "NeedsReview",
-                        "notes": "",
-                    })
-                    if pid_a:
-                        paired_pids.add(pid_a)
-                    if pid_b:
-                        paired_pids.add(pid_b)
+            for rec in unresolved_recs:
+                if rec.reason == "SelfPaired":
+                    note = "Participant listed themselves as their own partner"
+                elif rec.reason == "NonReciprocal":
+                    note = f"Partner '{rec.partner_name}' found but did not reciprocate"
+                elif rec.reason == "AmbiguousPartner":
+                    note = f"Partner '{rec.partner_name}' matches multiple participants"
+                elif rec.reason == "MissingPartner":
+                    note = "No partner declared"
                 else:
-                    # Partner not found or non-reciprocal.
-                    if candidates:
-                        reason = "NonReciprocal"
-                        note = f"Partner '{partner_decl}' found but does not list this player back"
-                    else:
-                        reason = "PartnerNotFound"
-                        note = f"Partner '{partner_decl}' not in same-division roster"
-                    entry_counter += 1
-                    entry_rows.append({
-                        "entry_id": entry_counter,
-                        "division_id": division_id,
-                        "entry_type": "UnresolvedDoubles",
-                        "participant_1_name": name_a,
-                        "participant_2_name": "",
-                        "source_participant_ids": pid_a,
-                        "church_team": str(r.get("Church Team") or ""),
-                        "partner_status": reason,
-                        "review_status": "NeedsReview",
-                        "notes": note,
-                    })
-                    if pid_a:
-                        paired_pids.add(pid_a)
+                    note = f"Partner '{rec.partner_name}' not in same-division roster"
+                # Recover the real PID (may differ from sel_id when synthetic).
+                real_pid = _pid(row_by_sel_id.get(rec.participant_id) or {})
+                entry_counter += 1
+                entry_rows.append({
+                    "entry_id": entry_counter,
+                    "division_id": division_id,
+                    "entry_type": "UnresolvedDoubles",
+                    "participant_1_name": rec.name,
+                    "participant_2_name": "",
+                    "source_participant_ids": real_pid,
+                    "church_team": rec.church_code,
+                    "partner_status": rec.reason,
+                    "sport_format": rec.sport_format,
+                    "review_status": "NeedsReview",
+                    "notes": note,
+                })
 
         # Anomalies — non-standard format rows for racquet sports.
         for r in anomaly_rows:
@@ -1242,6 +1226,7 @@ class ScheduleWorkbookBuilder:
                     "division_id": division_id,
                     "sport_type": sport_type,
                     "sport_gender": sport_gender,
+                    "sport_format": SPORT_FORMAT["DOUBLES"],
                     "participant_ids": pids,
                     "participant_names": {
                         pid: pid_info.get(pid, {}).get("name", pid) for pid in pids
@@ -1252,9 +1237,16 @@ class ScheduleWorkbookBuilder:
                     "pair_names": pair_names,
                 })
             elif row.get("entry_type") == "UnresolvedDoubles":
+                sport_type_u, sport_gender_u = div_meta.get(division_id, ("", ""))
+                raw_pid = str(row.get("source_participant_ids") or "").strip()
                 unprotected.append({
                     "division_id": division_id,
+                    "participant_id": raw_pid or None,
                     "participant_name": str(row.get("participant_1_name") or "").strip(),
+                    "sport_type": sport_type_u,
+                    "sport_format": str(row.get("sport_format") or "").strip(),
+                    "sport_gender": sport_gender_u,
+                    "church_code": str(row.get("church_team") or "").strip(),
                     "reason": str(row.get("partner_status") or "Unresolved").strip(),
                     "notes": str(row.get("notes") or "").strip(),
                 })
@@ -1270,6 +1262,228 @@ class ScheduleWorkbookBuilder:
                 )
 
         return confirmed_by_division, unprotected
+
+    # Validation issue types that persist unresolved doubles registrations.
+    _POD_PARTNER_ISSUE_TYPES = frozenset({
+        "missing_doubles_partner",
+        "doubles_partner_unmatched",
+    })
+
+    @staticmethod
+    def _expected_partner_issue_type(reason: str) -> str:
+        """Map a resolver unresolved reason to its persisted issue type."""
+        return (
+            "missing_doubles_partner"
+            if str(reason or "").strip() == "MissingPartner"
+            else "doubles_partner_unmatched"
+        )
+
+    @staticmethod
+    def _partner_validation_key(
+        participant_id: Any,
+        sport_type: Any,
+        sport_format: Any,
+        sport_gender: Any = "",
+    ) -> Tuple[str, str, str, str]:
+        """Return a canonical participant + doubles-event reconciliation key."""
+        raw_format = str(sport_format or "").strip()
+        if raw_format in FORMAT_MAPPINGS:
+            mapped_format, mapped_gender = FORMAT_MAPPINGS[raw_format]
+        elif "double" in raw_format.casefold():
+            mapped_format = SPORT_FORMAT["DOUBLES"]
+            mapped_gender = str(sport_gender or "").strip()
+            if not mapped_gender:
+                format_cf = raw_format.casefold()
+                mapped_gender = next(
+                    (
+                        gender for gender in ("Men", "Women", "Mixed")
+                        if gender.casefold() in format_cf
+                    ),
+                    "",
+                )
+        else:
+            mapped_format = raw_format
+            mapped_gender = str(sport_gender or "").strip()
+        return (
+            str(participant_id or "").strip(),
+            str(sport_type or "").strip().casefold(),
+            str(mapped_format or "").strip().casefold(),
+            str(mapped_gender or sport_gender or "").strip().casefold(),
+        )
+
+    @classmethod
+    def _reconcile_pod_validation(
+        cls,
+        pod_unprotected_entries: List[Dict[str, Any]],
+        confirmed_by_division: Dict[str, List[Dict[str, Any]]],
+        validation_rows: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Reconcile scheduler doubles diagnostics with persisted validation issues.
+
+        Issue #160 acceptance criterion: every scheduler-unprotected doubles
+        registration must have a corresponding OPEN partner validation issue
+        (missing_doubles_partner / doubles_partner_unmatched) for the same
+        participant + sport + format + gender, and confirmed pairs must not
+        have one. This check
+        runs on the same snapshot the scheduler consumes, so any divergence
+        between WordPress validation state and roster-based resolution is
+        surfaced instead of silently disagreeing.
+
+        Side effect: annotates each unprotected entry in place with
+        ``validation_issue_status`` (Matched / MismatchedIssueType /
+        MissingValidationIssue / NoParticipantId) so the Conflict-Audit tab can
+        show reconciliation state per entry.
+        """
+        # Full doubles-event key -> persisted issue details for that event.
+        open_partner_issues: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+        for v in validation_rows:
+            issue_type = str(v.get("Issue Type") or "").strip()
+            if issue_type not in cls._POD_PARTNER_ISSUE_TYPES:
+                continue
+            if str(v.get("Status") or "").strip().lower() != "open":
+                continue
+            pid = str(v.get("Participant ID (WP)") or "").strip()
+            if not pid or pid == "0":
+                continue
+            sport = str(v.get("sport_type") or "").strip()
+            sport_format = str(v.get("sport_format") or "").strip()
+            key = cls._partner_validation_key(pid, sport, sport_format)
+            bucket = open_partner_issues.setdefault(
+                key,
+                {
+                    "issue_types": set(),
+                    "sport_type": sport,
+                    "sport_format": sport_format,
+                },
+            )
+            bucket["issue_types"].add(issue_type)
+
+        missing: List[Dict[str, Any]] = []
+        mismatched: List[Dict[str, Any]] = []
+        matched_count = 0
+        scheduler_keys: set = set()
+
+        for entry in pod_unprotected_entries:
+            pid = str(entry.get("participant_id") or "").strip()
+            sport = str(entry.get("sport_type") or "").strip()
+            sport_format = str(entry.get("sport_format") or "").strip()
+            sport_gender = str(entry.get("sport_gender") or "").strip()
+            reason = str(entry.get("reason") or "").strip()
+            record = {
+                "participant_id": pid or None,
+                "participant_name": entry.get("participant_name", ""),
+                "church_code": entry.get("church_code", ""),
+                "division_id": entry.get("division_id", ""),
+                "sport_type": sport,
+                "sport_format": sport_format,
+                "sport_gender": sport_gender,
+                "reason": reason,
+                "expected_issue_type": cls._expected_partner_issue_type(reason),
+            }
+            if not pid:
+                entry["validation_issue_status"] = "NoParticipantId"
+                missing.append(record)
+                continue
+
+            key = cls._partner_validation_key(
+                pid, sport, sport_format, sport_gender
+            )
+            scheduler_keys.add(key)
+            issue_types = open_partner_issues.get(key, {}).get("issue_types", set())
+            if record["expected_issue_type"] in issue_types:
+                matched_count += 1
+                entry["validation_issue_status"] = "Matched"
+            elif issue_types:
+                record["open_issue_types"] = sorted(issue_types)
+                entry["validation_issue_status"] = "MismatchedIssueType"
+                mismatched.append(record)
+            else:
+                entry["validation_issue_status"] = "MissingValidationIssue"
+                missing.append(record)
+
+        # Confirmed pairs with a still-open partner issue contradict validation.
+        contradictory: List[Dict[str, Any]] = []
+        for division_id, entries in sorted((confirmed_by_division or {}).items()):
+            for confirmed in entries:
+                sport = str(confirmed.get("sport_type") or "").strip()
+                sport_format = str(confirmed.get("sport_format") or "").strip()
+                sport_gender = str(confirmed.get("sport_gender") or "").strip()
+                for pid in confirmed.get("participant_ids", []):
+                    key = cls._partner_validation_key(
+                        pid, sport, sport_format, sport_gender
+                    )
+                    scheduler_keys.add(key)
+                    bucket = open_partner_issues.get(key)
+                    if bucket:
+                        contradictory.append({
+                            "participant_id": str(pid),
+                            "participant_name": confirmed.get(
+                                "participant_names", {}
+                            ).get(pid, ""),
+                            "division_id": division_id,
+                            "sport_type": sport,
+                            "sport_format": sport_format,
+                            "sport_gender": sport_gender,
+                            "open_issue_types": sorted(bucket["issue_types"]),
+                        })
+
+        # Open partner issues with no scheduler-side record at all (for
+        # example, the participant is absent from the exported roster).
+        validation_only = [
+            {
+                "participant_id": pid,
+                "sport_type": bucket["sport_type"],
+                "sport_format": bucket["sport_format"],
+                "open_issue_types": sorted(bucket["issue_types"]),
+            }
+            for key, bucket in sorted(open_partner_issues.items())
+            for pid in (key[0],)
+            if key not in scheduler_keys
+        ]
+
+        problem_count = (
+            len(missing)
+            + len(mismatched)
+            + len(contradictory)
+            + len(validation_only)
+        )
+        reconciliation = {
+            "is_clean": problem_count == 0,
+            "problem_count": problem_count,
+            "matched_count": matched_count,
+            "missing_validation_issues": missing,
+            "mismatched_issue_types": mismatched,
+            "contradictory_open_issues": contradictory,
+            "validation_only_issues": validation_only,
+        }
+
+        if problem_count:
+            logger.warning(
+                "[VAY SM] Pod doubles validation reconciliation found "
+                f"{len(missing)} unprotected entrie(s) without an open partner "
+                f"validation issue, {len(mismatched)} with a mismatched issue "
+                f"type, {len(contradictory)} confirmed pair member(s) with "
+                f"a contradictory open issue, and {len(validation_only)} "
+                "validation-only issue(s). Scheduler diagnostics and the "
+                "Validation-Issues tab disagree — investigate before publishing."
+            )
+            for record in missing:
+                logger.warning(
+                    "[VAY SM] Missing partner validation issue: "
+                    f"participant_id={record['participant_id']} "
+                    f"church={record['church_code']} "
+                    f"division={record['division_id']} reason={record['reason']} "
+                    f"expected_issue_type={record['expected_issue_type']}"
+                )
+        else:
+            logger.info(
+                "[VAY SM] Pod doubles validation reconciliation clean: "
+                f"{matched_count} unprotected entrie(s) all have matching open "
+                f"partner validation issues; {len(validation_only)} open partner "
+                "issue(s) reference participants outside the exported roster."
+            )
+
+        return reconciliation
 
     # ── Venue capacity ───────────────────────────────────────────────────────
 
@@ -3403,6 +3617,9 @@ class ScheduleWorkbookBuilder:
         _confirmed_pods, pod_unprotected_entries = self._resolve_pod_doubles(
             roster_rows, validation_rows
         )
+        pod_validation_reconciliation = self._reconcile_pod_validation(
+            pod_unprotected_entries, _confirmed_pods, validation_rows
+        )
         precedence.extend(gym_precedence)
         precedence.extend(soccer_precedence)
 
@@ -3767,6 +3984,7 @@ class ScheduleWorkbookBuilder:
             "gym_allocation":     gym_allocation,
             "team_conflicts":     team_conflicts,
             "pod_unprotected_entries": pod_unprotected_entries,
+            "pod_validation_reconciliation": pod_validation_reconciliation,
             "precedence":         precedence,
             "day_order":          day_order,
         }
@@ -6208,7 +6426,10 @@ class ScheduleWorkbookBuilder:
             )
             note_cell.font = bold_font
             note_cell.fill = PatternFill(fgColor="FFF2CC", fill_type="solid")
-            unprotected_headers = ["division_id", "participant_name", "reason", "notes"]
+            unprotected_headers = [
+                "division_id", "participant_name", "reason",
+                "validation_issue_status", "notes",
+            ]
             head_r = section_row + 1
             for ci, col in enumerate(unprotected_headers, start=1):
                 cell = ws3.cell(row=head_r, column=ci, value=col)

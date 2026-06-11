@@ -12,7 +12,7 @@ from validation.name_matcher import likely_name_match, normalized_name
 from validation.team_validator import TeamValidator
 from loguru import logger
 from config import Config, CHM_FIELDS
-from config import (SPORT_TYPE, SPORT_UNSELECTED, DEFAULT_SPORT,
+from config import (SPORT_TYPE, SPORT_FORMAT, GENDER, SPORT_UNSELECTED, DEFAULT_SPORT,
                    VALIDATION_SEVERITY, AGE_RESTRICTIONS)
 
 @pytest.fixture
@@ -512,6 +512,111 @@ def test_doubles_partner_required_for_secondary_selection(validator):
     assert partner_issue["sport_format"] == "Mixed Double"
 
 
+def test_duplicate_doubles_selection_with_blank_secondary_passes(validator):
+    """A duplicate secondary selection of the same doubles event with a blank
+    partner must not create a false missing-partner issue when the primary slot
+    declared the partner (Issue #160 — WP 156 regression)."""
+    participant = {
+        "chmeetings_id": "duplicate_doubles_blank_secondary",
+        "first_name": "Long",
+        "last_name": "Chung",
+        "gender": "Male",
+        "birthdate": "1985-01-01",
+        "primary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "primary_format": "Men Double",
+        "primary_partner": "Andrew Nguyen",
+        "secondary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "secondary_format": "Men Double",
+        "secondary_partner": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert is_valid, f"Consolidated selection has a partner, got: {issues}"
+    assert not any(issue["type"] == "missing_doubles_partner" for issue in issues)
+
+
+def test_duplicate_doubles_selection_partner_only_on_secondary_passes(validator):
+    """Partner declared only on the duplicate secondary slot also satisfies the
+    consolidated selection (mirrors sf_rosters blank-fill consolidation)."""
+    participant = {
+        "chmeetings_id": "duplicate_doubles_blank_primary",
+        "first_name": "Long",
+        "last_name": "Chung",
+        "gender": "Male",
+        "birthdate": "1985-01-01",
+        "primary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "primary_format": "Men Double",
+        "primary_partner": "",
+        "secondary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "secondary_format": "Men Double",
+        "secondary_partner": "Andrew Nguyen",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert is_valid, f"Consolidated selection has a partner, got: {issues}"
+    assert not any(issue["type"] == "missing_doubles_partner" for issue in issues)
+
+
+def test_duplicate_doubles_selection_both_blank_yields_single_issue(validator):
+    """Duplicate doubles selections that are both blank consolidate into ONE
+    missing-partner issue, not two."""
+    participant = {
+        "chmeetings_id": "duplicate_doubles_both_blank",
+        "first_name": "Long",
+        "last_name": "Chung",
+        "gender": "Male",
+        "birthdate": "1985-01-01",
+        "primary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "primary_format": "Men Double",
+        "primary_partner": "",
+        "secondary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "secondary_format": "Men Double",
+        "secondary_partner": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert not is_valid
+    partner_issues = [i for i in issues if i["type"] == "missing_doubles_partner"]
+    assert len(partner_issues) == 1
+
+
+def test_distinct_doubles_selections_each_require_partner(validator):
+    """Different doubles events do NOT consolidate — each still needs a partner."""
+    participant = {
+        "chmeetings_id": "two_distinct_doubles",
+        "first_name": "Multi",
+        "last_name": "Event",
+        "gender": "Male",
+        "birthdate": "2000-01-01",
+        "primary_sport": SPORT_TYPE["BADMINTON"],
+        "primary_format": "Men Double",
+        "primary_partner": "",
+        "secondary_sport": SPORT_TYPE["PICKLEBALL"],
+        "secondary_format": "Men Double",
+        "secondary_partner": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert not is_valid
+    partner_issues = [i for i in issues if i["type"] == "missing_doubles_partner"]
+    assert len(partner_issues) == 2
+    assert {i["sport"] for i in partner_issues} == {
+        SPORT_TYPE["BADMINTON"], SPORT_TYPE["PICKLEBALL"],
+    }
+
+
 def test_doubles_partner_present_passes_validation(validator):
     """Providing the partner name should satisfy the doubles partner rule."""
     participant = {
@@ -965,6 +1070,67 @@ def test_team_validator_reciprocal_doubles_partner_mismatch_warns(team_validator
     assert "did not reciprocally list" in partner_issue["issue_description"]
 
 
+def test_team_validator_duplicate_slot_with_blank_partner_still_confirms_pair(team_validator):
+    """A participant who duplicated the same doubles event across primary and
+    secondary slots (one slot reciprocal, the other blank) must still confirm
+    the pair — the duplicate consolidates instead of creating a false
+    nonreciprocal/ambiguous report (Issue #160 — WP 446/441 regression)."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["TABLE_TENNIS"], primary_format="Men Double"),
+            "participant_id": 1,
+            "first_name": "Andy",
+            "last_name": "Nguyen",
+            "primary_partner": "Brian Tran",
+        },
+        {
+            **_make_participant(
+                primary_sport=SPORT_TYPE["TABLE_TENNIS"], primary_format="Men Double",
+                secondary_sport=SPORT_TYPE["TABLE_TENNIS"], secondary_format="Men Double",
+            ),
+            "participant_id": 2,
+            "first_name": "Brian",
+            "last_name": "Tran",
+            "primary_partner": "Andy Nguyen",
+            "secondary_partner": "",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert not any(issue["issue_type"] == "doubles_partner_unmatched" for issue in issues), issues
+
+
+def test_team_validator_roster_snapshot_emits_event_specific_partner_issue(team_validator):
+    """Roster-derived validation uses the scheduler's persisted event identity."""
+    rosters = [
+        {
+            "participant_id": "69",
+            "church_code": "LBC",
+            "first_name": "Player",
+            "last_name": "Missing",
+            "sport_type": SPORT_TYPE["TABLE_TENNIS"],
+            "sport_format": SPORT_FORMAT["DOUBLES"],
+            "sport_gender": GENDER["WOMEN"],
+            "partner_name": "",
+        },
+    ]
+
+    issues = team_validator.validate_roster_partners(
+        church_id=1,
+        church_code="LBC",
+        rosters=rosters,
+    )
+
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue["participant_id"] == "69"
+    assert issue["issue_type"] == "missing_doubles_partner"
+    assert issue["rule_code"] == "PARTNER_REQUIRED_DOUBLES"
+    assert issue["sport_type"] == SPORT_TYPE["TABLE_TENNIS"]
+    assert issue["sport_format"] == "Women Double"
+
+
 def test_team_validator_reciprocal_match_can_cross_primary_and_secondary_slots(team_validator):
     """Reciprocal partner matching should work even if the event lives in different slots."""
     participants = [
@@ -990,7 +1156,8 @@ def test_team_validator_reciprocal_match_can_cross_primary_and_secondary_slots(t
 
 
 def test_team_validator_partial_partner_name_suggests_full_name(team_validator):
-    """A unique short-name match should stay a WARNING with a suggested full name."""
+    """Both sides of a partial-name pair are flagged: Dean can't resolvably find Janice Vu,
+    and Janice Vu finds Dean exactly but Dean did not reciprocate with Janice's full name."""
     participants = [
         {
             **_make_participant(primary_sport=SPORT_TYPE["TENNIS"], primary_format="Mixed Double"),
@@ -1011,11 +1178,14 @@ def test_team_validator_partial_partner_name_suggests_full_name(team_validator):
     issues = team_validator.validate_church(1, participants)
 
     partner_issues = [issue for issue in issues if issue["issue_type"] == "doubles_partner_unmatched"]
-    assert len(partner_issues) == 1
-    assert partner_issues[0]["participant_id"] == 1
-    assert partner_issues[0]["severity"] == VALIDATION_SEVERITY["WARNING"]
-    assert "ambiguous; use full name" in partner_issues[0]["issue_description"]
-    assert "perhaps Janice Vu" in partner_issues[0]["issue_description"]
+    # Both sides are unresolved: Dean (PartnerNotFound) and Janice (NonReciprocal T1).
+    assert len(partner_issues) == 2
+    dean_issue = next(i for i in partner_issues if i["participant_id"] == 1)
+    assert dean_issue["severity"] == VALIDATION_SEVERITY["WARNING"]
+    assert "ambiguous; use full name" in dean_issue["issue_description"]
+    assert "perhaps Janice Vu" in dean_issue["issue_description"]
+    janice_issue = next(i for i in partner_issues if i["participant_id"] == 2)
+    assert "did not reciprocally list" in janice_issue["issue_description"]
 
 
 def test_team_validator_partial_partner_name_lists_possible_matches(team_validator):
@@ -1077,8 +1247,16 @@ def test_team_validator_parenthetical_and_reordered_partner_name_resolves_match(
     assert not any(issue["issue_type"] == "doubles_partner_unmatched" for issue in issues), issues
 
 
-def test_team_validator_compact_spacing_reduces_to_one_warning(team_validator):
-    """A strong full-name match should suppress the full-name side but keep the short-name side as a warning."""
+def test_team_validator_compact_spacing_both_sides_warned(team_validator):
+    """Both sides of the compact-spacing pair are unresolved (Issue #160).
+
+    Truc Nhi Nguyen (1) lists 'Minh Thu Bui' — resolvably matches Minhthu Bui via
+    token-concat, but Minhthu's 'Nhi Nguyen' does NOT resolvably match 'Truc Nhi Nguyen'
+    (no initial token present), so the pair is NonReciprocal.
+
+    Minhthu Bui (2) lists 'Nhi Nguyen' — T1/T2 fail to find Truc Nhi Nguyen, so she
+    gets PartnerNotFound with a T3 suggestion.
+    """
     participants = [
         {
             **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Women Double"),
@@ -1099,9 +1277,13 @@ def test_team_validator_compact_spacing_reduces_to_one_warning(team_validator):
     issues = team_validator.validate_church(1, participants)
 
     partner_issues = [issue for issue in issues if issue["issue_type"] == "doubles_partner_unmatched"]
-    assert len(partner_issues) == 1
-    assert partner_issues[0]["participant_id"] == 2
-    assert "perhaps Truc Nhi Nguyen" in partner_issues[0]["issue_description"]
+    assert len(partner_issues) == 2
+    # Participant 2: PartnerNotFound with T3 suggestion pointing to Truc Nhi Nguyen.
+    minhthu_issue = next(i for i in partner_issues if i["participant_id"] == 2)
+    assert "perhaps Truc Nhi Nguyen" in minhthu_issue["issue_description"]
+    # Participant 1: NonReciprocal T2 — ambiguous hint about Minhthu Bui.
+    truc_issue = next(i for i in partner_issues if i["participant_id"] == 1)
+    assert "ambiguous; use full name" in truc_issue["issue_description"]
 
 
 def test_team_validator_initial_abbreviation_partner_name_resolves_match(team_validator):

@@ -1355,6 +1355,7 @@ def solve(
             },
             "conflict_audit": [],
             "pod_unprotected_entries": schedule_input.get("pod_unprotected_entries", []) or [],
+            "pod_validation_reconciliation": schedule_input.get("pod_validation_reconciliation") or {},
         }
 
     pool_results:       list[dict[str, Any]] = []
@@ -1557,6 +1558,7 @@ def solve(
         "conflict_audit_summary": conflict_audit_summary,
         "conflict_audit":      conflict_audit,
         "pod_unprotected_entries": schedule_input.get("pod_unprotected_entries", []) or [],
+        "pod_validation_reconciliation": schedule_input.get("pod_validation_reconciliation") or {},
     }
 
 

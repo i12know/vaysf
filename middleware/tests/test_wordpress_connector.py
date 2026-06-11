@@ -149,12 +149,28 @@ def test_get_approvals_coerces_bool_params(wp_connector, mocker):
     )
     assert captured["params"]["approval_status"] == "approved", "non-bool params preserved"
     assert captured["params"]["per_page"] == 500, "non-bool params preserved"
+    assert wp_connector.last_get_approvals_status == "ok"
 
     # True must coerce to 1 too
     wp_connector.get_approvals(params={"synced_to_chmeetings": True})
     assert captured["params"]["synced_to_chmeetings"] == 1, (
         f"Expected bool True → int 1, got: {captured['params']['synced_to_chmeetings']!r}"
     )
+
+
+def test_get_approvals_records_failed_read_status(wp_connector, mocker):
+    mocker.patch.object(
+        wp_connector.session,
+        "get",
+        side_effect=requests.ConnectionError("WordPress unavailable"),
+    )
+
+    result = wp_connector.get_approvals(
+        params={"approval_status": "approved", "synced_to_chmeetings": False}
+    )
+
+    assert result == []
+    assert wp_connector.last_get_approvals_status == "failed"
 
 
 def test_send_email(wp_connector, mocker):

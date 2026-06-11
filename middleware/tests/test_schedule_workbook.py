@@ -1097,7 +1097,7 @@ def test_build_pod_entries_review_doubles_reciprocal():
          "partner_name": "Binh Tran", "Church Team": "RPC"},
         {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Double",
          "Participant ID (WP)": "41", "First Name": "Binh", "Last Name": "Tran",
-         "partner_name": "Anh Nguyen", "Church Team": "TLC"},
+         "partner_name": "Anh Nguyen", "Church Team": "RPC"},
     ]
     rows = builder._build_pod_entries_review_rows(roster_rows, [])
 
@@ -1108,8 +1108,26 @@ def test_build_pod_entries_review_doubles_reciprocal():
     assert pair["review_status"] == "OK"
     assert "Anh Nguyen" in pair["participant_1_name"] or "Binh Tran" in pair["participant_1_name"]
     assert "Anh Nguyen" in pair["participant_2_name"] or "Binh Tran" in pair["participant_2_name"]
-    # cross-church pair shows both church codes
-    assert "RPC" in pair["church_team"] and "TLC" in pair["church_team"]
+    assert pair["church_team"] == "RPC"
+
+
+def test_build_pod_entries_review_doubles_cross_church_unresolved():
+    """Cross-church partner declarations must not confirm; both stay unresolved."""
+    builder = ScheduleWorkbookBuilder()
+    roster_rows = [
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "40", "First Name": "Anh", "Last Name": "Nguyen",
+         "partner_name": "Binh Tran", "Church Team": "RPC"},
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "41", "First Name": "Binh", "Last Name": "Tran",
+         "partner_name": "Anh Nguyen", "Church Team": "TLC"},
+    ]
+    rows = builder._build_pod_entries_review_rows(roster_rows, [])
+
+    assert len(rows) == 2
+    types = {r["entry_type"] for r in rows}
+    assert types == {"UnresolvedDoubles"}
+    assert all(r["partner_status"] != "Confirmed" for r in rows)
 
 
 def test_build_pod_entries_review_doubles_missing_partner():
@@ -1145,6 +1163,239 @@ def test_build_pod_entries_review_doubles_non_reciprocal():
     assert len(unresolved) >= 1
     reasons = {r["partner_status"] for r in unresolved}
     assert "NonReciprocal" in reasons
+
+
+def test_build_pod_entries_review_doubles_self_paired():
+    """A participant who lists their own name as partner is flagged as SelfPaired (Issue #160)."""
+    builder = ScheduleWorkbookBuilder()
+    roster_rows = [
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "62", "First Name": "Anh", "Last Name": "Nguyen",
+         "partner_name": "Anh Nguyen", "Church Team": "RPC"},
+    ]
+    rows = builder._build_pod_entries_review_rows(roster_rows, [])
+
+    assert len(rows) == 1
+    assert rows[0]["entry_type"] == "UnresolvedDoubles"
+    assert rows[0]["partner_status"] == "SelfPaired"
+
+
+def test_build_pod_unprotected_entries_enriched(tmp_path):
+    """UnresolvedDoubles in pod_unprotected_entries carry participant_id, sport_type,
+    sport_format, and church_code (Issue #160)."""
+    from config import SPORT_TYPE
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        {"sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Women",
+         "sport_format": "Women Double", "Participant ID (WP)": "99",
+         "First Name": "Mai", "Last Name": "Tran",
+         "partner_name": "", "Church Team": "TLC",
+         "participant_primary_sport": SPORT_TYPE["BADMINTON"]},
+    ]
+    si = builder._build_schedule_input(roster, [], tmp_path / "no_venue.xlsx")
+    unprotected = si["pod_unprotected_entries"]
+    assert len(unprotected) == 1
+    rec = unprotected[0]
+    assert rec["participant_id"] == "99"
+    assert rec["sport_type"] == SPORT_TYPE["BADMINTON"]
+    assert rec["church_code"] == "TLC"
+    assert rec["reason"] == "MissingPartner"
+
+
+def test_pod_validation_reconciliation_subset_holds(tmp_path):
+    """Every scheduler-unprotected doubles registration with a matching open
+    partner validation issue reconciles cleanly (Issue #160 acceptance)."""
+    from config import SPORT_TYPE
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        {"sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Women",
+         "sport_format": "Women Double", "Participant ID (WP)": "99",
+         "First Name": "Mai", "Last Name": "Tran",
+         "partner_name": "", "Church Team": "TLC",
+         "participant_primary_sport": SPORT_TYPE["BADMINTON"]},
+    ]
+    validation_rows = [
+        {"Participant ID (WP)": "99", "sport_type": SPORT_TYPE["BADMINTON"],
+         "sport_format": "Women Double",
+         "Issue Type": "missing_doubles_partner", "Severity": "ERROR",
+         "Status": "open"},
+    ]
+    si = builder._build_schedule_input(roster, validation_rows, tmp_path / "no_venue.xlsx")
+
+    recon = si["pod_validation_reconciliation"]
+    assert recon["matched_count"] == 1
+    assert recon["missing_validation_issues"] == []
+    assert recon["mismatched_issue_types"] == []
+    assert recon["contradictory_open_issues"] == []
+    assert si["pod_unprotected_entries"][0]["validation_issue_status"] == "Matched"
+
+
+def test_pod_validation_reconciliation_detects_missing_issue(tmp_path):
+    """An unprotected doubles registration without an open partner validation
+    issue must be reported — the Church Rep workbook would otherwise hide it."""
+    from config import SPORT_TYPE
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        {"sport_type": SPORT_TYPE["TABLE_TENNIS"], "sport_gender": "Men",
+         "sport_format": "Men Double", "Participant ID (WP)": "214",
+         "First Name": "Duc", "Last Name": "Pham",
+         "partner_name": "Khong Ai Ca", "Church Team": "TLC",
+         "participant_primary_sport": SPORT_TYPE["TABLE_TENNIS"]},
+    ]
+    si = builder._build_schedule_input(roster, [], tmp_path / "no_venue.xlsx")
+
+    recon = si["pod_validation_reconciliation"]
+    assert recon["matched_count"] == 0
+    assert len(recon["missing_validation_issues"]) == 1
+    rec = recon["missing_validation_issues"][0]
+    assert rec["participant_id"] == "214"
+    assert rec["sport_type"] == SPORT_TYPE["TABLE_TENNIS"]
+    assert rec["reason"] == "PartnerNotFound"
+    assert rec["expected_issue_type"] == "doubles_partner_unmatched"
+    assert (
+        si["pod_unprotected_entries"][0]["validation_issue_status"]
+        == "MissingValidationIssue"
+    )
+
+
+def test_pod_validation_reconciliation_isolated_by_format_and_gender():
+    """One format's issue must not satisfy another division in the same sport."""
+    builder = ScheduleWorkbookBuilder()
+    unprotected = [
+        {
+            "participant_id": "7",
+            "participant_name": "Player Seven",
+            "church_code": "TLC",
+            "division_id": "TT-Men-Doubles",
+            "sport_type": SPORT_TYPE["TABLE_TENNIS"],
+            "sport_format": "Doubles",
+            "sport_gender": "Men",
+            "reason": "MissingPartner",
+        },
+        {
+            "participant_id": "7",
+            "participant_name": "Player Seven",
+            "church_code": "TLC",
+            "division_id": "TT-Mixed-Doubles",
+            "sport_type": SPORT_TYPE["TABLE_TENNIS"],
+            "sport_format": "Doubles",
+            "sport_gender": "Mixed",
+            "reason": "MissingPartner",
+        },
+    ]
+    validation_rows = [
+        {
+            "Participant ID (WP)": "7",
+            "sport_type": SPORT_TYPE["TABLE_TENNIS"],
+            "sport_format": "Men Double",
+            "Issue Type": "missing_doubles_partner",
+            "Status": "open",
+        },
+    ]
+
+    recon = builder._reconcile_pod_validation(
+        unprotected, {}, validation_rows
+    )
+
+    assert recon["matched_count"] == 1
+    assert len(recon["missing_validation_issues"]) == 1
+    assert recon["missing_validation_issues"][0]["division_id"] == "TT-Mixed-Doubles"
+    assert [entry["validation_issue_status"] for entry in unprotected] == [
+        "Matched",
+        "MissingValidationIssue",
+    ]
+
+
+def test_pod_validation_reconciliation_detects_contradiction(tmp_path):
+    """A confirmed reciprocal pair member with a still-open partner validation
+    issue is contradictory: scheduler and validation disagree (Issue #160)."""
+    from config import SPORT_TYPE
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        {"sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Men",
+         "sport_format": "Men Double", "Participant ID (WP)": "446",
+         "First Name": "Anh", "Last Name": "Nguyen",
+         "partner_name": "Binh Tran", "Church Team": "GAC",
+         "participant_primary_sport": SPORT_TYPE["BADMINTON"]},
+        {"sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Men",
+         "sport_format": "Men Double", "Participant ID (WP)": "447",
+         "First Name": "Binh", "Last Name": "Tran",
+         "partner_name": "Anh Nguyen", "Church Team": "GAC",
+         "participant_primary_sport": SPORT_TYPE["BADMINTON"]},
+    ]
+    validation_rows = [
+        {"Participant ID (WP)": "446", "sport_type": SPORT_TYPE["BADMINTON"],
+         "sport_format": "Men Double",
+         "Issue Type": "doubles_partner_unmatched", "Severity": "WARNING",
+         "Status": "open"},
+    ]
+    si = builder._build_schedule_input(roster, validation_rows, tmp_path / "no_venue.xlsx")
+
+    recon = si["pod_validation_reconciliation"]
+    assert recon["missing_validation_issues"] == []
+    assert len(recon["contradictory_open_issues"]) == 1
+    rec = recon["contradictory_open_issues"][0]
+    assert rec["participant_id"] == "446"
+    assert rec["open_issue_types"] == ["doubles_partner_unmatched"]
+
+
+def test_pod_validation_reconciliation_reports_validation_only(tmp_path):
+    """An open partner issue whose participant is absent from the exported
+    roster is reported as validation-only instead of silently ignored."""
+    from config import SPORT_TYPE
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        {"sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Women",
+         "sport_format": "Women Double", "Participant ID (WP)": "271",
+         "First Name": "Lan", "Last Name": "Vu",
+         "partner_name": "", "Church Team": "WAG",
+         "participant_primary_sport": SPORT_TYPE["BADMINTON"]},
+    ]
+    validation_rows = [
+        {"Participant ID (WP)": "271", "sport_type": SPORT_TYPE["BADMINTON"],
+         "sport_format": "Women Double",
+         "Issue Type": "missing_doubles_partner", "Severity": "ERROR",
+         "Status": "open"},
+        # Participant 273 has an open issue but no roster row at all.
+        {"Participant ID (WP)": "273", "sport_type": SPORT_TYPE["BADMINTON"],
+         "sport_format": "Women Double",
+         "Issue Type": "doubles_partner_unmatched", "Severity": "WARNING",
+         "Status": "open"},
+    ]
+    si = builder._build_schedule_input(roster, validation_rows, tmp_path / "no_venue.xlsx")
+
+    recon = si["pod_validation_reconciliation"]
+    assert recon["matched_count"] == 1
+    assert recon["missing_validation_issues"] == []
+    assert len(recon["validation_only_issues"]) == 1
+    assert recon["validation_only_issues"][0]["participant_id"] == "273"
+    assert recon["is_clean"] is False
+    assert recon["problem_count"] == 1
+
+
+def test_pod_validation_reconciliation_resolved_issues_ignored(tmp_path):
+    """Resolved partner issues do not satisfy the subset criterion — the
+    matching issue must still be OPEN."""
+    from config import SPORT_TYPE
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        {"sport_type": SPORT_TYPE["PICKLEBALL"], "sport_gender": "Mixed",
+         "sport_format": "Mixed Double", "Participant ID (WP)": "479",
+         "First Name": "Hoa", "Last Name": "Dang",
+         "partner_name": "", "Church Team": "NHC",
+         "participant_primary_sport": SPORT_TYPE["PICKLEBALL"]},
+    ]
+    validation_rows = [
+        {"Participant ID (WP)": "479", "sport_type": SPORT_TYPE["PICKLEBALL"],
+         "sport_format": "Mixed Double",
+         "Issue Type": "missing_doubles_partner", "Severity": "ERROR",
+         "Status": "resolved"},
+    ]
+    si = builder._build_schedule_input(roster, validation_rows, tmp_path / "no_venue.xlsx")
+
+    recon = si["pod_validation_reconciliation"]
+    assert recon["matched_count"] == 0
+    assert len(recon["missing_validation_issues"]) == 1
 
 
 def test_build_pod_entries_review_anomaly():
@@ -2314,7 +2565,8 @@ def test_build_schedule_input_keys(tmp_path):
     assert set(si.keys()) == {
         "generated_at", "gym_court_scenario", "game_count", "resource_count",
         "games", "resources", "playoff_slots", "gym_modes", "gym_allocation",
-        "team_conflicts", "pod_unprotected_entries", "precedence", "day_order",
+        "team_conflicts", "pod_unprotected_entries",
+        "pod_validation_reconciliation", "precedence", "day_order",
     }
     assert si["game_count"] == len(si["games"])
     assert si["resource_count"] == len(si["resources"])

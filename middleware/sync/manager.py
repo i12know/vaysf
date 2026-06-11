@@ -510,17 +510,31 @@ class SyncManager:
         all_relevant_approvals = self.wordpress_connector.get_approvals(
             params=approval_query_params
         )
-        if all_relevant_approvals is None:
+        if getattr(self.wordpress_connector, "last_get_approvals_status", "ok") == "failed":
             logger.error("Failed to fetch approval records from WordPress. Cannot mark as synced.")
             return False
 
         approvals_lookup = {str(ar.get("participant_id")): ar for ar in all_relevant_approvals}
+        participants_to_sync = [
+            participant
+            for participant in participants
+            if str(participant.get("participant_id")) in approvals_lookup
+        ]
+        skipped_already_synced = len(participants) - len(participants_to_sync)
+        if skipped_already_synced:
+            logger.info(
+                f"Skipping {skipped_already_synced} approved participant(s) without "
+                "an unsynced approval record."
+            )
+        if not participants_to_sync:
+            logger.info("No unsynced approved participants need ChMeetings group synchronization.")
+            return True
 
         added_count = 0
         failed_count = 0
         marked_synced_count = 0
 
-        for participant in tqdm(participants, desc="Adding to ChMeetings group via API"):
+        for participant in tqdm(participants_to_sync, desc="Adding to ChMeetings group via API"):
             chm_id = participant["chmeetings_id"]
             wp_id_str = str(participant["participant_id"])
 
@@ -622,7 +636,8 @@ class SyncManager:
     def _is_group_validation_issue(issue: Dict[str, Any]) -> bool:
         participant_id = issue.get("participant_id")
         return (
-            issue.get("rule_level") in (RULE_LEVEL["TEAM"], RULE_LEVEL["CHURCH"])
+            issue.get("issue_type") in TeamValidator.PARTNER_ISSUE_TYPES
+            or issue.get("rule_level") in (RULE_LEVEL["TEAM"], RULE_LEVEL["CHURCH"])
             or (
                 participant_id in (None, "", 0, "0")
                 and issue.get("issue_type") in (TeamValidator.ISSUE_TYPES | ChurchValidator.ISSUE_TYPES)
@@ -1004,14 +1019,22 @@ class SyncManager:
                 continue
             existing_group_issues_by_church.setdefault(issue_church_id, []).append(issue)
 
-        rosters_by_church = {}
+        rosters_by_church: Dict[int, Optional[list[Dict[str, Any]]]] = {}
         for church_id in participants_by_church:
             church_code = church_code_by_id.get(church_id)
             if not church_code:
                 continue
-            rosters_by_church[church_id] = self.wordpress_connector.get_rosters(
+            rosters = self.wordpress_connector.get_rosters(
                 params={"church_code": church_code, "all_team_orders": 1}
             )
+            if getattr(self.wordpress_connector, "last_get_rosters_status", "ok") == "failed":
+                logger.warning(
+                    f"Roster read failed for church {church_code}; retaining "
+                    "participant-field partner validation for this pass."
+                )
+                rosters_by_church[church_id] = None
+            else:
+                rosters_by_church[church_id] = rosters
 
         team_validator = TeamValidator()
         church_validator = ChurchValidator()
@@ -1019,14 +1042,28 @@ class SyncManager:
         for church_id in tqdm(sorted(church_ids_to_process), desc="Syncing non-individual validation issues"):
             try:
                 current_issues = []
-                current_issues.extend(team_validator.validate_church(
+                participant_team_issues = team_validator.validate_church(
                     church_id,
                     participants_by_church.get(church_id, []),
-                ))
+                )
+                roster_snapshot = rosters_by_church.get(church_id)
+                if roster_snapshot:
+                    current_issues.extend(
+                        issue for issue in participant_team_issues
+                        if issue.get("issue_type") not in TeamValidator.PARTNER_ISSUE_TYPES
+                    )
+                    current_issues.extend(team_validator.validate_roster_partners(
+                        church_id=church_id,
+                        church_code=church_code_by_id.get(church_id, ""),
+                        rosters=roster_snapshot,
+                        participants=participants_by_church.get(church_id, []),
+                    ))
+                else:
+                    current_issues.extend(participant_team_issues)
                 current_issues.extend(church_validator.validate_church(
                     church_id,
                     participants_by_church.get(church_id, []),
-                    rosters=rosters_by_church.get(church_id, []),
+                    rosters=roster_snapshot or [],
                 ))
                 self._sync_group_validation_issues(
                     church_id,

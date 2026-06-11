@@ -1,18 +1,24 @@
 from typing import List, Dict, Any
 
-from .name_matcher import (
-    likely_name_match,
-    normalized_name,
-    resolvable_name_match,
-    token_matches,
+from .doubles_resolver import (
+    Selection,
+    UnresolvedRecord,
+    consolidate_doubles_selections,
+    resolve_doubles,
 )
+from .name_matcher import normalized_name
 from .models import RulesManager
 from config import (SPORT_BY_CATEGORY, SPORT_CATEGORY, RACQUET_SPORTS,
-                   FORMAT_MAPPINGS, SPORT_FORMAT, DEFAULT_SPORT)
+                   FORMAT_MAPPINGS, SPORT_FORMAT, GENDER, DEFAULT_SPORT)
 
 
 class TeamValidator:
     """Validates team-composition rules for a single church's participants."""
+
+    PARTNER_ISSUE_TYPES = frozenset({
+        "missing_doubles_partner",
+        "doubles_partner_unmatched",
+    })
 
     ISSUE_TYPES = frozenset({
         "team_min_size",
@@ -46,6 +52,14 @@ class TeamValidator:
             (
                 r for r in partner_rules
                 if r.get("category") == "reciprocal"
+                and str(r.get("value", "")).lower() == "true"
+            ),
+            None,
+        )
+        self.required_partner_rule = next(
+            (
+                r for r in partner_rules
+                if r.get("category") == "required"
                 and str(r.get("value", "")).lower() == "true"
             ),
             None,
@@ -90,18 +104,6 @@ class TeamValidator:
     @staticmethod
     def _normalized_name(name: str) -> str:
         return normalized_name(name)
-
-    @staticmethod
-    def _token_matches(query_token: str, candidate_token: str) -> bool:
-        return token_matches(query_token, candidate_token)
-
-    @classmethod
-    def _is_likely_name_match(cls, query_name_key: str, candidate_name_key: str) -> bool:
-        return likely_name_match(query_name_key, candidate_name_key)
-
-    @classmethod
-    def _is_resolvable_name_match(cls, query_name_key: str, candidate_name_key: str) -> bool:
-        return resolvable_name_match(query_name_key, candidate_name_key)
 
     def _pair_key(self, participant: Dict[str, Any], partner_field: str) -> tuple[str, ...]:
         participant_identity = self._participant_name(participant) or str(
@@ -312,6 +314,7 @@ class TeamValidator:
         for participant in participants:
             participant_name = self._participant_name(participant)
             participant_name_key = self._normalized_name(participant_name)
+            raw_selections: List[Dict[str, Any]] = []
             for sport_field, format_field, partner_field in (
                 ("primary_sport", "primary_format", "primary_partner"),
                 ("secondary_sport", "secondary_format", "secondary_partner"),
@@ -321,207 +324,232 @@ class TeamValidator:
                 if sport not in RACQUET_SPORTS:
                     continue
 
-                format_type, _ = FORMAT_MAPPINGS.get(format_name, (None, None))
+                format_type, format_gender = FORMAT_MAPPINGS.get(format_name, (None, None))
                 if format_type != SPORT_FORMAT["DOUBLES"]:
                     continue
 
                 partner_name = str(participant.get(partner_field, "") or "").strip()
-                selections.append({
+                raw_selections.append({
                     "participant_id": participant.get("participant_id"),
                     "participant_name": participant_name,
                     "participant_name_key": participant_name_key,
                     "sport_type": sport,
                     "sport_format": format_name,
                     "partner_name": partner_name,
-                    "partner_name_key": self._normalized_name(partner_name),
+                    "_key": (sport, format_type, format_gender),
                 })
+
+            # Consolidate duplicate primary/secondary declarations of the same
+            # doubles event per participant (mirroring sf_rosters consolidation)
+            # so validation resolves the same selections scheduling sees (#160).
+            for selection in consolidate_doubles_selections(
+                raw_selections, key_fn=lambda s: s["_key"]
+            ):
+                selection.pop("_key", None)
+                selection["partner_name"] = str(
+                    selection.get("partner_name") or ""
+                ).strip()
+                selection["partner_name_key"] = self._normalized_name(
+                    selection["partner_name"]
+                )
+                selections.append(selection)
 
         return selections
 
-    @staticmethod
-    def _same_event_candidates(
-        selection: Dict[str, Any],
-        selections: List[Dict[str, Any]],
+    def _check_doubles_partner_matching(
+        self, church_id: Any, participants: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        return [
-            candidate for candidate in selections
-            if candidate is not selection
-            and candidate["sport_type"] == selection["sport_type"]
-            and candidate["sport_format"] == selection["sport_format"]
-        ]
-
-    def _partial_same_event_candidates(
-        self,
-        selection: Dict[str, Any],
-        selections: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        candidates: List[Dict[str, Any]] = []
-        seen_keys: set[str] = set()
-
-        for candidate in self._same_event_candidates(selection, selections):
-            if not self._is_likely_name_match(
-                selection["partner_name_key"],
-                candidate["participant_name_key"],
-            ):
-                continue
-
-            candidate_key = str(candidate.get("participant_id") or candidate["participant_name_key"])
-            if candidate_key in seen_keys:
-                continue
-            seen_keys.add(candidate_key)
-            candidates.append(candidate)
-
-        return candidates
-
-    def _resolvable_same_event_candidates(
-        self,
-        selection: Dict[str, Any],
-        selections: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        candidates: List[Dict[str, Any]] = []
-        seen_keys: set[str] = set()
-
-        for candidate in self._same_event_candidates(selection, selections):
-            if not self._is_resolvable_name_match(
-                selection["partner_name_key"],
-                candidate["participant_name_key"],
-            ):
-                continue
-
-            candidate_key = str(candidate.get("participant_id") or candidate["participant_name_key"])
-            if candidate_key in seen_keys:
-                continue
-            seen_keys.add(candidate_key)
-            candidates.append(candidate)
-
-        return candidates
-
-    def _is_unique_partial_reciprocal_match(
-        self,
-        source_selection: Dict[str, Any],
-        target_selection: Dict[str, Any],
-        selections: List[Dict[str, Any]],
-    ) -> bool:
-        partial_candidates = self._partial_same_event_candidates(source_selection, selections)
-        if len(partial_candidates) != 1:
-            return False
-
-        candidate = partial_candidates[0]
-        if candidate.get("participant_id") and target_selection.get("participant_id"):
-            return str(candidate["participant_id"]) == str(target_selection["participant_id"])
-        return candidate["participant_name_key"] == target_selection["participant_name_key"]
-
-    def _check_doubles_partner_matching(self, church_id: Any, participants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not self.reciprocal_partner_rule:
             return []
 
-        selections = self._doubles_selections(participants)
-        selections_by_name: Dict[str, List[Dict[str, Any]]] = {}
-        for selection in selections:
-            key = selection["participant_name_key"]
-            if key:
-                selections_by_name.setdefault(key, []).append(selection)
+        raw_selections = self._doubles_selections(participants)
+        if not raw_selections:
+            return []
+
+        # Build Selection objects; use index-based ID when participant_id is absent.
+        sel_objs = [
+            Selection(
+                participant_id=str(s.get("participant_id") or f"_idx_{i}"),
+                name=s["participant_name"],
+                norm_name=s["participant_name_key"],
+                partner_name=s["partner_name"],
+                partner_norm_name=s["partner_name_key"],
+                sport_type=s["sport_type"],
+                sport_format=s["sport_format"],
+            )
+            for i, s in enumerate(raw_selections)
+        ]
+
+        # Map resolver IDs back to original participant_ids for _build_issue.
+        original_pid_by_sel_id = {
+            sel.participant_id: raw_selections[i].get("participant_id")
+            for i, sel in enumerate(sel_objs)
+        }
+
+        _, unresolved = resolve_doubles(sel_objs)
 
         issues: List[Dict[str, Any]] = []
-        for selection in selections:
-            partner_name = selection["partner_name"]
-            partner_name_key = selection["partner_name_key"]
-            if not partner_name_key:
-                continue
-
-            partner_candidates = [
-                candidate for candidate in selections_by_name.get(partner_name_key, [])
-                if candidate is not selection
-            ]
-
-            if not partner_candidates:
-                resolvable_candidates = self._resolvable_same_event_candidates(selection, selections)
-                if len(resolvable_candidates) == 1:
-                    resolvable_candidate = resolvable_candidates[0]
-                    if (
-                        resolvable_candidate["partner_name_key"] == selection["participant_name_key"]
-                        or self._is_unique_partial_reciprocal_match(
-                            resolvable_candidate,
-                            selection,
-                            selections,
-                        )
-                    ):
-                        continue
-
-                partial_candidates = self._partial_same_event_candidates(selection, selections)
-                if len(partial_candidates) == 1:
-                    partial_candidate = partial_candidates[0]
-                    suggestion = partial_candidate["participant_name"]
-                    description = (
-                        f"{selection['participant_name']} listed {partner_name} as their partner for "
-                        f"{selection['sport_type']} ({selection['sport_format']}), but the partner name is "
-                        f"ambiguous; use full name, perhaps {suggestion}."
-                    )
-                elif partial_candidates:
-                    suggestions = ", ".join(candidate["participant_name"] for candidate in partial_candidates)
-                    description = (
-                        f"{selection['participant_name']} listed {partner_name} as their partner for "
-                        f"{selection['sport_type']} ({selection['sport_format']}), but the partner name is "
-                        f"ambiguous; use full name. Possible matches: {suggestions}."
-                    )
-                else:
-                    description = (
-                        f"{selection['participant_name']} listed {partner_name} as their partner for "
-                        f"{selection['sport_type']} ({selection['sport_format']}), but no participant by that "
-                        "name was found in the same church roster."
-                    )
-            else:
-                same_event_candidates = [
-                    candidate for candidate in partner_candidates
-                    if candidate["sport_type"] == selection["sport_type"]
-                    and candidate["sport_format"] == selection["sport_format"]
-                ]
-                reciprocal_candidate = next(
-                    (
-                        candidate for candidate in same_event_candidates
-                        if candidate["partner_name_key"] == selection["participant_name_key"]
-                    ),
-                    None,
-                )
-
-                if reciprocal_candidate:
-                    continue
-
-                partial_reciprocal_candidate = next(
-                    (
-                        candidate for candidate in same_event_candidates
-                        if self._is_unique_partial_reciprocal_match(candidate, selection, selections)
-                    ),
-                    None,
-                )
-                if partial_reciprocal_candidate:
-                    continue
-
-                same_event_candidate = next(
-                    iter(same_event_candidates),
-                    None,
-                )
-                if same_event_candidate:
-                    description = (
-                        f"{selection['participant_name']} listed {partner_name} as their partner for "
-                        f"{selection['sport_type']} ({selection['sport_format']}), but {partner_name} did not "
-                        f"reciprocally list {selection['participant_name']}."
-                    )
-                else:
-                    description = (
-                        f"{selection['participant_name']} listed {partner_name} as their partner for "
-                        f"{selection['sport_type']} ({selection['sport_format']}), but {partner_name} is not "
-                        "registered for that same doubles event."
-                    )
+        for rec in unresolved:
+            if rec.reason == "MissingPartner":
+                continue  # Already caught by IndividualValidator.
 
             issues.append(self._build_issue(
                 church_id=church_id,
                 issue_type="doubles_partner_unmatched",
-                description=description,
+                description=self._doubles_issue_description(rec),
                 rule=self.reciprocal_partner_rule,
-                sport_type=selection["sport_type"],
-                sport_format=selection["sport_format"],
-                participant_id=selection.get("participant_id"),
+                sport_type=rec.sport_type,
+                sport_format=rec.sport_format,
+                participant_id=original_pid_by_sel_id.get(rec.participant_id),
             ))
 
         return issues
+
+    @staticmethod
+    def _roster_doubles_format(sport_gender: str) -> str:
+        gender = str(sport_gender or "").strip()
+        if gender in (GENDER["MEN"], GENDER["WOMEN"], GENDER["MIXED"]):
+            return f"{gender} Double"
+        return SPORT_FORMAT["DOUBLES"]
+
+    def validate_roster_partners(
+        self,
+        church_id: Any,
+        church_code: str,
+        rosters: List[Dict[str, Any]],
+        participants: List[Dict[str, Any]] | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Return canonical partner issues from the persisted roster snapshot."""
+        participant_by_id = {
+            str(participant.get("participant_id")): participant
+            for participant in (participants or [])
+            if participant.get("participant_id") not in (None, "", 0, "0")
+        }
+        selections: List[Selection] = []
+
+        for index, roster in enumerate(rosters):
+            sport_type = str(roster.get("sport_type") or "").strip()
+            sport_format = str(roster.get("sport_format") or "").strip()
+            sport_gender = str(roster.get("sport_gender") or "").strip()
+            if (
+                sport_type not in RACQUET_SPORTS
+                or sport_format != SPORT_FORMAT["DOUBLES"]
+            ):
+                continue
+
+            raw_pid = roster.get("participant_id")
+            participant_id = str(raw_pid or f"_roster_{index}")
+            participant = participant_by_id.get(str(raw_pid), {})
+            name = " ".join(
+                value
+                for value in (
+                    str(roster.get("first_name") or participant.get("first_name") or "").strip(),
+                    str(roster.get("last_name") or participant.get("last_name") or "").strip(),
+                )
+                if value
+            ).strip()
+            partner_name = str(roster.get("partner_name") or "").strip()
+            display_format = self._roster_doubles_format(sport_gender)
+            selections.append(Selection(
+                participant_id=participant_id,
+                name=name or participant_id,
+                norm_name=self._normalized_name(name),
+                partner_name=partner_name,
+                partner_norm_name=self._normalized_name(partner_name),
+                sport_type=sport_type,
+                sport_format=display_format,
+                church_code=str(roster.get("church_code") or church_code or "").strip(),
+                group_key=f"{sport_type}|{SPORT_FORMAT['DOUBLES']}|{sport_gender}",
+            ))
+
+        if not selections:
+            return []
+
+        _, unresolved = resolve_doubles(selections)
+        issues: List[Dict[str, Any]] = []
+        for rec in unresolved:
+            if rec.reason == "MissingPartner":
+                if not self.required_partner_rule:
+                    continue
+                issues.append(self._build_issue(
+                    church_id=church_id,
+                    issue_type="missing_doubles_partner",
+                    description=(
+                        f"Partner name required for {rec.sport_type} "
+                        f"({rec.sport_format})"
+                    ),
+                    rule=self.required_partner_rule,
+                    sport_type=rec.sport_type,
+                    sport_format=rec.sport_format,
+                    participant_id=rec.participant_id,
+                ))
+                continue
+
+            if not self.reciprocal_partner_rule:
+                continue
+            issues.append(self._build_issue(
+                church_id=church_id,
+                issue_type="doubles_partner_unmatched",
+                description=self._doubles_issue_description(rec),
+                rule=self.reciprocal_partner_rule,
+                sport_type=rec.sport_type,
+                sport_format=rec.sport_format,
+                participant_id=rec.participant_id,
+            ))
+
+        return issues
+
+    @staticmethod
+    def _doubles_issue_description(rec: UnresolvedRecord) -> str:
+        name = rec.name
+        partner = rec.partner_name
+        sport = rec.sport_type
+        fmt = rec.sport_format
+
+        if rec.reason == "SelfPaired":
+            return (
+                f"{name} listed themselves as their own partner for "
+                f"{sport} ({fmt})."
+            )
+
+        if rec.reason == "NonReciprocal" and rec.notes.startswith("T1"):
+            return (
+                f"{name} listed {partner} as their partner for "
+                f"{sport} ({fmt}), but {partner} did not "
+                f"reciprocally list {name}."
+            )
+
+        if rec.reason == "NonReciprocal":
+            # T2: found via resolvable match but no reciprocal — hint at full name.
+            suggestion = rec.candidate_name or (rec.suggestions[0] if rec.suggestions else partner)
+            return (
+                f"{name} listed {partner} as their partner for "
+                f"{sport} ({fmt}), but the partner name is "
+                f"ambiguous; use full name, perhaps {suggestion}."
+            )
+
+        if rec.reason == "AmbiguousPartner":
+            return (
+                f"{name} listed {partner} as their partner for "
+                f"{sport} ({fmt}), but multiple participants match that name."
+            )
+
+        # PartnerNotFound branch.
+        if len(rec.suggestions) == 1:
+            return (
+                f"{name} listed {partner} as their partner for "
+                f"{sport} ({fmt}), but the partner name is "
+                f"ambiguous; use full name, perhaps {rec.suggestions[0]}."
+            )
+        if rec.suggestions:
+            suggestion_list = ", ".join(rec.suggestions)
+            return (
+                f"{name} listed {partner} as their partner for "
+                f"{sport} ({fmt}), but the partner name is "
+                f"ambiguous; use full name. Possible matches: {suggestion_list}."
+            )
+        return (
+            f"{name} listed {partner} as their partner for "
+            f"{sport} ({fmt}), but no participant by that "
+            "name was found in the same church roster."
+        )
