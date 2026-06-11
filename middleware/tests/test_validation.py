@@ -990,7 +990,8 @@ def test_team_validator_reciprocal_match_can_cross_primary_and_secondary_slots(t
 
 
 def test_team_validator_partial_partner_name_suggests_full_name(team_validator):
-    """A unique short-name match should stay a WARNING with a suggested full name."""
+    """Both sides of a partial-name pair are flagged: Dean can't resolvably find Janice Vu,
+    and Janice Vu finds Dean exactly but Dean did not reciprocate with Janice's full name."""
     participants = [
         {
             **_make_participant(primary_sport=SPORT_TYPE["TENNIS"], primary_format="Mixed Double"),
@@ -1011,11 +1012,14 @@ def test_team_validator_partial_partner_name_suggests_full_name(team_validator):
     issues = team_validator.validate_church(1, participants)
 
     partner_issues = [issue for issue in issues if issue["issue_type"] == "doubles_partner_unmatched"]
-    assert len(partner_issues) == 1
-    assert partner_issues[0]["participant_id"] == 1
-    assert partner_issues[0]["severity"] == VALIDATION_SEVERITY["WARNING"]
-    assert "ambiguous; use full name" in partner_issues[0]["issue_description"]
-    assert "perhaps Janice Vu" in partner_issues[0]["issue_description"]
+    # Both sides are unresolved: Dean (PartnerNotFound) and Janice (NonReciprocal T1).
+    assert len(partner_issues) == 2
+    dean_issue = next(i for i in partner_issues if i["participant_id"] == 1)
+    assert dean_issue["severity"] == VALIDATION_SEVERITY["WARNING"]
+    assert "ambiguous; use full name" in dean_issue["issue_description"]
+    assert "perhaps Janice Vu" in dean_issue["issue_description"]
+    janice_issue = next(i for i in partner_issues if i["participant_id"] == 2)
+    assert "did not reciprocally list" in janice_issue["issue_description"]
 
 
 def test_team_validator_partial_partner_name_lists_possible_matches(team_validator):
@@ -1077,8 +1081,16 @@ def test_team_validator_parenthetical_and_reordered_partner_name_resolves_match(
     assert not any(issue["issue_type"] == "doubles_partner_unmatched" for issue in issues), issues
 
 
-def test_team_validator_compact_spacing_reduces_to_one_warning(team_validator):
-    """A strong full-name match should suppress the full-name side but keep the short-name side as a warning."""
+def test_team_validator_compact_spacing_both_sides_warned(team_validator):
+    """Both sides of the compact-spacing pair are unresolved (Issue #160).
+
+    Truc Nhi Nguyen (1) lists 'Minh Thu Bui' — resolvably matches Minhthu Bui via
+    token-concat, but Minhthu's 'Nhi Nguyen' does NOT resolvably match 'Truc Nhi Nguyen'
+    (no initial token present), so the pair is NonReciprocal.
+
+    Minhthu Bui (2) lists 'Nhi Nguyen' — T1/T2 fail to find Truc Nhi Nguyen, so she
+    gets PartnerNotFound with a T3 suggestion.
+    """
     participants = [
         {
             **_make_participant(primary_sport=SPORT_TYPE["BADMINTON"], primary_format="Women Double"),
@@ -1099,9 +1111,13 @@ def test_team_validator_compact_spacing_reduces_to_one_warning(team_validator):
     issues = team_validator.validate_church(1, participants)
 
     partner_issues = [issue for issue in issues if issue["issue_type"] == "doubles_partner_unmatched"]
-    assert len(partner_issues) == 1
-    assert partner_issues[0]["participant_id"] == 2
-    assert "perhaps Truc Nhi Nguyen" in partner_issues[0]["issue_description"]
+    assert len(partner_issues) == 2
+    # Participant 2: PartnerNotFound with T3 suggestion pointing to Truc Nhi Nguyen.
+    minhthu_issue = next(i for i in partner_issues if i["participant_id"] == 2)
+    assert "perhaps Truc Nhi Nguyen" in minhthu_issue["issue_description"]
+    # Participant 1: NonReciprocal T2 — ambiguous hint about Minhthu Bui.
+    truc_issue = next(i for i in partner_issues if i["participant_id"] == 1)
+    assert "ambiguous; use full name" in truc_issue["issue_description"]
 
 
 def test_team_validator_initial_abbreviation_partner_name_resolves_match(team_validator):

@@ -2,6 +2,80 @@
 
 ## Unreleased
 
+### Nightly sync correctness fixes
+
+- Consolidated duplicate primary/secondary roster selections before writing to
+  WordPress. When both selections map to the same event, a blank partner no
+  longer overwrites the nonblank partner declaration.
+- Approval synchronization now sends only participants with an approved,
+  unsynced approval record to ChMeetings. Previously it re-added every approved
+  participant on each run, even when there was nothing left to mark as synced.
+- WordPress approval reads now expose success/failure status so an API failure is
+  not mistaken for an empty unsynced-approval list.
+
+### Canonical doubles resolver: self-pairing prevention and full unresolved coverage — closes [#160](https://github.com/i12know/vaysf/issues/160)
+
+Root cause of the 60-vs-48 `pod_unprotected_entries` gap: three divergent partner
+resolvers (TeamValidator, schedule_workbook, church_teams_export dead copy) applied
+different matching policies, allowing self-pairings to slip through and letting
+12 entries be silently resolved in the validator while remaining unprotected for
+scheduling.
+
+- **New `middleware/validation/doubles_resolver.py`** — canonical `resolve_doubles()`
+  shared by all consumers. Two-phase algorithm:
+  - *Phase 1 (confirm):* T1 exact `normalized_name` lookup → unique candidate →
+    `resolvable_name_match` reciprocal check on both sides. Falls through to T2
+    (`resolvable_name_match` lookup) only when T1 finds zero candidates.
+  - *Phase 2 (diagnose):* emits `UnresolvedRecord` with reason codes
+    `MissingPartner`, `SelfPaired`, `AmbiguousPartner`, `NonReciprocal`,
+    `PartnerNotFound` and T3 (`likely_name_match`) suggestion hints.
+- **Self-pairing rejected** — Phase 1 and Phase 2 both detect
+  `partner_norm_name == self.norm_name` and short-circuit with `SelfPaired` before
+  any candidate search. Fixes the bug in the old exact-match loop that missed this
+  guard.
+- **`TeamValidator._check_doubles_partner_matching`** rewritten to call
+  `resolve_doubles()`; `MissingPartner` records are still skipped (already caught
+  by `IndividualValidator`). Removed no-longer-needed private helpers
+  `_same_event_candidates`, `_partial_same_event_candidates`,
+  `_resolvable_same_event_candidates`, `_is_unique_partial_reciprocal_match`.
+  Added `_doubles_issue_description()` for clean reason→text mapping.
+- **`_build_pod_entries_review_rows` in `schedule_workbook.py`** refactored to call
+  `resolve_doubles()`. The old `name_to_rows` + `paired_pids` loop is gone.
+- **`pod_unprotected_entries` enriched** — each unresolved entry now carries
+  `participant_id`, `sport_type`, `sport_format`, and `church_code` so downstream
+  tooling can match them to open validation issues without guessing.
+- **Dead copy removed** from `church_teams_export.py` (lines 1388–1576 of the
+  old file). The setattr loop already overwrote the copy at module load time; it
+  is now gone entirely with a tombstone comment.
+- **Behavior change for mismatched-name pairs:** both sides of a non-reciprocal pair
+  now always receive a validation issue (Issue #160 Tier 2 requirement). Two existing
+  tests updated: `test_team_validator_compact_spacing_reduces_to_one_warning` →
+  `test_team_validator_compact_spacing_both_sides_warned` (now expects 2 issues);
+  `test_team_validator_partial_partner_name_suggests_full_name` updated to expect
+  2 issues (Dean PartnerNotFound + Janice NonReciprocal T1).
+- **Same-church rule enforced** — `resolve_doubles()` now filters candidates to
+  `c.church_code == sel.church_code` in both Phase 1 (`peers_unconfirmed`) and
+  Phase 2 (`all_peers`). Cross-church declarations are always `PartnerNotFound` or
+  `NonReciprocal` unresolved records, never confirmed pairs. This ensures the
+  per-church `TeamValidator` and the all-roster schedule workbook produce the same
+  confirmed/unresolved split when given the same data.
+- **Bug fix — multi-event participant skip:** confirmation tracking changed from
+  `confirmed_ids: set[str]` to `confirmed_gkpids: set[tuple[str, str]]`
+  (`(group_key, participant_id)`), so a participant confirmed in Badminton doubles
+  is not incorrectly skipped in a second event (e.g. Pickleball doubles).
+- **Bug fix — duplicate participant_id rows:** added
+  `c.participant_id != sel.participant_id` guard (when participant_id is non-empty)
+  to prevent two data rows for the same person from forming a spurious pair.
+- **New `middleware/tests/test_doubles_resolver.py`** — 24 tests covering exact
+  reciprocal, T2 initial-abbreviation, self-pairing, missing partner,
+  NonReciprocal (T1 and T2), PartnerNotFound with 0/1/2+ T3 suggestions,
+  AmbiguousPartner, group isolation, same-church confirmation, cross-church
+  rejection, already-confirmed exclusion, multi-event independence, duplicate-ID
+  guard, and group_key override.
+- **New tests in `test_schedule_workbook.py`:** self-paired entry flags as
+  `SelfPaired` in POD review rows; enriched `pod_unprotected_entries` fields
+  verified; cross-church pair stays unresolved in the scheduler path.
+
 ### Racquet (pod) cross-sport conflict modeling — closes [#158](https://github.com/i12know/vaysf/issues/158)
 
 - Extended shared-athlete conflict modeling beyond team sports to racquet

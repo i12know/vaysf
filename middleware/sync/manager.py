@@ -510,17 +510,31 @@ class SyncManager:
         all_relevant_approvals = self.wordpress_connector.get_approvals(
             params=approval_query_params
         )
-        if all_relevant_approvals is None:
+        if getattr(self.wordpress_connector, "last_get_approvals_status", "ok") == "failed":
             logger.error("Failed to fetch approval records from WordPress. Cannot mark as synced.")
             return False
 
         approvals_lookup = {str(ar.get("participant_id")): ar for ar in all_relevant_approvals}
+        participants_to_sync = [
+            participant
+            for participant in participants
+            if str(participant.get("participant_id")) in approvals_lookup
+        ]
+        skipped_already_synced = len(participants) - len(participants_to_sync)
+        if skipped_already_synced:
+            logger.info(
+                f"Skipping {skipped_already_synced} approved participant(s) without "
+                "an unsynced approval record."
+            )
+        if not participants_to_sync:
+            logger.info("No unsynced approved participants need ChMeetings group synchronization.")
+            return True
 
         added_count = 0
         failed_count = 0
         marked_synced_count = 0
 
-        for participant in tqdm(participants, desc="Adding to ChMeetings group via API"):
+        for participant in tqdm(participants_to_sync, desc="Adding to ChMeetings group via API"):
             chm_id = participant["chmeetings_id"]
             wp_id_str = str(participant["participant_id"])
 

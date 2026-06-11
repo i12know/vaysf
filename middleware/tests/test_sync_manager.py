@@ -1497,6 +1497,75 @@ def test_sync_approvals_partial_failure(sync_manager, mocker):
     mock_update.assert_called_once_with(10, {"synced_to_chmeetings": True})
 
 
+def test_sync_approvals_skips_participants_without_unsynced_approval(sync_manager, mocker):
+    participants = [
+        {"participant_id": 1, "chmeetings_id": "CHM1", "first_name": "Alice", "last_name": "A"},
+        {"participant_id": 2, "chmeetings_id": "CHM2", "first_name": "Bob", "last_name": "B"},
+    ]
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=participants,
+    )
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_groups",
+        return_value=[{"id": 999, "name": "2026 Sports Fest"}],
+    )
+    mock_add = mocker.patch.object(
+        sync_manager.chm_connector,
+        "add_person_to_group",
+        return_value=True,
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_approvals",
+        return_value=[{"approval_id": 20, "participant_id": 2}],
+    )
+    mock_update = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_approval",
+        return_value=True,
+    )
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2026 Sports Fest")
+
+    result = sync_manager.sync_approvals_to_chmeetings()
+
+    assert result is True
+    mock_add.assert_called_once_with("999", "CHM2")
+    mock_update.assert_called_once_with(20, {"synced_to_chmeetings": True})
+
+
+def test_sync_approvals_no_unsynced_records_makes_no_group_calls(sync_manager, mocker):
+    participants = [
+        {"participant_id": 1, "chmeetings_id": "CHM1", "first_name": "Alice", "last_name": "A"},
+    ]
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=participants,
+    )
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_groups",
+        return_value=[{"id": 999, "name": "2026 Sports Fest"}],
+    )
+    mock_add = mocker.patch.object(sync_manager.chm_connector, "add_person_to_group")
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_approvals",
+        return_value=[],
+    )
+    mock_update = mocker.patch.object(sync_manager.wordpress_connector, "update_approval")
+    mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2026 Sports Fest")
+
+    result = sync_manager.sync_approvals_to_chmeetings()
+
+    assert result is True
+    mock_add.assert_not_called()
+    mock_update.assert_not_called()
+
+
 def test_sync_approvals_targeted_single_participant(sync_manager, mocker):
     """A targeted approvals sync should stay scoped to one approved participant."""
     participant = {
@@ -1632,6 +1701,51 @@ def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
     assert row["participant_id"] == 42
     assert row["church_code"] == "RPC"
     mock_delete.assert_not_called()
+
+
+def test_sync_rosters_preserves_partner_when_duplicate_event_has_blank_partner(
+    sync_manager, mocker
+):
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    captured = []
+
+    mocker.patch.object(
+        participant_syncer,
+        "_create_or_update_roster",
+        side_effect=lambda roster_data: captured.append(dict(roster_data)),
+    )
+
+    def get_rosters_side_effect(_params):
+        sync_manager.wordpress_connector.last_get_rosters_status = "ok"
+        return []
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        side_effect=get_rosters_side_effect,
+    )
+
+    participant = {
+        "church_code": "TLC",
+        "primary_sport": "Table Tennis 35+",
+        "primary_format": "Men Double",
+        "primary_partner": "Andrew Nguyen",
+        "secondary_sport": "Table Tennis 35+",
+        "secondary_format": "Men Double",
+        "secondary_partner": "",
+        "other_events": "",
+    }
+
+    participant_syncer._sync_rosters("156", participant)
+
+    assert len(captured) == 1
+    assert captured[0]["participant_id"] == 156
+    assert captured[0]["partner_name"] == "Andrew Nguyen"
 
 
 def test_sync_rosters_skips_create_when_lookup_fails_after_retry(sync_manager, mocker):
