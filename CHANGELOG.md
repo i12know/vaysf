@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Consolidated doubles selections in validation + scheduler↔validation reconciliation — closes [#160](https://github.com/i12know/vaysf/issues/160)
+
+Follow-up to the canonical resolver work below. The June 11, 2026 real-data run
+still showed a nine-record disagreement between scheduler `pod_unprotected_entries`
+and the open partner validation issues exported to `Validation-Issues`. Root cause:
+the validators evaluated *raw* primary/secondary participant fields while
+scheduling resolves the *consolidated* sf_rosters declarations, so a duplicate
+blank slot (e.g. WP 156's secondary Table Tennis 35+ selection) produced false
+`missing_doubles_partner` / nonreciprocal reports.
+
+- **New `consolidate_doubles_selections()` in `validation/doubles_resolver.py`** —
+  collapses duplicate doubles selections for one participant exactly like the
+  sf_rosters consolidation in `sync/participants.py` (`remember_roster`): the
+  first occurrence of an event wins and a blank partner is filled from the first
+  later duplicate that declared one.
+- **`IndividualValidator._validate_doubles_partner`** now consolidates duplicate
+  primary/secondary declarations of the same doubles event before requiring a
+  partner, so a redundant blank slot never creates a false
+  `PARTNER_REQUIRED_DOUBLES` issue (WP 156 regression).
+- **`TeamValidator._doubles_selections`** applies the same per-participant
+  consolidation before canonical resolution, so duplicate-slot candidates no
+  longer cause false `AmbiguousPartner`/`NonReciprocal` reports for the
+  reciprocal partner (WP 446/441 regression).
+- **New automated reconciliation check** — `_reconcile_pod_validation()` in
+  `schedule_workbook.py` runs inside `_build_schedule_input` and compares
+  scheduler-unprotected doubles keys against open partner validation issues from
+  the same snapshot. It reports `missing_validation_issues` (subset criterion
+  violations), `mismatched_issue_types`, `contradictory_open_issues` (confirmed
+  pair members with a still-open partner issue), and `validation_only_issues`
+  (issues referencing participants absent from the exported roster). The result
+  is embedded in `schedule_input.json` / `schedule_output.json` as
+  `pod_validation_reconciliation`, logged with `[VAY SM]` warnings when dirty,
+  and each unprotected entry is annotated with `validation_issue_status`
+  (surfaced as a new column in the Conflict-Audit tab).
+- **New tests:** 5 consolidation-helper tests, 5 validator regression tests
+  (duplicate-slot shapes incl. both-blank single issue and distinct events
+  unmerged), 1 TeamValidator duplicate-slot reciprocal regression, and 5
+  reconciliation tests including the subset acceptance criterion, missing-issue
+  detection, contradiction detection, validation-only reporting, and
+  resolved-issue exclusion.
+
 ### Nightly sync correctness fixes
 
 - Consolidated duplicate primary/secondary roster selections before writing to

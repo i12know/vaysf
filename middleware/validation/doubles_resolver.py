@@ -59,6 +59,40 @@ class UnresolvedRecord:
     suggestions: list[str] = field(default_factory=list)  # T3 hint names
 
 
+def consolidate_doubles_selections(
+    selections: list[dict],
+    key_fn,
+    partner_key: str = "partner_name",
+) -> list[dict]:
+    """Collapse duplicate doubles selections for one participant.
+
+    Mirrors the sf_rosters consolidation in sync/participants.py
+    (``remember_roster``): the first occurrence of each ``key_fn`` key wins,
+    and a blank partner on the kept selection is filled from the first later
+    duplicate that declared one. This keeps validators evaluating the same
+    consolidated event selections that are written to sf_rosters and consumed
+    by scheduling, so a redundant blank duplicate slot can never create a
+    false missing-partner issue (Issue #160).
+
+    The input dicts are not mutated; kept selections are shallow copies.
+    """
+    consolidated: list[dict] = []
+    by_key: dict = {}
+    for sel in selections:
+        key = key_fn(sel)
+        kept = by_key.get(key)
+        if kept is None:
+            kept = dict(sel)
+            by_key[key] = kept
+            consolidated.append(kept)
+            continue
+        if not str(kept.get(partner_key) or "").strip():
+            new_partner = str(sel.get(partner_key) or "").strip()
+            if new_partner:
+                kept[partner_key] = sel.get(partner_key)
+    return consolidated
+
+
 def _gkey(sel: Selection) -> str:
     return sel.group_key or f"{sel.sport_type}|{sel.sport_format}"
 

@@ -1260,6 +1260,166 @@ class ScheduleWorkbookBuilder:
 
         return confirmed_by_division, unprotected
 
+    # Validation issue types that persist unresolved doubles registrations.
+    _POD_PARTNER_ISSUE_TYPES = frozenset({
+        "missing_doubles_partner",
+        "doubles_partner_unmatched",
+    })
+
+    @staticmethod
+    def _expected_partner_issue_type(reason: str) -> str:
+        """Map a resolver unresolved reason to its persisted issue type."""
+        return (
+            "missing_doubles_partner"
+            if str(reason or "").strip() == "MissingPartner"
+            else "doubles_partner_unmatched"
+        )
+
+    @classmethod
+    def _reconcile_pod_validation(
+        cls,
+        pod_unprotected_entries: List[Dict[str, Any]],
+        confirmed_by_division: Dict[str, List[Dict[str, Any]]],
+        validation_rows: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Reconcile scheduler doubles diagnostics with persisted validation issues.
+
+        Issue #160 acceptance criterion: every scheduler-unprotected doubles
+        registration must have a corresponding OPEN partner validation issue
+        (missing_doubles_partner / doubles_partner_unmatched) for the same
+        participant + sport, and confirmed pairs must not have one. This check
+        runs on the same snapshot the scheduler consumes, so any divergence
+        between WordPress validation state and roster-based resolution is
+        surfaced instead of silently disagreeing.
+
+        Side effect: annotates each unprotected entry in place with
+        ``validation_issue_status`` (Matched / MismatchedIssueType /
+        MissingValidationIssue / NoParticipantId) so the Conflict-Audit tab can
+        show reconciliation state per entry.
+        """
+        # (participant_id, casefolded sport) → {issue types, original sport}.
+        open_partner_issues: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for v in validation_rows:
+            issue_type = str(v.get("Issue Type") or "").strip()
+            if issue_type not in cls._POD_PARTNER_ISSUE_TYPES:
+                continue
+            if str(v.get("Status") or "").strip().lower() != "open":
+                continue
+            pid = str(v.get("Participant ID (WP)") or "").strip()
+            if not pid or pid == "0":
+                continue
+            sport = str(v.get("sport_type") or "").strip()
+            bucket = open_partner_issues.setdefault(
+                (pid, sport.casefold()),
+                {"issue_types": set(), "sport_type": sport},
+            )
+            bucket["issue_types"].add(issue_type)
+
+        missing: List[Dict[str, Any]] = []
+        mismatched: List[Dict[str, Any]] = []
+        matched_count = 0
+        scheduler_keys: set = set()
+
+        for entry in pod_unprotected_entries:
+            pid = str(entry.get("participant_id") or "").strip()
+            sport = str(entry.get("sport_type") or "").strip()
+            reason = str(entry.get("reason") or "").strip()
+            record = {
+                "participant_id": pid or None,
+                "participant_name": entry.get("participant_name", ""),
+                "church_code": entry.get("church_code", ""),
+                "division_id": entry.get("division_id", ""),
+                "sport_type": sport,
+                "reason": reason,
+                "expected_issue_type": cls._expected_partner_issue_type(reason),
+            }
+            if not pid:
+                entry["validation_issue_status"] = "NoParticipantId"
+                missing.append(record)
+                continue
+
+            key = (pid, sport.casefold())
+            scheduler_keys.add(key)
+            issue_types = open_partner_issues.get(key, {}).get("issue_types", set())
+            if record["expected_issue_type"] in issue_types:
+                matched_count += 1
+                entry["validation_issue_status"] = "Matched"
+            elif issue_types:
+                record["open_issue_types"] = sorted(issue_types)
+                entry["validation_issue_status"] = "MismatchedIssueType"
+                mismatched.append(record)
+            else:
+                entry["validation_issue_status"] = "MissingValidationIssue"
+                missing.append(record)
+
+        # Confirmed pairs with a still-open partner issue contradict validation.
+        contradictory: List[Dict[str, Any]] = []
+        for division_id, entries in sorted((confirmed_by_division or {}).items()):
+            for confirmed in entries:
+                sport = str(confirmed.get("sport_type") or "").strip()
+                for pid in confirmed.get("participant_ids", []):
+                    key = (str(pid), sport.casefold())
+                    scheduler_keys.add(key)
+                    bucket = open_partner_issues.get(key)
+                    if bucket:
+                        contradictory.append({
+                            "participant_id": str(pid),
+                            "participant_name": confirmed.get(
+                                "participant_names", {}
+                            ).get(pid, ""),
+                            "division_id": division_id,
+                            "sport_type": sport,
+                            "open_issue_types": sorted(bucket["issue_types"]),
+                        })
+
+        # Open partner issues with no scheduler-side record at all (for
+        # example, the participant is absent from the exported roster).
+        validation_only = [
+            {
+                "participant_id": pid,
+                "sport_type": bucket["sport_type"],
+                "open_issue_types": sorted(bucket["issue_types"]),
+            }
+            for (pid, _sport_cf), bucket in sorted(open_partner_issues.items())
+            if (pid, _sport_cf) not in scheduler_keys
+        ]
+
+        reconciliation = {
+            "matched_count": matched_count,
+            "missing_validation_issues": missing,
+            "mismatched_issue_types": mismatched,
+            "contradictory_open_issues": contradictory,
+            "validation_only_issues": validation_only,
+        }
+
+        problem_count = len(missing) + len(mismatched) + len(contradictory)
+        if problem_count:
+            logger.warning(
+                "[VAY SM] Pod doubles validation reconciliation found "
+                f"{len(missing)} unprotected entrie(s) without an open partner "
+                f"validation issue, {len(mismatched)} with a mismatched issue "
+                f"type, and {len(contradictory)} confirmed pair member(s) with "
+                "a contradictory open issue. Scheduler diagnostics and the "
+                "Validation-Issues tab disagree — investigate before publishing."
+            )
+            for record in missing:
+                logger.warning(
+                    "[VAY SM] Missing partner validation issue: "
+                    f"participant_id={record['participant_id']} "
+                    f"church={record['church_code']} "
+                    f"division={record['division_id']} reason={record['reason']} "
+                    f"expected_issue_type={record['expected_issue_type']}"
+                )
+        else:
+            logger.info(
+                "[VAY SM] Pod doubles validation reconciliation clean: "
+                f"{matched_count} unprotected entrie(s) all have matching open "
+                f"partner validation issues; {len(validation_only)} open partner "
+                "issue(s) reference participants outside the exported roster."
+            )
+
+        return reconciliation
+
     # ── Venue capacity ───────────────────────────────────────────────────────
 
     def _build_venue_capacity_rows(self, roster_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -3392,6 +3552,9 @@ class ScheduleWorkbookBuilder:
         _confirmed_pods, pod_unprotected_entries = self._resolve_pod_doubles(
             roster_rows, validation_rows
         )
+        pod_validation_reconciliation = self._reconcile_pod_validation(
+            pod_unprotected_entries, _confirmed_pods, validation_rows
+        )
         precedence.extend(gym_precedence)
         precedence.extend(soccer_precedence)
 
@@ -3756,6 +3919,7 @@ class ScheduleWorkbookBuilder:
             "gym_allocation":     gym_allocation,
             "team_conflicts":     team_conflicts,
             "pod_unprotected_entries": pod_unprotected_entries,
+            "pod_validation_reconciliation": pod_validation_reconciliation,
             "precedence":         precedence,
             "day_order":          day_order,
         }
@@ -6197,7 +6361,10 @@ class ScheduleWorkbookBuilder:
             )
             note_cell.font = bold_font
             note_cell.fill = PatternFill(fgColor="FFF2CC", fill_type="solid")
-            unprotected_headers = ["division_id", "participant_name", "reason", "notes"]
+            unprotected_headers = [
+                "division_id", "participant_name", "reason",
+                "validation_issue_status", "notes",
+            ]
             head_r = section_row + 1
             for ci, col in enumerate(unprotected_headers, start=1):
                 cell = ws3.cell(row=head_r, column=ci, value=col)

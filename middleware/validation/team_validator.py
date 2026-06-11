@@ -1,6 +1,11 @@
 from typing import List, Dict, Any
 
-from .doubles_resolver import Selection, UnresolvedRecord, resolve_doubles
+from .doubles_resolver import (
+    Selection,
+    UnresolvedRecord,
+    consolidate_doubles_selections,
+    resolve_doubles,
+)
 from .name_matcher import normalized_name
 from .models import RulesManager
 from config import (SPORT_BY_CATEGORY, SPORT_CATEGORY, RACQUET_SPORTS,
@@ -296,6 +301,7 @@ class TeamValidator:
         for participant in participants:
             participant_name = self._participant_name(participant)
             participant_name_key = self._normalized_name(participant_name)
+            raw_selections: List[Dict[str, Any]] = []
             for sport_field, format_field, partner_field in (
                 ("primary_sport", "primary_format", "primary_partner"),
                 ("secondary_sport", "secondary_format", "secondary_partner"),
@@ -305,20 +311,35 @@ class TeamValidator:
                 if sport not in RACQUET_SPORTS:
                     continue
 
-                format_type, _ = FORMAT_MAPPINGS.get(format_name, (None, None))
+                format_type, format_gender = FORMAT_MAPPINGS.get(format_name, (None, None))
                 if format_type != SPORT_FORMAT["DOUBLES"]:
                     continue
 
                 partner_name = str(participant.get(partner_field, "") or "").strip()
-                selections.append({
+                raw_selections.append({
                     "participant_id": participant.get("participant_id"),
                     "participant_name": participant_name,
                     "participant_name_key": participant_name_key,
                     "sport_type": sport,
                     "sport_format": format_name,
                     "partner_name": partner_name,
-                    "partner_name_key": self._normalized_name(partner_name),
+                    "_key": (sport, format_type, format_gender),
                 })
+
+            # Consolidate duplicate primary/secondary declarations of the same
+            # doubles event per participant (mirroring sf_rosters consolidation)
+            # so validation resolves the same selections scheduling sees (#160).
+            for selection in consolidate_doubles_selections(
+                raw_selections, key_fn=lambda s: s["_key"]
+            ):
+                selection.pop("_key", None)
+                selection["partner_name"] = str(
+                    selection.get("partner_name") or ""
+                ).strip()
+                selection["partner_name_key"] = self._normalized_name(
+                    selection["partner_name"]
+                )
+                selections.append(selection)
 
         return selections
 

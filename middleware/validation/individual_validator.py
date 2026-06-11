@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Any, Optional
 from loguru import logger
 from .models import Participant, RulesManager
+from .doubles_resolver import consolidate_doubles_selections
 from config import (Config, SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, 
                    SPORT_UNSELECTED, DEFAULT_SPORT, RACQUET_SPORTS, RULE_LEVEL,
                    FORMAT_MAPPINGS,
@@ -180,7 +181,13 @@ class IndividualValidator:
         return issues
 
     def _validate_doubles_partner(self, participant: Participant) -> List[Dict[str, str]]:
-        """Require partner names for racquet doubles selections."""
+        """Require partner names for racquet doubles selections.
+
+        Duplicate primary/secondary declarations of the same doubles event are
+        consolidated first (keeping the first non-blank partner), mirroring the
+        sf_rosters consolidation in sync/participants.py, so a redundant blank
+        duplicate slot never creates a false missing-partner issue (Issue #160).
+        """
         issues = []
         rules = [
             r for r in self.rules_manager.get_rules_by_type("partner")
@@ -195,29 +202,42 @@ class IndividualValidator:
             ("secondary_sport", "secondary_format", "secondary_partner"),
         ]
 
+        raw_selections = []
         for sport_field, format_field, partner_field in doubles_selections:
             sport = str(getattr(participant, sport_field, "") or "").strip()
             if not sport or sport == SPORT_UNSELECTED or not is_racquet_sport(sport):
                 continue
 
             format_value = str(getattr(participant, format_field, "") or "").strip()
-            sport_format, _ = FORMAT_MAPPINGS.get(format_value, (None, None))
+            sport_format, sport_gender = FORMAT_MAPPINGS.get(format_value, (None, None))
             if sport_format != SPORT_FORMAT["DOUBLES"]:
                 continue
 
-            partner_name = str(getattr(participant, partner_field, "") or "").strip()
-            if partner_name:
+            raw_selections.append({
+                "sport": sport,
+                "format_value": format_value,
+                "partner_name": str(getattr(participant, partner_field, "") or "").strip(),
+                "_key": (sport, sport_format, sport_gender),
+            })
+
+        for selection in consolidate_doubles_selections(
+            raw_selections, key_fn=lambda s: s["_key"]
+        ):
+            if str(selection.get("partner_name") or "").strip():
                 continue
 
             rule = rules[0]
             issues.append({
                 "type": "missing_doubles_partner",
-                "description": f"Partner name required for {sport} ({format_value})",
+                "description": (
+                    f"Partner name required for {selection['sport']} "
+                    f"({selection['format_value']})"
+                ),
                 "rule_code": rule.get("rule_code"),
                 "rule_level": rule.get("rule_level", RULE_LEVEL["INDIVIDUAL"]),
                 "severity": rule.get("severity", VALIDATION_SEVERITY["ERROR"]),
-                "sport": sport,
-                "sport_format": format_value,
+                "sport": selection["sport"],
+                "sport_format": selection["format_value"],
             })
 
         return issues

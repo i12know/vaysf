@@ -512,6 +512,111 @@ def test_doubles_partner_required_for_secondary_selection(validator):
     assert partner_issue["sport_format"] == "Mixed Double"
 
 
+def test_duplicate_doubles_selection_with_blank_secondary_passes(validator):
+    """A duplicate secondary selection of the same doubles event with a blank
+    partner must not create a false missing-partner issue when the primary slot
+    declared the partner (Issue #160 — WP 156 regression)."""
+    participant = {
+        "chmeetings_id": "duplicate_doubles_blank_secondary",
+        "first_name": "Long",
+        "last_name": "Chung",
+        "gender": "Male",
+        "birthdate": "1985-01-01",
+        "primary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "primary_format": "Men Double",
+        "primary_partner": "Andrew Nguyen",
+        "secondary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "secondary_format": "Men Double",
+        "secondary_partner": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert is_valid, f"Consolidated selection has a partner, got: {issues}"
+    assert not any(issue["type"] == "missing_doubles_partner" for issue in issues)
+
+
+def test_duplicate_doubles_selection_partner_only_on_secondary_passes(validator):
+    """Partner declared only on the duplicate secondary slot also satisfies the
+    consolidated selection (mirrors sf_rosters blank-fill consolidation)."""
+    participant = {
+        "chmeetings_id": "duplicate_doubles_blank_primary",
+        "first_name": "Long",
+        "last_name": "Chung",
+        "gender": "Male",
+        "birthdate": "1985-01-01",
+        "primary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "primary_format": "Men Double",
+        "primary_partner": "",
+        "secondary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "secondary_format": "Men Double",
+        "secondary_partner": "Andrew Nguyen",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert is_valid, f"Consolidated selection has a partner, got: {issues}"
+    assert not any(issue["type"] == "missing_doubles_partner" for issue in issues)
+
+
+def test_duplicate_doubles_selection_both_blank_yields_single_issue(validator):
+    """Duplicate doubles selections that are both blank consolidate into ONE
+    missing-partner issue, not two."""
+    participant = {
+        "chmeetings_id": "duplicate_doubles_both_blank",
+        "first_name": "Long",
+        "last_name": "Chung",
+        "gender": "Male",
+        "birthdate": "1985-01-01",
+        "primary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "primary_format": "Men Double",
+        "primary_partner": "",
+        "secondary_sport": SPORT_TYPE["TABLE_TENNIS_35"],
+        "secondary_format": "Men Double",
+        "secondary_partner": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert not is_valid
+    partner_issues = [i for i in issues if i["type"] == "missing_doubles_partner"]
+    assert len(partner_issues) == 1
+
+
+def test_distinct_doubles_selections_each_require_partner(validator):
+    """Different doubles events do NOT consolidate — each still needs a partner."""
+    participant = {
+        "chmeetings_id": "two_distinct_doubles",
+        "first_name": "Multi",
+        "last_name": "Event",
+        "gender": "Male",
+        "birthdate": "2000-01-01",
+        "primary_sport": SPORT_TYPE["BADMINTON"],
+        "primary_format": "Men Double",
+        "primary_partner": "",
+        "secondary_sport": SPORT_TYPE["PICKLEBALL"],
+        "secondary_format": "Men Double",
+        "secondary_partner": "",
+        "photo_url": "https://example.com/photo.jpg",
+        "consent_status": True,
+    }
+
+    is_valid, issues = validator.validate(participant)
+
+    assert not is_valid
+    partner_issues = [i for i in issues if i["type"] == "missing_doubles_partner"]
+    assert len(partner_issues) == 2
+    assert {i["sport"] for i in partner_issues} == {
+        SPORT_TYPE["BADMINTON"], SPORT_TYPE["PICKLEBALL"],
+    }
+
+
 def test_doubles_partner_present_passes_validation(validator):
     """Providing the partner name should satisfy the doubles partner rule."""
     participant = {
@@ -963,6 +1068,37 @@ def test_team_validator_reciprocal_doubles_partner_mismatch_warns(team_validator
     assert partner_issue["rule_level"] == "TEAM"
     assert partner_issue["severity"] == VALIDATION_SEVERITY["WARNING"]
     assert "did not reciprocally list" in partner_issue["issue_description"]
+
+
+def test_team_validator_duplicate_slot_with_blank_partner_still_confirms_pair(team_validator):
+    """A participant who duplicated the same doubles event across primary and
+    secondary slots (one slot reciprocal, the other blank) must still confirm
+    the pair — the duplicate consolidates instead of creating a false
+    nonreciprocal/ambiguous report (Issue #160 — WP 446/441 regression)."""
+    participants = [
+        {
+            **_make_participant(primary_sport=SPORT_TYPE["TABLE_TENNIS"], primary_format="Men Double"),
+            "participant_id": 1,
+            "first_name": "Andy",
+            "last_name": "Nguyen",
+            "primary_partner": "Brian Tran",
+        },
+        {
+            **_make_participant(
+                primary_sport=SPORT_TYPE["TABLE_TENNIS"], primary_format="Men Double",
+                secondary_sport=SPORT_TYPE["TABLE_TENNIS"], secondary_format="Men Double",
+            ),
+            "participant_id": 2,
+            "first_name": "Brian",
+            "last_name": "Tran",
+            "primary_partner": "Andy Nguyen",
+            "secondary_partner": "",
+        },
+    ]
+
+    issues = team_validator.validate_church(1, participants)
+
+    assert not any(issue["issue_type"] == "doubles_partner_unmatched" for issue in issues), issues
 
 
 def test_team_validator_reciprocal_match_can_cross_primary_and_secondary_slots(team_validator):

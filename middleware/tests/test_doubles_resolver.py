@@ -399,3 +399,82 @@ def test_duplicate_participant_id_rows_never_form_a_confirmed_pair():
     # Both rows should be reported as unresolved (PartnerNotFound since same-ID
     # peers are excluded from candidate lookups).
     assert len(unresolved) == 2
+
+
+# ── consolidate_doubles_selections (Issue #160) ──────────────────────────────
+
+def _raw(sport, fmt, partner, gender="Men"):
+    return {
+        "sport_type": sport,
+        "sport_format": fmt,
+        "partner_name": partner,
+        "_key": (sport, "Doubles", gender),
+    }
+
+
+def test_consolidate_fills_blank_partner_from_later_duplicate():
+    """First occurrence wins; a blank partner is filled from the first later
+    duplicate that declared one (mirrors sf_rosters remember_roster)."""
+    from validation.doubles_resolver import consolidate_doubles_selections
+    out = consolidate_doubles_selections(
+        [
+            _raw("Table Tennis 35+", "Men Double", ""),
+            _raw("Table Tennis 35+", "Men Double", "Andrew Nguyen"),
+        ],
+        key_fn=lambda s: s["_key"],
+    )
+    assert len(out) == 1
+    assert out[0]["partner_name"] == "Andrew Nguyen"
+
+
+def test_consolidate_keeps_first_nonblank_partner_over_blank_duplicate():
+    """A blank later duplicate must never overwrite the declared partner —
+    the WP 156 production overwrite shape."""
+    from validation.doubles_resolver import consolidate_doubles_selections
+    out = consolidate_doubles_selections(
+        [
+            _raw("Table Tennis 35+", "Men Double", "Andrew Nguyen"),
+            _raw("Table Tennis 35+", "Men Double", ""),
+        ],
+        key_fn=lambda s: s["_key"],
+    )
+    assert len(out) == 1
+    assert out[0]["partner_name"] == "Andrew Nguyen"
+
+
+def test_consolidate_conflicting_partners_keeps_first():
+    """Conflicting non-blank partner declarations keep the first occurrence."""
+    from validation.doubles_resolver import consolidate_doubles_selections
+    out = consolidate_doubles_selections(
+        [
+            _raw("Badminton", "Men Double", "Brian Tran"),
+            _raw("Badminton", "Men Double", "Chris Pham"),
+        ],
+        key_fn=lambda s: s["_key"],
+    )
+    assert len(out) == 1
+    assert out[0]["partner_name"] == "Brian Tran"
+
+
+def test_consolidate_distinct_events_do_not_merge():
+    """Different consolidation keys stay separate selections."""
+    from validation.doubles_resolver import consolidate_doubles_selections
+    out = consolidate_doubles_selections(
+        [
+            _raw("Badminton", "Men Double", "Brian Tran"),
+            _raw("Pickleball", "Men Double", "Chris Pham"),
+        ],
+        key_fn=lambda s: s["_key"],
+    )
+    assert len(out) == 2
+    assert [s["sport_type"] for s in out] == ["Badminton", "Pickleball"]
+
+
+def test_consolidate_does_not_mutate_inputs():
+    """The helper must be pure: inputs keep their original partner values."""
+    from validation.doubles_resolver import consolidate_doubles_selections
+    first = _raw("Badminton", "Men Double", "")
+    second = _raw("Badminton", "Men Double", "Brian Tran")
+    consolidate_doubles_selections([first, second], key_fn=lambda s: s["_key"])
+    assert first["partner_name"] == ""
+    assert second["partner_name"] == "Brian Tran"

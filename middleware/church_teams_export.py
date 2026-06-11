@@ -3454,6 +3454,8 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_build_pod_divisions_rows",
     "_build_pod_entries_review_rows",
     "_resolve_pod_doubles",
+    "_expected_partner_issue_type",
+    "_reconcile_pod_validation",
     "_build_venue_capacity_rows",
     "_pool_assignments_sidecar_path",
     "_normalize_pool_seed",
@@ -3525,6 +3527,7 @@ for _method_name in _SCHEDULE_WORKBOOK_METHOD_NAMES:
 
 for _attr_name in (
     "_GYM_CORE_SOLVER_POOL",
+    "_POD_PARTNER_ISSUE_TYPES",
     "_POOL_ASSIGNMENT_COLUMNS",
     "_POOL_ASSIGNMENT_EVENT_DEFS",
     "_POOL_ASSIGNMENT_HEADER_NOTES",
