@@ -64,6 +64,7 @@ from config import (
     POD_FIT_COLOR_RED,
     POD_FIT_YELLOW_MAX,
 )
+from validation.doubles_resolver import Selection as _DblSelection, resolve_doubles as _resolve_dbl
 from validation.name_matcher import normalized_name as _norm_name
 from validation.models import RulesManager
 from schedule_styles import (
@@ -1048,8 +1049,7 @@ class ScheduleWorkbookBuilder:
                 "notes": "",
             })
 
-        # Doubles — attempt reciprocal pairing within each division.
-        # Group by (sport_type, sport_gender) across all churches.
+        # Doubles — use canonical resolver grouped by division (sport_type + sport_gender).
         doubles_by_div: Dict[tuple, List[Dict[str, Any]]] = {}
         for r in doubles_rows:
             sport_type = str(r.get("sport_type") or "").strip()
@@ -1058,101 +1058,84 @@ class ScheduleWorkbookBuilder:
 
         for (sport_type, sport_gender), div_rows in sorted(doubles_by_div.items()):
             division_id = self._make_division_id(sport_type, sport_gender, "doubles")
-            name_to_rows: Dict[str, List[Dict[str, Any]]] = {}
-            for r in div_rows:
-                key = _norm_name(_full_name(r))
-                if key:
-                    name_to_rows.setdefault(key, []).append(r)
 
-            paired_pids: set = set()
-
-            for r in div_rows:
-                pid_a = _pid(r)
-                if pid_a and pid_a in paired_pids:
-                    continue
-
-                name_a = _full_name(r)
+            # Build Selection objects; use index-scoped synthetic IDs when PID is absent.
+            row_by_sel_id: Dict[str, Dict[str, Any]] = {}
+            sel_objs: List[_DblSelection] = []
+            for i, r in enumerate(div_rows):
+                pid = _pid(r)
+                sel_id = pid if pid else f"_div_{division_id}_idx_{i}"
+                name = _full_name(r)
                 partner_decl = str(r.get("partner_name") or "").strip()
+                sel_objs.append(_DblSelection(
+                    participant_id=sel_id,
+                    name=name,
+                    norm_name=_norm_name(name),
+                    partner_name=partner_decl,
+                    partner_norm_name=_norm_name(partner_decl),
+                    sport_type=sport_type,
+                    sport_format=str(r.get("sport_format") or "").strip(),
+                    church_code=str(r.get("Church Team") or "").strip(),
+                    group_key=division_id,
+                ))
+                row_by_sel_id[sel_id] = r
 
-                if not partner_decl:
-                    entry_counter += 1
-                    entry_rows.append({
-                        "entry_id": entry_counter,
-                        "division_id": division_id,
-                        "entry_type": "UnresolvedDoubles",
-                        "participant_1_name": name_a,
-                        "participant_2_name": "",
-                        "source_participant_ids": pid_a,
-                        "church_team": str(r.get("Church Team") or ""),
-                        "partner_status": "MissingPartner",
-                        "review_status": "NeedsReview",
-                        "notes": "No partner declared",
-                    })
-                    if pid_a:
-                        paired_pids.add(pid_a)
-                    continue
+            confirmed_pairs, unresolved_recs = _resolve_dbl(sel_objs)
 
-                partner_key = _norm_name(partner_decl)
-                candidates = name_to_rows.get(partner_key, [])
-
-                # Look for a reciprocal candidate not yet paired.
-                name_a_key = _norm_name(name_a)
-                reciprocal = next(
-                    (
-                        c for c in candidates
-                        if _pid(c) not in paired_pids
-                        and _norm_name(str(c.get("partner_name") or "")) == name_a_key
-                    ),
-                    None,
+            for pair in confirmed_pairs:
+                pid_a, pid_b = pair.participant_ids
+                r_a = row_by_sel_id.get(pid_a)
+                r_b = row_by_sel_id.get(pid_b)
+                both_ok = bool(
+                    r_a and not _has_error(r_a)
+                    and r_b and not _has_error(r_b)
                 )
+                churches = ", ".join(c for c in sorted({
+                    str((r_a or {}).get("Church Team") or ""),
+                    str((r_b or {}).get("Church Team") or ""),
+                }) if c)
+                entry_counter += 1
+                entry_rows.append({
+                    "entry_id": entry_counter,
+                    "division_id": division_id,
+                    "entry_type": "DoublesPair",
+                    "participant_1_name": pair.participant_names.get(pid_a, ""),
+                    "participant_2_name": pair.participant_names.get(pid_b, ""),
+                    "source_participant_ids": ", ".join(filter(None, [pid_a, pid_b])),
+                    "church_team": churches,
+                    "partner_status": "Confirmed",
+                    "sport_format": pair.sport_format,
+                    "review_status": "OK" if both_ok else "NeedsReview",
+                    "notes": "",
+                })
 
-                if reciprocal:
-                    pid_b = _pid(reciprocal)
-                    entry_counter += 1
-                    both_ok = not _has_error(r) and not _has_error(reciprocal)
-                    churches = ", ".join(sorted({
-                        str(r.get("Church Team") or ""),
-                        str(reciprocal.get("Church Team") or ""),
-                    }))
-                    entry_rows.append({
-                        "entry_id": entry_counter,
-                        "division_id": division_id,
-                        "entry_type": "DoublesPair",
-                        "participant_1_name": name_a,
-                        "participant_2_name": _full_name(reciprocal),
-                        "source_participant_ids": ", ".join(filter(None, [pid_a, pid_b])),
-                        "church_team": churches,
-                        "partner_status": "Confirmed",
-                        "review_status": "OK" if both_ok else "NeedsReview",
-                        "notes": "",
-                    })
-                    if pid_a:
-                        paired_pids.add(pid_a)
-                    if pid_b:
-                        paired_pids.add(pid_b)
+            for rec in unresolved_recs:
+                if rec.reason == "SelfPaired":
+                    note = "Participant listed themselves as their own partner"
+                elif rec.reason == "NonReciprocal":
+                    note = f"Partner '{rec.partner_name}' found but did not reciprocate"
+                elif rec.reason == "AmbiguousPartner":
+                    note = f"Partner '{rec.partner_name}' matches multiple participants"
+                elif rec.reason == "MissingPartner":
+                    note = "No partner declared"
                 else:
-                    # Partner not found or non-reciprocal.
-                    if candidates:
-                        reason = "NonReciprocal"
-                        note = f"Partner '{partner_decl}' found but does not list this player back"
-                    else:
-                        reason = "PartnerNotFound"
-                        note = f"Partner '{partner_decl}' not in same-division roster"
-                    entry_counter += 1
-                    entry_rows.append({
-                        "entry_id": entry_counter,
-                        "division_id": division_id,
-                        "entry_type": "UnresolvedDoubles",
-                        "participant_1_name": name_a,
-                        "participant_2_name": "",
-                        "source_participant_ids": pid_a,
-                        "church_team": str(r.get("Church Team") or ""),
-                        "partner_status": reason,
-                        "review_status": "NeedsReview",
-                        "notes": note,
-                    })
-                    if pid_a:
-                        paired_pids.add(pid_a)
+                    note = f"Partner '{rec.partner_name}' not in same-division roster"
+                # Recover the real PID (may differ from sel_id when synthetic).
+                real_pid = _pid(row_by_sel_id.get(rec.participant_id) or {})
+                entry_counter += 1
+                entry_rows.append({
+                    "entry_id": entry_counter,
+                    "division_id": division_id,
+                    "entry_type": "UnresolvedDoubles",
+                    "participant_1_name": rec.name,
+                    "participant_2_name": "",
+                    "source_participant_ids": real_pid,
+                    "church_team": rec.church_code,
+                    "partner_status": rec.reason,
+                    "sport_format": rec.sport_format,
+                    "review_status": "NeedsReview",
+                    "notes": note,
+                })
 
         # Anomalies — non-standard format rows for racquet sports.
         for r in anomaly_rows:
@@ -1252,9 +1235,15 @@ class ScheduleWorkbookBuilder:
                     "pair_names": pair_names,
                 })
             elif row.get("entry_type") == "UnresolvedDoubles":
+                sport_type_u, _ = div_meta.get(division_id, ("", ""))
+                raw_pid = str(row.get("source_participant_ids") or "").strip()
                 unprotected.append({
                     "division_id": division_id,
+                    "participant_id": raw_pid or None,
                     "participant_name": str(row.get("participant_1_name") or "").strip(),
+                    "sport_type": sport_type_u,
+                    "sport_format": str(row.get("sport_format") or "").strip(),
+                    "church_code": str(row.get("church_team") or "").strip(),
                     "reason": str(row.get("partner_status") or "Unresolved").strip(),
                     "notes": str(row.get("notes") or "").strip(),
                 })

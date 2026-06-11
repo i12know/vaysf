@@ -1147,6 +1147,43 @@ def test_build_pod_entries_review_doubles_non_reciprocal():
     assert "NonReciprocal" in reasons
 
 
+def test_build_pod_entries_review_doubles_self_paired():
+    """A participant who lists their own name as partner is flagged as SelfPaired (Issue #160)."""
+    builder = ScheduleWorkbookBuilder()
+    roster_rows = [
+        {"sport_type": "Badminton", "sport_gender": "Men", "sport_format": "Men Double",
+         "Participant ID (WP)": "62", "First Name": "Anh", "Last Name": "Nguyen",
+         "partner_name": "Anh Nguyen", "Church Team": "RPC"},
+    ]
+    rows = builder._build_pod_entries_review_rows(roster_rows, [])
+
+    assert len(rows) == 1
+    assert rows[0]["entry_type"] == "UnresolvedDoubles"
+    assert rows[0]["partner_status"] == "SelfPaired"
+
+
+def test_build_pod_unprotected_entries_enriched(tmp_path):
+    """UnresolvedDoubles in pod_unprotected_entries carry participant_id, sport_type,
+    sport_format, and church_code (Issue #160)."""
+    from config import SPORT_TYPE
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        {"sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Women",
+         "sport_format": "Women Double", "Participant ID (WP)": "99",
+         "First Name": "Mai", "Last Name": "Tran",
+         "partner_name": "", "Church Team": "TLC",
+         "participant_primary_sport": SPORT_TYPE["BADMINTON"]},
+    ]
+    si = builder._build_schedule_input(roster, [], tmp_path / "no_venue.xlsx")
+    unprotected = si["pod_unprotected_entries"]
+    assert len(unprotected) == 1
+    rec = unprotected[0]
+    assert rec["participant_id"] == "99"
+    assert rec["sport_type"] == SPORT_TYPE["BADMINTON"]
+    assert rec["church_code"] == "TLC"
+    assert rec["reason"] == "MissingPartner"
+
+
 def test_build_pod_entries_review_anomaly():
     builder = ScheduleWorkbookBuilder()
     roster_rows = [
