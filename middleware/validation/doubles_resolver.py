@@ -99,12 +99,16 @@ def resolve_doubles(
     for sel in selections:
         by_group.setdefault(_gkey(sel), []).append(sel)
 
-    confirmed_ids: set[str] = set()
+    # Confirmation is tracked per (group_key, participant_id) so the same participant
+    # can independently confirm pairs in two different event groups (e.g. Badminton
+    # doubles AND Pickleball doubles in the same tournament).
+    confirmed_gkpids: set[tuple[str, str]] = set()
     confirmed_pairs: list[ConfirmedPair] = []
 
     # ── Phase 1: find confirmed pairs ────────────────────────────────────────
     for sel in selections:
-        if sel.participant_id in confirmed_ids:
+        gk = _gkey(sel)
+        if (gk, sel.participant_id) in confirmed_gkpids:
             continue
 
         partner_norm = sel.partner_norm_name
@@ -113,9 +117,13 @@ def resolve_doubles(
         if partner_norm == sel.norm_name:
             continue  # SelfPaired — handled in Phase 2
 
+        # Exclude: same object, same non-empty participant_id, or already confirmed
+        # in this event group.
         peers_unconfirmed = [
-            c for c in by_group.get(_gkey(sel), [])
-            if c is not sel and c.participant_id not in confirmed_ids
+            c for c in by_group.get(gk, [])
+            if c is not sel
+            and (not sel.participant_id or c.participant_id != sel.participant_id)
+            and (gk, c.participant_id) not in confirmed_gkpids
         ]
 
         # T1: exact normalized_name lookup.
@@ -127,7 +135,7 @@ def resolve_doubles(
                 # T1 guarantees sel→cand matches; only verify cand→sel reciprocally.
                 if resolvable_name_match(cand.partner_norm_name, sel.norm_name):
                     confirmed_pairs.append(_make_pair(sel, cand))
-                    confirmed_ids.update({sel.participant_id, cand.participant_id})
+                    confirmed_gkpids.update({(gk, sel.participant_id), (gk, cand.participant_id)})
             continue
 
         # T2: resolvable match (only when T1 found zero candidates).
@@ -142,13 +150,14 @@ def resolve_doubles(
                 and resolvable_name_match(cand.partner_norm_name, sel.norm_name)
             ):
                 confirmed_pairs.append(_make_pair(sel, cand))
-                confirmed_ids.update({sel.participant_id, cand.participant_id})
+                confirmed_gkpids.update({(gk, sel.participant_id), (gk, cand.participant_id)})
 
     # ── Phase 2: emit unresolved records for everyone not confirmed ───────────
     unresolved: list[UnresolvedRecord] = []
 
     for sel in selections:
-        if sel.participant_id in confirmed_ids:
+        gk = _gkey(sel)
+        if (gk, sel.participant_id) in confirmed_gkpids:
             continue
 
         partner_norm = sel.partner_norm_name
@@ -178,8 +187,13 @@ def resolve_doubles(
             ))
             continue
 
-        # Use ALL peers (including confirmed) for accurate diagnosis.
-        all_peers = [c for c in by_group.get(_gkey(sel), []) if c is not sel]
+        # Use all peers (including confirmed) for accurate diagnosis, but still
+        # exclude rows with the same non-empty participant_id (duplicate rows).
+        all_peers = [
+            c for c in by_group.get(gk, [])
+            if c is not sel
+            and (not sel.participant_id or c.participant_id != sel.participant_id)
+        ]
 
         # T1 diagnosis.
         t1_cands = [c for c in all_peers if c.norm_name == partner_norm]

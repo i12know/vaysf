@@ -322,3 +322,67 @@ def test_group_key_overrides_sport_fields():
     ]
     _, unresolved = resolve_doubles(sels)
     assert len(unresolved) == 2
+
+
+# ── Regression: Bug 1 — multi-event participant ──────────────────────────────
+
+def test_same_participant_confirms_in_two_independent_event_groups():
+    """Participant 1 plays Badminton (with 2) AND Pickleball (with 3).
+    Confirming in Badminton must not swallow the Pickleball selection.
+    """
+    sels = [
+        _sel(1, "Andy Nguyen", partner="Brian Tran",   sport_type="Badminton",  sport_format="Men Double"),
+        _sel(2, "Brian Tran",  partner="Andy Nguyen",  sport_type="Badminton",  sport_format="Men Double"),
+        _sel(1, "Andy Nguyen", partner="Chris Pham",   sport_type="Pickleball", sport_format="Mixed Double"),
+        _sel(3, "Chris Pham",  partner="Andy Nguyen",  sport_type="Pickleball", sport_format="Mixed Double"),
+    ]
+    pairs, unresolved = resolve_doubles(sels)
+
+    assert len(pairs) == 2, f"Expected 2 confirmed pairs, got {len(pairs)}: {pairs}"
+    group_keys = {p.group_key for p in pairs}
+    assert "Badminton|Men Double" in group_keys
+    assert "Pickleball|Mixed Double" in group_keys
+    assert unresolved == []
+
+
+# ── Regression: Bug 2 — duplicate-PID rows cannot self-pair ──────────────────
+
+def test_duplicate_participant_id_rows_never_form_a_confirmed_pair():
+    """Two distinct roster rows with the same non-empty participant_id must never
+    produce a confirmed pair whose participant_ids list contains duplicates.
+    """
+    from validation.name_matcher import normalized_name
+
+    # Simulate a bad export where the same PID appears on two rows with names
+    # that would otherwise match each other's partner declarations.
+    dup_pid = "42"
+    sels = [
+        Selection(
+            participant_id=dup_pid,
+            name="Andy Nguyen",
+            norm_name=normalized_name("Andy Nguyen"),
+            partner_name="Brian Tran",
+            partner_norm_name=normalized_name("Brian Tran"),
+            sport_type="Badminton",
+            sport_format="Men Double",
+        ),
+        Selection(
+            participant_id=dup_pid,
+            name="Brian Tran",
+            norm_name=normalized_name("Brian Tran"),
+            partner_name="Andy Nguyen",
+            partner_norm_name=normalized_name("Andy Nguyen"),
+            sport_type="Badminton",
+            sport_format="Men Double",
+        ),
+    ]
+    pairs, unresolved = resolve_doubles(sels)
+
+    # No confirmed pair should have duplicate IDs.
+    for pair in pairs:
+        assert len(set(pair.participant_ids)) == len(pair.participant_ids), (
+            f"Pair with duplicate IDs formed: {pair.participant_ids}"
+        )
+    # Both rows should be reported as unresolved (PartnerNotFound since same-ID
+    # peers are excluded from candidate lookups).
+    assert len(unresolved) == 2
