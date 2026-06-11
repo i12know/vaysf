@@ -36,12 +36,19 @@ blank slot (e.g. WP 156's secondary Table Tennis 35+ selection) produced false
   `pod_validation_reconciliation`, logged with `[VAY SM]` warnings when dirty,
   and each unprotected entry is annotated with `validation_issue_status`
   (surfaced as a new column in the Conflict-Audit tab).
-- **New tests:** 5 consolidation-helper tests, 5 validator regression tests
-  (duplicate-slot shapes incl. both-blank single issue and distinct events
-  unmerged), 1 TeamValidator duplicate-slot reciprocal regression, and 5
-  reconciliation tests including the subset acceptance criterion, missing-issue
-  detection, contradiction detection, validation-only reporting, and
-  resolved-issue exclusion.
+- **Roster-derived issue persistence** — `sync --type validation` now resolves
+  partner declarations from each church's persisted WordPress roster snapshot
+  and sends the resulting participant/event issues through the existing
+  validation upsert/resolve lifecycle. Scheduler-only failures therefore appear
+  in the Church Rep `Validation-Issues` tab instead of remaining export warnings.
+- **Event-specific reconciliation keys** now include participant, sport, doubles
+  format, and gender. An issue for one division can no longer satisfy another
+  division in the same sport, and validation-only records make reconciliation
+  explicitly dirty.
+- **Expanded tests** cover duplicate-slot consolidation, roster-derived partner
+  issue persistence and resolution, event-isolated reconciliation, missing
+  issues, contradictions, validation-only divergence, and resolved-issue
+  exclusion.
 
 ### Nightly sync correctness fixes
 

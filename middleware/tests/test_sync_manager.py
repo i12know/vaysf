@@ -1124,6 +1124,165 @@ def test_validate_data_creates_participant_scoped_team_warning(sync_manager, moc
     assert warning_payload["severity"] == "WARNING"
 
 
+def test_validate_data_persists_roster_derived_missing_partner_issue(sync_manager, mocker):
+    """Scheduler-visible roster failures must be persisted for Church Reps."""
+    participants = [
+        {
+            "participant_id": "69",
+            "church_id": 1,
+            "church_code": "LBC",
+            "first_name": "Player",
+            "last_name": "Missing",
+            "is_church_member": True,
+            "primary_sport": "",
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+    ]
+    rosters = [
+        {
+            "participant_id": "69",
+            "church_code": "LBC",
+            "first_name": "Player",
+            "last_name": "Missing",
+            "sport_type": SPORT_TYPE["TABLE_TENNIS"],
+            "sport_format": SPORT_FORMAT["DOUBLES"],
+            "sport_gender": GENDER["WOMEN"],
+            "partner_name": "",
+        },
+    ]
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=participants,
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        return_value=rosters,
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=[],
+    )
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 31},
+    )
+
+    assert sync_manager.validate_data()
+
+    issue_payload = next(
+        call.args[0]
+        for call in create_issue.call_args_list
+        if call.args[0]["issue_type"] == "missing_doubles_partner"
+    )
+    assert issue_payload["participant_id"] == "69"
+    assert issue_payload["rule_code"] == "PARTNER_REQUIRED_DOUBLES"
+    assert issue_payload["sport_type"] == SPORT_TYPE["TABLE_TENNIS"]
+    assert issue_payload["sport_format"] == "Women Double"
+
+
+def test_validate_data_resolves_roster_partner_issue_after_correction(sync_manager, mocker):
+    """A corrected reciprocal roster resolves the previously persisted issue."""
+    participants = [
+        {
+            "participant_id": "1",
+            "church_id": 1,
+            "church_code": "RPC",
+            "first_name": "Andy",
+            "last_name": "Nguyen",
+            "is_church_member": True,
+            "primary_sport": "",
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "2",
+            "church_id": 1,
+            "church_code": "RPC",
+            "first_name": "Brian",
+            "last_name": "Tran",
+            "is_church_member": True,
+            "primary_sport": "",
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+    ]
+    rosters = [
+        {
+            "participant_id": "1",
+            "church_code": "RPC",
+            "first_name": "Andy",
+            "last_name": "Nguyen",
+            "sport_type": SPORT_TYPE["BADMINTON"],
+            "sport_format": SPORT_FORMAT["DOUBLES"],
+            "sport_gender": GENDER["MEN"],
+            "partner_name": "Brian Tran",
+        },
+        {
+            "participant_id": "2",
+            "church_code": "RPC",
+            "first_name": "Brian",
+            "last_name": "Tran",
+            "sport_type": SPORT_TYPE["BADMINTON"],
+            "sport_format": SPORT_FORMAT["DOUBLES"],
+            "sport_gender": GENDER["MEN"],
+            "partner_name": "Andy Nguyen",
+        },
+    ]
+    existing_issue = {
+        "issue_id": 32,
+        "church_id": 1,
+        "participant_id": "1",
+        "issue_type": "doubles_partner_unmatched",
+        "issue_description": "stale partner issue",
+        "rule_code": "PARTNER_RECIPROCAL_DOUBLES",
+        "rule_level": "TEAM",
+        "severity": "WARNING",
+        "sport_type": SPORT_TYPE["BADMINTON"],
+        "sport_format": "Men Double",
+        "status": "open",
+    }
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=participants,
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        return_value=rosters,
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=[existing_issue],
+    )
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 33},
+    )
+    update_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_validation_issue",
+        return_value=True,
+    )
+
+    assert sync_manager.validate_data()
+
+    create_issue.assert_not_called()
+    update_issue.assert_called_once_with(32, {"status": "resolved"})
+
+
 def test_validate_data_creates_church_level_issue(sync_manager, mocker):
     """Church-level entry limits should sync as CHURCH validation issues."""
     participants = [

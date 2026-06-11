@@ -21,6 +21,7 @@ from math import ceil
 from config import (
     SPORT_TYPE,
     SPORT_FORMAT,
+    FORMAT_MAPPINGS,
     SOCCER_ENABLED,
     RACQUET_SPORTS,
     is_racquet_sport,
@@ -1225,6 +1226,7 @@ class ScheduleWorkbookBuilder:
                     "division_id": division_id,
                     "sport_type": sport_type,
                     "sport_gender": sport_gender,
+                    "sport_format": SPORT_FORMAT["DOUBLES"],
                     "participant_ids": pids,
                     "participant_names": {
                         pid: pid_info.get(pid, {}).get("name", pid) for pid in pids
@@ -1235,7 +1237,7 @@ class ScheduleWorkbookBuilder:
                     "pair_names": pair_names,
                 })
             elif row.get("entry_type") == "UnresolvedDoubles":
-                sport_type_u, _ = div_meta.get(division_id, ("", ""))
+                sport_type_u, sport_gender_u = div_meta.get(division_id, ("", ""))
                 raw_pid = str(row.get("source_participant_ids") or "").strip()
                 unprotected.append({
                     "division_id": division_id,
@@ -1243,6 +1245,7 @@ class ScheduleWorkbookBuilder:
                     "participant_name": str(row.get("participant_1_name") or "").strip(),
                     "sport_type": sport_type_u,
                     "sport_format": str(row.get("sport_format") or "").strip(),
+                    "sport_gender": sport_gender_u,
                     "church_code": str(row.get("church_team") or "").strip(),
                     "reason": str(row.get("partner_status") or "Unresolved").strip(),
                     "notes": str(row.get("notes") or "").strip(),
@@ -1275,6 +1278,39 @@ class ScheduleWorkbookBuilder:
             else "doubles_partner_unmatched"
         )
 
+    @staticmethod
+    def _partner_validation_key(
+        participant_id: Any,
+        sport_type: Any,
+        sport_format: Any,
+        sport_gender: Any = "",
+    ) -> Tuple[str, str, str, str]:
+        """Return a canonical participant + doubles-event reconciliation key."""
+        raw_format = str(sport_format or "").strip()
+        if raw_format in FORMAT_MAPPINGS:
+            mapped_format, mapped_gender = FORMAT_MAPPINGS[raw_format]
+        elif "double" in raw_format.casefold():
+            mapped_format = SPORT_FORMAT["DOUBLES"]
+            mapped_gender = str(sport_gender or "").strip()
+            if not mapped_gender:
+                format_cf = raw_format.casefold()
+                mapped_gender = next(
+                    (
+                        gender for gender in ("Men", "Women", "Mixed")
+                        if gender.casefold() in format_cf
+                    ),
+                    "",
+                )
+        else:
+            mapped_format = raw_format
+            mapped_gender = str(sport_gender or "").strip()
+        return (
+            str(participant_id or "").strip(),
+            str(sport_type or "").strip().casefold(),
+            str(mapped_format or "").strip().casefold(),
+            str(mapped_gender or sport_gender or "").strip().casefold(),
+        )
+
     @classmethod
     def _reconcile_pod_validation(
         cls,
@@ -1287,7 +1323,8 @@ class ScheduleWorkbookBuilder:
         Issue #160 acceptance criterion: every scheduler-unprotected doubles
         registration must have a corresponding OPEN partner validation issue
         (missing_doubles_partner / doubles_partner_unmatched) for the same
-        participant + sport, and confirmed pairs must not have one. This check
+        participant + sport + format + gender, and confirmed pairs must not
+        have one. This check
         runs on the same snapshot the scheduler consumes, so any divergence
         between WordPress validation state and roster-based resolution is
         surfaced instead of silently disagreeing.
@@ -1297,8 +1334,8 @@ class ScheduleWorkbookBuilder:
         MissingValidationIssue / NoParticipantId) so the Conflict-Audit tab can
         show reconciliation state per entry.
         """
-        # (participant_id, casefolded sport) → {issue types, original sport}.
-        open_partner_issues: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        # Full doubles-event key -> persisted issue details for that event.
+        open_partner_issues: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
         for v in validation_rows:
             issue_type = str(v.get("Issue Type") or "").strip()
             if issue_type not in cls._POD_PARTNER_ISSUE_TYPES:
@@ -1309,9 +1346,15 @@ class ScheduleWorkbookBuilder:
             if not pid or pid == "0":
                 continue
             sport = str(v.get("sport_type") or "").strip()
+            sport_format = str(v.get("sport_format") or "").strip()
+            key = cls._partner_validation_key(pid, sport, sport_format)
             bucket = open_partner_issues.setdefault(
-                (pid, sport.casefold()),
-                {"issue_types": set(), "sport_type": sport},
+                key,
+                {
+                    "issue_types": set(),
+                    "sport_type": sport,
+                    "sport_format": sport_format,
+                },
             )
             bucket["issue_types"].add(issue_type)
 
@@ -1323,6 +1366,8 @@ class ScheduleWorkbookBuilder:
         for entry in pod_unprotected_entries:
             pid = str(entry.get("participant_id") or "").strip()
             sport = str(entry.get("sport_type") or "").strip()
+            sport_format = str(entry.get("sport_format") or "").strip()
+            sport_gender = str(entry.get("sport_gender") or "").strip()
             reason = str(entry.get("reason") or "").strip()
             record = {
                 "participant_id": pid or None,
@@ -1330,6 +1375,8 @@ class ScheduleWorkbookBuilder:
                 "church_code": entry.get("church_code", ""),
                 "division_id": entry.get("division_id", ""),
                 "sport_type": sport,
+                "sport_format": sport_format,
+                "sport_gender": sport_gender,
                 "reason": reason,
                 "expected_issue_type": cls._expected_partner_issue_type(reason),
             }
@@ -1338,7 +1385,9 @@ class ScheduleWorkbookBuilder:
                 missing.append(record)
                 continue
 
-            key = (pid, sport.casefold())
+            key = cls._partner_validation_key(
+                pid, sport, sport_format, sport_gender
+            )
             scheduler_keys.add(key)
             issue_types = open_partner_issues.get(key, {}).get("issue_types", set())
             if record["expected_issue_type"] in issue_types:
@@ -1357,8 +1406,12 @@ class ScheduleWorkbookBuilder:
         for division_id, entries in sorted((confirmed_by_division or {}).items()):
             for confirmed in entries:
                 sport = str(confirmed.get("sport_type") or "").strip()
+                sport_format = str(confirmed.get("sport_format") or "").strip()
+                sport_gender = str(confirmed.get("sport_gender") or "").strip()
                 for pid in confirmed.get("participant_ids", []):
-                    key = (str(pid), sport.casefold())
+                    key = cls._partner_validation_key(
+                        pid, sport, sport_format, sport_gender
+                    )
                     scheduler_keys.add(key)
                     bucket = open_partner_issues.get(key)
                     if bucket:
@@ -1369,6 +1422,8 @@ class ScheduleWorkbookBuilder:
                             ).get(pid, ""),
                             "division_id": division_id,
                             "sport_type": sport,
+                            "sport_format": sport_format,
+                            "sport_gender": sport_gender,
                             "open_issue_types": sorted(bucket["issue_types"]),
                         })
 
@@ -1378,13 +1433,23 @@ class ScheduleWorkbookBuilder:
             {
                 "participant_id": pid,
                 "sport_type": bucket["sport_type"],
+                "sport_format": bucket["sport_format"],
                 "open_issue_types": sorted(bucket["issue_types"]),
             }
-            for (pid, _sport_cf), bucket in sorted(open_partner_issues.items())
-            if (pid, _sport_cf) not in scheduler_keys
+            for key, bucket in sorted(open_partner_issues.items())
+            for pid in (key[0],)
+            if key not in scheduler_keys
         ]
 
+        problem_count = (
+            len(missing)
+            + len(mismatched)
+            + len(contradictory)
+            + len(validation_only)
+        )
         reconciliation = {
+            "is_clean": problem_count == 0,
+            "problem_count": problem_count,
             "matched_count": matched_count,
             "missing_validation_issues": missing,
             "mismatched_issue_types": mismatched,
@@ -1392,14 +1457,14 @@ class ScheduleWorkbookBuilder:
             "validation_only_issues": validation_only,
         }
 
-        problem_count = len(missing) + len(mismatched) + len(contradictory)
         if problem_count:
             logger.warning(
                 "[VAY SM] Pod doubles validation reconciliation found "
                 f"{len(missing)} unprotected entrie(s) without an open partner "
                 f"validation issue, {len(mismatched)} with a mismatched issue "
-                f"type, and {len(contradictory)} confirmed pair member(s) with "
-                "a contradictory open issue. Scheduler diagnostics and the "
+                f"type, {len(contradictory)} confirmed pair member(s) with "
+                f"a contradictory open issue, and {len(validation_only)} "
+                "validation-only issue(s). Scheduler diagnostics and the "
                 "Validation-Issues tab disagree — investigate before publishing."
             )
             for record in missing:

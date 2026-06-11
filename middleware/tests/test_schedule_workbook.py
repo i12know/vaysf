@@ -1216,6 +1216,7 @@ def test_pod_validation_reconciliation_subset_holds(tmp_path):
     ]
     validation_rows = [
         {"Participant ID (WP)": "99", "sport_type": SPORT_TYPE["BADMINTON"],
+         "sport_format": "Women Double",
          "Issue Type": "missing_doubles_partner", "Severity": "ERROR",
          "Status": "open"},
     ]
@@ -1257,6 +1258,54 @@ def test_pod_validation_reconciliation_detects_missing_issue(tmp_path):
     )
 
 
+def test_pod_validation_reconciliation_isolated_by_format_and_gender():
+    """One format's issue must not satisfy another division in the same sport."""
+    builder = ScheduleWorkbookBuilder()
+    unprotected = [
+        {
+            "participant_id": "7",
+            "participant_name": "Player Seven",
+            "church_code": "TLC",
+            "division_id": "TT-Men-Doubles",
+            "sport_type": SPORT_TYPE["TABLE_TENNIS"],
+            "sport_format": "Doubles",
+            "sport_gender": "Men",
+            "reason": "MissingPartner",
+        },
+        {
+            "participant_id": "7",
+            "participant_name": "Player Seven",
+            "church_code": "TLC",
+            "division_id": "TT-Mixed-Doubles",
+            "sport_type": SPORT_TYPE["TABLE_TENNIS"],
+            "sport_format": "Doubles",
+            "sport_gender": "Mixed",
+            "reason": "MissingPartner",
+        },
+    ]
+    validation_rows = [
+        {
+            "Participant ID (WP)": "7",
+            "sport_type": SPORT_TYPE["TABLE_TENNIS"],
+            "sport_format": "Men Double",
+            "Issue Type": "missing_doubles_partner",
+            "Status": "open",
+        },
+    ]
+
+    recon = builder._reconcile_pod_validation(
+        unprotected, {}, validation_rows
+    )
+
+    assert recon["matched_count"] == 1
+    assert len(recon["missing_validation_issues"]) == 1
+    assert recon["missing_validation_issues"][0]["division_id"] == "TT-Mixed-Doubles"
+    assert [entry["validation_issue_status"] for entry in unprotected] == [
+        "Matched",
+        "MissingValidationIssue",
+    ]
+
+
 def test_pod_validation_reconciliation_detects_contradiction(tmp_path):
     """A confirmed reciprocal pair member with a still-open partner validation
     issue is contradictory: scheduler and validation disagree (Issue #160)."""
@@ -1276,6 +1325,7 @@ def test_pod_validation_reconciliation_detects_contradiction(tmp_path):
     ]
     validation_rows = [
         {"Participant ID (WP)": "446", "sport_type": SPORT_TYPE["BADMINTON"],
+         "sport_format": "Men Double",
          "Issue Type": "doubles_partner_unmatched", "Severity": "WARNING",
          "Status": "open"},
     ]
@@ -1303,10 +1353,12 @@ def test_pod_validation_reconciliation_reports_validation_only(tmp_path):
     ]
     validation_rows = [
         {"Participant ID (WP)": "271", "sport_type": SPORT_TYPE["BADMINTON"],
+         "sport_format": "Women Double",
          "Issue Type": "missing_doubles_partner", "Severity": "ERROR",
          "Status": "open"},
         # Participant 273 has an open issue but no roster row at all.
         {"Participant ID (WP)": "273", "sport_type": SPORT_TYPE["BADMINTON"],
+         "sport_format": "Women Double",
          "Issue Type": "doubles_partner_unmatched", "Severity": "WARNING",
          "Status": "open"},
     ]
@@ -1317,6 +1369,8 @@ def test_pod_validation_reconciliation_reports_validation_only(tmp_path):
     assert recon["missing_validation_issues"] == []
     assert len(recon["validation_only_issues"]) == 1
     assert recon["validation_only_issues"][0]["participant_id"] == "273"
+    assert recon["is_clean"] is False
+    assert recon["problem_count"] == 1
 
 
 def test_pod_validation_reconciliation_resolved_issues_ignored(tmp_path):
@@ -1333,6 +1387,7 @@ def test_pod_validation_reconciliation_resolved_issues_ignored(tmp_path):
     ]
     validation_rows = [
         {"Participant ID (WP)": "479", "sport_type": SPORT_TYPE["PICKLEBALL"],
+         "sport_format": "Mixed Double",
          "Issue Type": "missing_doubles_partner", "Severity": "ERROR",
          "Status": "resolved"},
     ]

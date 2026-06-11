@@ -9,11 +9,16 @@ from .doubles_resolver import (
 from .name_matcher import normalized_name
 from .models import RulesManager
 from config import (SPORT_BY_CATEGORY, SPORT_CATEGORY, RACQUET_SPORTS,
-                   FORMAT_MAPPINGS, SPORT_FORMAT, DEFAULT_SPORT)
+                   FORMAT_MAPPINGS, SPORT_FORMAT, GENDER, DEFAULT_SPORT)
 
 
 class TeamValidator:
     """Validates team-composition rules for a single church's participants."""
+
+    PARTNER_ISSUE_TYPES = frozenset({
+        "missing_doubles_partner",
+        "doubles_partner_unmatched",
+    })
 
     ISSUE_TYPES = frozenset({
         "team_min_size",
@@ -47,6 +52,14 @@ class TeamValidator:
             (
                 r for r in partner_rules
                 if r.get("category") == "reciprocal"
+                and str(r.get("value", "")).lower() == "true"
+            ),
+            None,
+        )
+        self.required_partner_rule = next(
+            (
+                r for r in partner_rules
+                if r.get("category") == "required"
                 and str(r.get("value", "")).lower() == "true"
             ),
             None,
@@ -388,6 +401,100 @@ class TeamValidator:
                 sport_type=rec.sport_type,
                 sport_format=rec.sport_format,
                 participant_id=original_pid_by_sel_id.get(rec.participant_id),
+            ))
+
+        return issues
+
+    @staticmethod
+    def _roster_doubles_format(sport_gender: str) -> str:
+        gender = str(sport_gender or "").strip()
+        if gender in (GENDER["MEN"], GENDER["WOMEN"], GENDER["MIXED"]):
+            return f"{gender} Double"
+        return SPORT_FORMAT["DOUBLES"]
+
+    def validate_roster_partners(
+        self,
+        church_id: Any,
+        church_code: str,
+        rosters: List[Dict[str, Any]],
+        participants: List[Dict[str, Any]] | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Return canonical partner issues from the persisted roster snapshot."""
+        participant_by_id = {
+            str(participant.get("participant_id")): participant
+            for participant in (participants or [])
+            if participant.get("participant_id") not in (None, "", 0, "0")
+        }
+        selections: List[Selection] = []
+
+        for index, roster in enumerate(rosters):
+            sport_type = str(roster.get("sport_type") or "").strip()
+            sport_format = str(roster.get("sport_format") or "").strip()
+            sport_gender = str(roster.get("sport_gender") or "").strip()
+            if (
+                sport_type not in RACQUET_SPORTS
+                or sport_format != SPORT_FORMAT["DOUBLES"]
+            ):
+                continue
+
+            raw_pid = roster.get("participant_id")
+            participant_id = str(raw_pid or f"_roster_{index}")
+            participant = participant_by_id.get(str(raw_pid), {})
+            name = " ".join(
+                value
+                for value in (
+                    str(roster.get("first_name") or participant.get("first_name") or "").strip(),
+                    str(roster.get("last_name") or participant.get("last_name") or "").strip(),
+                )
+                if value
+            ).strip()
+            partner_name = str(roster.get("partner_name") or "").strip()
+            display_format = self._roster_doubles_format(sport_gender)
+            selections.append(Selection(
+                participant_id=participant_id,
+                name=name or participant_id,
+                norm_name=self._normalized_name(name),
+                partner_name=partner_name,
+                partner_norm_name=self._normalized_name(partner_name),
+                sport_type=sport_type,
+                sport_format=display_format,
+                church_code=str(roster.get("church_code") or church_code or "").strip(),
+                group_key=f"{sport_type}|{SPORT_FORMAT['DOUBLES']}|{sport_gender}",
+            ))
+
+        if not selections:
+            return []
+
+        _, unresolved = resolve_doubles(selections)
+        issues: List[Dict[str, Any]] = []
+        for rec in unresolved:
+            if rec.reason == "MissingPartner":
+                if not self.required_partner_rule:
+                    continue
+                issues.append(self._build_issue(
+                    church_id=church_id,
+                    issue_type="missing_doubles_partner",
+                    description=(
+                        f"Partner name required for {rec.sport_type} "
+                        f"({rec.sport_format})"
+                    ),
+                    rule=self.required_partner_rule,
+                    sport_type=rec.sport_type,
+                    sport_format=rec.sport_format,
+                    participant_id=rec.participant_id,
+                ))
+                continue
+
+            if not self.reciprocal_partner_rule:
+                continue
+            issues.append(self._build_issue(
+                church_id=church_id,
+                issue_type="doubles_partner_unmatched",
+                description=self._doubles_issue_description(rec),
+                rule=self.reciprocal_partner_rule,
+                sport_type=rec.sport_type,
+                sport_format=rec.sport_format,
+                participant_id=rec.participant_id,
             ))
 
         return issues

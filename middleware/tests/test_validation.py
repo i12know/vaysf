@@ -12,7 +12,7 @@ from validation.name_matcher import likely_name_match, normalized_name
 from validation.team_validator import TeamValidator
 from loguru import logger
 from config import Config, CHM_FIELDS
-from config import (SPORT_TYPE, SPORT_UNSELECTED, DEFAULT_SPORT,
+from config import (SPORT_TYPE, SPORT_FORMAT, GENDER, SPORT_UNSELECTED, DEFAULT_SPORT,
                    VALIDATION_SEVERITY, AGE_RESTRICTIONS)
 
 @pytest.fixture
@@ -1099,6 +1099,36 @@ def test_team_validator_duplicate_slot_with_blank_partner_still_confirms_pair(te
     issues = team_validator.validate_church(1, participants)
 
     assert not any(issue["issue_type"] == "doubles_partner_unmatched" for issue in issues), issues
+
+
+def test_team_validator_roster_snapshot_emits_event_specific_partner_issue(team_validator):
+    """Roster-derived validation uses the scheduler's persisted event identity."""
+    rosters = [
+        {
+            "participant_id": "69",
+            "church_code": "LBC",
+            "first_name": "Player",
+            "last_name": "Missing",
+            "sport_type": SPORT_TYPE["TABLE_TENNIS"],
+            "sport_format": SPORT_FORMAT["DOUBLES"],
+            "sport_gender": GENDER["WOMEN"],
+            "partner_name": "",
+        },
+    ]
+
+    issues = team_validator.validate_roster_partners(
+        church_id=1,
+        church_code="LBC",
+        rosters=rosters,
+    )
+
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue["participant_id"] == "69"
+    assert issue["issue_type"] == "missing_doubles_partner"
+    assert issue["rule_code"] == "PARTNER_REQUIRED_DOUBLES"
+    assert issue["sport_type"] == SPORT_TYPE["TABLE_TENNIS"]
+    assert issue["sport_format"] == "Women Double"
 
 
 def test_team_validator_reciprocal_match_can_cross_primary_and_secondary_slots(team_validator):
