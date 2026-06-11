@@ -1037,6 +1037,31 @@ class ParticipantSyncer:
             ("other_events", None, None),
         ]
         current_sports = set()
+        current_rosters: Dict[Tuple[str, str, str, Any], Dict[str, Any]] = {}
+
+        def remember_roster(roster_data: Dict[str, Any]) -> None:
+            roster_key = (
+                roster_data["sport_type"],
+                roster_data["sport_format"],
+                roster_data["sport_gender"],
+                roster_data["team_order"],
+            )
+            current_sports.add(roster_key)
+
+            existing = current_rosters.get(roster_key)
+            if existing is None:
+                current_rosters[roster_key] = roster_data
+                return
+
+            existing_partner = str(existing.get("partner_name") or "").strip()
+            new_partner = str(roster_data.get("partner_name") or "").strip()
+            if not existing_partner and new_partner:
+                existing["partner_name"] = roster_data.get("partner_name")
+            elif existing_partner and new_partner and existing_partner != new_partner:
+                logger.warning(
+                    f"Participant {participant_id} has conflicting partner declarations "
+                    f"for {roster_key}: keeping '{existing_partner}', ignoring '{new_partner}'."
+                )
 
         ## Add debug info next 4 lines - what participant are we syncing?
         logger.debug(f"=== ROSTER SYNC START for participant_id={participant_id} ===")
@@ -1064,8 +1089,7 @@ class ParticipantSyncer:
                     }
                     ## Debug for other_events roster in next 2 lines
                     logger.debug(f"Adding to current_sports: ('{other_sport}', 'Team', 'Mixed', None)")
-                    current_sports.add((roster_data["sport_type"], roster_data["sport_format"], roster_data["sport_gender"], roster_data["team_order"]))
-                    self._create_or_update_roster(roster_data)
+                    remember_roster(roster_data)
             else:
                 sport_type = sport_value
                 format_value = participant.get(format_field) if format_field else None
@@ -1144,8 +1168,10 @@ class ParticipantSyncer:
 
                 ## Debug next 1 line for primary/secondary sport roster
                 logger.debug(f"Adding to current_sports: ('{sport_type}', '{sport_format}', '{sport_gender}', {roster_data['team_order']})")
-                current_sports.add((roster_data["sport_type"], roster_data["sport_format"], roster_data["sport_gender"], roster_data["team_order"]))
-                self._create_or_update_roster(roster_data)
+                remember_roster(roster_data)
+
+        for roster_data in current_rosters.values():
+            self._create_or_update_roster(roster_data)
 
         ## Debug next line - show all current sports
         logger.debug(f"Current sports after processing: {current_sports}")

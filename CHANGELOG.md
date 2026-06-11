@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Nightly sync correctness fixes
+
+- Consolidated duplicate primary/secondary roster selections before writing to
+  WordPress. When both selections map to the same event, a blank partner no
+  longer overwrites the nonblank partner declaration.
+- Approval synchronization now sends only participants with an approved,
+  unsynced approval record to ChMeetings. Previously it re-added every approved
+  participant on each run, even when there was nothing left to mark as synced.
+- WordPress approval reads now expose success/failure status so an API failure is
+  not mistaken for an empty unsynced-approval list.
+
 ### Canonical doubles resolver: self-pairing prevention and full unresolved coverage — closes [#160](https://github.com/i12know/vaysf/issues/160)
 
 Root cause of the 60-vs-48 `pod_unprotected_entries` gap: three divergent partner

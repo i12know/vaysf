@@ -54,6 +54,7 @@ class WordPressConnector:
         self.total_participants = 0
         self.total_participant_pages = 0
         self.last_get_rosters_status = "unknown"
+        self.last_get_approvals_status = "unknown"
         self.last_get_validation_issues_status = "unknown"
         self.last_update_validation_issue_status = "unknown"
     
@@ -484,8 +485,10 @@ class WordPressConnector:
                 params=params
             )
             response.raise_for_status()
+            self.last_get_approvals_status = "ok"
             return response.json()
         except requests.RequestException as e:
+            self.last_get_approvals_status = "failed"
             logger.error(f"Failed to get approvals: {str(e)}")
             return []
     
