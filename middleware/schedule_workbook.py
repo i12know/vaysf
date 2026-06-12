@@ -6857,7 +6857,7 @@ class ScheduleWorkbookBuilder:
         json_path.write_text(json.dumps(schedule_input, indent=2, default=str), encoding="utf-8")
         logger.info(
             f"Schedule-Input: {schedule_input['game_count']} games, "
-            f"{schedule_input['resource_count']} resources → {json_path}"
+            f"{schedule_input['resource_count']} resources -> {json_path}"
         )
         return schedule_input
 

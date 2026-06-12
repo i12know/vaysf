@@ -44,6 +44,8 @@ class ChMeetingsConnector:
         self.use_api = use_api
         self.last_group_membership_delete_status: Optional[str] = None
         self.last_get_person_status: Optional[str] = None
+        self.last_get_groups_status: Optional[str] = None
+        self.last_get_group_people_status: Optional[str] = None
         self.session = requests.Session()
         # Set headers with API key (new API uses lowercase "apikey")
         self.session.headers.update({
@@ -235,14 +237,17 @@ class ChMeetingsConnector:
         """
         if not self.use_api:
             logger.error("API usage is disabled")
+            self.last_get_groups_status = "failed"
             return []
         try:
             response = self._api_request("GET", "api/v1/groups", params=params)
             response.raise_for_status()
             raw = response.json()
             data = self._extract_data(raw)
+            self.last_get_groups_status = "ok"
             return data if isinstance(data, list) else []
         except requests.RequestException as e:
+            self.last_get_groups_status = "failed"
             logger.error(f"Failed to get groups: {str(e)}")
             return []
 
@@ -258,6 +263,7 @@ class ChMeetingsConnector:
         """
         if not self.use_api:
             logger.error("API usage is disabled")
+            self.last_get_group_people_status = "failed"
             return []
         try:
             response = self._api_request(
@@ -267,8 +273,10 @@ class ChMeetingsConnector:
             response.raise_for_status()
             raw = response.json()
             data = self._extract_data(raw)
+            self.last_get_group_people_status = "ok"
             return data if isinstance(data, list) else []
         except requests.RequestException as e:
+            self.last_get_group_people_status = "failed"
             logger.error(f"Failed to get people in group {group_id}: {str(e)}")
             return []
 

@@ -13,7 +13,7 @@ from config import Config
 from wordpress.frontend_connector import Config as WPConfig
 from chmeetings.backend_connector import Config as CHMConfig
 from config import (SPORT_TYPE, SPORT_FORMAT, GENDER, RACQUET_SPORTS, SPORT_UNSELECTED,
-                   VALIDATION_SEVERITY, FORMAT_MAPPINGS)
+                   VALIDATION_SEVERITY, FORMAT_MAPPINGS, CHM_FIELDS)
 
 
 @pytest.fixture
@@ -34,6 +34,9 @@ def sync_manager(mocker):
         mocker.patch("chmeetings.backend_connector.Config.CHM_API_URL", "https://test.chmeetings.com/")
         mocker.patch("chmeetings.backend_connector.Config.CHM_API_KEY", "test_api_key")
     manager = SyncManager()
+    if not live_test and manager.chm_connector:
+        mocker.patch.object(manager.chm_connector, "get_groups", return_value=[])
+        manager.chm_connector.last_get_groups_status = "failed"
     yield manager
     manager.close()
 
@@ -1283,6 +1286,297 @@ def test_validate_data_resolves_roster_partner_issue_after_correction(sync_manag
     update_issue.assert_called_once_with(32, {"status": "resolved"})
 
 
+def test_validate_data_filters_stale_reregistrations_and_resolves_team_issues(
+    sync_manager,
+    mocker,
+):
+    """Deleted/re-registered rows must not create ambiguity or stale TEAM issues."""
+    participants = [
+        {
+            "participant_id": "271",
+            "chmeetings_id": "current-esther",
+            "church_id": 1,
+            "church_code": "WAG",
+            "first_name": "Esther",
+            "last_name": "Tran",
+            "is_church_member": True,
+            "primary_sport": "",
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "414",
+            "chmeetings_id": "current-samantha",
+            "church_id": 1,
+            "church_code": "WAG",
+            "first_name": "Samantha",
+            "last_name": "Tran",
+            "is_church_member": True,
+            "primary_sport": "",
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "273",
+            "chmeetings_id": "deleted-samantha",
+            "church_id": 1,
+            "church_code": "WAG",
+            "first_name": "Samantha",
+            "last_name": "Tran",
+            "is_church_member": True,
+            "primary_sport": "",
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+    ]
+    rosters = [
+        {
+            "participant_id": "271",
+            "church_code": "WAG",
+            "first_name": "Esther",
+            "last_name": "Tran",
+            "sport_type": SPORT_TYPE["BADMINTON"],
+            "sport_format": SPORT_FORMAT["DOUBLES"],
+            "sport_gender": GENDER["WOMEN"],
+            "partner_name": "Samantha Tran",
+        },
+        {
+            "participant_id": "414",
+            "church_code": "WAG",
+            "first_name": "Samantha",
+            "last_name": "Tran",
+            "sport_type": SPORT_TYPE["BADMINTON"],
+            "sport_format": SPORT_FORMAT["DOUBLES"],
+            "sport_gender": GENDER["WOMEN"],
+            "partner_name": "Esther Tran",
+        },
+        {
+            "participant_id": "273",
+            "church_code": "WAG",
+            "first_name": "Samantha",
+            "last_name": "Tran",
+            "sport_type": SPORT_TYPE["BADMINTON"],
+            "sport_format": SPORT_FORMAT["DOUBLES"],
+            "sport_gender": GENDER["WOMEN"],
+            "partner_name": "Esther Tran",
+        },
+    ]
+    existing_issues = [
+        {
+            "issue_id": issue_id,
+            "church_id": 1,
+            "participant_id": participant_id,
+            "issue_type": "doubles_partner_unmatched",
+            "issue_description": "stale duplicate-registration issue",
+            "rule_code": "PARTNER_RECIPROCAL_DOUBLES",
+            "rule_level": "TEAM",
+            "severity": "WARNING",
+            "sport_type": SPORT_TYPE["BADMINTON"],
+            "sport_format": "Women Double",
+            "status": "open",
+        }
+        for issue_id, participant_id in ((41, "271"), (42, "414"), (43, "273"))
+    ]
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=participants,
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        return_value=rosters,
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=existing_issues,
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "WAG", "church_id": 1}],
+    )
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 44},
+    )
+    update_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_validation_issue",
+        return_value=True,
+    )
+
+    def get_groups():
+        sync_manager.chm_connector.last_get_groups_status = "ok"
+        return [{"id": "team-wag", "name": "Team WAG"}]
+
+    def get_group_people(_group_id):
+        sync_manager.chm_connector.last_get_group_people_status = "ok"
+        return [
+            {"person_id": "current-esther"},
+            {"person_id": "current-samantha"},
+            {"person_id": "deleted-samantha"},
+        ]
+
+    def get_person(chm_id):
+        if chm_id == "deleted-samantha":
+            sync_manager.chm_connector.last_get_person_status = "not_found"
+            return None
+        sync_manager.chm_connector.last_get_person_status = "ok"
+        return {
+            "id": chm_id,
+            "additional_fields": [
+                {"field_name": CHM_FIELDS["ROLES"], "value": "Athlete"}
+            ],
+        }
+
+    mocker.patch.object(sync_manager.chm_connector, "get_groups", side_effect=get_groups)
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_group_people",
+        side_effect=get_group_people,
+    )
+    mocker.patch.object(sync_manager.chm_connector, "get_person", side_effect=get_person)
+
+    assert sync_manager.validate_data()
+
+    create_issue.assert_not_called()
+    assert {
+        call.args[0] for call in update_issue.call_args_list
+    } == {41, 42, 43}
+    assert all(
+        call.args[1] == {"status": "resolved"}
+        for call in update_issue.call_args_list
+    )
+
+
+def test_validate_data_keeps_ineligible_partner_as_actionable_issue(
+    sync_manager,
+    mocker,
+):
+    """A reciprocal but non-athlete partner must remain a Church Rep issue."""
+    participants = [
+        {
+            "participant_id": "214",
+            "chmeetings_id": "jeremy",
+            "church_id": 1,
+            "church_code": "TLC",
+            "first_name": "Jeremy",
+            "last_name": "Nguyen",
+            "is_church_member": True,
+            "primary_sport": "",
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+        {
+            "participant_id": "216",
+            "chmeetings_id": "matthew",
+            "church_id": 1,
+            "church_code": "TLC",
+            "first_name": "Matthew",
+            "last_name": "Chang",
+            "is_church_member": True,
+            "primary_sport": "",
+            "primary_format": "",
+            "secondary_sport": "",
+            "secondary_format": "",
+        },
+    ]
+    rosters = [
+        {
+            "participant_id": "214",
+            "church_code": "TLC",
+            "first_name": "Jeremy",
+            "last_name": "Nguyen",
+            "sport_type": SPORT_TYPE["BADMINTON"],
+            "sport_format": SPORT_FORMAT["DOUBLES"],
+            "sport_gender": GENDER["MEN"],
+            "partner_name": "Matthew Chang",
+        },
+        {
+            "participant_id": "216",
+            "church_code": "TLC",
+            "first_name": "Matthew",
+            "last_name": "Chang",
+            "sport_type": SPORT_TYPE["BADMINTON"],
+            "sport_format": SPORT_FORMAT["DOUBLES"],
+            "sport_gender": GENDER["MEN"],
+            "partner_name": "Jeremy Nguyen",
+        },
+    ]
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=participants,
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        return_value=rosters,
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=[],
+    )
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "TLC", "church_id": 1}],
+    )
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value={"issue_id": 45},
+    )
+
+    def get_groups():
+        sync_manager.chm_connector.last_get_groups_status = "ok"
+        return [{"id": "team-tlc", "name": "Team TLC"}]
+
+    def get_group_people(_group_id):
+        sync_manager.chm_connector.last_get_group_people_status = "ok"
+        return [{"person_id": "jeremy"}, {"person_id": "matthew"}]
+
+    def get_person(chm_id):
+        sync_manager.chm_connector.last_get_person_status = "ok"
+        role = "Athlete" if chm_id == "jeremy" else "Fan and Supporter"
+        return {
+            "id": chm_id,
+            "additional_fields": [
+                {"field_name": CHM_FIELDS["ROLES"], "value": role}
+            ],
+        }
+
+    mocker.patch.object(sync_manager.chm_connector, "get_groups", side_effect=get_groups)
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_group_people",
+        side_effect=get_group_people,
+    )
+    mocker.patch.object(sync_manager.chm_connector, "get_person", side_effect=get_person)
+
+    assert sync_manager.validate_data()
+
+    issue_payload = next(
+        call.args[0]
+        for call in create_issue.call_args_list
+        if call.args[0]["issue_type"] == "doubles_partner_unmatched"
+    )
+    assert issue_payload["participant_id"] == "214"
+    assert issue_payload["sport_type"] == SPORT_TYPE["BADMINTON"]
+    assert issue_payload["sport_format"] == "Men Double"
+    assert "Matthew Chang" in issue_payload["issue_description"]
+
+
 def test_validate_data_creates_church_level_issue(sync_manager, mocker):
     """Church-level entry limits should sync as CHURCH validation issues."""
     participants = [
@@ -1860,6 +2154,59 @@ def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
     assert row["participant_id"] == 42
     assert row["church_code"] == "RPC"
     mock_delete.assert_not_called()
+
+
+def test_create_or_update_roster_moves_existing_row_to_current_church(
+    sync_manager,
+    mocker,
+):
+    """A church transfer must update roster ownership without recreating the row."""
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    existing_roster = {
+        "roster_id": 123,
+        "church_code": "FVC",
+        "participant_id": 67,
+        "sport_type": SPORT_TYPE["BADMINTON"],
+        "sport_format": SPORT_FORMAT["DOUBLES"],
+        "sport_gender": GENDER["WOMEN"],
+        "partner_name": "Tine Le",
+        "team_order": None,
+    }
+    roster_data = {
+        **existing_roster,
+        "church_code": "TLC",
+    }
+    roster_data.pop("roster_id")
+
+    def get_rosters(_params):
+        sync_manager.wordpress_connector.last_get_rosters_status = "ok"
+        return [existing_roster]
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_rosters",
+        side_effect=get_rosters,
+    )
+    update_roster = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_roster",
+        return_value={"roster_id": 123},
+    )
+    create_roster = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_roster",
+    )
+
+    participant_syncer._create_or_update_roster(roster_data)
+
+    update_roster.assert_called_once_with(123, {"church_code": "TLC"})
+    create_roster.assert_not_called()
+    assert sync_manager.stats["rosters"]["updated"] == 1
 
 
 def test_sync_rosters_preserves_partner_when_duplicate_event_has_blank_partner(

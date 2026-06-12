@@ -1268,7 +1268,11 @@ class ParticipantSyncer:
                 roster_id_to_update = matched_existing_roster_details['roster_id']
                 logger.debug(f"{log_prefix} - Existing roster found (ID: {roster_id_to_update}). Checking for updates.")
 
-                fields_to_check_for_update = ["partner_name", "team_order"]
+                fields_to_check_for_update = [
+                    "church_code",
+                    "partner_name",
+                    "team_order",
+                ]
                 update_payload = {}
                 needs_db_update = False
 

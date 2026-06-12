@@ -2716,7 +2716,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         json_path = filepath.parent / "schedule_input.json"
                         logger.info(
                             f"schedule_input.json: {schedule_input['game_count']} games, "
-                            f"{schedule_input['resource_count']} resources → {json_path}"
+                            f"{schedule_input['resource_count']} resources -> {json_path}"
                         )
                     except Exception as _si_exc:
                         logger.error(
@@ -2913,14 +2913,14 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         church_rep_email = church.get('church_rep_email', 'N/A')
                         
                         logger.info(f"  {participant_name} ({church_code}) - Status: {status}")
-                        logger.info(f"    → Pastor approval email TO: {pastor_email}")
-                        logger.info(f"    → Participant notification TO: {participant_email}")
+                        logger.info(f"    -> Pastor approval email TO: {pastor_email}")
+                        logger.info(f"    -> Participant notification TO: {participant_email}")
                         if church_rep_email != 'N/A':
-                            logger.info(f"    → Church rep CC: {church_rep_email}")
+                            logger.info(f"    -> Church rep CC: {church_rep_email}")
                         logger.info("")  # Empty line for readability
                     else:
                         logger.info(f"  {participant_name} ({church_code}) - Status: {status}")
-                        logger.error(f"    → ERROR: Church {church_code} not found in cache!")
+                        logger.error(f"    -> ERROR: Church {church_code} not found in cache!")
                         logger.info("")
             
             return len(participants_to_resend)
