@@ -640,6 +640,18 @@ inventory, then merges those playoff assignments into the output. Writes
 Exit codes: 0 = OPTIMAL/FEASIBLE (all pools solved), 1 = PARTIAL/INFEASIBLE/UNKNOWN,
 2 = error.
 
+Before anything is solved, the input is checked against the schedule contract
+(`middleware/schedule_contracts.py`, Issue #161): Pydantic models for games,
+resources, playoff slots, precedence rules, and conflict edges, plus
+cross-checks for duplicate IDs, precedence cycles, and games whose
+`duration_minutes` cannot fit any resource of their `resource_type`. Contract
+violations exit 3 with every violation listed (each message names the
+offending `game_id`/`resource_id`); tolerable conditions — a `resource_type`
+with no resources, a precedence rule referencing an unknown game — are logged
+as warnings and the solve proceeds. `produce-schedule` runs the same contract
+over both JSON files before rendering. Extra/unknown fields are always
+allowed, so hand-annotated inputs stay valid.
+
 Playoff slots are not re-assigned by the solver, but they **are** validated
 against the resource list and reserved before pool play is packed. If a
 playoff row points at an unknown court, an invalid slot label, or duplicates an

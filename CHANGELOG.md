@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Fail-fast contract validation for scheduling JSON files — closes [#161](https://github.com/i12know/vaysf/issues/161)
+
+The scheduling bridge files now have a Pydantic contract, so malformed or
+hand-edit-damaged input fails at load time with field-level messages instead
+of a mid-solve traceback or a silently wrong schedule.
+
+- **New `middleware/schedule_contracts.py`** — `validate_schedule_input()` /
+  `validate_schedule_output()` check `schedule_input.json` and
+  `schedule_output.json` against permissive Pydantic models (extra fields
+  allowed; validation is read-only, so valid inputs solve byte-identically).
+  All violations are collected into one `ScheduleContractError`, each message
+  carrying the offending `game_id`/`resource_id`.
+- **`solve-schedule`** validates at load and exits 3 listing every violation.
+  **`produce-schedule`** validates both files before rendering.
+  `diagnose-schedule` intentionally keeps reading raw JSON so it can inspect
+  broken files.
+- **Precedence cycle detection** — a cycle in `precedence` rules is now
+  reported as a contract error naming the cycle members (previously a silent
+  INFEASIBLE); a rule referencing an unknown game/playoff id logs a warning
+  (previously silently ignored).
+- **Unfittable games are hard errors** — a game whose `duration_minutes`
+  cannot fit any resource of its `resource_type` (per C7 consecutive-slot
+  math) now fails the contract instead of surfacing downstream as a mystery
+  unscheduled/INFEASIBLE. A `resource_type` with *zero* resources stays a
+  warning, preserving the solver's documented unroutable-game exit-1 path,
+  and plain capacity shortages remain solver INFEASIBLE with diagnostics.
+- **Output sanity** — duplicate game assignments or a double-booked
+  `(resource_id, slot)` in `schedule_output.json` block rendering.
+- **Conflict-edge warning** — an edge with `primary_overlap_count > 0` but an
+  empty `shared_participant_names` list is flagged so empty Conflict-Audit
+  name cells get noticed at export time.
+
 ### Consolidated doubles selections in validation + scheduler↔validation reconciliation — closes [#160](https://github.com/i12know/vaysf/issues/160)
 
 Follow-up to the canonical resolver work below. The June 11, 2026 real-data run

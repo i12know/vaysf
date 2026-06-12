@@ -65,6 +65,7 @@ from typing import Any
 from loguru import logger
 
 from config import SCHEDULE_SOLVER_RANDOM_SEED
+from schedule_contracts import ScheduleContractError, validate_schedule_input
 
 _WEEKDAY_ORDER: dict[str, int] = {
     "Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3,
@@ -86,12 +87,18 @@ STATUS_UNKNOWN    = "UNKNOWN"
 # ---------------------------------------------------------------------------
 
 def load_schedule_input(path: Path) -> dict[str, Any]:
-    """Load schedule_input.json and validate required top-level keys."""
+    """Load schedule_input.json and validate it against the schedule contract.
+
+    Raises ScheduleContractError (with every violation listed) on malformed
+    input; logs contract warnings for conditions the solver tolerates.
+    """
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
     for key in ("games", "resources"):
         if key not in data:
             raise ValueError(f"schedule_input.json missing required key: {key!r}")
+    for warning in validate_schedule_input(data):
+        logger.warning(f"schedule_input contract: {warning}")
     return data
 
 
@@ -1577,6 +1584,14 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
     """
     try:
         schedule_input = load_schedule_input(input_path)
+    except ScheduleContractError as e:
+        logger.error(
+            f"{input_path} failed contract validation with "
+            f"{len(e.errors)} error(s):"
+        )
+        for violation in e.errors:
+            logger.error(f"  - {violation}")
+        return 3
     except Exception as e:
         logger.error(f"Failed to load {input_path}: {e}")
         return 3

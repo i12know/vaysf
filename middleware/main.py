@@ -1054,11 +1054,28 @@ def main() -> None:
         else:
             today = datetime.date.today().strftime("%Y-%m-%d")
             out_path = Path(EXPORT_DIR) / f"VAYSF_Schedule_{today}.xlsx"
+        from schedule_contracts import (
+            ScheduleContractError,
+            validate_schedule_input,
+            validate_schedule_output,
+        )
         try:
             so_data = json.loads(so_path.read_text(encoding="utf-8"))
             si_data = json.loads(si_path.read_text(encoding="utf-8"))
+            for warning in validate_schedule_input(si_data):
+                logger.warning(f"schedule_input contract: {warning}")
+            for warning in validate_schedule_output(so_data):
+                logger.warning(f"schedule_output contract: {warning}")
         except FileNotFoundError as exc:
             logger.error(f"export-schedule: required file not found — {exc.filename}")
+            success = False
+        except ScheduleContractError as exc:
+            logger.error(
+                f"produce-schedule: {exc.file_label} failed contract validation "
+                f"with {len(exc.errors)} error(s):"
+            )
+            for violation in exc.errors:
+                logger.error(f"  - {violation}")
             success = False
         else:
             out_path.parent.mkdir(parents=True, exist_ok=True)
