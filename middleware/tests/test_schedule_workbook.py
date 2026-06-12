@@ -5259,6 +5259,32 @@ def test_resolve_pod_singles_deterministic_and_deduped():
     assert entries[1]["participant_ids"] == ["92"]
 
 
+def test_pod_singles_duplicate_rows_do_not_inflate_bracket():
+    """Bracket sizing uses the same deduplicated singles membership as R1 IDs."""
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "90", "Alpha", "X"),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "90", "Alpha", "X"),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "92", "Beta", "X"),
+    ]
+
+    division = builder._build_pod_divisions_rows(roster, [])[0]
+    games, precedence = builder._build_pod_game_objects(roster, [])
+
+    assert division["planning_entries"] == 2
+    assert division["confirmed_entries"] == 2
+    assert precedence == []
+    assert len(games) == 1
+    assert games[0]["game_id"] == "BAD-Men-Singles-Final"
+    assert {
+        games[0]["team_a_id"],
+        games[0]["team_b_id"],
+    } == {
+        "BAD-Men-Singles-S01",
+        "BAD-Men-Singles-S02",
+    }
+
+
 def test_soccer_schedule_input_creates_soccer_field_games(tmp_path):
     """Soccer pool-assignment rows should create real Soccer Field games, not Gym Core games."""
     builder = ScheduleWorkbookBuilder()

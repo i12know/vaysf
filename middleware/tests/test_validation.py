@@ -59,13 +59,37 @@ def test_rules_manager_qualifying_and_excluded_are_disjoint(rules_manager):
     assert rules_manager.qualifying_roles.isdisjoint(rules_manager.known_excluded_roles)
 
 
-def test_rules_manager_empty_configuration_defaults_to_empty_sets(tmp_path):
-    """RulesManager with no 'configuration' key returns empty role sets without crashing."""
+def test_rules_manager_empty_configuration_is_not_role_configured(tmp_path):
+    """Generic rules files may omit roles, but eligibility filtering must detect it."""
     rules_file = tmp_path / "minimal.json"
     rules_file.write_text('{"rules": []}', encoding="utf-8")
     rm = RulesManager(collection="MINIMAL", rules_file=str(rules_file))
     assert rm.qualifying_roles == frozenset()
     assert rm.known_excluded_roles == frozenset()
+    assert rm.participant_roles_configured is False
+
+
+def test_rules_manager_rejects_overlapping_participant_roles(tmp_path):
+    """A role cannot be both qualifying and intentionally excluded."""
+    rules_file = tmp_path / "overlap.json"
+    rules_file.write_text(
+        json.dumps({
+            "rules": [],
+            "configuration": {
+                "participant_roles": {
+                    "qualifying": ["Athlete"],
+                    "known_excluded": ["ATHLETE"],
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    rm = RulesManager(collection="OVERLAP", rules_file=str(rules_file))
+
+    assert rm.participant_roles_configured is False
+    assert rm.configuration_error
+    assert rm.qualifying_roles == frozenset()
 
 
 def test_participant_model():

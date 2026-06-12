@@ -803,6 +803,7 @@ class ScheduleWorkbookBuilder:
         # Accumulate per-division counts.
         # key: (sport_type, sport_gender, format_class)
         divs: Dict[tuple, Dict[str, Any]] = {}
+        seen_singles_ids: Dict[tuple, set[str]] = defaultdict(set)
 
         for r in roster_rows:
             sport_type = str(r.get("sport_type") or "").strip()
@@ -824,6 +825,10 @@ class ScheduleWorkbookBuilder:
                 }
 
             pid = str(r.get("Participant ID (WP)") or "").strip()
+            if fmt_class == "singles" and pid:
+                if pid in seen_singles_ids[key]:
+                    continue
+                seen_singles_ids[key].add(pid)
             has_error = bool(pid and pid not in ("0",) and sport_type in error_lookup.get(pid, set()))
 
             if fmt_class == "anomaly":
@@ -3021,7 +3026,11 @@ class ScheduleWorkbookBuilder:
         for div in div_rows:
             if div["division_status"] in ("Empty", "AnomalyOnly"):
                 continue
-            n_entries = div["planning_entries"]
+            fmt_class = self._pod_format_class(str(div.get("sport_format") or ""))
+            if fmt_class == "singles":
+                n_entries = len(singles_by_div.get(div["division_id"], []))
+            else:
+                n_entries = div["planning_entries"]
             if n_entries < 2:
                 continue
             division_id = div["division_id"]
@@ -3051,7 +3060,6 @@ class ScheduleWorkbookBuilder:
             # (Issue #164).  Bracket math mirrors the outer P computation so
             # byes are placed correctly.
             r1_matchups: List[Tuple[Optional[str], Optional[str]]] = []
-            fmt_class = self._pod_format_class(str(div.get("sport_format") or ""))
             if fmt_class == "doubles":
                 entries = confirmed_by_div.get(division_id, [])
             elif fmt_class == "singles":

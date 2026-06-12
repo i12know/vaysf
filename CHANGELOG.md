@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Issue #165 follow-up review fixes
+
+- Fail safely when seasonal ChMeetings participant-role configuration is
+  missing or invalid: validation keeps the unfiltered WordPress population
+  instead of treating every athlete as ineligible.
+- Use deduplicated singles membership consistently for pod division counts and
+  bracket generation, preventing duplicate roster rows from creating phantom
+  entrants or `None` Round-1 opponents.
+- Merge game, playoff-slot, and assignment metadata in post-solve quality
+  diagnostics so manual-only pinned playoff games retain their event and
+  duration in actionable warnings.
+
 ### Decompose schedule_workbook.py into scheduling/ package — refs [#152](https://github.com/i12know/vaysf/issues/152)
 
 Extraction-only refactor (Steps 1–3 of 8): no behavior changes, all imports

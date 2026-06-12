@@ -434,6 +434,38 @@ def test_quality_warnings_late_finish_flagged():
     assert late[0]["game_id"] == "BBM-Final"
 
 
+def test_quality_warnings_manual_playoff_assignment_keeps_metadata():
+    """Manual-only playoff rows retain event and duration in quality output."""
+    si = _quality_schedule_input()
+    si["games"] = [
+        game for game in si["games"] if game["game_id"] != "BBM-Final"
+    ]
+    si["playoff_slots"] = [{
+        "game_id": "BBM-Final",
+        "event": "Basketball - Men Team",
+        "stage": "Final",
+        "resource_id": "GYM-1",
+        "slot": "Sat-1-20:30",
+        "duration_minutes": 60,
+    }]
+    so = _quality_schedule_output(
+        semi_slot="Sat-1-18:00",
+        final_slot="Sat-1-20:30",
+    )
+
+    diagnostics = build_schedule_diagnostics(si, so)
+
+    late = [
+        warning
+        for warning in diagnostics["quality_warnings"]
+        if warning["check"] == "late_finish"
+        and warning["game_id"] == "BBM-Final"
+    ]
+    assert len(late) == 1
+    assert late[0]["event"] == "Basketball - Men Team"
+    assert late[0]["latest_finish"] == "21:30"
+
+
 def test_quality_warnings_tight_turnaround_flagged():
     """Semi ending at 20:00 and Final starting at 20:15 (15 min gap) is flagged."""
     si = _quality_schedule_input()

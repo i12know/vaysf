@@ -2729,4 +2729,29 @@ def test_is_eligible_by_role_blank_roles_not_eligible():
     assert not _is_eligible_by_role("   ", _QUALIFYING, _EXCLUDED, "chm-010")
 
 
+def test_load_current_eligible_ids_falls_back_when_role_config_invalid(
+    sync_manager, mocker
+):
+    """Invalid seasonal role config must not filter the population to zero."""
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_groups",
+        return_value=[{"id": "team-1", "name": f"{Config.TEAM_PREFIX} RPC"}],
+    )
+    sync_manager.chm_connector.last_get_groups_status = "ok"
+    broken_rules = mocker.Mock(
+        participant_roles_configured=False,
+        rules_file="broken-rules.json",
+    )
+    mocker.patch("sync.manager.RulesManager", return_value=broken_rules)
+    get_group_people = mocker.patch.object(
+        sync_manager.chm_connector, "get_group_people"
+    )
+
+    result = sync_manager._load_current_eligible_chm_ids()
+
+    assert result is None
+    get_group_people.assert_not_called()
+
+
 ##### End of tests/test_sync_manager

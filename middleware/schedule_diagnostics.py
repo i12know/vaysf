@@ -678,9 +678,23 @@ def _build_quality_warnings(
     if status in ("INFEASIBLE", "UNKNOWN", ""):
         return warnings  # quality checks only make sense for a placed schedule
 
-    game_meta: dict[str, dict[str, Any]] = {
-        str(g["game_id"]): g for g in schedule_input.get("games", [])
-    }
+    game_meta: dict[str, dict[str, Any]] = {}
+    for source in (
+        schedule_input.get("games", []),
+        schedule_input.get("playoff_slots", []),
+        schedule_output.get("assignments", []),
+    ):
+        for game in source or []:
+            game_id = str(game.get("game_id") or "").strip()
+            if not game_id:
+                continue
+            game_meta.setdefault(game_id, {}).update(
+                {
+                    key: value
+                    for key, value in game.items()
+                    if value not in (None, "")
+                }
+            )
     res_meta: dict[str, dict[str, Any]] = {
         str(r["resource_id"]): r for r in schedule_input.get("resources", [])
     }

@@ -818,6 +818,13 @@ class SyncManager:
         eligible_ids: set[str] = set()
         seen_ids: set[str] = set()
         _rm = RulesManager(collection="SUMMER_2026")
+        if not _rm.participant_roles_configured:
+            logger.error(
+                "Participant-role configuration is missing or invalid in "
+                f"{_rm.rules_file}; retaining unfiltered WordPress validation "
+                "for this pass."
+            )
+            return None
         qualifying_roles = _rm.qualifying_roles
         known_excluded_roles = _rm.known_excluded_roles
 
