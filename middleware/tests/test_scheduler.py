@@ -1873,3 +1873,46 @@ def test_solve_qf_semi_gap_enforced():
     assert semi_idx >= qf2_idx + 2, (
         f"Semi-1 at slot {semi_idx} is too close to QF-2 at slot {qf2_idx} (need gap >= 2)"
     )
+
+
+def test_run_solve_schedule_timeout_writes_unknown(tmp_path, monkeypatch):
+    """Solver timeout returns exit code 2 and writes a parseable output with status UNKNOWN.
+
+    Monkeypatches _solve_one_pool to return STATUS_UNKNOWN immediately so the test
+    never flakes on CI due to wall-clock timing.  Verifies the file is written (callers
+    must still be able to inspect partial results) and that all required top-level keys
+    are present.
+    """
+    pytest.importorskip("ortools")
+    import scheduler as _scheduler
+    from scheduler import STATUS_UNKNOWN, run_solve_schedule
+
+    def _mock_timeout(pool_input, timeout_seconds):
+        return {
+            "status":              STATUS_UNKNOWN,
+            "solver_wall_seconds": timeout_seconds,
+            "assignments":         [],
+            "unscheduled":         [g["game_id"] for g in pool_input.get("games", [])],
+            "diagnostics":         [],
+        }
+
+    monkeypatch.setattr(_scheduler, "_solve_one_pool", _mock_timeout)
+
+    si = _minimal_schedule_input(
+        games=[_gym_game("G1", "T1", "T2"), _gym_game("G2", "T3", "T4")],
+        resources=[_gym_resource("GYM-Sat-1-1")],
+    )
+    input_path = tmp_path / "schedule_input.json"
+    input_path.write_text(json.dumps(si), encoding="utf-8")
+    output_path = tmp_path / "schedule_output.json"
+
+    exit_code = run_solve_schedule(input_path, output_path)
+
+    assert exit_code == 2
+    assert output_path.exists(), "schedule_output.json must be written even on timeout"
+
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert data["status"] == STATUS_UNKNOWN
+    assert "solved_at" in data
+    assert "assignments" in data
+    assert "pool_results" in data

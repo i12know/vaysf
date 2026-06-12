@@ -5080,3 +5080,110 @@ def test_soccer_disabled_removes_from_pool_assignment(monkeypatch):
     base_rows = builder._build_pool_assignment_base_rows(rows)
     soccer_rows = [r for r in base_rows if r["Event"] == SPORT_TYPE["SOCCER"]]
     assert soccer_rows == []
+
+
+def test_produce_schedule_preserves_vietnamese_diacritics(tmp_path):
+    """Team labels with Vietnamese diacritics must survive unmangled into Excel cells.
+
+    _cell_text() renders the two-line "header\\na vs b" layout only when both
+    labels are at most 12 chars long.  The names below are chosen to be <= 12 chars
+    so the assertion can check the rendered cell text directly.
+
+    Regression guard: never lowercase or strip diacritics (CLAUDE.md §Bilingual names).
+    """
+    label_a = "Hội Thánh"   # 9 chars — Vietnamese: "Holy Church"
+    label_b = "Tin Lành"    # 8 chars — Vietnamese: "Gospel / Good News"
+
+    schedule_input = {
+        "games": [
+            {
+                "game_id": "BBM-01",
+                "event": "Basketball - Men Team",
+                "stage": "Pool",
+                "pool_id": "P1",
+                "round": 1,
+                "team_a_id": "BBM-P1-T1",
+                "team_b_id": "BBM-P1-T2",
+                "team_a_label": label_a,
+                "team_b_label": label_b,
+                "duration_minutes": 60,
+                "resource_type": "Gym Court",
+                "earliest_slot": None,
+                "latest_slot": None,
+            }
+        ],
+        "resources": [
+            {
+                "resource_id": "GYM-Sat-1-1",
+                "resource_type": "Gym Court",
+                "label": "Court-1",
+                "day": "Sat-1",
+                "open_time": "08:00",
+                "close_time": "09:00",
+                "slot_minutes": 60,
+                "exclusive_group": "",
+            }
+        ],
+        "playoff_slots": [],
+    }
+    schedule_output = {
+        "solved_at": "2026-05-01T10:00:00+00:00",
+        "status": "OPTIMAL",
+        "solver_wall_seconds": 0.1,
+        "assignments": [
+            {"game_id": "BBM-01", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-08:00"}
+        ],
+        "unscheduled": [],
+        "pool_results": [],
+        "conflict_audit_summary": {
+            "total_edges": 0,
+            "separated_edges": 0,
+            "overlapping_edges": 0,
+            "incomplete_edges": 0,
+            "remaining_primary_overlap_penalty": 0,
+            "remaining_secondary_overlap_penalty": 0,
+        },
+        "conflict_audit": [],
+    }
+
+    workbook_path = tmp_path / "schedule_output.xlsx"
+    ScheduleWorkbookBuilder.write_schedule_output_workbook(
+        workbook_path,
+        schedule_output,
+        schedule_input,
+    )
+
+    wb = load_workbook(workbook_path)
+
+    # Collect every string value from all sheets.
+    all_cell_texts: list[str] = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value is not None:
+                    all_cell_texts.append(str(cell.value))
+
+    joined = "\n".join(all_cell_texts)
+
+    # Both Vietnamese names must appear unmangled somewhere in the workbook.
+    assert label_a in joined, (
+        f"Vietnamese label {label_a!r} was mangled or dropped in the workbook"
+    )
+    assert label_b in joined, (
+        f"Vietnamese label {label_b!r} was mangled or dropped in the workbook"
+    )
+
+    # The two-line cell in Schedule-by-Time must render both on the matchup line.
+    by_time_texts = []
+    if "Schedule-by-Time" in wb.sheetnames:
+        ws = wb["Schedule-by-Time"]
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value is not None:
+                    by_time_texts.append(str(cell.value))
+    matchup_line = f"{label_a} vs {label_b}"
+    assert any(matchup_line in t for t in by_time_texts), (
+        f"Expected matchup line {matchup_line!r} in Schedule-by-Time cells; "
+        f"got cells: {by_time_texts[:30]}"
+    )
