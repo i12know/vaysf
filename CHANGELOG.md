@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Stage-aware racquet late-round game IDs — closes [#130](https://github.com/i12know/vaysf/issues/130)
+
+Racquet sport (TT, TT 35+, Pickleball, Pickleball 35+, Tennis, Badminton)
+bracket games now receive stable stage-aware IDs, enabling operators to pin
+late rounds via `Playoff-Slots` the same way team-sport finals are pinned.
+
+- **Bracket-aware game generation** — `_build_pod_game_objects()` replaces
+  the flat sequential `R1` loop with a round-by-round bracket. Late-round
+  games receive named IDs: `-QF-1..N` (bracket size ≥ 8), `-Semi-1`,
+  `-Semi-2`, `-Final`. Early rounds keep sequential numeric IDs (`-01`,
+  `-02`, …) for very large brackets.
+- **Precedence** — per-division precedence edges enforce round ordering
+  (every game in round R must complete before round R+1 starts,
+  `min_gap_slots=1`). These edges are included in `schedule_input.json`
+  alongside the existing Soccer and Basketball precedence chains.
+- **Return type** — `_build_pod_game_objects()` now returns
+  `(games, precedence)` and the caller `_build_schedule_input()` extends the
+  top-level precedence list accordingly.
+- **Doubles assignment preserved** — bracket round-1 matchups for confirmed
+  doubles pairs carry real entry IDs as before; bye-aware math is unchanged.
+- Five new unit tests: TT bracket structures (P=8 with N=6 and N=8),
+  Pickleball P=4 bracket, precedence inclusion in `schedule_input.json`, and
+  an end-to-end Playoff-Slots pin of a `TT-Men-Singles-Final` game.
+- Identified in the 2026 pre-season scheduling review (#165, P0b).
+
 ### Venue-centric Playoff-Slots — pin finals by gym + date + time — closes [#127](https://github.com/i12know/vaysf/issues/127)
 
 Operators can now pin playoff games without knowing internal allocator

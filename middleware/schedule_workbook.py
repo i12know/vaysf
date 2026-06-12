@@ -3011,12 +3011,22 @@ class ScheduleWorkbookBuilder:
         self,
         roster_rows: List[Dict[str, Any]],
         validation_rows: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """Return single-elimination game placeholder dicts for pod (racquet) sports.
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Return (games, precedence) for single-elimination brackets for pod (racquet) sports.
 
         Uses planning_entries (confirmed + provisional) from Pod-Divisions.
         Number of games per division = planning_entries − 1 (single elimination).
         Divisions with fewer than 2 planning entries are skipped.
+
+        Late rounds receive stage-aware IDs so operators can pin them in
+        Playoff-Slots (Issue #130):
+          - ``-QF-N``   quarter-final games (bracket size >= 8)
+          - ``-Semi-N`` semi-final games
+          - ``-Final``  championship game
+        Early rounds keep sequential numeric IDs (``-01``, ``-02``, ...).
+
+        Precedence edges enforce round ordering: every game in round R must
+        complete (min_gap_slots=1) before any game in round R+1 can start.
 
         For doubles divisions, the first ``floor(c / 2)`` games (where ``c`` is
         the number of *confirmed* pairs) are real Round-1 matchups carrying the
@@ -3028,7 +3038,9 @@ class ScheduleWorkbookBuilder:
         """
         div_rows = self._build_pod_divisions_rows(roster_rows, validation_rows)
         confirmed_by_div, _unprotected = self._resolve_pod_doubles(roster_rows, validation_rows)
-        games: List[Dict[str, Any]] = []
+        all_games: List[Dict[str, Any]] = []
+        all_precedence: List[Dict[str, Any]] = []
+
         for div in div_rows:
             if div["division_status"] in ("Empty", "AnomalyOnly"):
                 continue
@@ -3040,51 +3052,105 @@ class ScheduleWorkbookBuilder:
             resource_type = div["resource_type"]
             mpg = div["minutes_per_game"]
 
-            # Round-1 matchups for planned doubles entries using standard
-            # single-elimination bracket math: for N entries, the bracket
-            # size P is the smallest power of 2 >= N; byes = P - N entries
-            # advance directly to R2. Unknown/unresolved entries occupy
-            # anonymous draw positions so they affect bye placement without
-            # being falsely conflict-protected.
+            # Bracket size P = smallest power of 2 >= n_entries.
+            P = 1
+            while P < n_entries:
+                P <<= 1
+            n_rounds = P.bit_length() - 1  # log2(P)
+
+            # Stage name for each bracket round (from the Final backward).
+            def _round_stage(r: int, _nr: int = n_rounds) -> str:
+                rounds_from_end = _nr - r
+                if rounds_from_end == 0:
+                    return "Final"
+                if rounds_from_end == 1:
+                    return "Semi"
+                if rounds_from_end == 2:
+                    return "QF"
+                return f"R{r}"  # pre-QF rounds for very large brackets
+
+            # Doubles Round-1 matchup assignment.  Bracket math mirrors the outer
+            # P computation so byes are placed correctly (Issue #158, Decision 1).
             r1_matchups: List[Tuple[Optional[str], Optional[str]]] = []
             if self._pod_format_class(str(div.get("sport_format") or "")) == "doubles":
                 entries = confirmed_by_div.get(division_id, [])
-                n = n_entries
-                if n >= 2:
-                    p = 1
-                    while p < n:
-                        p <<= 1
-                    byes = p - n
-                    r1_match_count = (n - byes) // 2
+                if n_entries >= 2:
+                    byes = P - n_entries
+                    r1_match_count = (n_entries - byes) // 2
                     planned_entry_ids: List[Optional[str]] = [
-                        entry["entry_id"] for entry in entries[:n]
+                        entry["entry_id"] for entry in entries[:n_entries]
                     ]
-                    planned_entry_ids.extend([None] * (n - len(planned_entry_ids)))
-                    r1_starters = planned_entry_ids[n - 2 * r1_match_count:]
+                    planned_entry_ids.extend([None] * (n_entries - len(planned_entry_ids)))
+                    r1_starters = planned_entry_ids[n_entries - 2 * r1_match_count:]
                     for k in range(0, 2 * r1_match_count, 2):
                         r1_matchups.append((r1_starters[k], r1_starters[k + 1]))
 
-            for i in range(1, n_entries):  # n_entries - 1 games
-                if i - 1 < len(r1_matchups):
-                    team_a_id, team_b_id = r1_matchups[i - 1]
-                else:
-                    team_a_id, team_b_id = None, None
-                games.append({
-                    "game_id": f"{division_id}-{i:02d}",
-                    "division_id": division_id,
-                    "division_entry_count": n_entries,
-                    "event": sport_type,
-                    "stage": "R1",
-                    "pool_id": "",
-                    "round": i,
-                    "team_a_id": team_a_id,
-                    "team_b_id": team_b_id,
-                    "duration_minutes": mpg,
-                    "resource_type": resource_type,
-                    "earliest_slot": None,
-                    "latest_slot": None,
-                })
-        return games
+            # Generate games round by round.
+            # Round 1 actual games: n_entries - P//2  (byes happen only in round 1)
+            # Round r > 1: P // 2^r games  (no more byes)
+            div_games: List[Dict[str, Any]] = []
+            games_by_round: Dict[int, List[str]] = {}
+            stage_counters: Dict[str, int] = {}
+            early_seq = 0   # sequential counter for pre-QF numeric IDs
+            game_idx = 0    # total games generated (for doubles matchup assignment)
+
+            for r in range(1, n_rounds + 1):
+                stage = _round_stage(r)
+                n_games = (
+                    max(0, n_entries - P // 2) if r == 1 else P // (2 ** r)
+                )
+                stage_counters.setdefault(stage, 0)
+                games_by_round[r] = []
+
+                for _ in range(n_games):
+                    stage_counters[stage] += 1
+                    cnt = stage_counters[stage]
+
+                    if stage == "Final":
+                        game_id = f"{division_id}-Final"
+                    elif stage in ("Semi", "QF"):
+                        game_id = f"{division_id}-{stage}-{cnt}"
+                    else:
+                        early_seq += 1
+                        game_id = f"{division_id}-{early_seq:02d}"
+
+                    games_by_round[r].append(game_id)
+
+                    if game_idx < len(r1_matchups):
+                        team_a_id, team_b_id = r1_matchups[game_idx]
+                    else:
+                        team_a_id, team_b_id = None, None
+                    game_idx += 1
+
+                    div_games.append({
+                        "game_id":              game_id,
+                        "division_id":          division_id,
+                        "division_entry_count": n_entries,
+                        "event":                sport_type,
+                        "stage":                stage,
+                        "pool_id":              "",
+                        "round":                r,
+                        "team_a_id":            team_a_id,
+                        "team_b_id":            team_b_id,
+                        "duration_minutes":     mpg,
+                        "resource_type":        resource_type,
+                        "earliest_slot":        None,
+                        "latest_slot":          None,
+                    })
+
+            # Precedence: every game in round R must finish before round R+1 starts.
+            for r in range(1, n_rounds):
+                for before_id in games_by_round[r]:
+                    for after_id in games_by_round[r + 1]:
+                        all_precedence.append({
+                            "before_game_id": before_id,
+                            "after_game_id":  after_id,
+                            "min_gap_slots":  1,
+                        })
+
+            all_games.extend(div_games)
+
+        return all_games, all_precedence
 
     @staticmethod
     def _build_gym_resource_objects(
@@ -4051,7 +4117,7 @@ class ScheduleWorkbookBuilder:
             roster_rows,
             pool_assignment_rows,
         )
-        pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
+        pod_games, pod_precedence = self._build_pod_game_objects(roster_rows, validation_rows)
         all_games = gym_games + bc_games + soccer_games + pod_games
         team_conflicts = self._build_gym_team_conflicts(roster_rows, pool_assignment_rows)
         team_conflicts += self._build_cross_sport_conflicts(
@@ -4065,6 +4131,7 @@ class ScheduleWorkbookBuilder:
         )
         precedence.extend(gym_precedence)
         precedence.extend(soccer_precedence)
+        precedence.extend(pod_precedence)
 
         # Resolve venue-centric Playoff-Slots after game generation so physical
         # reservations use each game's real duration, but still before Stage-A

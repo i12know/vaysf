@@ -1785,7 +1785,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         was chosen for this run.
         """
         gym_games = self._build_gym_game_objects(roster_rows)
-        pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
+        pod_games, _pod_precedence = self._build_pod_game_objects(roster_rows, validation_rows)
         all_games = gym_games + pod_games
 
         gym_resources = self._build_gym_resource_objects(SCHEDULE_SOLVER_GYM_COURTS)

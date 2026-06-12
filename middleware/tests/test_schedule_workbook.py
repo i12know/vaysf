@@ -2690,7 +2690,10 @@ def test_build_schedule_input_via_church_teams_exporter_does_not_raise(tmp_path)
 
 
 def test_build_pod_game_objects_single_elimination():
-    """With 3 entries in a division, 2 game placeholders are generated."""
+    """With 3 entries, 2 game placeholders with stage-aware IDs are generated.
+
+    N=3, P=4: round 1 = Semi (1 game), round 2 = Final (1 game).
+    """
     from config import POD_RESOURCE_EVENT_TYPE
 
     roster_rows = [
@@ -2700,12 +2703,18 @@ def test_build_pod_game_objects_single_elimination():
         for i in range(1, 4)  # 3 entries
     ]
     builder = ScheduleWorkbookBuilder()
-    games = builder._build_pod_game_objects(roster_rows, [])
+    games, prec = builder._build_pod_game_objects(roster_rows, [])
     assert len(games) == 2, f"Expected 2 games (3-1=2), got {len(games)}"
     assert all(g["game_id"].startswith("BAD-Women-Singles-") for g in games)
-    assert all(g["stage"] == "R1" for g in games)
     assert all(g["resource_type"] == POD_RESOURCE_EVENT_TYPE[SPORT_TYPE["BADMINTON"]] for g in games)
-    assert games[0]["game_id"] == "BAD-Women-Singles-01"
+    game_ids = [g["game_id"] for g in games]
+    assert game_ids == ["BAD-Women-Singles-Semi-1", "BAD-Women-Singles-Final"]
+    stages = [g["stage"] for g in games]
+    assert stages == ["Semi", "Final"]
+    # Precedence: Semi must complete before Final
+    assert len(prec) == 1
+    assert prec[0]["before_game_id"] == "BAD-Women-Singles-Semi-1"
+    assert prec[0]["after_game_id"] == "BAD-Women-Singles-Final"
 
 
 def test_build_pod_game_objects_skips_empty_divisions():
@@ -2716,8 +2725,9 @@ def test_build_pod_game_objects_skips_empty_divisions():
          "sport_format": "Men Single"},
     ]
     builder = ScheduleWorkbookBuilder()
-    games = builder._build_pod_game_objects(roster_rows, [])
+    games, prec = builder._build_pod_game_objects(roster_rows, [])
     assert games == [], "Single-entry division should produce no games"
+    assert prec == []
 
 
 def test_build_gym_resource_objects_count():
@@ -4588,7 +4598,10 @@ def test_resolve_pod_doubles_assigns_stable_reproducible_ids():
 
 
 def test_pod_game_objects_assigns_r1_team_ids_for_confirmed_doubles():
-    """R1 games for confirmed doubles carry real entry IDs; later rounds stay None."""
+    """Round-1 games for confirmed doubles carry real entry IDs; later rounds stay None.
+
+    N=4, P=4: round 1 = Semi (2 games with team IDs), round 2 = Final (None).
+    """
     builder = ScheduleWorkbookBuilder()
     # 4 confirmed pairs → 4 planning entries → 3 games; R1 matchups = floor(4/2)=2.
     roster = _badminton_doubles_pair("Men", [
@@ -4597,23 +4610,28 @@ def test_pod_game_objects_assigns_r1_team_ids_for_confirmed_doubles():
         ("15", "Em", "16", "Phuc", "Badminton", "Badminton"),
         ("17", "Giang", "18", "Hai", "Badminton", "Badminton"),
     ])
-    games = builder._build_pod_game_objects(roster, [])
+    games, prec = builder._build_pod_game_objects(roster, [])
     assert len(games) == 3  # 4 - 1
-    r1_with_teams = [g for g in games if g["team_a_id"] and g["team_b_id"]]
-    assert len(r1_with_teams) == 2
-    for g in r1_with_teams:
+    # N=4, P=4: Semi-1 and Semi-2 get team IDs; Final has None.
+    semi_games = [g for g in games if g["stage"] == "Semi"]
+    assert len(semi_games) == 2
+    for g in semi_games:
         assert g["team_a_id"].startswith("BAD-Men-Doubles-E")
         assert g["team_b_id"].startswith("BAD-Men-Doubles-E")
         assert g["team_a_id"] != g["team_b_id"]
-    # The remaining (later-round) game has no known participants.
-    assert any(g["team_a_id"] is None and g["team_b_id"] is None for g in games)
+    final_game = next(g for g in games if g["stage"] == "Final")
+    assert final_game["team_a_id"] is None and final_game["team_b_id"] is None
+    # Precedence: Semi-1, Semi-2 → Final
+    assert len(prec) == 2
+    after_ids = {p["after_game_id"] for p in prec}
+    assert after_ids == {"BAD-Men-Doubles-Final"}
 
 
 def test_pod_game_objects_r1_matchups_are_bye_aware():
-    """P2 fix: bye-aware bracket math — N=5 yields 1 R1 match (not 2).
+    """Bye-aware bracket math: N=5 yields 1 first-round match (QF-1), not 2.
 
-    Standard single-elimination: P=8, byes=3, R1 games = (5-3)/2 = 1.
-    The two lowest-seeded entries (E04, E05) play; E01-E03 get byes.
+    N=5, P=8, byes=3: round 1 = QF (1 game), round 2 = Semi (2 games), round 3 = Final.
+    The two lowest-seeded entries (E04, E05) play in QF-1; E01-E03 get byes to Semi.
     """
     builder = ScheduleWorkbookBuilder()
     roster = _badminton_doubles_pair("Men", [
@@ -4623,19 +4641,35 @@ def test_pod_game_objects_r1_matchups_are_bye_aware():
         ("17", "Giang", "18", "Hai", "Badminton", "Badminton"),
         ("19", "Kiet", "20", "Long", "Badminton", "Badminton"),
     ])
-    games = builder._build_pod_game_objects(roster, [])
+    games, prec = builder._build_pod_game_objects(roster, [])
     assert len(games) == 4  # 5 - 1
 
-    r1_with_teams = [g for g in games if g["team_a_id"] and g["team_b_id"]]
-    # Only 1 R1 matchup for N=5 (not 2 as the old floor(N/2) formula produced)
-    assert len(r1_with_teams) == 1
-    matched_ids = {r1_with_teams[0]["team_a_id"], r1_with_teams[0]["team_b_id"]}
-    # The matched entries must be E04 and E05 (the two without byes)
+    stages = [g["stage"] for g in games]
+    assert stages == ["QF", "Semi", "Semi", "Final"]
+    game_ids = [g["game_id"] for g in games]
+    assert game_ids == [
+        "BAD-Men-Doubles-QF-1",
+        "BAD-Men-Doubles-Semi-1",
+        "BAD-Men-Doubles-Semi-2",
+        "BAD-Men-Doubles-Final",
+    ]
+
+    # Only QF-1 has known team IDs (the 2 non-bye players)
+    qf_game = games[0]
+    matched_ids = {qf_game["team_a_id"], qf_game["team_b_id"]}
     assert matched_ids == {"BAD-Men-Doubles-E04", "BAD-Men-Doubles-E05"}
-    # E01–E03 appear nowhere as team_a_id/team_b_id in R1
-    bye_ids = {f"BAD-Men-Doubles-E0{i}" for i in range(1, 4)}
-    r1_participants = {r1_with_teams[0]["team_a_id"], r1_with_teams[0]["team_b_id"]}
-    assert bye_ids.isdisjoint(r1_participants)
+    # Semi and Final games have no known participants yet
+    assert all(g["team_a_id"] is None for g in games[1:])
+
+    # Precedence: QF-1 → Semi-1, QF-1 → Semi-2, Semi-1 → Final, Semi-2 → Final
+    assert len(prec) == 4
+    prec_pairs = {(p["before_game_id"], p["after_game_id"]) for p in prec}
+    assert prec_pairs == {
+        ("BAD-Men-Doubles-QF-1", "BAD-Men-Doubles-Semi-1"),
+        ("BAD-Men-Doubles-QF-1", "BAD-Men-Doubles-Semi-2"),
+        ("BAD-Men-Doubles-Semi-1", "BAD-Men-Doubles-Final"),
+        ("BAD-Men-Doubles-Semi-2", "BAD-Men-Doubles-Final"),
+    }
 
 
 def test_pod_game_objects_byes_include_unresolved_planned_entries():
@@ -4664,9 +4698,10 @@ def test_pod_game_objects_byes_include_unresolved_planned_entries():
         },
     ])
 
-    games = builder._build_pod_game_objects(roster, [])
+    games, _prec = builder._build_pod_game_objects(roster, [])
 
     assert len(games) == 4  # five planned entries
+    # First game (QF-1) has one known player; the other slot is None (unresolved entry)
     identified_r1 = [g for g in games if g["team_a_id"] or g["team_b_id"]]
     assert len(identified_r1) == 1
     assert {
@@ -4674,6 +4709,175 @@ def test_pod_game_objects_byes_include_unresolved_planned_entries():
         identified_r1[0]["team_b_id"],
     } == {"BAD-Men-Doubles-E04", None}
     assert all(g["division_entry_count"] == 5 for g in games)
+
+
+# ── Issue #130: stage-aware racquet late-round game IDs ──────────────────────
+
+
+def test_build_pod_game_objects_tt_singles_bracket_p8():
+    """TT Men Singles with N=6 uses a P=8 bracket: QF-1..2, Semi-1..2, Final.
+
+    N=6, P=8, byes=2: round 1 (QF) has 2 games, round 2 (Semi) 2 games, round 3 (Final) 1 game.
+    """
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["TABLE_TENNIS"], "sport_gender": "Men",
+         "sport_format": "Men Single"}
+        for i in range(1, 7)  # 6 entries
+    ]
+    games, prec = ScheduleWorkbookBuilder()._build_pod_game_objects(roster_rows, [])
+
+    assert len(games) == 5  # 6 - 1
+    game_ids = [g["game_id"] for g in games]
+    assert game_ids == [
+        "TT-Men-Singles-QF-1",
+        "TT-Men-Singles-QF-2",
+        "TT-Men-Singles-Semi-1",
+        "TT-Men-Singles-Semi-2",
+        "TT-Men-Singles-Final",
+    ]
+    stages = [g["stage"] for g in games]
+    assert stages == ["QF", "QF", "Semi", "Semi", "Final"]
+    assert all(g["event"] == SPORT_TYPE["TABLE_TENNIS"] for g in games)
+    assert all(g["resource_type"] == "Table Tennis Table" for g in games)
+    assert all(g["duration_minutes"] == 20 for g in games)
+
+    # 4 QF→Semi edges + 2 Semi→Final edges = 6 total
+    assert len(prec) == 6
+    qf_to_semi = [p for p in prec if "QF" in p["before_game_id"]]
+    assert len(qf_to_semi) == 4
+    semi_to_final = [p for p in prec if "Semi" in p["before_game_id"]]
+    assert len(semi_to_final) == 2
+    assert all(p["after_game_id"] == "TT-Men-Singles-Final" for p in semi_to_final)
+    assert all(p["min_gap_slots"] == 1 for p in prec)
+
+
+def test_build_pod_game_objects_tt_full_bracket_p8():
+    """TT Women Singles with N=8 (no byes): QF-1..4, Semi-1..2, Final — 7 games."""
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["TABLE_TENNIS"], "sport_gender": "Women",
+         "sport_format": "Women Single"}
+        for i in range(1, 9)  # 8 entries — full P=8 bracket, no byes
+    ]
+    games, prec = ScheduleWorkbookBuilder()._build_pod_game_objects(roster_rows, [])
+
+    assert len(games) == 7  # 8 - 1
+    game_ids = [g["game_id"] for g in games]
+    assert game_ids == [
+        "TT-Women-Singles-QF-1",
+        "TT-Women-Singles-QF-2",
+        "TT-Women-Singles-QF-3",
+        "TT-Women-Singles-QF-4",
+        "TT-Women-Singles-Semi-1",
+        "TT-Women-Singles-Semi-2",
+        "TT-Women-Singles-Final",
+    ]
+    # 8 QF→Semi edges + 2 Semi→Final edges = 10 total
+    assert len(prec) == 10
+
+
+def test_build_pod_game_objects_pickleball_singles_bracket_p4():
+    """Pickleball Women Singles with N=4 (P=4): Semi-1, Semi-2, Final — 3 games."""
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["PICKLEBALL"], "sport_gender": "Women",
+         "sport_format": "Women Single"}
+        for i in range(1, 5)  # 4 entries — P=4 bracket
+    ]
+    games, prec = ScheduleWorkbookBuilder()._build_pod_game_objects(roster_rows, [])
+
+    assert len(games) == 3  # 4 - 1
+    game_ids = [g["game_id"] for g in games]
+    assert game_ids == [
+        "PCK-Women-Singles-Semi-1",
+        "PCK-Women-Singles-Semi-2",
+        "PCK-Women-Singles-Final",
+    ]
+    stages = [g["stage"] for g in games]
+    assert stages == ["Semi", "Semi", "Final"]
+    assert all(g["event"] == SPORT_TYPE["PICKLEBALL"] for g in games)
+    assert all(g["resource_type"] == "Pickleball Court" for g in games)
+
+    # 2 Semi→Final edges
+    assert len(prec) == 2
+    assert all(p["after_game_id"] == "PCK-Women-Singles-Final" for p in prec)
+    assert all(p["min_gap_slots"] == 1 for p in prec)
+
+
+def test_pod_precedence_included_in_schedule_input(tmp_path):
+    """Racquet sport precedence edges appear in the schedule_input.json output."""
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["TABLE_TENNIS"], "sport_gender": "Men",
+         "sport_format": "Men Single"}
+        for i in range(1, 5)  # 4 TT Men: P=4, Semi-1, Semi-2, Final
+    ]
+    si = ScheduleWorkbookBuilder()._build_schedule_input(
+        roster_rows, [], tmp_path / "no_venue.xlsx"
+    )
+
+    # TT-Men-Singles-Final must be in the games list
+    game_ids = {g["game_id"] for g in si["games"]}
+    assert "TT-Men-Singles-Final" in game_ids
+    assert "TT-Men-Singles-Semi-1" in game_ids
+    assert "TT-Men-Singles-Semi-2" in game_ids
+
+    # Precedence edges from the TT bracket must be included
+    tt_prec = [p for p in si["precedence"] if "TT-Men-Singles" in p["before_game_id"]]
+    assert len(tt_prec) == 2  # Semi-1 → Final, Semi-2 → Final
+    after_ids = {p["after_game_id"] for p in tt_prec}
+    assert after_ids == {"TT-Men-Singles-Final"}
+
+
+def test_tt_final_pinned_via_playoff_slots(tmp_path):
+    """A TT-Men-Singles-Final game is generated and can be pinned via Playoff-Slots."""
+    from config import POD_RESOURCE_TYPE_TABLE_TENNIS
+
+    # 6 TT Men Singles entries → TT-Men-Singles-Final is generated (P=8 bracket)
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["TABLE_TENNIS"], "sport_gender": "Men",
+         "sport_format": "Men Single"}
+        for i in range(1, 7)
+    ]
+    # Venue-Input: standalone TT table at "Church Hall" on Sun-2
+    rows = [
+        ["TT Pod", "Church Hall", POD_RESOURCE_TYPE_TABLE_TENNIS, 2, "Sun-2",
+         "2026-07-26", 8, 17, 20, None, None, None, None, None],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["TT-Men-Singles-Final", SPORT_TYPE["TABLE_TENNIS"], "Final",
+         "Church Hall", "2026-07-26", "14:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows, playoff_rows=playoff_rows)
+
+    si = ScheduleWorkbookBuilder()._build_schedule_input(roster_rows, [], path)
+
+    # The Final game must exist in the GAMES list
+    final_game = next(
+        (g for g in si["games"] if g["game_id"] == "TT-Men-Singles-Final"),
+        None,
+    )
+    assert final_game is not None, "TT-Men-Singles-Final game not generated"
+    assert final_game["stage"] == "Final"
+    assert final_game["event"] == SPORT_TYPE["TABLE_TENNIS"]
+
+    # The playoff slot for the Final must be resolved (resource_id assigned)
+    pinned = [ps for ps in si["playoff_slots"]
+              if ps.get("game_id") == "TT-Men-Singles-Final"]
+    assert len(pinned) == 1, "Expected 1 pinned TT Final slot"
+    assert pinned[0].get("resource_id"), "TT Final slot should have a resource_id"
+    assert pinned[0].get("slot"), "TT Final slot should have a slot label"
+
+    # Precedence chain: Semi-1 and Semi-2 must precede the Final
+    tt_prec = [p for p in si["precedence"]
+               if p.get("after_game_id") == "TT-Men-Singles-Final"]
+    assert len(tt_prec) == 2
+    before_ids = {p["before_game_id"] for p in tt_prec}
+    assert before_ids == {"TT-Men-Singles-Semi-1", "TT-Men-Singles-Semi-2"}
 
 
 def test_pod_doubles_cross_sport_conflict_edge_with_basketball(tmp_path):
