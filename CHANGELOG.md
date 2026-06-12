@@ -36,7 +36,7 @@ backward-compat `staticmethod()` class aliases.
 - **`scheduling/output_report.py`** — 4 output-report writers:
   `_warn_if_schedules_mismatched`, `_build_schedule_output_flat_rows`,
   `_write_schedule_diagnostics_tab`, `_write_schedule_output_report`.
-- **`schedule_workbook.py`** reduced from 7,703 → 5,716 lines (−1,987);
+- **`schedule_workbook.py`** reduced from 7,703 → 5,706 lines (−1,997);
   exposes all 27 symbols as `staticmethod()` class aliases for full
   backward compatibility.
 - 629 tests pass unchanged.
