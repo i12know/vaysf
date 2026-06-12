@@ -719,9 +719,7 @@ def test_run_solve_schedule_rejects_corrupt_solver_output(tmp_path, monkeypatch)
 
 
 def test_validation_does_not_change_solver_behavior(tmp_path, monkeypatch):
-    """Identical assignments, status, and unscheduled lists with and without
-    validation — the precise invariant behind 'validation is read-only'."""
-    pytest.importorskip("ortools")
+    """Validation passes the same input to the solver and preserves its result."""
     import scheduler
 
     si = {
@@ -737,6 +735,36 @@ def test_validation_does_not_change_solver_behavior(tmp_path, monkeypatch):
     }
     input_path = tmp_path / "schedule_input.json"
     input_path.write_text(json.dumps(si), encoding="utf-8")
+
+    solver_inputs = []
+
+    def deterministic_solve(schedule_input, timeout_seconds=None):
+        solver_inputs.append(json.loads(json.dumps(schedule_input)))
+        return {
+            "status": "OPTIMAL",
+            "solver_wall_seconds": 0.0,
+            "assignments": [
+                {
+                    "game_id": "G1",
+                    "resource_id": "GYM-Sat-1-1",
+                    "slot": "Sat-1-08:00",
+                },
+                {
+                    "game_id": "G2",
+                    "resource_id": "GYM-Sat-1-1",
+                    "slot": "Sat-1-10:00",
+                },
+                {
+                    "game_id": "G3",
+                    "resource_id": "GYM-Sat-1-1",
+                    "slot": "Sat-1-12:00",
+                },
+            ],
+            "unscheduled": [],
+            "pool_results": [],
+        }
+
+    monkeypatch.setattr(scheduler, "solve", deterministic_solve)
 
     def solve_and_strip(out_name):
         output_path = tmp_path / out_name
@@ -755,6 +783,7 @@ def test_validation_does_not_change_solver_behavior(tmp_path, monkeypatch):
     monkeypatch.setattr(scheduler, "validate_schedule_output", lambda d: [])
     unvalidated = solve_and_strip("out_unvalidated.json")
 
+    assert solver_inputs == [si, si]
     assert validated["assignments"] == unvalidated["assignments"]
     assert validated["status"] == unvalidated["status"]
     assert validated["unscheduled"] == unvalidated["unscheduled"]
