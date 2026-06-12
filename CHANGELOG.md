@@ -45,10 +45,23 @@ blank slot (e.g. WP 156's secondary Table Tennis 35+ selection) produced false
   format, and gender. An issue for one division can no longer satisfy another
   division in the same sport, and validation-only records make reconciliation
   explicitly dirty.
+- **Current Team-group validation scope** now filters historical WordPress
+  participants and rosters against the current eligible ChMeetings `Team *`
+  athlete snapshot. Deleted, re-registered, and role-ineligible duplicates no
+  longer create false partner ambiguity; stale TEAM issues resolve normally,
+  while current athletes naming an ineligible partner receive an actionable
+  validation issue. Participant sync also moves an existing roster row to the
+  participant's current church after a church transfer, keeping validation and
+  scheduling on the same church-owned roster.
 - **Expanded tests** cover duplicate-slot consolidation, roster-derived partner
   issue persistence and resolution, event-isolated reconciliation, missing
   issues, contradictions, validation-only divergence, and resolved-issue
   exclusion.
+- **Known latent risk:** `qualifying_roles` in `_load_current_eligible_chm_ids`
+  is hardcoded as `{"athlete", "participant", "athlete/participant"}`. If VAY
+  adds a new combined role string (e.g. `"athlete/leader"`), eligible athletes
+  carrying it would be silently excluded from the validation population. Promote
+  to a config value when the role taxonomy next changes.
 
 ### Nightly sync correctness fixes
 

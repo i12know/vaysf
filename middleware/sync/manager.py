@@ -10,7 +10,7 @@ import pandas as pd
 from typing import Dict, Any, Optional
 from loguru import logger
 from config import (Config, DATA_DIR, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION,
-                   SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, 
+                   SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, CHM_FIELDS,
                    VALIDATION_SEVERITY, VALIDATION_STATUS, RULE_LEVEL)
 from chmeetings.backend_connector import ChMeetingsConnector
 from wordpress.frontend_connector import WordPressConnector
@@ -753,6 +753,98 @@ class SyncManager:
                 )
         return church_lookup
 
+    def _load_current_eligible_chm_ids(self) -> Optional[set[str]]:
+        """Return current athlete IDs from ChMeetings Team groups.
+
+        ``None`` means the snapshot could not be loaded completely, so callers
+        must retain the unfiltered WordPress fallback and avoid resolving issues
+        from partial source data.
+        """
+        if not self.chm_connector:
+            return None
+
+        groups = self.chm_connector.get_groups()
+        if getattr(self.chm_connector, "last_get_groups_status", None) != "ok":
+            logger.warning(
+                "Could not load the current ChMeetings Team-group snapshot; "
+                "retaining unfiltered WordPress validation for this pass."
+            )
+            return None
+
+        team_prefix = f"{Config.TEAM_PREFIX} "
+        team_groups = [
+            group for group in groups
+            if str(group.get("name") or "").startswith(team_prefix)
+        ]
+        if not team_groups:
+            logger.warning(
+                f"No ChMeetings groups found with prefix {team_prefix!r}; "
+                "retaining unfiltered WordPress validation for this pass."
+            )
+            return None
+
+        eligible_ids: set[str] = set()
+        seen_ids: set[str] = set()
+        qualifying_roles = {"athlete", "participant", "athlete/participant"}
+
+        for group in team_groups:
+            group_id = str(group.get("id") or "").strip()
+            if not group_id:
+                logger.warning(
+                    f"ChMeetings Team group has no ID: {group}. "
+                    "Retaining unfiltered WordPress validation for this pass."
+                )
+                return None
+
+            members = self.chm_connector.get_group_people(group_id)
+            if getattr(self.chm_connector, "last_get_group_people_status", None) != "ok":
+                logger.warning(
+                    f"Could not load members for ChMeetings Team group {group_id}; "
+                    "retaining unfiltered WordPress validation for this pass."
+                )
+                return None
+
+            for member in members:
+                chm_id = str(member.get("person_id") or "").strip()
+                if not chm_id or chm_id in seen_ids:
+                    continue
+                seen_ids.add(chm_id)
+
+                person_response = self.chm_connector.get_person(chm_id)
+                person_status = getattr(
+                    self.chm_connector, "last_get_person_status", None
+                )
+                if person_status == "not_found":
+                    continue
+                if person_status != "ok" or not person_response:
+                    logger.warning(
+                        f"Could not verify ChMeetings Team member {chm_id}; "
+                        "retaining unfiltered WordPress validation for this pass."
+                    )
+                    return None
+
+                person = (
+                    person_response
+                    if "data" not in person_response
+                    else person_response.get("data", {})
+                )
+                additional_fields = {
+                    field.get("field_name"): field.get("value")
+                    for field in person.get("additional_fields", [])
+                }
+                roles = str(additional_fields.get(CHM_FIELDS["ROLES"], "") or "")
+                if any(
+                    role.strip().casefold() in qualifying_roles
+                    for role in roles.split(",")
+                ):
+                    eligible_ids.add(str(person.get("id") or chm_id))
+
+        logger.info(
+            f"Loaded {len(eligible_ids)} current eligible athlete(s) from "
+            f"{len(team_groups)} ChMeetings Team group(s)."
+        )
+        return eligible_ids
+
     @staticmethod
     def _coerce_church_id(raw_church_id: Any) -> Optional[int]:
         """Normalize a church_id value to int when possible."""
@@ -982,6 +1074,26 @@ class SyncManager:
             return False
         logger.info(f"Fetched {len(wp_participants)} participants for validation.")
 
+        open_validation_issues = self._fetch_open_validation_issues()
+        self._resolve_orphaned_individual_validation_issues(
+            wp_participants,
+            open_validation_issues,
+        )
+
+        eligible_chm_ids = self._load_current_eligible_chm_ids()
+        if eligible_chm_ids is not None:
+            all_participant_count = len(wp_participants)
+            wp_participants = [
+                participant for participant in wp_participants
+                if str(participant.get("chmeetings_id") or "").strip()
+                in eligible_chm_ids
+            ]
+            logger.info(
+                f"Filtered validation population from {all_participant_count} "
+                f"WordPress participant row(s) to {len(wp_participants)} current "
+                "eligible ChMeetings Team-group athlete(s)."
+            )
+
         church_lookup = self._load_church_lookup_by_code()
         church_code_by_id = self._load_church_lookup_by_id()
         participants_by_church = {}
@@ -1001,12 +1113,6 @@ class SyncManager:
             participant_church_code = str(participant.get("church_code", "")).strip().upper()
             if participant_church_code:
                 church_code_by_id.setdefault(church_id, participant_church_code)
-
-        open_validation_issues = self._fetch_open_validation_issues()
-        self._resolve_orphaned_individual_validation_issues(
-            wp_participants,
-            open_validation_issues,
-        )
 
         existing_group_issues = [
             issue for issue in open_validation_issues if self._is_group_validation_issue(issue)
@@ -1034,7 +1140,20 @@ class SyncManager:
                 )
                 rosters_by_church[church_id] = None
             else:
-                rosters_by_church[church_id] = rosters
+                if eligible_chm_ids is None:
+                    rosters_by_church[church_id] = rosters
+                else:
+                    current_participant_ids = {
+                        str(participant.get("participant_id"))
+                        for participant in participants_by_church.get(church_id, [])
+                        if participant.get("participant_id")
+                        not in (None, "", 0, "0")
+                    }
+                    rosters_by_church[church_id] = [
+                        roster for roster in rosters
+                        if str(roster.get("participant_id") or "")
+                        in current_participant_ids
+                    ]
 
         team_validator = TeamValidator()
         church_validator = ChurchValidator()

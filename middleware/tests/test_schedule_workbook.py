@@ -152,12 +152,45 @@ def test_church_teams_exporter_schedule_methods_delegate_to_builder():
         "_build_schedule_output_flat_rows",
         "_write_schedule_output_report",
         "_build_gym_resources_from_allocator",
+        "_partner_validation_key",
+        "_reconcile_pod_validation",
         "write_schedule_input_json",
         "write_schedule_workbook",
         "write_schedule_output_workbook",
     )
     for method_name in method_names:
         assert ChurchTeamsExporter.__dict__[method_name] is ScheduleWorkbookBuilder.__dict__[method_name]
+
+
+def test_church_teams_exporter_reconciliation_has_delegated_key_helper():
+    """The live export path must carry reconciliation's helper dependencies."""
+    unprotected = [{
+        "participant_id": "99",
+        "participant_name": "Mai Tran",
+        "church_code": "TLC",
+        "division_id": "BAD-Women-Doubles",
+        "sport_type": SPORT_TYPE["BADMINTON"],
+        "sport_format": "Doubles",
+        "sport_gender": "Women",
+        "reason": "MissingPartner",
+    }]
+    validation_rows = [{
+        "Participant ID (WP)": "99",
+        "sport_type": SPORT_TYPE["BADMINTON"],
+        "sport_format": "Women Double",
+        "Issue Type": "missing_doubles_partner",
+        "Status": "open",
+    }]
+
+    reconciliation = ChurchTeamsExporter._reconcile_pod_validation(
+        unprotected,
+        {},
+        validation_rows,
+    )
+
+    assert reconciliation["is_clean"] is True
+    assert reconciliation["matched_count"] == 1
+    assert unprotected[0]["validation_issue_status"] == "Matched"
 
 
 def test_write_schedule_input_json_writes_file(tmp_path):
