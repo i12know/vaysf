@@ -538,8 +538,9 @@ def validate_schedule_input(data: Any) -> list[str]:
     # the pool, so a compatible resource in a *different* pool is unreachable:
     #   - a resource_type with zero resources anywhere stays a WARNING — the
     #     solver reports those games as unscheduled and exits 1 (pinned
-    #     behavior); likewise a (pool, resource_type) combination with no
-    #     resources, which the solver treats the same way;
+    #     behavior);
+    #   - a resource_type that exists only outside the game's solver pool is
+    #     an ERROR because those resources are unreachable after partitioning;
     #   - a game that cannot physically fit ANY resource of its own type
     #     within its own pool is an ERROR — it would otherwise surface
     #     downstream as a mystery INFEASIBLE/unscheduled.
@@ -569,7 +570,6 @@ def validate_schedule_input(data: Any) -> list[str]:
         str(r.get("resource_type") or "").strip() for r in resource_dicts
     }
     warned_missing_types: set[str] = set()
-    warned_missing_pool_types: set[tuple[str, str]] = set()
     for game in game_dicts:
         gid = str(game.get("game_id") or "").strip() or "<unknown>"
         rtype = str(game.get("resource_type") or "").strip()
@@ -589,13 +589,17 @@ def validate_schedule_input(data: Any) -> list[str]:
             continue
         key = (_solver_pool_key(game), rtype)
         if key not in capacity_by_pool_type:
-            if key not in warned_missing_pool_types:
-                warned_missing_pool_types.add(key)
-                warnings.append(
-                    f"games: resource_type {rtype!r} has no resources in "
-                    f"solver pool {key[0]!r} (e.g. game {gid!r}) — those games "
-                    "will be reported as unscheduled"
-                )
+            available_pools = sorted(
+                pool
+                for pool, candidate_type in capacity_by_pool_type
+                if candidate_type == rtype
+            )
+            errors.append(
+                f"games: game {gid!r} requires resource_type {rtype!r} in "
+                f"solver pool {key[0]!r}, but that pool has no compatible "
+                f"resources — matching resources exist only in solver pools "
+                f"{available_pools!r}"
+            )
             continue
         if capacity_by_pool_type[key] < duration:
             available = "; ".join(windows_by_pool_type.get(key, [])) or "none"
