@@ -1056,6 +1056,7 @@ def main() -> None:
             out_path = Path(EXPORT_DIR) / f"VAYSF_Schedule_{today}.xlsx"
         from schedule_contracts import (
             ScheduleContractError,
+            validate_output_against_input,
             validate_schedule_input,
             validate_schedule_output,
         )
@@ -1065,6 +1066,8 @@ def main() -> None:
             for warning in validate_schedule_input(si_data):
                 logger.warning(f"schedule_input contract: {warning}")
             for warning in validate_schedule_output(so_data):
+                logger.warning(f"schedule_output contract: {warning}")
+            for warning in validate_output_against_input(so_data, si_data):
                 logger.warning(f"schedule_output contract: {warning}")
         except FileNotFoundError as exc:
             logger.error(f"export-schedule: required file not found — {exc.filename}")

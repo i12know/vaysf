@@ -641,16 +641,28 @@ Exit codes: 0 = OPTIMAL/FEASIBLE (all pools solved), 1 = PARTIAL/INFEASIBLE/UNKN
 2 = error.
 
 Before anything is solved, the input is checked against the schedule contract
-(`middleware/schedule_contracts.py`, Issue #161): Pydantic models for games,
-resources, playoff slots, precedence rules, and conflict edges, plus
-cross-checks for duplicate IDs, precedence cycles, and games whose
-`duration_minutes` cannot fit any resource of their `resource_type`. Contract
-violations exit 3 with every violation listed (each message names the
-offending `game_id`/`resource_id`); tolerable conditions — a `resource_type`
-with no resources, a precedence rule referencing an unknown game — are logged
-as warnings and the solve proceeds. `produce-schedule` runs the same contract
-over both JSON files before rendering. Extra/unknown fields are always
-allowed, so hand-annotated inputs stay valid.
+(`middleware/schedule_contracts.py`, Issue #161): Pydantic models covering the
+full schema documented here, with strict numerics (numeric strings and
+booleans rejected), real clock windows (`HH:MM`, `close_time > open_time`),
+`min_gap_slots >= 1`, plus cross-checks for duplicate IDs, playoff slots
+referencing unknown resources, precedence cycles, precedence rules spanning
+solver pools (unenforceable by the pool-decomposed solver, so rejected), and
+games whose `duration_minutes` cannot fit any resource of their
+`resource_type`. Contract violations exit 3 with every violation listed (each
+message names the offending `game_id`/`resource_id`); tolerable conditions —
+a `resource_type` with no resources, a precedence rule referencing an unknown
+game — are logged as warnings and the solve proceeds. The solver also
+self-checks its output against the contract before writing
+`schedule_output.json`, and `produce-schedule` validates both JSON files plus
+output→input referential integrity before rendering.
+
+Unknown fields are accepted with a deduplicated warning (the schema grows
+every season); the reserved annotation namespace — a field named
+`operator_notes` or any field starting with `x_` — never warns, so
+hand-annotated inputs stay clean. `team_conflicts` endpoints are deliberately
+not required to appear in `games`: planning-only edges (an event with no
+Layer-2 games yet) are a legitimate state with their own `PlanningOnly`
+conflict-audit status.
 
 Playoff slots are not re-assigned by the solver, but they **are** validated
 against the resource list and reserved before pool play is packed. If a

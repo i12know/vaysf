@@ -5,6 +5,7 @@ import pytest
 
 from schedule_contracts import (
     ScheduleContractError,
+    validate_output_against_input,
     validate_schedule_input,
     validate_schedule_output,
 )
@@ -49,7 +50,7 @@ def test_clean_input_is_not_mutated():
             {"before_game_id": "G1", "after_game_id": "G2", "min_gap_slots": 1},
         ],
         "team_conflicts": [],
-        "operator_note": "hand-edited",
+        "operator_notes": "hand-edited",
     }
     data["games"].append(_game("G2"))
     snapshot = json.loads(json.dumps(data))
@@ -61,13 +62,61 @@ def test_empty_games_and_resources_pass():
     assert validate_schedule_input({"games": [], "resources": []}) == []
 
 
-def test_extra_fields_are_allowed():
+def test_annotation_namespace_fields_pass_silently():
+    """x_* and operator_notes are the reserved annotation namespace."""
     data = {
-        "games": [_game(custom_marker="operator-added")],
+        "games": [_game(x_custom_marker="operator-added", operator_notes="check")],
         "resources": [_resource(exclusive_group="Midsize Gym")],
         "gym_court_scenario": 4,
+        "x_session_note": "dry run",
     }
     assert validate_schedule_input(data) == []
+
+
+def test_unknown_field_warns_once_per_section_and_field():
+    """Unknown fields are accepted but warned, deduplicated across items."""
+    data = {
+        "games": [_game("G1", colour="red"), _game("G2", colour="blue")],
+        "resources": [_resource()],
+    }
+    warnings = validate_schedule_input(data)
+    colour_warnings = [w for w in warnings if "'colour'" in w]
+    assert len(colour_warnings) == 1
+    assert "games" in colour_warnings[0]
+
+
+def test_unknown_top_level_section_warns():
+    data = {"games": [_game()], "resources": [_resource()], "mystery": {}}
+    warnings = validate_schedule_input(data)
+    assert any("'mystery'" in w for w in warnings)
+
+
+def test_documented_schema_fields_do_not_warn():
+    """Every field the exporters actually emit must be modeled (no noise)."""
+    data = {
+        "generated_at": "2026-06-12T08:00:00",
+        "gym_court_scenario": 4,
+        "game_count": 2,
+        "resource_count": 1,
+        "games": [
+            _game("BBM-01", stage="Pool", pool_id="P1", round=1,
+                  team_a_label="OCB", team_b_label="RPC", solver_pool="Gym Core"),
+            _game("BAD-Men-Doubles-01", resource_type="Badminton Court",
+                  division_id="BAD-Men-Doubles", division_entry_count=4,
+                  team_a_id=None, team_b_id=None),
+        ],
+        "resources": [_resource(solver_pool="Gym Core")],
+        "playoff_slots": [],
+        "gym_modes": {"Midsize Gym": {"Basketball Court": 1}},
+        "gym_allocation": {"source": "allocator"},
+        "team_conflicts": [],
+        "pod_unprotected_entries": [],
+        "pod_validation_reconciliation": {},
+        "precedence": [],
+        "day_order": ["Sat-1", "Sun-1"],
+    }
+    warnings = validate_schedule_input(data)
+    assert [w for w in warnings if "unknown" in w] == []
 
 
 # ---------------------------------------------------------------------------
@@ -395,3 +444,270 @@ def test_load_schedule_input_raises_contract_error(tmp_path):
     path.write_text(json.dumps(si), encoding="utf-8")
     with pytest.raises(ScheduleContractError, match="duration_minutes"):
         load_schedule_input(path)
+
+
+# ---------------------------------------------------------------------------
+# Strict numerics (review follow-up)
+# ---------------------------------------------------------------------------
+
+def test_numeric_string_duration_is_rejected():
+    data = {"games": [_game(duration_minutes="60")], "resources": [_resource()]}
+    with pytest.raises(ScheduleContractError, match="duration_minutes"):
+        validate_schedule_input(data)
+
+
+def test_numeric_string_slot_minutes_is_rejected():
+    data = {"games": [_game()], "resources": [_resource(slot_minutes="60")]}
+    with pytest.raises(ScheduleContractError, match="slot_minutes"):
+        validate_schedule_input(data)
+
+
+def test_boolean_slot_minutes_is_rejected():
+    data = {"games": [_game()], "resources": [_resource(slot_minutes=True)]}
+    with pytest.raises(ScheduleContractError, match="slot_minutes"):
+        validate_schedule_input(data)
+
+
+def test_integer_duration_is_accepted_for_float_field():
+    """Strict float fields still accept JSON integers (60, not just 60.0)."""
+    data = {"games": [_game(duration_minutes=60)], "resources": [_resource()]}
+    assert validate_schedule_input(data) == []
+
+
+# ---------------------------------------------------------------------------
+# Clock windows and min_gap_slots (review follow-up)
+# ---------------------------------------------------------------------------
+
+def test_close_time_not_after_open_time_is_an_error():
+    data = {
+        "games": [_game()],
+        "resources": [_resource(open_time="11:00", close_time="11:00")],
+    }
+    with pytest.raises(ScheduleContractError, match="close_time"):
+        validate_schedule_input(data)
+
+
+def test_hour_out_of_clock_range_is_an_error():
+    data = {
+        "games": [_game()],
+        "resources": [_resource(close_time="24:00")],
+    }
+    with pytest.raises(ScheduleContractError, match="hours"):
+        validate_schedule_input(data)
+
+
+def test_min_gap_slots_zero_is_an_error():
+    """The solver silently converts 0 to 1, so a declared 0 is dishonest."""
+    data = {
+        "games": [_game("A"), _game("B")],
+        "resources": [_resource()],
+        "precedence": [
+            {"before_game_id": "A", "after_game_id": "B", "min_gap_slots": 0},
+        ],
+    }
+    with pytest.raises(ScheduleContractError, match="min_gap_slots"):
+        validate_schedule_input(data)
+
+
+# ---------------------------------------------------------------------------
+# Reference checks (review follow-up)
+# ---------------------------------------------------------------------------
+
+def test_playoff_slot_unknown_resource_is_an_error():
+    data = {
+        "games": [_game()],
+        "resources": [_resource("GYM-Sat-1-1")],
+        "playoff_slots": [
+            {"game_id": "BBM-Final", "resource_id": "GYM-Sun-2-1",
+             "slot": "Sun-2-14:00"},
+        ],
+    }
+    with pytest.raises(ScheduleContractError, match="GYM-Sun-2-1"):
+        validate_schedule_input(data)
+
+
+def test_cross_pool_precedence_is_an_error():
+    """A rule spanning solver pools is silently dropped by the solver today;
+    the contract must reject it instead (#161 review decision)."""
+    data = {
+        "games": [
+            _game("BBM-01"),
+            _game("BAD-01", resource_type="Badminton Court"),
+        ],
+        "resources": [
+            _resource("GYM-1"),
+            _resource("BAD-1", resource_type="Badminton Court"),
+        ],
+        "precedence": [
+            {"before_game_id": "BBM-01", "after_game_id": "BAD-01"},
+        ],
+    }
+    with pytest.raises(ScheduleContractError, match="spans solver pools"):
+        validate_schedule_input(data)
+
+
+def test_same_pool_precedence_via_solver_pool_passes():
+    """Basketball and Volleyball share the 'Gym Core' pool, so precedence
+    between them is enforceable and must pass."""
+    data = {
+        "games": [
+            _game("BBM-01", solver_pool="Gym Core"),
+            _game("VBM-01", event="Volleyball - Men Team",
+                  resource_type="Volleyball Court", solver_pool="Gym Core"),
+        ],
+        "resources": [
+            _resource("BB-1", solver_pool="Gym Core"),
+            _resource("VB-1", resource_type="Volleyball Court",
+                      solver_pool="Gym Core"),
+        ],
+        "precedence": [
+            {"before_game_id": "BBM-01", "after_game_id": "VBM-01"},
+        ],
+    }
+    assert validate_schedule_input(data) == []
+
+
+def test_gym_modes_bad_shape_is_an_error():
+    data = {
+        "games": [_game()],
+        "resources": [_resource()],
+        "gym_modes": {"Midsize Gym": {"Basketball Court": "one"}},
+    }
+    with pytest.raises(ScheduleContractError, match="gym_modes"):
+        validate_schedule_input(data)
+
+
+def test_top_level_must_be_an_object():
+    with pytest.raises(ScheduleContractError, match="JSON object"):
+        validate_schedule_input([_game()])
+
+
+def test_missing_top_level_section_is_a_contract_error():
+    with pytest.raises(ScheduleContractError, match="resources"):
+        validate_schedule_input({"games": []})
+
+
+# ---------------------------------------------------------------------------
+# Output-to-input cross-file checks (review follow-up)
+# ---------------------------------------------------------------------------
+
+def test_output_assignment_unknown_game_is_an_error():
+    si = {"games": [_game("G1")], "resources": [_resource()]}
+    so = _output(assignments=[
+        {"game_id": "GHOST", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-08:00"},
+    ])
+    with pytest.raises(ScheduleContractError, match="GHOST"):
+        validate_output_against_input(so, si)
+
+
+def test_output_assignment_unknown_resource_is_an_error():
+    si = {"games": [_game("G1")], "resources": [_resource("GYM-Sat-1-1")]}
+    so = _output(assignments=[
+        {"game_id": "G1", "resource_id": "GHOST-COURT", "slot": "Sat-1-08:00"},
+    ])
+    with pytest.raises(ScheduleContractError, match="GHOST-COURT"):
+        validate_output_against_input(so, si)
+
+
+def test_output_assignment_may_reference_pinned_playoff_game():
+    """Pinned playoff games exist only in playoff_slots, not games (#132)."""
+    si = {
+        "games": [_game("G1")],
+        "resources": [_resource("GYM-Sat-1-1")],
+        "playoff_slots": [
+            {"game_id": "BBM-Final", "resource_id": "GYM-Sat-1-1",
+             "slot": "Sat-1-10:00"},
+        ],
+    }
+    so = _output(assignments=[
+        {"game_id": "G1", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-08:00"},
+        {"game_id": "BBM-Final", "resource_id": "GYM-Sat-1-1",
+         "slot": "Sat-1-10:00"},
+    ])
+    assert validate_output_against_input(so, si) == []
+
+
+def test_output_unknown_unscheduled_id_is_a_warning():
+    si = {"games": [_game("G1")], "resources": [_resource()]}
+    so = _output(
+        assignments=[],
+        unscheduled=["GHOST"],
+        status="INFEASIBLE",
+    )
+    warnings = validate_output_against_input(so, si)
+    assert any("GHOST" in w for w in warnings)
+
+
+# ---------------------------------------------------------------------------
+# Solver self-check and behavioral equivalence (review follow-up)
+# ---------------------------------------------------------------------------
+
+def test_run_solve_schedule_rejects_corrupt_solver_output(tmp_path, monkeypatch):
+    """A solver bug producing a double-booked slot must exit 3, write nothing."""
+    pytest.importorskip("ortools")
+    import scheduler
+
+    def corrupt_solve(schedule_input, timeout_seconds=None):
+        return {
+            "status": "OPTIMAL",
+            "solver_wall_seconds": 0.0,
+            "assignments": [
+                {"game_id": "G1", "resource_id": "R1", "slot": "Sat-1-08:00"},
+                {"game_id": "G2", "resource_id": "R1", "slot": "Sat-1-08:00"},
+            ],
+            "unscheduled": [],
+            "pool_results": [],
+        }
+
+    monkeypatch.setattr(scheduler, "solve", corrupt_solve)
+    si = {"games": [_game("G1"), _game("G2")], "resources": [_resource("R1")]}
+    input_path = tmp_path / "schedule_input.json"
+    input_path.write_text(json.dumps(si), encoding="utf-8")
+    output_path = tmp_path / "schedule_output.json"
+
+    exit_code = scheduler.run_solve_schedule(input_path, output_path)
+    assert exit_code == 3
+    assert not output_path.exists()
+
+
+def test_validation_does_not_change_solver_behavior(tmp_path, monkeypatch):
+    """Identical assignments, status, and unscheduled lists with and without
+    validation — the precise invariant behind 'validation is read-only'."""
+    pytest.importorskip("ortools")
+    import scheduler
+
+    si = {
+        "games": [
+            _game("G1", team_a_id="T1", team_b_id="T2"),
+            _game("G2", team_a_id="T1", team_b_id="T3"),
+            _game("G3", team_a_id="T2", team_b_id="T3"),
+        ],
+        "resources": [
+            _resource("GYM-Sat-1-1", close_time="16:00"),
+            _resource("GYM-Sat-1-2", close_time="16:00"),
+        ],
+    }
+    input_path = tmp_path / "schedule_input.json"
+    input_path.write_text(json.dumps(si), encoding="utf-8")
+
+    def solve_and_strip(out_name):
+        output_path = tmp_path / out_name
+        exit_code = scheduler.run_solve_schedule(input_path, output_path)
+        assert exit_code == 0
+        data = json.loads(output_path.read_text(encoding="utf-8"))
+        data.pop("solved_at", None)
+        data.pop("solver_wall_seconds", None)
+        for pool in data.get("pool_results", []):
+            pool.pop("solver_wall_seconds", None)
+        return data
+
+    validated = solve_and_strip("out_validated.json")
+
+    monkeypatch.setattr(scheduler, "validate_schedule_input", lambda d: [])
+    monkeypatch.setattr(scheduler, "validate_schedule_output", lambda d: [])
+    unvalidated = solve_and_strip("out_unvalidated.json")
+
+    assert validated["assignments"] == unvalidated["assignments"]
+    assert validated["status"] == unvalidated["status"]
+    assert validated["unscheduled"] == unvalidated["unscheduled"]
+    assert validated == unvalidated

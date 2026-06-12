@@ -10,18 +10,39 @@ of a mid-solve traceback or a silently wrong schedule.
 
 - **New `middleware/schedule_contracts.py`** — `validate_schedule_input()` /
   `validate_schedule_output()` check `schedule_input.json` and
-  `schedule_output.json` against permissive Pydantic models (extra fields
-  allowed; validation is read-only, so valid inputs solve byte-identically).
-  All violations are collected into one `ScheduleContractError`, each message
-  carrying the offending `game_id`/`resource_id`.
-- **`solve-schedule`** validates at load and exits 3 listing every violation.
-  **`produce-schedule`** validates both files before rendering.
-  `diagnose-schedule` intentionally keeps reading raw JSON so it can inspect
-  broken files.
-- **Precedence cycle detection** — a cycle in `precedence` rules is now
-  reported as a contract error naming the cycle members (previously a silent
-  INFEASIBLE); a rule referencing an unknown game/playoff id logs a warning
-  (previously silently ignored).
+  `schedule_output.json` against Pydantic models covering the full documented
+  schema (docs/SCHEDULING.md). Validation is read-only — valid inputs solve
+  without changing assignment/status semantics (proven by a behavioral
+  equivalence test comparing assignments, status, and unscheduled lists with
+  and without validation). All violations are collected into one
+  `ScheduleContractError`, each message carrying the offending
+  `game_id`/`resource_id`.
+- **Strict numerics** — numeric strings (`"60"`) and booleans are rejected on
+  every modeled numeric field, never coerced. Clock fields must be real times
+  (`HH:MM`, hours < 24, minutes < 60) with `close_time > open_time`, and
+  `min_gap_slots` must be ≥ 1 (the solver silently converts 0 to 1).
+- **Unknown fields warn instead of failing** — the schema grows every season,
+  so unknown fields are accepted with a deduplicated warning. The reserved
+  annotation namespace (`operator_notes` or any `x_*` field) never warns.
+- **`solve-schedule`** validates at load and exits 3 listing every violation,
+  and self-checks its own output against the contract before writing it (a
+  violating output is a solver bug — nothing is written, exit 3).
+  **`produce-schedule`** validates both files plus output→input referential
+  integrity (every assignment's `game_id`/`resource_id` must exist in the
+  input) before rendering. `diagnose-schedule` intentionally keeps reading
+  raw JSON so it can inspect broken files.
+- **Precedence integrity** — a cycle in `precedence` rules is reported as a
+  contract error naming the cycle members (previously a silent INFEASIBLE).
+  A rule spanning solver pools is also an error: the pool-decomposed solver
+  silently drops such rules, and a declared constraint that cannot be
+  enforced must not be silently ignored. A rule referencing an unknown
+  game/playoff id logs a warning (previously silently ignored).
+- **Reference checks** — duplicate game/resource IDs and playoff slots
+  pointing at unknown `resource_id`s are contract errors; slot-window
+  validity stays in `scheduler.validate_playoff_slots`. `team_conflicts`
+  endpoints are deliberately NOT required to appear in `games`: planning-only
+  edges (an event with no Layer-2 games yet) are a legitimate, documented
+  state with their own `PlanningOnly` conflict-audit status.
 - **Unfittable games are hard errors** — a game whose `duration_minutes`
   cannot fit any resource of its `resource_type` (per C7 consecutive-slot
   math) now fails the contract instead of surfacing downstream as a mystery

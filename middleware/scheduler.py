@@ -65,7 +65,11 @@ from typing import Any
 from loguru import logger
 
 from config import SCHEDULE_SOLVER_RANDOM_SEED
-from schedule_contracts import ScheduleContractError, validate_schedule_input
+from schedule_contracts import (
+    ScheduleContractError,
+    validate_schedule_input,
+    validate_schedule_output,
+)
 
 _WEEKDAY_ORDER: dict[str, int] = {
     "Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3,
@@ -94,9 +98,6 @@ def load_schedule_input(path: Path) -> dict[str, Any]:
     """
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
-    for key in ("games", "resources"):
-        if key not in data:
-            raise ValueError(f"schedule_input.json missing required key: {key!r}")
     for warning in validate_schedule_input(data):
         logger.warning(f"schedule_input contract: {warning}")
     return data
@@ -1614,6 +1615,21 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         "solved_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
         **result,
     }
+
+    # Self-check before writing: a contract-violating output here is a solver
+    # bug (e.g. a double-booked slot), not an operator problem — refuse to
+    # emit an artifact that produce-schedule would reject anyway.
+    try:
+        for warning in validate_schedule_output(output):
+            logger.warning(f"schedule_output contract: {warning}")
+    except ScheduleContractError as e:
+        logger.error(
+            f"Solver produced contract-violating output ({len(e.errors)} "
+            "error(s)) — this is a solver bug, nothing was written:"
+        )
+        for violation in e.errors:
+            logger.error(f"  - {violation}")
+        return 3
 
     try:
         output_path.write_text(
