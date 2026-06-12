@@ -834,12 +834,13 @@ The JSON file stays in `DATA_DIR` as the machine-readable backup.
 | C6 | Minimum rest — no team plays in two adjacent global slots (within the same day only; cross-day pairs are skipped) | `AddBoolOr([v1.Not(), v2.Not()])` for same-day adjacent slot pairs |
 | C7 | Multi-slot games — duration > slot_minutes blocks consecutive slots | restrict start positions; expand slot_occupancy |
 
-**Playoff scheduling (not solver constraints):**
-Playoff game timing is controlled entirely by the Playoff-Slots tab in
-`venue_input.xlsx` — the exact slot and court for each QF/Semi/Final/3rd game
-is specified there by the coordinator.  The solver only packs pool play.
-Last-minute changes during the tournament are handled by editing the tab and
-re-running `produce-schedule` (no solver re-run needed).
+**Playoff scheduling:**
+Generated playoff games participate in solver precedence, including
+duration-aware round ordering. The optional Playoff-Slots tab in
+`venue_input.xlsx` fixes exact QF/Semi/Final/3rd games to operator-selected
+venues and times; unpinned playoff games remain solver-assigned. Last-minute
+pin changes require regenerating and solving the schedule before running
+`produce-schedule`.
 
 **Out of scope (future work):**
 - Cross-sport participant conflicts (person in both Basketball and Badminton).

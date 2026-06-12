@@ -3015,7 +3015,8 @@ class ScheduleWorkbookBuilder:
         """Return (games, precedence) for single-elimination brackets for pod (racquet) sports.
 
         Uses planning_entries (confirmed + provisional) from Pod-Divisions.
-        Number of games per division = planning_entries − 1 (single elimination).
+        Elimination games per division = planning_entries − 1, plus an optional
+        third-place game when two Semis are played.
         Divisions with fewer than 2 planning entries are skipped.
 
         Late rounds receive stage-aware IDs so operators can pin them in
@@ -3023,6 +3024,7 @@ class ScheduleWorkbookBuilder:
           - ``-QF-N``   quarter-final games (bracket size >= 8)
           - ``-Semi-N`` semi-final games
           - ``-Final``  championship game
+          - ``-3rd``    third-place game when enabled and two Semis are played
         Early rounds keep sequential numeric IDs (``-01``, ``-02``, ...).
 
         Precedence edges enforce round ordering: every game in round R must
@@ -3147,6 +3149,37 @@ class ScheduleWorkbookBuilder:
                             "after_game_id":  after_id,
                             "min_gap_slots":  1,
                         })
+
+            semi_round = n_rounds - 1
+            semi_ids = games_by_round.get(semi_round, [])
+            if (
+                COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
+                and len(semi_ids) == 2
+            ):
+                third_id = f"{division_id}-3rd"
+                div_games.append({
+                    "game_id":              third_id,
+                    "division_id":          division_id,
+                    "division_entry_count": n_entries,
+                    "event":                sport_type,
+                    "stage":                "3rd",
+                    "pool_id":              "",
+                    "round":                n_rounds,
+                    "team_a_id":            None,
+                    "team_b_id":            None,
+                    "duration_minutes":     mpg,
+                    "resource_type":        resource_type,
+                    "earliest_slot":        None,
+                    "latest_slot":          None,
+                })
+                all_precedence.extend(
+                    {
+                        "before_game_id": semi_id,
+                        "after_game_id": third_id,
+                        "min_gap_slots": 1,
+                    }
+                    for semi_id in semi_ids
+                )
 
             all_games.extend(div_games)
 
@@ -6209,7 +6242,18 @@ class ScheduleWorkbookBuilder:
         ScheduleWorkbookBuilder._warn_if_schedules_mismatched(schedule_output, schedule_input)
         game_meta = {g["game_id"]: g for g in schedule_input.get("games", [])}
         res_meta  = {r["resource_id"]: r for r in schedule_input.get("resources", [])}
-        _STAGE_ORDER = {"Pool": 0, "R1": 1, "QF": 2, "Semi": 3, "Final": 4, "3rd": 5}
+        def _stage_order(stage: Any) -> Tuple[int, int]:
+            text = str(stage or "").strip()
+            early_round = re.fullmatch(r"R(\d+)", text)
+            if early_round:
+                return (1, int(early_round.group(1)))
+            return {
+                "Pool": (0, 0),
+                "QF": (2, 0),
+                "Semi": (3, 0),
+                "Final": (4, 0),
+                "3rd": (5, 0),
+            }.get(text, (99, 0))
         rows: List[Dict[str, Any]] = []
         for a in schedule_output.get("assignments", []):
             gid  = a["game_id"]
@@ -6240,7 +6284,7 @@ class ScheduleWorkbookBuilder:
             })
         rows.sort(key=lambda r: (
             r["event"],
-            _STAGE_ORDER.get(str(r["stage"]), 99),
+            _stage_order(r["stage"]),
             int(r["round"]) if isinstance(r["round"], int) else 0,
             r["slot"],
         ))

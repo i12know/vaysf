@@ -43,6 +43,14 @@ late rounds via `Playoff-Slots` the same way team-sport finals are pinned.
   (every game in round R must complete before round R+1 starts,
   `min_gap_slots=1`). These edges are included in `schedule_input.json`
   alongside the existing Soccer and Basketball precedence chains.
+- **Duration-aware precedence** — the solver now combines the declared slot
+  gap with each prior game's real duration, so a 60-minute Tennis match on a
+  30-minute grid cannot be followed by the next round after only 30 minutes.
+- **Third place** — racquet brackets with two played Semis emit stable
+  `<division_id>-3rd` games when third-place scheduling is enabled, with both
+  Semis preceding the Final and third-place game.
+- **Large-bracket report order** — numeric early stages (`R1`, `R2`, ...)
+  sort chronologically before QF/Semi/Final in Schedule-by-Sport.
 - **Return type** — `_build_pod_game_objects()` now returns
   `(games, precedence)` and the caller `_build_schedule_input()` extends the
   top-level precedence list accordingly.

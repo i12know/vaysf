@@ -389,16 +389,15 @@ The system now uses weekday-aware day keys such as:
 
 These are derived automatically from the real calendar dates in `Venue-Input`.
 
-### Current limitation for racquet / pod sports
+### Racquet / pod playoff IDs
 
-Some racquet events still expose only generated `R1` game IDs in
-`Schedule-Input -> GAMES` rather than explicit `Semi` / `Final` / `3rd`
-stage IDs.
+Racquet brackets expose stable late-round IDs in
+`Schedule-Input -> GAMES`, including `QF`, `Semi`, `Final`, and `3rd` when
+the configured bracket supports those rounds. Larger brackets keep numeric
+IDs for early rounds and then transition to the named late-round IDs.
 
-So:
-
-- team-sport playoff pinning is fully supported
-- some pod/racquet finals workflows are still partially manual
+Use these exact IDs in `Playoff-Slots`; the solver preserves round precedence
+and waits for each prior-round game to finish before starting the next round.
 
 ---
 

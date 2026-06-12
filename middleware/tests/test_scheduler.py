@@ -583,6 +583,97 @@ def test_solve_soccer_precedence_keeps_final_after_pool_games():
     assert max(slot_index[slot_by_game[game_id]] for game_id in semi_ids) < third_idx
 
 
+def test_solve_precedence_waits_for_multislot_game_completion():
+    """A later round cannot start while a multi-slot earlier round is active."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    games = [
+        {
+            "game_id": "TEN-Men-Singles-Semi-1",
+            "event": "Tennis",
+            "stage": "Semi",
+            "pool_id": "",
+            "round": 1,
+            "team_a_id": None,
+            "team_b_id": None,
+            "duration_minutes": 60,
+            "resource_type": "Tennis Court",
+            "earliest_slot": None,
+            "latest_slot": None,
+        },
+        {
+            "game_id": "TEN-Men-Singles-Semi-2",
+            "event": "Tennis",
+            "stage": "Semi",
+            "pool_id": "",
+            "round": 1,
+            "team_a_id": None,
+            "team_b_id": None,
+            "duration_minutes": 60,
+            "resource_type": "Tennis Court",
+            "earliest_slot": None,
+            "latest_slot": None,
+        },
+        {
+            "game_id": "TEN-Men-Singles-Final",
+            "event": "Tennis",
+            "stage": "Final",
+            "pool_id": "",
+            "round": 2,
+            "team_a_id": None,
+            "team_b_id": None,
+            "duration_minutes": 60,
+            "resource_type": "Tennis Court",
+            "earliest_slot": None,
+            "latest_slot": None,
+        },
+    ]
+    resources = [
+        {
+            "resource_id": f"TEN-Sat-1-{court}",
+            "resource_type": "Tennis Court",
+            "label": f"Court-{court}",
+            "day": "Sat-1",
+            "open_time": "08:00",
+            "close_time": "10:30",
+            "slot_minutes": 30,
+        }
+        for court in range(1, 4)
+    ]
+    precedence = [
+        {
+            "before_game_id": semi_id,
+            "after_game_id": "TEN-Men-Singles-Final",
+            "min_gap_slots": 1,
+        }
+        for semi_id in (
+            "TEN-Men-Singles-Semi-1",
+            "TEN-Men-Singles-Semi-2",
+        )
+    ]
+
+    result = solve(
+        {
+            "games": games,
+            "resources": resources,
+            "precedence": precedence,
+            "day_order": ["Sat-1"],
+        },
+        timeout_seconds=10.0,
+    )
+
+    assert result["status"] == STATUS_OPTIMAL
+    starts = {
+        row["game_id"]: int(row["slot"][-5:-3]) * 60 + int(row["slot"][-2:])
+        for row in result["assignments"]
+    }
+    assert starts["TEN-Men-Singles-Final"] >= max(
+        starts["TEN-Men-Singles-Semi-1"] + 60,
+        starts["TEN-Men-Singles-Semi-2"] + 60,
+    )
+
+
 def test_solve_team_conflict_infeasible():
     """Two games sharing a team on a single slot/court must be INFEASIBLE."""
     pytest.importorskip("ortools")
