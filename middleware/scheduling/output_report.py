@@ -2,8 +2,9 @@
 
 Pure functions; no class state.  Extracted as part of Issue #152.
 """
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -20,7 +21,6 @@ from schedule_styles import (
     style_for_game,
     sport_style,
     format_compact_label,
-    category_style,
 )
 from scheduling.xlsx_utils import (
     _day_display_label,
@@ -70,7 +70,6 @@ def _build_schedule_output_flat_rows(
     Each row joins one assignment from schedule_output with game metadata
     from schedule_input.  Rows are sorted by event → stage order → round → slot.
     """
-    import re
     _warn_if_schedules_mismatched(schedule_output, schedule_input)
     game_meta = {g["game_id"]: g for g in schedule_input.get("games", [])}
     res_meta  = {r["resource_id"]: r for r in schedule_input.get("resources", [])}
@@ -914,7 +913,6 @@ def _write_schedule_output_report(
     # Chronological day order — calendar-date-derived when available.
     ms_day_order: List[str] = list(schedule_input.get("day_order") or [])
     if not ms_day_order:
-        import re as _re
         ms_day_order = sorted(
             {str(r.get("day", "")) for r in all_resources if r.get("day")},
             key=_day_sort_key,
@@ -977,9 +975,8 @@ def _write_schedule_output_report(
         return (vg_to_min_rank.get(vg, _UNRANKED), vg)
 
     def _label_sort_key(label: str) -> Tuple[str, int, str]:
-        import re as _re2
         # Natural sort: split on the last run of digits so "Court-2" < "Court-10".
-        m = _re2.search(r"(\d+)(\D*)$", label)
+        m = re.search(r"(\d+)(\D*)$", label)
         if m:
             prefix = label[: m.start()]
             return (prefix, int(m.group(1)), m.group(2))
@@ -1093,7 +1090,7 @@ def _write_schedule_output_report(
     prev_day_display: str = ""
     # Track whether we've written the day header yet; defer it until the
     # first non-empty row so a day with all-empty slots is also suppressed.
-    pending_day_header: Any = None  # (day_display, day) or None
+    pending_day_header: Optional[Tuple[str, str]] = None  # (day_display, day) or None
 
     for day_rank, time_min in sorted_slot_keys:
         day, t_str = slot_index[(day_rank, time_min)]

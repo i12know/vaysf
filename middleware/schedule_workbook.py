@@ -6,7 +6,6 @@
 # ChurchTeamsExporter.  One-way dependency: church_teams_export.py may import
 # from here; this module must NOT import from church_teams_export.
 import json
-import os
 import pandas as pd
 from pathlib import Path
 from loguru import logger
@@ -15,7 +14,6 @@ from datetime import datetime
 from collections import defaultdict, deque
 import random
 import re
-import zipfile
 from math import ceil
 
 from config import (
@@ -50,13 +48,10 @@ from config import (
     SCHEDULE_SKETCH_COLOR_VB_WOMEN,
     SCHEDULE_SKETCH_COLOR_SECTION,
     SCHEDULE_SKETCH_COLOR_HEADER,
-    GYM_RESOURCE_TYPE,
     GYM_RESOURCE_TYPE_BASKETBALL,
     GYM_RESOURCE_TYPE_VOLLEYBALL,
     TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
     TEAM_RESOURCE_TYPE_SOCCER,
-    RESOURCE_TYPE_ALIASES,
-    RESOURCE_ID_PREFIX_BY_TYPE,
     SCHEDULE_SOLVER_GYM_COURTS,
     VENUE_INPUT_FILENAME,
     POD_RESOURCE_EVENT_TYPE,
@@ -69,13 +64,8 @@ from validation.doubles_resolver import Selection as _DblSelection, resolve_doub
 from validation.name_matcher import normalized_name as _norm_name
 from validation.models import RulesManager
 from schedule_styles import (
-    SPORT_STYLES,
-    CATEGORY_STYLES,
-    sport_style,
     category_style,
-    style_for_game,
     category_prefix,
-    format_compact_label,
 )
 from scheduling import xlsx_utils, venue_loader, output_report
 
