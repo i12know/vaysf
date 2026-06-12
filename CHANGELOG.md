@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Move qualifying_roles into validation rules JSON — closes [#163](https://github.com/i12know/vaysf/issues/163)
+
+Eliminates the last hardcoded ChMeetings role-string set in business logic.
+Previously `qualifying_roles = {"athlete", "participant", "athlete/participant"}` was
+a literal constant in `sync/manager.py`; an unknown role would silently exclude the
+participant with no log entry.
+
+- **`validation/summer_2026.json`** — new `configuration.participant_roles` section:
+  ```json
+  "qualifying":      ["Athlete", "Participant", "Athlete/Participant"],
+  "known_excluded":  ["VAY SM Staff", "Fan and Supporter"]
+  ```
+- **`RulesManager`** (`validation/models.py`) — new `qualifying_roles` and
+  `known_excluded_roles` properties return case-folded `frozenset`s from the
+  `configuration` section. `_load_configuration()` reads the config key alongside
+  rules; an empty or missing key yields empty sets without crashing.
+- **`_is_eligible_by_role()`** (`sync/manager.py`) — new module-level helper
+  replaces the inline comprehension. Logs a WARNING (with ChMeetings ID, no PII
+  such as names) for any nonblank role that is neither qualifying nor
+  known_excluded, so new ChMeetings role values surface in logs rather than
+  causing silent exclusions.
+- **`_load_current_eligible_chm_ids()`** — calls `_is_eligible_by_role()` via
+  a `RulesManager(collection="SUMMER_2026")` instance; no behavior change for
+  the three existing role values.
+- 13 new tests across `test_validation.py` (RulesManager properties, empty
+  config, disjoint check) and `test_sync_manager.py` (all five suggested cases:
+  qualifying values, known-excluded silent skip, novel role warning,
+  comma-separated list, blank roles).
+
 ### Post-solve quality audit — closes [#153](https://github.com/i12know/vaysf/issues/153)
 
 Adds a `quality_warnings` section to `build_schedule_diagnostics()` (and the

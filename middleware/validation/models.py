@@ -32,16 +32,17 @@ class Participant(BaseModel):
 
 class RulesManager:
     """Simple manager for loading validation rules."""
-    
+
     def __init__(self, collection="SUMMER_2025", rules_file=None):
         """Initialize with collection name and optional rules file path."""
         self.collection = collection
         self.rules_file = rules_file or os.path.join(
-            os.path.dirname(__file__), 
+            os.path.dirname(__file__),
             f"{collection.lower()}.json"
         )
         self.rules = self._load_rules()
-    
+        self.configuration = self._load_configuration()
+
     def _load_rules(self):
         """Load rules from JSON file."""
         try:
@@ -51,6 +52,28 @@ class RulesManager:
         except Exception as e:
             logger.error(f"Error loading rules from {self.rules_file}: {e}")
             return []
+
+    def _load_configuration(self):
+        """Load configuration section from rules JSON."""
+        try:
+            with open(self.rules_file, 'r') as f:
+                data = json.load(f)
+                return data.get("configuration", {})
+        except Exception as e:
+            logger.error(f"Error loading configuration from {self.rules_file}: {e}")
+            return {}
+
+    @property
+    def qualifying_roles(self) -> frozenset:
+        """Case-folded set of roles that make a participant eligible."""
+        roles = self.configuration.get("participant_roles", {}).get("qualifying", [])
+        return frozenset(r.casefold() for r in roles if r)
+
+    @property
+    def known_excluded_roles(self) -> frozenset:
+        """Case-folded set of roles that are intentionally excluded (no warning)."""
+        roles = self.configuration.get("participant_roles", {}).get("known_excluded", [])
+        return frozenset(r.casefold() for r in roles if r)
     
     def get_rules_by_type(self, rule_type):
         """Get rules filtered by type."""

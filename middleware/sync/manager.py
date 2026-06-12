@@ -17,9 +17,41 @@ from wordpress.frontend_connector import WordPressConnector
 from sync.churches import ChurchSyncer
 from sync.participants import ParticipantSyncer
 from validation import ChurchValidator, TeamValidator
+from validation.models import RulesManager
 import datetime
 from uuid import uuid4
 from tqdm import tqdm
+
+
+def _is_eligible_by_role(
+    roles_str: str,
+    qualifying: frozenset,
+    known_excluded: frozenset,
+    chm_id: str,
+) -> bool:
+    """Return True if roles_str contains at least one qualifying role.
+
+    Logs a WARNING (with ChMeetings ID context, no PII) for any nonblank role
+    that is neither qualifying nor in known_excluded, so new ChMeetings role
+    values surface in logs rather than silently excluding participants.
+    """
+    if not str(roles_str or "").strip():
+        return False
+    found_qualifying = False
+    for raw_role in str(roles_str).split(","):
+        normalized = raw_role.strip().casefold()
+        if not normalized:
+            continue
+        if normalized in qualifying:
+            found_qualifying = True
+        elif normalized not in known_excluded:
+            logger.warning(
+                f"Unknown ChMeetings role value {raw_role.strip()!r} for ID {chm_id!r}. "
+                "Add to 'known_excluded' in configuration if this role should be silently "
+                "skipped, or to 'qualifying' if it should make participants eligible."
+            )
+    return found_qualifying
+
 
 class SyncManager:
     """Manager for synchronizing data between ChMeetings and WordPress."""
@@ -785,7 +817,9 @@ class SyncManager:
 
         eligible_ids: set[str] = set()
         seen_ids: set[str] = set()
-        qualifying_roles = {"athlete", "participant", "athlete/participant"}
+        _rm = RulesManager(collection="SUMMER_2026")
+        qualifying_roles = _rm.qualifying_roles
+        known_excluded_roles = _rm.known_excluded_roles
 
         for group in team_groups:
             group_id = str(group.get("id") or "").strip()
@@ -833,10 +867,7 @@ class SyncManager:
                     for field in person.get("additional_fields", [])
                 }
                 roles = str(additional_fields.get(CHM_FIELDS["ROLES"], "") or "")
-                if any(
-                    role.strip().casefold() in qualifying_roles
-                    for role in roles.split(",")
-                ):
+                if _is_eligible_by_role(roles, qualifying_roles, known_excluded_roles, chm_id):
                     eligible_ids.add(str(person.get("id") or chm_id))
 
         logger.info(

@@ -2651,4 +2651,82 @@ def test_membership_legacy_approved_backfill_and_revert(sync_manager, mocker):
     ), "Write-back must send the 'No' option ID after legacy backfill"
 
 
+# ---------------------------------------------------------------------------
+# _is_eligible_by_role — qualifying_roles from configuration (#163)
+# ---------------------------------------------------------------------------
+
+from sync.manager import _is_eligible_by_role
+
+
+_QUALIFYING = frozenset({"athlete", "participant", "athlete/participant"})
+_EXCLUDED   = frozenset({"vay sm staff", "fan and supporter"})
+
+
+def test_is_eligible_by_role_qualifying_athlete():
+    """'Athlete' (mixed case) is qualifying."""
+    assert _is_eligible_by_role("Athlete", _QUALIFYING, _EXCLUDED, "chm-001")
+
+
+def test_is_eligible_by_role_qualifying_participant():
+    """'Participant' is qualifying."""
+    assert _is_eligible_by_role("Participant", _QUALIFYING, _EXCLUDED, "chm-002")
+
+
+def test_is_eligible_by_role_qualifying_athlete_slash_participant():
+    """'Athlete/Participant' is qualifying."""
+    assert _is_eligible_by_role("Athlete/Participant", _QUALIFYING, _EXCLUDED, "chm-003")
+
+
+def test_is_eligible_by_role_case_insensitive():
+    """Role matching is case-insensitive ('ATHLETE' → qualifying)."""
+    assert _is_eligible_by_role("ATHLETE", _QUALIFYING, _EXCLUDED, "chm-004")
+
+
+def test_is_eligible_by_role_known_excluded_no_warning(caplog):
+    """A known-excluded role is silently skipped — no WARNING emitted."""
+    import logging
+    with caplog.at_level(logging.WARNING, logger="root"):
+        result = _is_eligible_by_role("VAY SM Staff", _QUALIFYING, _EXCLUDED, "chm-005")
+    assert result is False
+    assert not any("Unknown" in r.message for r in caplog.records)
+
+
+def test_is_eligible_by_role_novel_role_warns():
+    """An unknown nonblank role triggers a WARNING log entry."""
+    messages = []
+    from loguru import logger as loguru_logger
+    sink_id = loguru_logger.add(lambda msg: messages.append(msg), level="WARNING")
+    try:
+        result = _is_eligible_by_role("ChurchLeader", _QUALIFYING, _EXCLUDED, "chm-006")
+    finally:
+        loguru_logger.remove(sink_id)
+    assert result is False
+    assert any("Unknown" in m for m in messages), (
+        "Expected a WARNING mentioning 'Unknown' for novel role value"
+    )
+    assert any("chm-006" in m for m in messages), (
+        "WARNING should include the ChMeetings ID for context"
+    )
+
+
+def test_is_eligible_by_role_comma_separated_qualifying_wins():
+    """Comma-separated list with one qualifying role → eligible."""
+    assert _is_eligible_by_role(
+        "Fan and Supporter, Athlete", _QUALIFYING, _EXCLUDED, "chm-007"
+    )
+
+
+def test_is_eligible_by_role_comma_separated_all_excluded():
+    """Comma-separated list with only excluded roles → not eligible."""
+    assert not _is_eligible_by_role(
+        "VAY SM Staff, Fan and Supporter", _QUALIFYING, _EXCLUDED, "chm-008"
+    )
+
+
+def test_is_eligible_by_role_blank_roles_not_eligible():
+    """Empty or blank roles string → not eligible, no warning."""
+    assert not _is_eligible_by_role("", _QUALIFYING, _EXCLUDED, "chm-009")
+    assert not _is_eligible_by_role("   ", _QUALIFYING, _EXCLUDED, "chm-010")
+
+
 ##### End of tests/test_sync_manager

@@ -6,6 +6,12 @@
     "last_updated": "2026-05-09T21:00:00",
     "description": "Rules for Sports Fest 2026"
   },
+  "configuration": {
+    "participant_roles": {
+      "qualifying": ["Athlete", "Participant", "Athlete/Participant"],
+      "known_excluded": ["VAY SM Staff", "Fan and Supporter"]
+    }
+  },
   "rules": [
     {
       "rule_id": 1,

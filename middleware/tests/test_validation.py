@@ -35,6 +35,39 @@ def test_rules_manager_loads_rules(rules_manager):
     assert any(r.get("rule_type") == "partner" for r in rules_manager.rules), "Should have partner rules"
     assert any(r.get("rule_type") == "team_size" for r in rules_manager.rules), "Should have team size rules"
 
+
+def test_rules_manager_qualifying_roles_loaded(rules_manager):
+    """qualifying_roles returns a case-folded frozenset from the configuration section."""
+    qr = rules_manager.qualifying_roles
+    assert isinstance(qr, frozenset)
+    # All three current ChMeetings role values must be present (case-folded).
+    assert "athlete" in qr
+    assert "participant" in qr
+    assert "athlete/participant" in qr
+
+
+def test_rules_manager_known_excluded_roles_loaded(rules_manager):
+    """known_excluded_roles returns a case-folded frozenset from the configuration section."""
+    ke = rules_manager.known_excluded_roles
+    assert isinstance(ke, frozenset)
+    assert "vay sm staff" in ke
+    assert "fan and supporter" in ke
+
+
+def test_rules_manager_qualifying_and_excluded_are_disjoint(rules_manager):
+    """qualifying and known_excluded must not overlap — an overlap is a config mistake."""
+    assert rules_manager.qualifying_roles.isdisjoint(rules_manager.known_excluded_roles)
+
+
+def test_rules_manager_empty_configuration_defaults_to_empty_sets(tmp_path):
+    """RulesManager with no 'configuration' key returns empty role sets without crashing."""
+    rules_file = tmp_path / "minimal.json"
+    rules_file.write_text('{"rules": []}', encoding="utf-8")
+    rm = RulesManager(collection="MINIMAL", rules_file=str(rules_file))
+    assert rm.qualifying_roles == frozenset()
+    assert rm.known_excluded_roles == frozenset()
+
+
 def test_participant_model():
     """Test Participant Pydantic model."""
     valid_data = {
