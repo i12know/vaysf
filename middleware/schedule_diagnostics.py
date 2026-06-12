@@ -623,19 +623,186 @@ def _suggest_next_actions(
             }
         )
 
+    quality_warnings = diagnostics.get("quality_warnings", []) or []
+    for warning in quality_warnings:
+        if warning.get("severity") == "medium":
+            suggestions.append({
+                "vector": "quality",
+                "severity": "medium",
+                "message": warning["message"],
+            })
+
     if not suggestions:
-        suggestions.append(
-            {
+        if not quality_warnings:
+            suggestions.append({
                 "vector": "quality",
                 "severity": "info",
                 "message": (
-                    "No obvious hard pressure found. If the schedule is feasible but ugly, "
-                    "review late finishes, spacing, gym switches, and operator concerns."
+                    "No obvious hard pressure or quality concerns found. "
+                    "Schedule looks clean."
                 ),
-            }
-        )
+            })
+        else:
+            suggestions.append({
+                "vector": "quality",
+                "severity": "info",
+                "message": (
+                    "No hard feasibility pressure found; minor quality notes are "
+                    "listed in the Quality Warnings section."
+                ),
+            })
 
     return suggestions
+
+
+_LATE_FINISH_MINUTES = 20 * 60  # 20:00 — flag events ending after this
+_TIGHT_TURNAROUND_MINUTES = 30  # < 30 min gap between end of QF/Semi and start of next round
+_VOLLEYBALL_SWITCH_MEDIUM_THRESHOLD = 4  # > 4 switches → medium; > 0 → info
+
+
+def _build_quality_warnings(
+    schedule_input: dict[str, Any],
+    schedule_output: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Quality checks for a solved (FEASIBLE/OPTIMAL/PARTIAL) schedule.
+
+    Returns warning dicts separate from hard feasibility findings.  A clean
+    schedule should produce an empty list so callers are not buried in noise.
+
+    Each dict has at minimum: ``check``, ``severity``, ``event``, ``day``,
+    ``message``.
+    """
+    warnings: list[dict[str, Any]] = []
+
+    status = str(schedule_output.get("status") or "")
+    if status in ("INFEASIBLE", "UNKNOWN", ""):
+        return warnings  # quality checks only make sense for a placed schedule
+
+    game_meta: dict[str, dict[str, Any]] = {
+        str(g["game_id"]): g for g in schedule_input.get("games", [])
+    }
+    res_meta: dict[str, dict[str, Any]] = {
+        str(r["resource_id"]): r for r in schedule_input.get("resources", [])
+    }
+
+    def _slot_day_and_minutes(slot: str) -> tuple[str, int]:
+        day, time_str = str(slot).rsplit("-", maxsplit=1)
+        return day, _parse_hhmm_minutes(time_str) or 0
+
+    # --- Check 1: Late finish by event and day ---
+    # Track latest finish_minutes and the game_id responsible.
+    latest_finish_by: dict[tuple[str, str], tuple[int, str]] = {}
+    for asgn in schedule_output.get("assignments", []) or []:
+        gid = str(asgn.get("game_id") or "")
+        slot = str(asgn.get("slot") or "")
+        if not gid or not slot:
+            continue
+        game = game_meta.get(gid, {})
+        res = res_meta.get(str(asgn.get("resource_id") or ""), {})
+        event = str(game.get("event") or "Unspecified")
+        dur = _as_int(game.get("duration_minutes") or res.get("slot_minutes") or 60)
+        day, start_min = _slot_day_and_minutes(slot)
+        finish_min = start_min + dur
+        key = (event, day)
+        if key not in latest_finish_by or finish_min > latest_finish_by[key][0]:
+            latest_finish_by[key] = (finish_min, gid)
+
+    for (event, day), (finish_min, game_id) in sorted(latest_finish_by.items()):
+        if finish_min > _LATE_FINISH_MINUTES:
+            hh, mm = divmod(finish_min, 60)
+            warnings.append({
+                "check": "late_finish",
+                "severity": "medium",
+                "event": event,
+                "day": day,
+                "game_id": game_id,
+                "latest_finish": f"{hh:02d}:{mm:02d}",
+                "message": (
+                    f"{event} on {day}: last game ends at {hh:02d}:{mm:02d} "
+                    f"(game {game_id}). Widen the resource window earlier or "
+                    "reduce games on this day."
+                ),
+            })
+
+    # --- Check 2: Tight stage turnaround ---
+    # Flag QF→Semi, Semi→Final, Semi→3rd edges where actual gap < threshold.
+    _PLAYOFF_STAGES = {"QF", "Semi", "Final", "3rd"}
+    slot_by_game = {
+        str(a.get("game_id") or ""): str(a.get("slot") or "")
+        for a in (schedule_output.get("assignments") or [])
+    }
+    for rule in schedule_input.get("precedence", []) or []:
+        before_id = str(rule.get("before_game_id") or "").strip()
+        after_id = str(rule.get("after_game_id") or "").strip()
+        before_game = game_meta.get(before_id, {})
+        after_game = game_meta.get(after_id, {})
+        before_stage = str(before_game.get("stage") or "")
+        after_stage = str(after_game.get("stage") or "")
+        if before_stage not in _PLAYOFF_STAGES or after_stage not in _PLAYOFF_STAGES:
+            continue  # only check named-stage transitions (QF/Semi/Final/3rd)
+        before_slot = slot_by_game.get(before_id, "")
+        after_slot = slot_by_game.get(after_id, "")
+        if not before_slot or not after_slot:
+            continue  # one or both games are unscheduled; not our concern here
+        before_day, before_start = _slot_day_and_minutes(before_slot)
+        after_day, after_start = _slot_day_and_minutes(after_slot)
+        if before_day != after_day:
+            continue  # cross-day gaps are fine
+        before_dur = _as_int(before_game.get("duration_minutes"), 60)
+        gap = after_start - (before_start + before_dur)
+        if gap < _TIGHT_TURNAROUND_MINUTES:
+            event = str(before_game.get("event") or after_game.get("event") or "")
+            warnings.append({
+                "check": "tight_turnaround",
+                "severity": "medium",
+                "event": event,
+                "day": before_day,
+                "before_game_id": before_id,
+                "after_game_id": after_id,
+                "gap_minutes": gap,
+                "message": (
+                    f"{event}: {after_stage} ({after_id}) starts {gap} min after "
+                    f"{before_stage} ({before_id}) ends on {before_day}. "
+                    "Add a Playoff-Slots buffer or extend the resource window."
+                ),
+            })
+
+    # --- Check 3: Volleyball net-height switches ---
+    total_switches = 0
+    pool_detail_parts: list[str] = []
+    for pr in schedule_output.get("pool_results", []) or []:
+        switches = _as_int(pr.get("volleyball_adjacent_switches"), 0)
+        if switches:
+            total_switches += switches
+            pool_detail_parts.append(f"{pr.get('resource_type', '')} ({switches})")
+
+    if total_switches > _VOLLEYBALL_SWITCH_MEDIUM_THRESHOLD:
+        warnings.append({
+            "check": "volleyball_switches",
+            "severity": "medium",
+            "event": "Volleyball",
+            "day": "",
+            "switch_count": total_switches,
+            "message": (
+                f"Volleyball: {total_switches} adjacent net-height switch(es) "
+                f"({'; '.join(pool_detail_parts)}). "
+                "Adjust pool assignments to group Men/Women games consecutively."
+            ),
+        })
+    elif total_switches > 0:
+        warnings.append({
+            "check": "volleyball_switches",
+            "severity": "info",
+            "event": "Volleyball",
+            "day": "",
+            "switch_count": total_switches,
+            "message": (
+                f"Volleyball: {total_switches} adjacent net-height switch(es). "
+                "Acceptable but can be reduced via pool assignment changes."
+            ),
+        })
+
+    return warnings
 
 
 def build_schedule_diagnostics(
@@ -660,6 +827,11 @@ def build_schedule_diagnostics(
     diagnostics["resource_contract"] = _summarize_resource_contract(
         schedule_input,
         diagnostics["supply"],
+    )
+    diagnostics["quality_warnings"] = (
+        _build_quality_warnings(schedule_input, schedule_output)
+        if schedule_output is not None
+        else []
     )
     diagnostics["next_actions"] = _suggest_next_actions(diagnostics, capacity)
     return diagnostics
@@ -696,6 +868,11 @@ def format_schedule_diagnostics(diagnostics: dict[str, Any]) -> list[str]:
                 f"Resource contract issue [{issue.get('severity')}/{issue.get('code')}]: "
                 f"{issue.get('message')}"
             )
+    for warning in diagnostics.get("quality_warnings", []) or []:
+        lines.append(
+            f"Quality [{warning.get('severity', 'info')}/{warning.get('check', '')}]: "
+            f"{warning.get('message', '')}"
+        )
     for action in diagnostics.get("next_actions", []):
         lines.append(
             f"Next action [{action['severity']}/{action['vector']}]: {action['message']}"

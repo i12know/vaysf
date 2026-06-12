@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Post-solve quality audit — closes [#153](https://github.com/i12know/vaysf/issues/153)
+
+Adds a `quality_warnings` section to `build_schedule_diagnostics()` (and the
+`Schedule-Diagnostics` workbook tab) that runs after a feasible solve to flag
+schedules that technically fit but may be unreasonable to publish.
+
+Three checks are implemented, each separate from hard infeasibility findings:
+
+- **Late finish** (`late_finish`): flags any event+day where the last game ends
+  after 20:00. Reports the finish time and game ID so operators can widen the
+  resource window or reduce games on that day. Severity: medium.
+- **Tight stage turnaround** (`tight_turnaround`): for each QF→Semi, Semi→Final,
+  or Semi→3rd precedence edge, flags when the actual gap between end of the
+  prior round and start of the next is under 30 minutes. Suggests adding a
+  Playoff-Slots buffer. Severity: medium.
+- **Volleyball net-height switches** (`volleyball_switches`): surfaces the
+  `volleyball_adjacent_switches` count already computed by the solver. Medium
+  when > 4 switches; info when 1–4. Suggests pool assignment changes.
+
+Behaviour:
+- Quality checks are skipped for INFEASIBLE/UNKNOWN schedules (nothing to assess).
+- Medium-severity quality warnings propagate into `next_actions` as
+  `vector: "quality"` suggestions so operators see them in the CLI output.
+- `format_schedule_diagnostics()` logs a `Quality [severity/check]` line per
+  warning.
+- The `Schedule-Diagnostics` workbook tab renders a "Quality Warnings" section
+  with severity, check name, event, day, and actionable message.
+- 10 new tests in `test_schedule_diagnostics.py` cover all three checks plus
+  edge cases (clean schedule, infeasible schedule, propagation to next_actions,
+  format output).
+
 ### Event-critical test coverage — closes [#162](https://github.com/i12know/vaysf/issues/162)
 
 Adds the two remaining coverage gaps identified in the 2026 pre-season

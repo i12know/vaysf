@@ -6424,6 +6424,27 @@ class ScheduleWorkbookBuilder:
             ws.cell(row=row, column=1, value="No suggested next actions.")
             row += 1
 
+        quality_warnings = diagnostics.get("quality_warnings", []) or []
+        if quality_warnings:
+            row += 1
+            row = _section(row, "Quality Warnings")
+            row = _headers(row, ["Severity", "Check", "Event", "Day", "Message"])
+            for warning in quality_warnings:
+                severity = str(warning.get("severity") or "info")
+                fill = _severity_fill(severity)
+                values = [
+                    severity,
+                    str(warning.get("check") or ""),
+                    str(warning.get("event") or ""),
+                    str(warning.get("day") or ""),
+                    str(warning.get("message") or ""),
+                ]
+                for col_idx, value in enumerate(values, start=1):
+                    cell = ws.cell(row=row, column=col_idx, value=value)
+                    cell.fill = fill
+                    cell.alignment = left
+                row += 1
+
         overlaps = supply.get("exclusive_group_overlaps", []) or []
         if overlaps:
             row += 1
