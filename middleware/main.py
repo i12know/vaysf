@@ -442,7 +442,7 @@ def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str
                 logger.warning("Warning: --chm-id is provided with --type=full. The participant sync portion of the full sync will currently run for all, not the specific ID.")
             stats = manager.run_full_sync() # run_full_sync internally calls manager.sync_participants without an ID.
             logger.info(f"Full sync completed with stats: {stats}")
-            return True
+            return bool(getattr(manager, "last_full_sync_success", False))
         else:
             logger.error(f"Invalid sync type: {sync_type}")
             return False

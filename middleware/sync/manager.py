@@ -36,6 +36,7 @@ class SyncManager:
             "validation_issues": {"created": 0, "updated": 0, "resolved": 0, "unchanged": 0, "skipped": 0, "errors": 0},
             "approvals": {"created": 0, "updated": 0, "errors": 0}
         }
+        self.last_full_sync_success = True
 
         self.church_syncer = ChurchSyncer(self.wordpress_connector, self.stats)
         self.participant_syncer = ParticipantSyncer(self.chm_connector, self.wordpress_connector, self.stats, self.churches_cache) if self.chm_connector else None
@@ -1207,18 +1208,24 @@ class SyncManager:
             "rosters": {"created": 0, "deleted": 0, "errors": 0}
         }
 
+        step_results: list[bool] = []
         excel_path = os.path.join(DATA_DIR, "Church Application Form.xlsx")
         if os.path.exists(excel_path):
-            self.sync_churches_from_excel(excel_path)
+            step_results.append(bool(self.sync_churches_from_excel(excel_path)))
         else:
             logger.error(f"Excel file not found at {excel_path}")
+            step_results.append(False)
 
-        self.sync_participants()
-        self.generate_approvals()
-        self.sync_approvals_to_chmeetings()
+        step_results.append(bool(self.sync_participants()))
+        step_results.append(bool(self.generate_approvals()))
+        step_results.append(bool(self.sync_approvals_to_chmeetings()))
         # self.validate_data() ## temporary skipped until more validations can be tested.
 
-        logger.info("Full synchronization completed")
+        self.last_full_sync_success = all(step_results)
+        if self.last_full_sync_success:
+            logger.info("Full synchronization completed")
+        else:
+            logger.error("Full synchronization completed with one or more failed steps")
         return self.stats
 
     def close(self):
