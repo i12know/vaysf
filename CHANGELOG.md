@@ -57,6 +57,11 @@ blank slot (e.g. WP 156's secondary Table Tennis 35+ selection) produced false
   issue persistence and resolution, event-isolated reconciliation, missing
   issues, contradictions, validation-only divergence, and resolved-issue
   exclusion.
+- **Known latent risk:** `qualifying_roles` in `_load_current_eligible_chm_ids`
+  is hardcoded as `{"athlete", "participant", "athlete/participant"}`. If VAY
+  adds a new combined role string (e.g. `"athlete/leader"`), eligible athletes
+  carrying it would be silently excluded from the validation population. Promote
+  to a config value when the role taxonomy next changes.
 
 ### Nightly sync correctness fixes
 
