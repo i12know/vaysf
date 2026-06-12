@@ -43,6 +43,14 @@ of a mid-solve traceback or a silently wrong schedule.
   endpoints are deliberately NOT required to appear in `games`: planning-only
   edges (an event with no Layer-2 games yet) are a legitimate, documented
   state with their own `PlanningOnly` conflict-audit status.
+- **Review fixes** — resource-fit checks are keyed by
+  `(solver_pool, resource_type)`, so a roomy same-type resource in a
+  different pool no longer masks that a game cannot fit within its own pool;
+  the resource model gained `venue_name`/`playoff_pinned` and the playoff
+  model gained `team_a_id`/`team_b_id`/`duration_minutes` so real exporter
+  output produces zero unknown-field warnings; a malformed (truncated) JSON
+  file at `produce-schedule` now fails through the controlled contract-error
+  path instead of an uncaught `JSONDecodeError`.
 - **Unfittable games are hard errors** — a game whose `duration_minutes`
   cannot fit any resource of its `resource_type` (per C7 consecutive-slot
   math) now fails the contract instead of surfacing downstream as a mystery

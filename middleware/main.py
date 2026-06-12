@@ -1061,8 +1061,20 @@ def main() -> None:
             validate_schedule_output,
         )
         try:
-            so_data = json.loads(so_path.read_text(encoding="utf-8"))
-            si_data = json.loads(si_path.read_text(encoding="utf-8"))
+            parsed: dict[str, dict] = {}
+            for label, json_path in (
+                ("schedule_output", so_path), ("schedule_input", si_path),
+            ):
+                try:
+                    parsed[label] = json.loads(json_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as exc:
+                    # Surface a damaged event-week file as a controlled
+                    # contract failure, not a traceback.
+                    raise ScheduleContractError(
+                        json_path.name, [f"not valid JSON: {exc}"]
+                    ) from exc
+            so_data = parsed["schedule_output"]
+            si_data = parsed["schedule_input"]
             for warning in validate_schedule_input(si_data):
                 logger.warning(f"schedule_input contract: {warning}")
             for warning in validate_schedule_output(so_data):

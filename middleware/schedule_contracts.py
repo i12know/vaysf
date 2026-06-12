@@ -118,6 +118,8 @@ class _ResourceContract(BaseModel):
     label: Optional[str] = None
     exclusive_group: Optional[str] = None
     solver_pool: Optional[str] = None
+    venue_name: Optional[str] = None
+    playoff_pinned: Optional[bool] = Field(default=None, strict=True)
 
     @field_validator("open_time", "close_time")
     @classmethod
@@ -142,6 +144,10 @@ class _PlayoffSlotContract(BaseModel):
     stage: Optional[str] = None
     resource_type: Optional[str] = None
     slot_minutes: Optional[int] = Field(default=None, gt=0, strict=True)
+    # Optional Playoff-Slots columns (see _load_playoff_slots).
+    team_a_id: Optional[str] = None
+    team_b_id: Optional[str] = None
+    duration_minutes: Optional[int] = Field(default=None, gt=0, strict=True)
 
 
 class _PrecedenceContract(BaseModel):
@@ -515,17 +521,21 @@ def validate_schedule_input(data: Any) -> list[str]:
                 f"resource_id {rid!r}"
             )
 
-    # Resource fit:
-    #   - a resource_type with zero resources stays a WARNING — the solver
-    #     reports those games as unscheduled and exits 1 (pinned behavior);
-    #   - a game that cannot physically fit ANY resource of its own type is
-    #     an ERROR — it would otherwise surface downstream as a mystery
-    #     INFEASIBLE/unscheduled.
+    # Resource fit, scoped to the game's solver pool — the solver partitions
+    # resources by pool first and applies the C4 resource_type filter within
+    # the pool, so a compatible resource in a *different* pool is unreachable:
+    #   - a resource_type with zero resources anywhere stays a WARNING — the
+    #     solver reports those games as unscheduled and exits 1 (pinned
+    #     behavior); likewise a (pool, resource_type) combination with no
+    #     resources, which the solver treats the same way;
+    #   - a game that cannot physically fit ANY resource of its own type
+    #     within its own pool is an ERROR — it would otherwise surface
+    #     downstream as a mystery INFEASIBLE/unscheduled.
     # A game needs ceil(duration / slot_minutes) consecutive slots on a single
     # resource, which fits exactly when slots × slot_minutes >= duration —
     # duration does NOT need to divide slot_minutes evenly (C7).
-    capacity_by_type: dict[str, float] = {}
-    windows_by_type: dict[str, list[str]] = {}
+    capacity_by_pool_type: dict[tuple[str, str], float] = {}
+    windows_by_pool_type: dict[tuple[str, str], list[str]] = {}
     for resource in resource_dicts:
         rtype = str(resource.get("resource_type") or "").strip()
         slot_min = resource.get("slot_minutes")
@@ -534,20 +544,20 @@ def validate_schedule_input(data: Any) -> list[str]:
             or not isinstance(slot_min, (int, float)) or slot_min <= 0
         ):
             continue
+        key = (_solver_pool_key(resource), rtype)
         slots = _resource_capacity_slots(resource)
-        capacity_by_type[rtype] = max(
-            capacity_by_type.get(rtype, 0), slots * slot_min
+        capacity_by_pool_type[key] = max(
+            capacity_by_pool_type.get(key, 0), slots * slot_min
         )
-        windows_by_type.setdefault(rtype, []).append(
+        windows_by_pool_type.setdefault(key, []).append(
             f"{resource.get('resource_id')}: {slots} × {slot_min:g}min"
         )
 
     types_with_resources = {
         str(r.get("resource_type") or "").strip() for r in resource_dicts
     }
-    pools_with_resources = {_solver_pool_key(r) for r in resource_dicts}
     warned_missing_types: set[str] = set()
-    warned_missing_pools: set[str] = set()
+    warned_missing_pool_types: set[tuple[str, str]] = set()
     for game in game_dicts:
         gid = str(game.get("game_id") or "").strip() or "<unknown>"
         rtype = str(game.get("resource_type") or "").strip()
@@ -565,20 +575,22 @@ def validate_schedule_input(data: Any) -> list[str]:
                     "resources — those games will be reported as unscheduled"
                 )
             continue
-        pool_key = _solver_pool_key(game)
-        if pool_key not in pools_with_resources:
-            if pool_key not in warned_missing_pools:
-                warned_missing_pools.add(pool_key)
+        key = (_solver_pool_key(game), rtype)
+        if key not in capacity_by_pool_type:
+            if key not in warned_missing_pool_types:
+                warned_missing_pool_types.add(key)
                 warnings.append(
-                    f"games: solver pool {pool_key!r} (e.g. game {gid!r}) has "
-                    "no resources — those games will be reported as unscheduled"
+                    f"games: resource_type {rtype!r} has no resources in "
+                    f"solver pool {key[0]!r} (e.g. game {gid!r}) — those games "
+                    "will be reported as unscheduled"
                 )
             continue
-        if capacity_by_type.get(rtype, 0) < duration:
-            available = "; ".join(windows_by_type.get(rtype, [])) or "none"
+        if capacity_by_pool_type[key] < duration:
+            available = "; ".join(windows_by_pool_type.get(key, [])) or "none"
             errors.append(
                 f"games: game {gid!r} ({duration:g} min) cannot fit any "
-                f"{rtype!r} resource — available windows: {available}"
+                f"{rtype!r} resource in solver pool {key[0]!r} — available "
+                f"windows: {available}"
             )
 
     # Precedence integrity.  Cycles are errors.  Rules that span solver pools

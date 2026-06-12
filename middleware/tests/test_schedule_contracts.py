@@ -105,8 +105,17 @@ def test_documented_schema_fields_do_not_warn():
                   division_id="BAD-Men-Doubles", division_entry_count=4,
                   team_a_id=None, team_b_id=None),
         ],
-        "resources": [_resource(solver_pool="Gym Core")],
-        "playoff_slots": [],
+        "resources": [
+            _resource(solver_pool="Gym Core", venue_name="EHS Main Gym"),
+            _resource("GYM-Sun-2-5", venue_name="EHS Main Gym",
+                      playoff_pinned=True),
+        ],
+        "playoff_slots": [
+            {"game_id": "BBM-Final", "event": "Basketball - Men Team",
+             "stage": "Final", "resource_id": "GYM-Sun-2-5",
+             "slot": "Sat-1-10:00", "team_a_id": "BBM-P1-T1",
+             "team_b_id": "BBM-P2-T1", "duration_minutes": 60},
+        ],
         "gym_modes": {"Midsize Gym": {"Basketball Court": 1}},
         "gym_allocation": {"source": "allocator"},
         "team_conflicts": [],
@@ -565,6 +574,42 @@ def test_same_pool_precedence_via_solver_pool_passes():
         ],
     }
     assert validate_schedule_input(data) == []
+
+
+def test_resource_fit_is_scoped_to_solver_pool():
+    """A roomy resource of the right type in a DIFFERENT pool must not mask
+    that the game cannot fit within its own pool (#161 review finding 1)."""
+    data = {
+        "games": [
+            _game("BBM-01", duration_minutes=120, solver_pool="Gym Core"),
+        ],
+        "resources": [
+            # Same resource_type, big window — but outside the game's pool.
+            _resource("BB-OUTSIDE", open_time="08:00", close_time="16:00"),
+            # Inside the pool, but only one 60-min slot: 120 min cannot fit.
+            _resource("BB-CORE", solver_pool="Gym Core",
+                      open_time="08:00", close_time="09:00"),
+        ],
+    }
+    with pytest.raises(ScheduleContractError) as exc_info:
+        validate_schedule_input(data)
+    message = str(exc_info.value)
+    assert "BBM-01" in message
+    assert "Gym Core" in message
+    assert "BB-OUTSIDE" not in message
+
+
+def test_resource_type_outside_game_pool_is_a_warning():
+    """resource_type exists, but not within the game's solver pool — the
+    solver leaves the game unscheduled (exit 1), so the contract warns."""
+    data = {
+        "games": [_game("BBM-01", solver_pool="Gym Core")],
+        "resources": [_resource("BB-OUTSIDE")],  # no solver_pool
+    }
+    warnings = validate_schedule_input(data)
+    assert len(warnings) == 1
+    assert "Gym Core" in warnings[0]
+    assert "unscheduled" in warnings[0]
 
 
 def test_gym_modes_bad_shape_is_an_error():

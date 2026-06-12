@@ -441,6 +441,40 @@ def test_main_produce_schedule_uses_default_paths(mocker, monkeypatch, tmp_path)
     assert si_data["games"] == []
 
 
+def test_main_produce_schedule_malformed_json_fails_controlled(
+    mocker, monkeypatch, tmp_path
+):
+    """A damaged event-week JSON file must exit 1 via the contract-error
+    path, not raise an uncaught JSONDecodeError (#161 review finding 3)."""
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main, "EXPORT_DIR", tmp_path)
+
+    (tmp_path / "schedule_output.json").write_text(
+        '{"status": "OPTIMAL", "assignments": [',  # truncated mid-write
+        encoding="utf-8",
+    )
+    (tmp_path / "schedule_input.json").write_text(
+        json.dumps({"games": [], "resources": []}), encoding="utf-8"
+    )
+
+    mock_write = mocker.patch.object(
+        ScheduleWorkbookBuilder, "write_schedule_output_workbook"
+    )
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="produce-schedule",
+            schedule_output=None,
+            schedule_input=None,
+            output=None,
+        ),
+    )
+
+    _run_main_expect_exit(1)
+    mock_write.assert_not_called()
+
+
 def test_schedule_pipeline_export_solve_produce_local(mocker, monkeypatch, tmp_path):
     pytest.importorskip("ortools")
 
