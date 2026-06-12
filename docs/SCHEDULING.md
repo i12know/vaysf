@@ -309,9 +309,35 @@ How it works:
   in `pod_unprotected_entries` and listed in the `Conflict-Audit` tab so
   operators can chase down the missing partner, never silently dropped.
 
+#### Singles conflict protection (Issue #164, shipped)
+
+The second slice extends the same Round-1 protection to racquet **singles**
+entries. Singles membership is always known — one participant per entry, no
+partner declaration to fail — so every singles player gets a stable entry ID
+and conflict edges, with no "unresolved" class.
+
+- `_resolve_pod_singles()` assigns each singles roster row a stable,
+  reproducible ID of the form `{division_id}-S{nn}` (e.g.
+  `BAD-Men-Singles-S01`), sorted by participant ID before numbering — the
+  same model `_resolve_pod_doubles()` uses for `-E{nn}` pairs. Duplicate
+  roster rows for the same player in one division are collapsed.
+- `_build_pod_game_objects()` attaches singles entry IDs to the division's
+  **Round-1** games using the same bye-aware bracket math as doubles.
+- `_build_cross_sport_conflicts()` includes singles entries as racquet units,
+  so the existing pairwise loops emit **team ↔ singles**,
+  **doubles ↔ singles**, and **singles ↔ singles** edges automatically —
+  including same-sport overlap (e.g. one player in Badminton singles *and*
+  Badminton doubles).
+
+Protection limits (same bracket-unknown limitation as doubles):
+
+- Only the **known Round-1 game** is protected. Bye entries (whose first
+  match is in round 2) and all post-R1 rounds keep
+  `team_a_id`/`team_b_id` of `null` — their participation depends on match
+  results, so a static map cannot cover them.
+
 Still future work within Phase 2:
 
-- **Singles** conflict protection (this slice is doubles-only).
 - Coarse division-level windowing to approximate **later-round** coverage
   beyond R1 without pretending to know bracket winners.
 

@@ -5057,6 +5057,208 @@ def test_pod_unresolved_doubles_reported_as_unprotected(tmp_path):
     ]
 
 
+def _singles_roster_row(sport_type, pid, first, last, gender="Men",
+                        primary=None, church="RPC"):
+    return {
+        "sport_type": sport_type, "sport_gender": gender,
+        "sport_format": f"{gender} Single", "Participant ID (WP)": pid,
+        "First Name": first, "Last Name": last,
+        "Church Team": church,
+        "participant_primary_sport": primary or sport_type,
+    }
+
+
+def test_pod_singles_r1_games_carry_stable_entry_ids(tmp_path):
+    """Singles R1 games carry -S{nn} entry IDs using the bye-aware bracket math."""
+    builder = ScheduleWorkbookBuilder()
+    # 4 TT Men singles → P=4, no byes: Semi-1 = S01 v S02, Semi-2 = S03 v S04.
+    roster = [
+        _singles_roster_row(SPORT_TYPE["TABLE_TENNIS"], str(pid), f"P{pid}", "X")
+        for pid in (11, 12, 13, 14)
+    ]
+    games, _prec = builder._build_pod_game_objects(roster, [])
+    by_id = {g["game_id"]: g for g in games}
+
+    semi1 = by_id["TT-Men-Singles-Semi-1"]
+    semi2 = by_id["TT-Men-Singles-Semi-2"]
+    final = by_id["TT-Men-Singles-Final"]
+    assert semi1["team_a_id"] == "TT-Men-Singles-S01"
+    assert semi1["team_b_id"] == "TT-Men-Singles-S02"
+    assert semi2["team_a_id"] == "TT-Men-Singles-S03"
+    assert semi2["team_b_id"] == "TT-Men-Singles-S04"
+    # The Final's participants depend on Semi results — never pre-assigned.
+    assert final["team_a_id"] is None
+    assert final["team_b_id"] is None
+
+
+def test_pod_singles_bye_entry_unprotected(tmp_path):
+    """With N=3 (P=4), the bye entry appears in no game; only the one R1 game has IDs."""
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        _singles_roster_row(SPORT_TYPE["TABLE_TENNIS"], str(pid), f"P{pid}", "X")
+        for pid in (21, 22, 23)
+    ]
+    games, _prec = builder._build_pod_game_objects(roster, [])
+    by_id = {g["game_id"]: g for g in games}
+
+    # byes = 1 → S01 skips round 1; the single R1 game is S02 v S03.
+    semi1 = by_id["TT-Men-Singles-Semi-1"]
+    assert (semi1["team_a_id"], semi1["team_b_id"]) == (
+        "TT-Men-Singles-S02", "TT-Men-Singles-S03"
+    )
+    assert by_id["TT-Men-Singles-Final"]["team_a_id"] is None
+    all_team_ids = {
+        tid for g in games for tid in (g["team_a_id"], g["team_b_id"]) if tid
+    }
+    assert "TT-Men-Singles-S01" not in all_team_ids, (
+        "Bye entry's first match is round 2 — it must stay unprotected"
+    )
+
+
+def test_pod_singles_cross_sport_conflict_edge_with_basketball(tmp_path):
+    """A player on a BB team and in Badminton singles → team↔racquet edge (#164)."""
+    builder = ScheduleWorkbookBuilder()
+    shared_id = "42"
+    bb_rpc = [
+        {"Church Team": "RPC", "sport_type": SPORT_TYPE["BASKETBALL"],
+         "sport_gender": "Men", "sport_format": "Team", "Participant ID (WP)": pid,
+         "First Name": f"P{pid}", "Last Name": "X",
+         "participant_primary_sport": SPORT_TYPE["BASKETBALL"]}
+        for pid in ["40", "41", shared_id, "43", "44"]
+    ]
+    bb_anh = [
+        {"Church Team": "ANH", "sport_type": SPORT_TYPE["BASKETBALL"],
+         "sport_gender": "Men", "sport_format": "Team", "Participant ID (WP)": pid,
+         "First Name": f"P{pid}", "Last Name": "X",
+         "participant_primary_sport": SPORT_TYPE["BASKETBALL"]}
+        for pid in ["50", "51", "52", "53", "54"]
+    ]
+    # Two Badminton Men singles entries so the division has a game; one is the
+    # shared basketball player.
+    bad = [
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], shared_id, "P42", "X",
+                            primary=SPORT_TYPE["BASKETBALL"]),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "99", "Solo", "X"),
+    ]
+    si = builder._build_schedule_input(bb_rpc + bb_anh + bad, [], tmp_path / "no_venue.xlsx")
+
+    edges = [
+        e for e in si["team_conflicts"]
+        if {e.get("event_a"), e.get("event_b")}
+        == {SPORT_TYPE["BASKETBALL"], SPORT_TYPE["BADMINTON"]}
+    ]
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge["shared_count"] == 1
+    # Shared athlete's primary is Basketball (one of the two events) → primary.
+    assert edge["primary_overlap_count"] == 1
+    # The racquet side references a stable singles entry id, also present as a
+    # game team (with N=2 the round-1 game is the Final itself).
+    racquet_team = edge["team_a_id"] if "BAD-" in edge["team_a_id"] else edge["team_b_id"]
+    assert racquet_team.startswith("BAD-Men-Singles-S")
+    assert any(
+        racquet_team in (g.get("team_a_id"), g.get("team_b_id"))
+        for g in si["games"]
+    )
+
+
+def test_pod_singles_three_event_participant_edges(tmp_path):
+    """A three-event participant (BB team + BAD singles + TT singles) → 3 edges."""
+    builder = ScheduleWorkbookBuilder()
+    shared_id = "60"
+    bb_rpc = [
+        {"Church Team": "RPC", "sport_type": SPORT_TYPE["BASKETBALL"],
+         "sport_gender": "Men", "sport_format": "Team", "Participant ID (WP)": pid,
+         "First Name": f"P{pid}", "Last Name": "X",
+         "participant_primary_sport": SPORT_TYPE["BASKETBALL"]}
+        for pid in [shared_id, "61", "62", "63", "64"]
+    ]
+    bb_anh = [
+        {"Church Team": "ANH", "sport_type": SPORT_TYPE["BASKETBALL"],
+         "sport_gender": "Men", "sport_format": "Team", "Participant ID (WP)": pid,
+         "First Name": f"P{pid}", "Last Name": "X",
+         "participant_primary_sport": SPORT_TYPE["BASKETBALL"]}
+        for pid in ["65", "66", "67", "68", "69"]
+    ]
+    bad = [
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], shared_id, "P60", "X",
+                            primary=SPORT_TYPE["BASKETBALL"]),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "70", "Anh", "X"),
+    ]
+    tt = [
+        _singles_roster_row(SPORT_TYPE["TABLE_TENNIS"], shared_id, "P60", "X",
+                            primary=SPORT_TYPE["BASKETBALL"]),
+        _singles_roster_row(SPORT_TYPE["TABLE_TENNIS"], "71", "Binh", "X"),
+    ]
+    si = builder._build_schedule_input(
+        bb_rpc + bb_anh + bad + tt, [], tmp_path / "no_venue.xlsx"
+    )
+
+    def _edges_between(event_x, event_y):
+        return [
+            e for e in si["team_conflicts"]
+            if {e.get("event_a"), e.get("event_b")} == {event_x, event_y}
+        ]
+
+    bb_bad = _edges_between(SPORT_TYPE["BASKETBALL"], SPORT_TYPE["BADMINTON"])
+    bb_tt = _edges_between(SPORT_TYPE["BASKETBALL"], SPORT_TYPE["TABLE_TENNIS"])
+    bad_tt = _edges_between(SPORT_TYPE["BADMINTON"], SPORT_TYPE["TABLE_TENNIS"])
+    assert len(bb_bad) == 1
+    assert len(bb_tt) == 1
+    assert len(bad_tt) == 1, "singles↔singles edge must be generated"
+    for edge in (bb_bad[0], bb_tt[0], bad_tt[0]):
+        assert edge["shared_count"] == 1
+        assert "P60 X" in edge["shared_participant_names"]
+
+
+def test_pod_singles_and_doubles_same_sport_edge(tmp_path):
+    """One player in Badminton singles AND Badminton doubles → doubles↔singles edge."""
+    builder = ScheduleWorkbookBuilder()
+    shared_id = "80"
+    roster = [
+        # Confirmed doubles pair including the shared player.
+        {"sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Men",
+         "sport_format": "Men Doubles", "Participant ID (WP)": shared_id,
+         "First Name": "Khoa", "Last Name": "X", "partner_name": "Long X",
+         "Church Team": "RPC", "participant_primary_sport": SPORT_TYPE["BADMINTON"]},
+        {"sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Men",
+         "sport_format": "Men Doubles", "Participant ID (WP)": "81",
+         "First Name": "Long", "Last Name": "X", "partner_name": "Khoa X",
+         "Church Team": "RPC", "participant_primary_sport": SPORT_TYPE["BADMINTON"]},
+        # The same shared player also in Badminton singles.
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], shared_id, "Khoa", "X"),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "82", "Minh", "X"),
+    ]
+    si = builder._build_schedule_input(roster, [], tmp_path / "no_venue.xlsx")
+
+    edges = [
+        e for e in si["team_conflicts"]
+        if {e["team_a_id"], e["team_b_id"]}
+        == {"BAD-Men-Doubles-E01", "BAD-Men-Singles-S01"}
+    ]
+    assert len(edges) == 1
+    assert edges[0]["shared_count"] == 1
+    assert "Khoa X" in edges[0]["shared_participant_names"]
+
+
+def test_resolve_pod_singles_deterministic_and_deduped():
+    """Entry IDs are sorted by participant ID and duplicate rows collapse."""
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "92", "Beta", "X"),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "90", "Alpha", "X"),
+        # Duplicate roster row for the same player — must collapse.
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "90", "Alpha", "X"),
+    ]
+    by_div = builder._resolve_pod_singles(roster)
+    entries = by_div["BAD-Men-Singles"]
+    assert [e["entry_id"] for e in entries] == [
+        "BAD-Men-Singles-S01", "BAD-Men-Singles-S02",
+    ]
+    assert entries[0]["participant_ids"] == ["90"]
+    assert entries[1]["participant_ids"] == ["92"]
+
+
 def test_soccer_schedule_input_creates_soccer_field_games(tmp_path):
     """Soccer pool-assignment rows should create real Soccer Field games, not Gym Core games."""
     builder = ScheduleWorkbookBuilder()

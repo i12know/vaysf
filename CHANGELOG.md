@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Participant-level singles conflict protection — closes [#164](https://github.com/i12know/vaysf/issues/164)
+
+Extends #158's Round-1 conflict protection from racquet doubles to racquet
+**singles** entries. Singles membership is always known (one participant per
+entry, no partner declaration to fail), so every singles player now gets a
+stable entry ID and shared-athlete conflict edges.
+
+- **`_resolve_pod_singles()`** (`schedule_workbook.py`) — assigns each singles
+  roster row a stable, reproducible entry ID of the form
+  `{division_id}-S{nn}` (e.g. `BAD-Men-Singles-S01`), parallel to the doubles
+  `-E{nn}` model. Entries sort by participant ID before numbering; duplicate
+  roster rows for the same player in one division collapse.
+- **`_build_pod_game_objects()`** — singles divisions now use the same
+  bye-aware bracket math as doubles to attach entry IDs to **Round-1** games.
+  Bye entries and post-R1 rounds keep `team_a_id`/`team_b_id` of `null`
+  (bracket-unknown limitation, same as doubles).
+- **`_build_cross_sport_conflicts()`** — singles entries join the racquet
+  unit list, so the existing pairwise loops emit **team↔singles**,
+  **doubles↔singles**, and **singles↔singles** edges automatically — including
+  same-sport overlap (one player in Badminton singles *and* doubles).
+- **No solver or audit changes** — edges use the identical dict shape and
+  reference entry IDs that now appear as game team IDs, so in-pool overlap
+  penalties, C3x cross-pool avoidance, and Conflict-Audit attribution all act
+  on singles edges through the existing machinery.
+- `docs/SCHEDULING.md` — new "Singles conflict protection (Issue #164,
+  shipped)" section documenting the protection and its R1-only limits.
+- 6 new tests: R1 entry-ID assignment (N=4), bye entry unprotected (N=3),
+  team↔singles edge with Basketball, three-event participant (3 edges incl.
+  singles↔singles), same-sport singles+doubles edge, resolver determinism +
+  dedupe.
+- Identified in the 2026 pre-season scheduling review (#165). Scope narrowed
+  per issue review: protection covers known Round-1 participation only — no
+  claims about post-R1 rounds.
+
 ### Move qualifying_roles into validation rules JSON — closes [#163](https://github.com/i12know/vaysf/issues/163)
 
 Eliminates the last hardcoded ChMeetings role-string set in business logic.

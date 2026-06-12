@@ -3454,6 +3454,7 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_build_pod_divisions_rows",
     "_build_pod_entries_review_rows",
     "_resolve_pod_doubles",
+    "_resolve_pod_singles",
     "_expected_partner_issue_type",
     "_partner_validation_key",
     "_reconcile_pod_validation",

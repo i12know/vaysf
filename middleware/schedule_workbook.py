@@ -1263,6 +1263,70 @@ class ScheduleWorkbookBuilder:
 
         return confirmed_by_division, unprotected
 
+    def _resolve_pod_singles(
+        self,
+        roster_rows: List[Dict[str, Any]],
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Resolve racquet SINGLES entries for conflict modeling (Issue #164).
+
+        Singles membership is always known — one participant per entry, no
+        partner declaration to fail — so every singles roster row becomes an
+        entry.  Returns ``{division_id: [entry, ...]}`` where each entry
+        carries a stable ``entry_id`` of the form ``{division_id}-S{nn}``
+        (e.g. ``BAD-Men-Singles-S01``), parallel to the doubles ``-E{nn}``
+        model from Issue #158.  Entries are sorted by participant ID so the
+        IDs are reproducible across re-runs of the same roster.
+
+        Only the bracket's Round-1 games carry these entry IDs (assigned in
+        `_build_pod_game_objects`); bye entries and post-R1 rounds remain
+        unprotected because their participation depends on match results.
+        """
+        by_division: Dict[str, List[Dict[str, Any]]] = {}
+        seen_in_div: Dict[str, set] = {}
+        for r in roster_rows:
+            sport_type = str(r.get("sport_type") or "").strip()
+            if sport_type not in RACQUET_SPORTS:
+                continue
+            if self._pod_format_class(str(r.get("sport_format") or "")) != "singles":
+                continue
+            sport_gender = str(r.get("sport_gender") or "").strip()
+            division_id = self._make_division_id(sport_type, sport_gender, "singles")
+            pid = str(r.get("Participant ID (WP)") or r.get("ChMeetings ID") or "").strip()
+            if pid:
+                if pid in seen_in_div.setdefault(division_id, set()):
+                    continue  # duplicate roster row for the same player
+                seen_in_div[division_id].add(pid)
+            full_name = (
+                f"{str(r.get('First Name') or '').strip()} "
+                f"{str(r.get('Last Name') or '').strip()}"
+            ).strip()
+            by_division.setdefault(division_id, []).append({
+                "division_id": division_id,
+                "sport_type": sport_type,
+                "sport_gender": sport_gender,
+                "sport_format": str(r.get("sport_format") or "").strip(),
+                "participant_ids": [pid] if pid else [],
+                "participant_names": {pid: full_name or pid} if pid else {},
+                "primary_sports": {
+                    pid: self._normalize_primary_sport_name(
+                        r.get("participant_primary_sport")
+                    )
+                } if pid else {},
+                "player_name": full_name,
+            })
+
+        # Assign deterministic, reproducible entry IDs per division.
+        for division_id, entries in by_division.items():
+            entries.sort(key=lambda e: (tuple(e["participant_ids"]), e["player_name"]))
+            for idx, entry in enumerate(entries, start=1):
+                entry["entry_id"] = f"{division_id}-S{idx:02d}"
+                entry["label"] = (
+                    f"{entry['entry_id']} ({entry['player_name']})"
+                    if entry["player_name"] else entry["entry_id"]
+                )
+
+        return by_division
+
     # Validation issue types that persist unresolved doubles registrations.
     _POD_PARTNER_ISSUE_TYPES = frozenset({
         "missing_doubles_partner",
@@ -2200,16 +2264,19 @@ class ScheduleWorkbookBuilder:
         pool_assignment_rows: List[Dict[str, Any]],
         validation_rows: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Return team↔racquet and racquet↔racquet shared-athlete edges (Issue #158).
+        """Return team↔racquet and racquet↔racquet shared-athlete edges (#158, #164).
 
-        Covers the two conflict classes the gym-only builder misses:
-          (b) a participant in a team sport and a racquet doubles event, and
-          (c) a participant in two racquet doubles events.
-        Only confirmed doubles pairs participate — singles is a follow-up
-        (Decision 3) and UnresolvedDoubles cannot be protected because their
-        membership is unknown.  Edges reference the same stable racquet entry
-        IDs that `_build_pod_game_objects` assigns to R1 games, so the solver's
-        cross-pool avoidance can act on them.
+        Covers the conflict classes the gym-only builder misses:
+          (b) a participant in a team sport and a racquet event, and
+          (c) a participant in two racquet events.
+        Racquet units are confirmed doubles pairs (Issue #158) and all singles
+        entries (Issue #164) — singles membership is always known, so every
+        singles player is protected in their Round-1 game.  UnresolvedDoubles
+        cannot be protected because their membership is unknown.  Edges
+        reference the same stable racquet entry IDs that
+        `_build_pod_game_objects` assigns to R1 games, so the solver's
+        cross-pool avoidance can act on them.  Bye entries and post-R1 rounds
+        remain unprotected: their game participation depends on match results.
         """
         # Gym units: team-sport teams actually assigned to a pool.
         team_lookup = self._build_core_gym_team_lookup(roster_rows)
@@ -2229,6 +2296,22 @@ class ScheduleWorkbookBuilder:
         racquet_units: List[Dict[str, Any]] = []
         for entries in confirmed_by_div.values():
             for entry in entries:
+                racquet_units.append({
+                    "unit_id": entry["entry_id"],
+                    "label": entry["label"],
+                    "event": entry["sport_type"],
+                    "participant_ids": set(entry["participant_ids"]),
+                    "participant_names": entry["participant_names"],
+                    "primary_sports": entry["primary_sports"],
+                })
+
+        # Racquet units: singles entries with stable entry IDs (Issue #164).
+        # Entries with no participant ID can never overlap and are skipped.
+        singles_by_div = self._resolve_pod_singles(roster_rows)
+        for division_id in sorted(singles_by_div):
+            for entry in singles_by_div[division_id]:
+                if not entry["participant_ids"]:
+                    continue
                 racquet_units.append({
                     "unit_id": entry["entry_id"],
                     "label": entry["label"],
@@ -3034,12 +3117,15 @@ class ScheduleWorkbookBuilder:
         the number of *confirmed* pairs) are real Round-1 matchups carrying the
         stable entry IDs from `_resolve_pod_doubles`, so the solver can keep a
         shared athlete's R1 game off another sport's slot (Issue #158,
-        Decision 1).  Later-round games and any games beyond the confirmed
+        Decision 1).  Singles divisions get the same Round-1 protection using
+        the ``-S{nn}`` entry IDs from `_resolve_pod_singles` (Issue #164).
+        Later-round games, bye entries, and any games beyond the known
         matchups keep ``team_a_id``/``team_b_id`` of ``None`` because their
         participants are not knowable until earlier rounds are played.
         """
         div_rows = self._build_pod_divisions_rows(roster_rows, validation_rows)
         confirmed_by_div, _unprotected = self._resolve_pod_doubles(roster_rows, validation_rows)
+        singles_by_div = self._resolve_pod_singles(roster_rows)
         all_games: List[Dict[str, Any]] = []
         all_precedence: List[Dict[str, Any]] = []
 
@@ -3071,21 +3157,28 @@ class ScheduleWorkbookBuilder:
                     return "QF"
                 return f"R{r}"  # pre-QF rounds for very large brackets
 
-            # Doubles Round-1 matchup assignment.  Bracket math mirrors the outer
-            # P computation so byes are placed correctly (Issue #158, Decision 1).
+            # Round-1 matchup assignment for divisions with known entries —
+            # confirmed doubles pairs (Issue #158) and all singles players
+            # (Issue #164).  Bracket math mirrors the outer P computation so
+            # byes are placed correctly.
             r1_matchups: List[Tuple[Optional[str], Optional[str]]] = []
-            if self._pod_format_class(str(div.get("sport_format") or "")) == "doubles":
+            fmt_class = self._pod_format_class(str(div.get("sport_format") or ""))
+            if fmt_class == "doubles":
                 entries = confirmed_by_div.get(division_id, [])
-                if n_entries >= 2:
-                    byes = P - n_entries
-                    r1_match_count = (n_entries - byes) // 2
-                    planned_entry_ids: List[Optional[str]] = [
-                        entry["entry_id"] for entry in entries[:n_entries]
-                    ]
-                    planned_entry_ids.extend([None] * (n_entries - len(planned_entry_ids)))
-                    r1_starters = planned_entry_ids[n_entries - 2 * r1_match_count:]
-                    for k in range(0, 2 * r1_match_count, 2):
-                        r1_matchups.append((r1_starters[k], r1_starters[k + 1]))
+            elif fmt_class == "singles":
+                entries = singles_by_div.get(division_id, [])
+            else:
+                entries = []
+            if entries and n_entries >= 2:
+                byes = P - n_entries
+                r1_match_count = (n_entries - byes) // 2
+                planned_entry_ids: List[Optional[str]] = [
+                    entry["entry_id"] for entry in entries[:n_entries]
+                ]
+                planned_entry_ids.extend([None] * (n_entries - len(planned_entry_ids)))
+                r1_starters = planned_entry_ids[n_entries - 2 * r1_match_count:]
+                for k in range(0, 2 * r1_match_count, 2):
+                    r1_matchups.append((r1_starters[k], r1_starters[k + 1]))
 
             # Generate games round by round.
             # Round 1 actual games: n_entries - P//2  (byes happen only in round 1)
