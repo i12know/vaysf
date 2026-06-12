@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Decompose schedule_workbook.py into scheduling/ package — refs [#152](https://github.com/i12know/vaysf/issues/152)
+
+Extraction-only refactor (Steps 1–3 of 8): no behavior changes, all imports
+and call sites unchanged. The three new modules live under
+`middleware/scheduling/` and are imported by `schedule_workbook.py` via
+backward-compat `staticmethod()` class aliases.
+
+- **`scheduling/xlsx_utils.py`** — 16 pure static helpers: `_clean_excel_text`,
+  `_float_from_excel`, `_normalize_resource_type_name`, `_resource_id_prefix`,
+  `_ordinal`, `_day_sort_key`, `_day_display_label`, `_coerce_excel_date`,
+  `_derive_day_labels_from_dates`, `_set_excel_comment`,
+  `_make_excel_note_shapes_visible`, `_stamp_tab_status_banner`,
+  `_annotate_header_row`, `_parse_hour`, `_read_xlsx_sheet_rows`, plus the
+  `_TAB_STATUS_GUIDE` dict and `_stamp_known_tab_statuses` function (moved here
+  to avoid circular imports from `output_report`).
+- **`scheduling/venue_loader.py`** — 7 venue-loading functions:
+  `_load_venue_input_rows`, `_load_playoff_slots`, `_load_venue_date_day_map`,
+  `_split_slot_label`, `_last_slot_label_on_day`, `_load_gym_modes`,
+  `_load_venue_input`.
+- **`scheduling/output_report.py`** — 4 output-report writers:
+  `_warn_if_schedules_mismatched`, `_build_schedule_output_flat_rows`,
+  `_write_schedule_diagnostics_tab`, `_write_schedule_output_report`.
+- **`schedule_workbook.py`** reduced from 7,703 → 5,716 lines (−1,987);
+  exposes all 27 symbols as `staticmethod()` class aliases for full
+  backward compatibility.
+- 629 tests pass unchanged.
+
 ### Participant-level singles conflict protection — closes [#164](https://github.com/i12know/vaysf/issues/164)
 
 Extends #158's Round-1 conflict protection from racquet doubles to racquet
