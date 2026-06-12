@@ -118,3 +118,7 @@ if defined PRODUCE_CODE (
 )
 echo ============================================================
 echo.
+
+if not "%SOLVE_CODE%"=="0" exit /b %SOLVE_CODE%
+if defined PRODUCE_CODE exit /b %PRODUCE_CODE%
+exit /b 0
