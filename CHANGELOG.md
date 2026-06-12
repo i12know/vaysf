@@ -7,16 +7,14 @@
 Adds the two remaining coverage gaps identified in the 2026 pre-season
 scheduling review (#165, P0c).
 
-- **Solver timeout** — `test_run_solve_schedule_timeout_writes_unknown`
-  monkeypatches `_solve_one_pool` to return `STATUS_UNKNOWN`, verifying that
-  `run_solve_schedule` returns exit code 2, writes the output file, and
-  includes the required top-level keys (`status`, `solved_at`, `assignments`,
-  `pool_results`). Does not rely on wall-clock timing so it is stable on CI.
-- **Vietnamese diacritics** — `test_produce_schedule_preserves_vietnamese_diacritics`
-  renders team labels `"Hội Thánh"` and `"Tin Lành"` through
-  `write_schedule_output_workbook()` and asserts both names appear unmangled in
-  the workbook and that the two-line matchup cell in Schedule-by-Time renders
-  `"Hội Thánh vs Tin Lành"` as-is.
+- **Solver timeout** — focused tests monkeypatch `_solve_one_pool` to return
+  `STATUS_UNKNOWN`, verifying both all-timeout and mixed solved/timed-out runs.
+  A mixed run preserves completed assignments under `PARTIAL` while returning
+  exit code 2 so automation can distinguish timeout from infeasibility.
+- **Vietnamese diacritics** — `test_main_produce_schedule_preserves_vietnamese_diacritics`
+  reads UTF-8 `schedule_input.json` and `schedule_output.json` through the real
+  `produce-schedule` command and verifies team and participant names in
+  Schedule-by-Time, Schedule-by-Sport, and Conflict-Audit.
 
 Coverage status after this change:
 
@@ -24,8 +22,8 @@ Coverage status after this change:
 |---|---|---|
 | 1 | Solver timeout | `test_run_solve_schedule_timeout_writes_unknown` ✓ |
 | 2 | Malformed input | `test_run_solve_schedule_contract_violation_exits_3` + schedule-contract tests ✓ |
-| 3 | Duplicate/invalid playoff reservations | `test_solve_duplicate_playoff_slot_raises`, overlap + capacity tests ✓ |
-| 4 | Vietnamese diacritics survive | `test_produce_schedule_preserves_vietnamese_diacritics` ✓ |
+| 3 | Duplicate/invalid playoff reservations | duplicate, overlap, capacity, unknown-resource, and invalid-slot tests ✓ |
+| 4 | Vietnamese diacritics survive | real `produce-schedule` JSON-to-workbook test across named tabs ✓ |
 | 5 | Solver determinism | `test_solver_uses_fixed_random_seed` ✓ |
 
 ### Stage-aware racquet late-round game IDs — closes [#130](https://github.com/i12know/vaysf/issues/130)

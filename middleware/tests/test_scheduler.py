@@ -1840,6 +1840,29 @@ def test_validate_playoff_slots_blocks_every_occupied_slot():
     }
 
 
+def test_validate_playoff_slots_rejects_invalid_slot_label():
+    """A playoff pin must start on a generated slot for its named resource."""
+    from scheduler import validate_playoff_slots
+
+    resources = [{
+        "resource_id": "TEN-1",
+        "resource_type": "Tennis Court",
+        "label": "Court 1",
+        "day": "Sat-1",
+        "open_time": "08:00",
+        "close_time": "10:00",
+        "slot_minutes": 30,
+    }]
+    playoff_slots = [{
+        "game_id": "TEN-Final",
+        "resource_id": "TEN-1",
+        "slot": "Sat-1-08:15",
+    }]
+
+    with pytest.raises(ValueError, match="not a valid slot"):
+        validate_playoff_slots(playoff_slots, resources)
+
+
 def test_solve_pinned_final_cannot_precede_solver_semis():
     """Regression: pinned playoff Final must not appear before solver-assigned Semis.
 
@@ -2007,3 +2030,65 @@ def test_run_solve_schedule_timeout_writes_unknown(tmp_path, monkeypatch):
     assert "solved_at" in data
     assert "assignments" in data
     assert "pool_results" in data
+
+
+def test_run_solve_schedule_mixed_timeout_returns_exit_2(
+    tmp_path, monkeypatch
+):
+    """Preserve completed pools but return the timeout-specific exit code."""
+    pytest.importorskip("ortools")
+    import scheduler as _scheduler
+    from scheduler import (
+        STATUS_OPTIMAL,
+        STATUS_PARTIAL,
+        STATUS_UNKNOWN,
+        run_solve_schedule,
+    )
+
+    def _mock_mixed_result(pool_input, timeout_seconds):
+        game_id = pool_input["games"][0]["game_id"]
+        if pool_input["resources"][0]["resource_type"] == "Gym Court":
+            return {
+                "status": STATUS_OPTIMAL,
+                "solver_wall_seconds": 0.01,
+                "assignments": [{
+                    "game_id": game_id,
+                    "resource_id": "GYM-Sat-1-1",
+                    "slot": "Sat-1-08:00",
+                }],
+                "unscheduled": [],
+                "diagnostics": [],
+            }
+        return {
+            "status": STATUS_UNKNOWN,
+            "solver_wall_seconds": timeout_seconds,
+            "assignments": [],
+            "unscheduled": [game_id],
+            "diagnostics": [],
+        }
+
+    monkeypatch.setattr(_scheduler, "_solve_one_pool", _mock_mixed_result)
+
+    si = _minimal_schedule_input(
+        games=[
+            _gym_game("G1", "T1", "T2"),
+            _bad_game("BAD-01"),
+        ],
+        resources=[
+            _gym_resource("GYM-Sat-1-1"),
+            _bad_resource("BAD-1"),
+        ],
+    )
+    input_path = tmp_path / "schedule_input.json"
+    input_path.write_text(json.dumps(si), encoding="utf-8")
+    output_path = tmp_path / "schedule_output.json"
+
+    exit_code = run_solve_schedule(input_path, output_path)
+
+    assert exit_code == 2
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert data["status"] == STATUS_PARTIAL
+    assert [a["game_id"] for a in data["assignments"]] == ["G1"]
+    pools = {pr["resource_type"]: pr for pr in data["pool_results"]}
+    assert pools["Gym Court"]["status"] == STATUS_OPTIMAL
+    assert pools["Badminton Court"]["status"] == STATUS_UNKNOWN

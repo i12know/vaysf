@@ -1735,6 +1735,29 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         logger.error(f"Failed to write {output_path}: {e}")
         return 3
 
+    timed_out_pools = [
+        pr for pr in result["pool_results"]
+        if pr["status"] == STATUS_UNKNOWN
+    ]
+    if timed_out_pools:
+        timeout_used = os.getenv("SCHEDULE_SOLVER_TIMEOUT", "90")
+        if result["status"] == STATUS_PARTIAL:
+            logger.warning(
+                f"PARTIAL: {len(timed_out_pools)} pool(s) timed out after "
+                f"{timeout_used}s. Assignments from completed pools have been "
+                "written, but the schedule is incomplete. Increase "
+                "SCHEDULE_SOLVER_TIMEOUT and re-run."
+            )
+        else:
+            logger.warning(
+                f"Solver timed out after {timeout_used}s without finding a solution. "
+                "This is not proven infeasible — increase SCHEDULE_SOLVER_TIMEOUT and "
+                f"re-run. Current timeout: {timeout_used}s."
+            )
+        for pr in timed_out_pools:
+            logger.error(f"  Timed-out pool: {pr['resource_type']!r}")
+        return 2
+
     if result["status"] == STATUS_PARTIAL:
         failed = [
             pr for pr in result["pool_results"]
@@ -1768,15 +1791,6 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
                 "same-team conflicts, stage ordering, or min-rest spacing."
             )
         return 1
-
-    if result["status"] == STATUS_UNKNOWN:
-        timeout_used = os.getenv("SCHEDULE_SOLVER_TIMEOUT", "90")
-        logger.warning(
-            f"Solver timed out after {timeout_used}s without finding a solution. "
-            "This is not proven infeasible — increase SCHEDULE_SOLVER_TIMEOUT and re-run. "
-            f"Current timeout: {timeout_used}s."
-        )
-        return 2
 
     # Defensive fallback: solved statuses should not carry unscheduled games, but if
     # they ever do, keep the CLI non-zero so callers do not silently accept it.

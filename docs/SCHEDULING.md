@@ -680,8 +680,11 @@ Reads `schedule_input.json`, runs the OR-Tools CP-SAT model for **pool play
 games only**, reserves any manual `playoff_slots` from the same court/time
 inventory, then merges those playoff assignments into the output. Writes
 `schedule_output.json` to `DATA_DIR` (or `--output` path).
-Exit codes: 0 = OPTIMAL/FEASIBLE (all pools solved), 1 = PARTIAL/INFEASIBLE/UNKNOWN,
-2 = error.
+Exit codes: 0 = OPTIMAL/FEASIBLE (all pools solved), 1 = PARTIAL/INFEASIBLE
+without a timeout, 2 = at least one pool timed out (`UNKNOWN`), 3 = contract,
+input, solver, or output error. A mixed solve keeps top-level status `PARTIAL`
+and preserves completed assignments, but still exits 2 so automation knows to
+retry with a larger timeout.
 
 Before anything is solved, the input is checked against the schedule contract
 (`middleware/schedule_contracts.py`, Issue #161): Pydantic models covering the
