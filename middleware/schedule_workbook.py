@@ -3533,6 +3533,7 @@ class ScheduleWorkbookBuilder:
         date_day_map: Dict[str, str],
         gym_modes: Dict[str, Dict[str, int]],
         allocator_active: bool,
+        game_duration_by_id: Optional[Dict[str, int]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Any], set]:
         """Resolve venue-centric Playoff-Slots rows into concrete resources (Issue #127).
 
@@ -3551,9 +3552,8 @@ class ScheduleWorkbookBuilder:
           (resource, slot) pair from pool play as it always has.
 
         Rows that already carry resource_id + slot pass through untouched (the
-        explicit form remains valid as an override).  Unresolvable venue-centric
-        rows are dropped with an ERROR naming the gym/date/start so the operator
-        gets an actionable message instead of a downstream contract failure.
+        explicit form remains valid as an override). Invalid venue-centric rows
+        fail the build together so playoff intent is never silently omitted.
 
         Returns (resolved_playoff_slots, synthetic_resources, reserved_windows,
         synthetic_resource_ids).
@@ -3571,13 +3571,23 @@ class ScheduleWorkbookBuilder:
         def _clock(total: int) -> str:
             return f"{total // 60:02d}:{total % 60:02d}"
 
+        def _overlaps(left: Tuple[int, int], right: Tuple[int, int]) -> bool:
+            return left[0] < right[1] and right[0] < left[1]
+
+        def _record_error(message: str) -> None:
+            logger.error(message)
+            errors.append(message)
+
+        game_duration_by_id = game_duration_by_id or {}
         resolved: List[Dict[str, Any]] = []
         synthetic_resources: List[Dict[str, Any]] = []
         reserved_windows: List[Any] = []
         synthetic_ids: set = set()
-        # (gym exclusive_group, day, resource_type) → list of court tracks.
+        errors: List[str] = []
+        # (gym exclusive_group, day, resource_type) -> pins for court tracks.
         managed_pending: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = defaultdict(list)
-        used_slot_pairs: set = set()
+        managed_by_gym_day: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+        used_intervals_by_resource: Dict[str, List[Tuple[int, int, str]]] = defaultdict(list)
 
         for entry in playoff_slots:
             if entry.get("resource_id") and entry.get("slot"):
@@ -3586,7 +3596,11 @@ class ScheduleWorkbookBuilder:
                         f"Playoff slot {entry['game_id']!r}: explicit resource_id+slot "
                         "takes precedence over gym_name/date/start_time."
                     )
-                used_slot_pairs.add((entry["resource_id"], entry["slot"]))
+                game_id = str(entry.get("game_id") or "").strip()
+                if game_id in game_duration_by_id:
+                    entry.setdefault(
+                        "duration_minutes", game_duration_by_id[game_id]
+                    )
                 resolved.append(entry)
                 continue
 
@@ -3600,9 +3614,9 @@ class ScheduleWorkbookBuilder:
             else:
                 day = date_day_map.get(date_text, "")
             if not day:
-                logger.error(
+                _record_error(
                     f"Playoff slot {game_id!r}: date {date_text!r} matches no "
-                    "Venue-Input date — row dropped. Use a date that appears in "
+                    "Venue-Input date. Use a date that appears in "
                     "the Venue-Input tab (or a day label such as 'Sun-2')."
                 )
                 continue
@@ -3610,9 +3624,9 @@ class ScheduleWorkbookBuilder:
             event = str(entry.get("event") or "").strip()
             resource_type = event_to_resource_type.get(event)
             if not resource_type:
-                logger.error(
+                _record_error(
                     f"Playoff slot {game_id!r}: cannot infer a resource type from "
-                    f"event {event!r} — row dropped. The event must exactly match "
+                    f"event {event!r}. The event must exactly match "
                     "a scheduled sport name."
                 )
                 continue
@@ -3628,82 +3642,177 @@ class ScheduleWorkbookBuilder:
                 )
             ]
             if not candidates:
-                logger.error(
+                _record_error(
                     f"Playoff slot {game_id!r}: no Venue-Input row found for gym "
-                    f"{gym_name!r} on {day} with a {resource_type!r} — row dropped. "
+                    f"{gym_name!r} on {day} with a {resource_type!r}. "
                     "Check the gym name, date, and that the venue offers this sport."
                 )
                 continue
 
             start_min = _minutes(start_text)
-            window_rows = []
+            window_rows: List[Tuple[Dict[str, Any], int, int, int, int]] = []
             for row in candidates:
                 row_slot_min = int(row.get("slot_minutes") or 60)
-                duration = int(entry.get("slot_minutes") or row_slot_min)
+                exclusive_group = str(row.get("exclusive_group") or "").strip()
+                managed = bool(
+                    allocator_active
+                    and exclusive_group
+                    and exclusive_group in gym_modes
+                )
+                grid_minutes = (
+                    int(entry.get("slot_minutes") or row_slot_min)
+                    if managed
+                    else row_slot_min
+                )
+                if (
+                    not managed
+                    and entry.get("slot_minutes")
+                    and int(entry["slot_minutes"]) != row_slot_min
+                ):
+                    continue
+                duration = int(
+                    entry.get("duration_minutes")
+                    or game_duration_by_id.get(str(game_id))
+                    or grid_minutes
+                )
+                occupied_minutes = (
+                    (duration + grid_minutes - 1) // grid_minutes
+                ) * grid_minutes
                 open_min = _minutes(str(row.get("open_time")))
                 close_min = _minutes(str(row.get("close_time")))
-                if open_min <= start_min and start_min + duration <= close_min:
-                    window_rows.append((row, row_slot_min, duration))
+                if open_min <= start_min and start_min + occupied_minutes <= close_min:
+                    window_rows.append(
+                        (row, grid_minutes, duration, occupied_minutes, open_min)
+                    )
             if not window_rows:
                 windows = sorted({
                     f"{row.get('open_time')}-{row.get('close_time')}" for row in candidates
                 })
-                logger.error(
-                    f"Playoff slot {game_id!r}: start_time {start_text!r} does not fit "
+                _record_error(
+                    f"Playoff slot {game_id!r}: start_time {start_text!r} and its "
+                    "game duration do not fit "
                     f"inside any {gym_name!r} window on {day} ({', '.join(windows)}) "
-                    "— row dropped."
+                    "on the venue's slot grid."
                 )
                 continue
 
-            source_row, row_slot_min, duration = window_rows[0]
+            source_row, grid_minutes, duration, occupied_minutes, _open_min = window_rows[0]
             exclusive_group = str(source_row.get("exclusive_group") or "").strip()
             managed = bool(
                 allocator_active and exclusive_group and exclusive_group in gym_modes
             )
+            entry.setdefault("duration_minutes", duration)
 
             if managed:
-                # Defer to the per-group track pass below so contiguous pins
-                # merge onto one synthetic court.
-                managed_pending[(exclusive_group, day, resource_type)].append({
+                pending = {
                     "entry":       entry,
                     "start_min":   start_min,
+                    "end_min":     start_min + occupied_minutes,
                     "duration":    duration,
+                    "grid_minutes": grid_minutes,
+                    "resource_type": resource_type,
                     "source_row":  source_row,
-                })
+                }
+                managed_pending[(exclusive_group, day, resource_type)].append(pending)
+                managed_by_gym_day[(exclusive_group, day)].append(pending)
                 resolved.append(entry)
                 continue
 
             # Direct/standalone resource: resolve to an existing expanded
-            # resource whose slot grid contains this start and whose
-            # (resource, slot) pair is still free.
+            # resource whose slot grid contains this start and whose full
+            # occupied interval is still free.
             slot_label = f"{day}-{_clock(start_min)}"
             chosen = None
-            for row, grid_min, _dur in sorted(
+            chosen_interval: Optional[Tuple[int, int, str]] = None
+            for row, row_grid_min, row_duration, _occupied, open_min in sorted(
                 window_rows,
                 key=lambda item: (
                     len(str(item[0].get("resource_id") or "")),
                     str(item[0].get("resource_id") or ""),
                 ),
             ):
-                open_min = _minutes(str(row.get("open_time")))
-                if (start_min - open_min) % grid_min != 0:
+                if (start_min - open_min) % row_grid_min != 0:
                     continue
                 rid = str(row.get("resource_id") or "").strip()
-                if (rid, slot_label) in used_slot_pairs:
+                end_min = start_min + (
+                    (row_duration + row_grid_min - 1) // row_grid_min
+                ) * row_grid_min
+                interval = (start_min, end_min)
+                if any(
+                    _overlaps(interval, (used_start, used_end))
+                    for used_start, used_end, _used_game
+                    in used_intervals_by_resource[rid]
+                ):
                     continue
                 chosen = rid
+                chosen_interval = (start_min, end_min, str(game_id))
                 break
             if chosen is None:
-                logger.error(
+                _record_error(
                     f"Playoff slot {game_id!r}: every {resource_type!r} at "
-                    f"{gym_name!r} is either already pinned at {slot_label} or has "
-                    f"a slot grid that does not start at {start_text!r} — row dropped."
+                    f"{gym_name!r} is already occupied during "
+                    f"{_clock(start_min)}-{_clock(start_min + occupied_minutes)} "
+                    f"or has a slot grid that does not start at {start_text!r}."
                 )
                 continue
             entry["resource_id"] = chosen
             entry["slot"] = slot_label
-            used_slot_pairs.add((chosen, slot_label))
+            if chosen_interval is not None:
+                used_intervals_by_resource[chosen].append(chosen_interval)
             resolved.append(entry)
+
+        # Gym-Modes describes mutually-exclusive physical configurations. At
+        # every instant a managed gym may host only one mode, and that mode may
+        # not exceed its configured court/table count.
+        for (exclusive_group, day), pins in managed_by_gym_day.items():
+            boundaries = sorted({
+                boundary
+                for pin in pins
+                for boundary in (pin["start_min"], pin["end_min"])
+            })
+            for segment_start, segment_end in zip(boundaries, boundaries[1:]):
+                active = [
+                    pin for pin in pins
+                    if pin["start_min"] < segment_end
+                    and segment_start < pin["end_min"]
+                ]
+                if not active:
+                    continue
+                active_types = {
+                    str(pin["resource_type"]) for pin in active
+                }
+                game_ids = sorted(
+                    str(pin["entry"].get("game_id") or "<unknown>")
+                    for pin in active
+                )
+                if len(active_types) > 1:
+                    _record_error(
+                        f"Playoff-Slots pins "
+                        f"{', '.join(repr(game_id) for game_id in game_ids)} "
+                        f"overlap at mutually-exclusive gym {exclusive_group!r} on "
+                        f"{day} {_clock(segment_start)}-{_clock(segment_end)} using "
+                        f"different modes {sorted(active_types)}."
+                    )
+                    continue
+                resource_type = next(iter(active_types))
+                capacity = int(
+                    gym_modes.get(exclusive_group, {}).get(resource_type, 0)
+                )
+                if len(active) > capacity:
+                    _record_error(
+                        f"Playoff-Slots pins "
+                        f"{', '.join(repr(game_id) for game_id in game_ids)} "
+                        f"need {len(active)} concurrent {resource_type!r} resources "
+                        f"at {exclusive_group!r} on {day} "
+                        f"{_clock(segment_start)}-{_clock(segment_end)}, but "
+                        f"Gym-Modes provides {capacity}."
+                    )
+
+        if errors:
+            details = "\n".join(f"  - {message}" for message in errors)
+            raise ValueError(
+                "Invalid venue-centric Playoff-Slots configuration:\n" + details
+            )
 
         # Track pass for allocator-managed gyms: contiguous pins share one
         # synthetic court; concurrent pins get separate courts.
@@ -3717,7 +3826,7 @@ class ScheduleWorkbookBuilder:
                     (
                         t for t in tracks
                         if t["close_min"] == pin["start_min"]
-                        and t["slot_minutes"] == pin["duration"]
+                        and t["slot_minutes"] == pin["grid_minutes"]
                     ),
                     None,
                 )
@@ -3730,25 +3839,16 @@ class ScheduleWorkbookBuilder:
                         "resource_id": f"{prefix}-{day}-PF{n}",
                         "label":       f"{label_kind}-PF{n}",
                         "open_min":    pin["start_min"],
-                        "close_min":   pin["start_min"] + pin["duration"],
-                        "slot_minutes": pin["duration"],
+                        "close_min":   pin["end_min"],
+                        "slot_minutes": pin["grid_minutes"],
                         "source_row":  pin["source_row"],
                     }
                     tracks.append(track)
                 else:
-                    track["close_min"] = pin["start_min"] + pin["duration"]
+                    track["close_min"] = pin["end_min"]
                 entry = pin["entry"]
                 entry["resource_id"] = track["resource_id"]
                 entry["slot"] = f"{day}-{_clock(pin['start_min'])}"
-                used_slot_pairs.add((entry["resource_id"], entry["slot"]))
-
-            courts_available = gym_modes.get(exclusive_group, {}).get(resource_type, 0)
-            if courts_available and len(tracks) > courts_available:
-                logger.warning(
-                    f"Playoff-Slots pin {len(tracks)} concurrent {resource_type!r} "
-                    f"courts at {exclusive_group!r} on {day}, but Gym-Modes only "
-                    f"yields {courts_available} — check for overlapping pins."
-                )
 
             for track in tracks:
                 source_row = track["source_row"]
@@ -3937,23 +4037,6 @@ class ScheduleWorkbookBuilder:
             else "fallback"
         )
 
-        # Resolve venue-centric Playoff-Slots rows (gym_name + date +
-        # start_time) before the allocator runs, so pinned playoff windows can
-        # be reserved out of the pool-play inventory (Issue #127).
-        date_day_map = self._load_venue_date_day_map(venue_input_path)
-        (
-            playoff_slots,
-            playoff_synthetic_resources,
-            playoff_reserved_windows,
-            playoff_synthetic_ids,
-        ) = self._resolve_venue_playoff_slots(
-            playoff_slots,
-            venue_rows,
-            date_day_map,
-            gym_modes,
-            allocator_active=(gym_resource_strategy == "allocator"),
-        )
-
         pool_assignment_rows = self._build_pool_assignment_rows(
             roster_rows,
             pool_assignment_path,
@@ -3982,6 +4065,32 @@ class ScheduleWorkbookBuilder:
         )
         precedence.extend(gym_precedence)
         precedence.extend(soccer_precedence)
+
+        # Resolve venue-centric Playoff-Slots after game generation so physical
+        # reservations use each game's real duration, but still before Stage-A
+        # allocation so those windows are removed from pool-play inventory.
+        date_day_map = self._load_venue_date_day_map(venue_input_path)
+        game_duration_by_id = {
+            str(game.get("game_id") or "").strip(): int(
+                game.get("duration_minutes") or 0
+            )
+            for game in all_games
+            if str(game.get("game_id") or "").strip()
+            and int(game.get("duration_minutes") or 0) > 0
+        }
+        (
+            playoff_slots,
+            playoff_synthetic_resources,
+            playoff_reserved_windows,
+            playoff_synthetic_ids,
+        ) = self._resolve_venue_playoff_slots(
+            playoff_slots,
+            venue_rows,
+            date_day_map,
+            gym_modes,
+            allocator_active=(gym_resource_strategy == "allocator"),
+            game_duration_by_id=game_duration_by_id,
+        )
 
         gym_allocation: Optional[Dict[str, Any]] = None
         if gym_resource_strategy == "allocator":

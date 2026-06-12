@@ -1689,6 +1689,66 @@ def test_solve_duplicate_playoff_slot_raises():
         solve(si, timeout_seconds=10.0)
 
 
+def test_validate_playoff_slots_rejects_overlapping_multislot_pins():
+    """Different start slots still collide when their occupied intervals overlap."""
+    from scheduler import validate_playoff_slots
+
+    resources = [{
+        "resource_id": "TT-Sun-2-1",
+        "resource_type": "Table Tennis Table",
+        "label": "Table-1",
+        "day": "Sun-2",
+        "open_time": "14:00",
+        "close_time": "18:00",
+        "slot_minutes": 20,
+    }]
+    playoff_slots = [
+        {
+            "game_id": "TT-Semi",
+            "resource_id": "TT-Sun-2-1",
+            "slot": "Sun-2-14:00",
+            "duration_minutes": 120,
+        },
+        {
+            "game_id": "TT-Final",
+            "resource_id": "TT-Sun-2-1",
+            "slot": "Sun-2-15:00",
+            "duration_minutes": 120,
+        },
+    ]
+
+    with pytest.raises(ValueError, match="Overlapping playoff slot reservations"):
+        validate_playoff_slots(playoff_slots, resources)
+
+
+def test_validate_playoff_slots_blocks_every_occupied_slot():
+    """A multi-slot playoff pin removes its whole interval from pool play."""
+    from scheduler import validate_playoff_slots
+
+    resources = [{
+        "resource_id": "TT-Sun-2-1",
+        "resource_type": "Table Tennis Table",
+        "label": "Table-1",
+        "day": "Sun-2",
+        "open_time": "14:00",
+        "close_time": "16:00",
+        "slot_minutes": 20,
+    }]
+    playoff_slots = [{
+        "game_id": "TT-Final",
+        "resource_id": "TT-Sun-2-1",
+        "slot": "Sun-2-14:00",
+        "duration_minutes": 60,
+    }]
+
+    validated, blocked = validate_playoff_slots(playoff_slots, resources)
+
+    assert validated[0]["duration_minutes"] == 60
+    assert blocked["Table Tennis Table"]["TT-Sun-2-1"] == {
+        "Sun-2-14:00", "Sun-2-14:20", "Sun-2-14:40",
+    }
+
+
 def test_solve_pinned_final_cannot_precede_solver_semis():
     """Regression: pinned playoff Final must not appear before solver-assigned Semis.
 

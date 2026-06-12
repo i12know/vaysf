@@ -417,7 +417,7 @@ def validate_playoff_slots(
         lambda: defaultdict(set)
     )
     validated: list[dict[str, Any]] = []
-    seen_keys: dict[tuple[str, str], str] = {}
+    seen_keys: dict[tuple[str, str], tuple[str, str]] = {}
 
     for playoff_slot in playoff_slots:
         game_id = str(playoff_slot.get("game_id", "")).strip() or "<unknown>"
@@ -434,26 +434,53 @@ def validate_playoff_slots(
                 f"Playoff slot {game_id!r} references unknown resource_id {resource_id!r}."
             )
 
-        valid_slots = set(res_slots.get(resource_id, []))
+        resource_slots = res_slots.get(resource_id, [])
+        valid_slots = set(resource_slots)
         if slot not in valid_slots:
             raise ValueError(
                 f"Playoff slot {game_id!r} uses slot {slot!r}, which is not a valid slot "
                 f"for resource {resource_id!r}."
             )
 
-        key = (resource_id, slot)
-        previous_game = seen_keys.get(key)
-        if previous_game is not None:
+        duration_minutes = int(
+            playoff_slot.get("duration_minutes")
+            or resource.get("slot_minutes")
+            or 60
+        )
+        slot_minutes = int(resource.get("slot_minutes") or 60)
+        occupied_count = max(1, math.ceil(duration_minutes / slot_minutes))
+        start_index = resource_slots.index(slot)
+        occupied_slots = resource_slots[start_index : start_index + occupied_count]
+        if len(occupied_slots) != occupied_count:
             raise ValueError(
-                f"Duplicate playoff slot reservation for {resource_id!r} at {slot!r}: "
-                f"{previous_game!r} and {game_id!r}."
+                f"Playoff slot {game_id!r} ({duration_minutes} min) does not fit "
+                f"resource {resource_id!r} starting at {slot!r}."
             )
-        seen_keys[key] = game_id
+
+        for occupied_slot in occupied_slots:
+            key = (resource_id, occupied_slot)
+            previous = seen_keys.get(key)
+            if previous is not None:
+                previous_game, previous_start = previous
+                if previous_start == slot:
+                    raise ValueError(
+                        f"Duplicate playoff slot reservation for {resource_id!r} "
+                        f"at {slot!r}: {previous_game!r} and {game_id!r}."
+                    )
+                raise ValueError(
+                    f"Overlapping playoff slot reservations on {resource_id!r} at "
+                    f"{occupied_slot!r}: {previous_game!r} and {game_id!r}."
+                )
+        for occupied_slot in occupied_slots:
+            seen_keys[(resource_id, occupied_slot)] = (game_id, slot)
 
         normalized = dict(playoff_slot)
         normalized.setdefault("resource_type", resource["resource_type"])
+        normalized.setdefault("duration_minutes", duration_minutes)
         validated.append(normalized)
-        reserved_by_type[resource["resource_type"]][resource_id].add(slot)
+        reserved_by_type[resource["resource_type"]][resource_id].update(
+            occupied_slots
+        )
 
     return validated, reserved_by_type
 

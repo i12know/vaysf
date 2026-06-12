@@ -24,10 +24,14 @@ remains valid as an override and for legacy files.
 - **Contiguous pins merge** — Semi at 14:00 + Final at 15:00 on the same
   gym/sport share one synthetic playoff court, mirroring the legacy
   same-`resource_id` merge behavior.
-- **Fail loudly, not deep** — a row whose gym, date, or start time does not
-  match `Venue-Input` is dropped at build time with an ERROR naming the gym,
-  day, and available windows, instead of surfacing later as an unknown
-  resource_id during `solve-schedule`.
+- **Fail loudly, not deep** — invalid venue-centric rows abort schedule-input
+  generation with all detected errors instead of silently omitting playoff
+  intent. Validation covers unknown gym/date/start values, mutually-exclusive
+  gym-mode overlap, configured court-count overflow, and overlapping
+  multi-slot reservations.
+- **Duration-aware reservations** — generated game duration is used when a
+  playoff row omits `duration_minutes`, and every occupied resource slot is
+  reserved and collision-checked rather than only the start slot.
 - **Schema** — resolved rows keep `gym_name`/`date`/`start_time` for
   traceability; the schedule contract models the new fields on both playoff
   slots and merged output assignments. The venue input template's

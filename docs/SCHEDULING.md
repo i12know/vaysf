@@ -424,7 +424,7 @@ knowledge of internal resource IDs required:
 | `gym_name` | `EHS Main Gym` | Matches `Venue Name` or `Exclusive Venue Group` in Venue-Input (case-insensitive) |
 | `date` | `7/26/2026` | Must be a date that appears in Venue-Input (a day label like `Sun-2` also works) |
 | `start_time` | `14:00` | Must fall inside that venue's Venue-Input time window |
-| `slot_minutes` | `60` | Optional; defaults to the venue row's slot size |
+| `slot_minutes` | `60` | Optional synthetic-resource grid size; defaults to the venue row's slot size |
 
 At build time (`export-church-teams`), each venue-centric row is validated
 against Venue-Input and resolved to a concrete resource:
@@ -439,9 +439,10 @@ against Venue-Input and resolved to a concrete resource:
 - For a **standalone venue row**, the pin resolves to one of the existing
   expanded resource IDs (e.g. `TT-Sun-2-1`) and the exact `(resource, slot)`
   pair is reserved from pool play at solve time, as always.
-- A row whose gym/date/start does not match Venue-Input is dropped with an
-  ERROR naming the gym, day, and available windows — fix the row and re-run
-  `export-church-teams`.
+- Invalid venue pins abort schedule-input generation with all detected errors
+  listed. This includes unknown gym/date/start values, overlapping mutually
+  exclusive gym modes, court-count overflow, and overlapping multi-slot pins.
+  Fix the rows and re-run `export-church-teams`.
 
 *Explicit form (override / legacy)* — copy internal IDs from the generated
 `Schedule-Input` Resources section:
@@ -457,6 +458,8 @@ the venue-centric form exists precisely so operators do not have to track
 that drift.
 
 Optional columns (either form): `team_a_id`, `team_b_id`, `duration_minutes`.
+When `duration_minutes` is omitted for a generated game, the build uses that
+game's configured duration and reserves every occupied resource slot.
 
 Canonical direct-venue resource prefixes are now:
 - `BB-` Basketball Court

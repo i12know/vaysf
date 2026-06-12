@@ -1,6 +1,7 @@
 import json
 
 import pandas as pd
+import pytest
 from openpyxl import load_workbook
 
 from church_teams_export import ChurchTeamsExporter
@@ -2238,9 +2239,139 @@ def test_build_schedule_input_venue_centric_pin_resolves_direct_resource(tmp_pat
     assert len(validated) == 2
 
 
-def test_build_schedule_input_venue_centric_pin_unknown_gym_drops_row(tmp_path):
-    """A venue-centric row naming a gym/date absent from Venue-Input is dropped
-    with a clear error instead of failing deep in the solver."""
+def test_build_schedule_input_venue_centric_direct_overlap_fails(tmp_path):
+    """Multi-slot pins may not overlap on the same standalone resource."""
+    from config import SPORT_TYPE
+
+    rows = [
+        ["TT Pod", "Orange Chapel", "Table Tennis Table", 1, "Sun-2",
+         "2026-07-26", 9, 17, 20, None, None, None, None, None],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time",
+         "duration_minutes"],
+        ["TT-Semi", SPORT_TYPE["TABLE_TENNIS"], "Semi",
+         "Orange Chapel", "2026-07-26", "14:00", 120],
+        ["TT-Final", SPORT_TYPE["TABLE_TENNIS"], "Final",
+         "Orange Chapel", "2026-07-26", "15:00", 120],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows, playoff_rows=playoff_rows)
+
+    with pytest.raises(ValueError, match="already occupied during"):
+        ScheduleWorkbookBuilder()._build_schedule_input(
+            _make_gym_roster(), [], path
+        )
+
+
+def test_build_schedule_input_venue_centric_managed_capacity_fails(tmp_path):
+    """Two concurrent pins cannot be placed on a one-court gym mode."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL
+
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 1, 0],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi",
+         "Church Main Gym", "2026-07-26", "14:00"],
+        ["BBM-Semi-2", "Basketball - Men Team", "Semi",
+         "Church Main Gym", "2026-07-26", "14:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(
+        path, _VENUE_CENTRIC_HEADERS, rows,
+        gym_modes_rows=gym_modes, playoff_rows=playoff_rows,
+    )
+
+    with pytest.raises(ValueError, match="Gym-Modes provides 1"):
+        ScheduleWorkbookBuilder()._build_schedule_input(
+            _make_gym_roster(), [], path
+        )
+
+
+def test_build_schedule_input_venue_centric_cross_mode_overlap_fails(tmp_path):
+    """Mutually-exclusive gym modes cannot be pinned at the same time."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 2, 2],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Church Main Gym", "2026-07-26", "14:00"],
+        ["VBM-Final", "Volleyball - Men Team", "Final",
+         "Church Main Gym", "2026-07-26", "14:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(
+        path, _VENUE_CENTRIC_HEADERS, rows,
+        gym_modes_rows=gym_modes, playoff_rows=playoff_rows,
+    )
+
+    with pytest.raises(ValueError, match="mutually-exclusive gym"):
+        ScheduleWorkbookBuilder()._build_schedule_input(
+            _make_gym_roster(), [], path
+        )
+
+
+def test_build_schedule_input_venue_pin_uses_generated_game_duration(tmp_path):
+    """A 60-minute generated game on a 30-minute grid reserves two slots."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL
+    from scheduler import validate_playoff_slots
+
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 30, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 2, 0],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Church Main Gym", "2026-07-26", "14:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(
+        path, _VENUE_CENTRIC_HEADERS, rows,
+        gym_modes_rows=gym_modes, playoff_rows=playoff_rows,
+    )
+
+    si = ScheduleWorkbookBuilder()._build_schedule_input(
+        _make_gym_roster(), [], path
+    )
+
+    entry = si["playoff_slots"][0]
+    pinned = next(r for r in si["resources"] if r.get("playoff_pinned"))
+    assert entry["duration_minutes"] == 60
+    assert pinned["slot_minutes"] == 30
+    assert pinned["open_time"] == "14:00"
+    assert pinned["close_time"] == "15:00"
+    _validated, blocked = validate_playoff_slots(
+        si["playoff_slots"], si["resources"]
+    )
+    assert blocked["Basketball Court"][pinned["resource_id"]] == {
+        "Sun-2-14:00", "Sun-2-14:30",
+    }
+
+
+def test_build_schedule_input_venue_centric_pin_unknown_gym_fails_build(tmp_path):
+    """An unknown venue fails generation instead of silently omitting the pin."""
     from loguru import logger as _loguru_logger
 
     path = _venue_centric_allocator_fixture(tmp_path, [
@@ -2253,11 +2384,13 @@ def test_build_schedule_input_venue_centric_pin_unknown_gym_drops_row(tmp_path):
     sink_id = _loguru_logger.add(messages.append, level="ERROR")
     try:
         builder = ScheduleWorkbookBuilder()
-        si = builder._build_schedule_input(_make_gym_roster(), [], path)
+        with pytest.raises(
+            ValueError, match="Invalid venue-centric Playoff-Slots configuration"
+        ):
+            builder._build_schedule_input(_make_gym_roster(), [], path)
     finally:
         _loguru_logger.remove(sink_id)
 
-    assert si["playoff_slots"] == []
     assert any(
         "no Venue-Input row found for gym 'Nonexistent Gym'" in str(m)
         for m in messages

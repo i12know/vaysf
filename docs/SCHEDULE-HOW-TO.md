@@ -202,12 +202,13 @@ Then pick **one** placement form per row:
 | `gym_name` | The venue as written in `Venue-Input` (`Venue Name` or `Exclusive Venue Group`) |
 | `date` | A date that appears in `Venue-Input` (a day label like `Sun-2` also works) |
 | `start_time` | `HH:MM`, inside that venue's `Venue-Input` window |
-| `slot_minutes` | Optional; defaults to the venue row's slot size |
+| `slot_minutes` | Optional synthetic-resource grid size; defaults to the venue row's slot size |
 
 The build resolves the venue to a concrete resource automatically and, for
 allocator-managed gyms, reserves the pinned window so regular pool-play games
-can never claim it.  A row that does not match `Venue-Input` is dropped with
-an ERROR in the log naming the gym and date — fix and re-run
+can never claim it. Invalid pins abort generation instead of being omitted.
+The error lists unknown venues/windows, gym-mode conflicts, court-count
+overflow, or overlapping multi-slot pins; fix the rows and re-run
 `export-church-teams`.
 
 **Explicit (override / legacy):**
