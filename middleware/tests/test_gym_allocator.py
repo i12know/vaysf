@@ -700,3 +700,41 @@ def test_extract_gym_blocks_records_resource_types():
 
     assert "Badminton Court" in afternoon.resource_types
     assert "Basketball Court" not in afternoon.resource_types
+
+
+# ---------------------------------------------------------------------------
+# reserved_windows (Issue #127)
+# ---------------------------------------------------------------------------
+
+def test_allocate_reserved_window_is_never_claimed_and_fragments_survive():
+    """A playoff-reserved window is carved out before the demand pass: pool
+    play cannot claim 14:00-15:00, but the 08:00-14:00 / 15:00-17:00
+    fragments stay allocatable."""
+    demand = {"Basketball Court": 50.0}  # wants far more than the gym offers
+    gym_modes = {"Main Gym": {"Basketball Court": 2}}
+    block = _block_with_types("Main Gym", ["Basketball Court"],
+                              open_t="08:00", close_t="17:00", day="Sun-2")
+    reserved = _block_with_types("Main Gym", ["Basketball Court"],
+                                 open_t="14:00", close_t="15:00", day="Sun-2")
+
+    result = allocate(demand, gym_modes, [block], reserved_windows=[reserved])
+
+    windows = {(d.open_time, d.close_time) for d in result.decisions}
+    assert windows == {("08:00", "14:00"), ("15:00", "17:00")}
+    for decision in result.decisions:
+        assert not (decision.open_time < "15:00" and "14:00" < decision.close_time)
+
+
+def test_allocate_reserved_window_outside_blocks_is_a_noop():
+    """Reserving a window in a gym/day with no blocks changes nothing."""
+    demand = {"Basketball Court": 4.0}
+    gym_modes = {"Main Gym": {"Basketball Court": 1}}
+    block = _block_with_types("Main Gym", ["Basketball Court"],
+                              open_t="08:00", close_t="12:00", day="Sat-1")
+    reserved = _block_with_types("Other Gym", ["Basketball Court"],
+                                 open_t="14:00", close_t="15:00", day="Sun-2")
+
+    result = allocate(demand, gym_modes, [block], reserved_windows=[reserved])
+
+    assert {(d.open_time, d.close_time) for d in result.decisions} == {("08:00", "12:00")}
+    assert result.mode_shortfall["Basketball Court"] == pytest.approx(0.0)

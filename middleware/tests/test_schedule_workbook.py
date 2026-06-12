@@ -685,8 +685,9 @@ def test_write_schedule_workbook_uses_schedule_input_resources_offline(tmp_path)
 # ===========================================================================
 
 
-def _write_venue_input(path, headers, data_rows, gym_modes_rows=None):
-    """Write a venue_input.xlsx with a Venue-Input tab (and optional Gym-Modes)."""
+def _write_venue_input(path, headers, data_rows, gym_modes_rows=None, playoff_rows=None):
+    """Write a venue_input.xlsx with a Venue-Input tab (and optional Gym-Modes /
+    Playoff-Slots tabs; the first row of each optional tab is its header row)."""
     from openpyxl import Workbook
 
     wb = Workbook()
@@ -702,6 +703,11 @@ def _write_venue_input(path, headers, data_rows, gym_modes_rows=None):
         for r, data in enumerate(gym_modes_rows, start=1):
             for c, val in enumerate(data, start=1):
                 gm.cell(row=r, column=c, value=val)
+    if playoff_rows is not None:
+        ps = wb.create_sheet("Playoff-Slots")
+        for r, data in enumerate(playoff_rows, start=1):
+            for c, val in enumerate(data, start=1):
+                ps.cell(row=r, column=c, value=val)
     wb.save(path)
 
 
@@ -1954,10 +1960,13 @@ def test_build_schedule_input_playoff_pinned_resource_promoted_as_single_slot(tm
     assert p["open_time"] == "14:00"
     # close_time = 14:00 + 60 min = 15:00.
     assert p["close_time"] == "15:00"
-    # Must be flagged so the solver_pool assignment loop skips it.
+    # Must be flagged so capacity diagnostics skip it.
     assert p.get("playoff_pinned") is True
-    # Must NOT be assigned to the Gym Core solver pool.
-    assert "solver_pool" not in p, "playoff_pinned resource must not enter Gym Core pool"
+    # Must join the Gym Core pool: a pinned game takes its pool from its
+    # pinned resource, and QF→Semi→Final precedence is only enforceable when
+    # the pinned game shares a pool with its pool-play siblings.  Pool play
+    # still cannot use the resource — its only slot is reserved.
+    assert p.get("solver_pool") == ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL
 
 
 def test_build_schedule_input_playoff_pinned_resource_merges_multiple_slots(tmp_path):
@@ -2074,6 +2083,298 @@ def test_build_schedule_input_playoff_pinned_resource_rejects_implausible_ordina
     si = builder._build_schedule_input(_make_gym_roster(), [], path)
 
     assert not any(r["resource_id"] == "GYM-Sun-2-99" for r in si["resources"])
+
+
+_VENUE_CENTRIC_HEADERS = [
+    "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+    "Date", "Start Time", "Last Start Time", "Slot Minutes",
+    "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+]
+
+
+def _venue_centric_allocator_fixture(tmp_path, playoff_rows):
+    """venue_input.xlsx with an allocator-managed gym (Sat-1 + Sun-2 blocks)."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 4, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 4, 2],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows,
+                       gym_modes_rows=gym_modes, playoff_rows=playoff_rows)
+    return path
+
+
+def test_build_schedule_input_venue_centric_playoff_pin_creates_pinned_resource(tmp_path):
+    """A Playoff-Slots row with gym_name + date + start_time (no resource_id)
+    should resolve to a synthetic playoff-pinned single-slot resource (#127)."""
+    from scheduler import validate_playoff_slots
+
+    path = _venue_centric_allocator_fixture(tmp_path, [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Church Main Gym", "2026-07-26", "14:00"],
+    ])
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    pinned = [r for r in si["resources"] if r.get("playoff_pinned")]
+    assert len(pinned) == 1
+    p = pinned[0]
+    assert p["resource_id"] == "BB-Sun-2-PF1"
+    assert p["resource_type"] == "Basketball Court"
+    assert p["open_time"] == "14:00"
+    assert p["close_time"] == "15:00"
+    assert p["venue_name"] == "Church Main Gym"
+    # Joins Gym Core so precedence rules involving the pinned game stay
+    # same-pool and enforceable; all its slots are reserved from pool play.
+    assert p.get("solver_pool") == ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL
+
+    # The playoff entry must be rewritten to the resolved resource_id + slot
+    # and still pass solver-side validation.
+    assert len(si["playoff_slots"]) == 1
+    entry = si["playoff_slots"][0]
+    assert entry["resource_id"] == "BB-Sun-2-PF1"
+    assert entry["slot"] == "Sun-2-14:00"
+    assert entry["gym_name"] == "Church Main Gym"
+    validated, _blocked = validate_playoff_slots(si["playoff_slots"], si["resources"])
+    assert len(validated) == 1
+
+
+def test_build_schedule_input_venue_centric_pin_reserves_allocator_window(tmp_path):
+    """The pinned window must be carved out of the allocator inventory: no
+    Stage-A decision may overlap it, even on a demand-claimed day (#127/#133)."""
+    path = _venue_centric_allocator_fixture(tmp_path, [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Main Gym", "2026-07-26", "14:00"],
+    ])
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    assert si["gym_allocation"]["source"] == "allocator"
+    for decision in si["gym_allocation"]["decisions"]:
+        if decision["day"] != "Sun-2":
+            continue
+        # Decision windows must not overlap the reserved 14:00–15:00 window.
+        assert (
+            decision["close_time"] <= "14:00" or decision["open_time"] >= "15:00"
+        ), f"allocator claimed reserved playoff window: {decision}"
+    # The same exclusion applies to allocator-emitted pool-play resources.
+    for resource in si["resources"]:
+        if resource.get("playoff_pinned") or resource["day"] != "Sun-2":
+            continue
+        assert resource["close_time"] <= "14:00" or resource["open_time"] >= "15:00"
+
+
+def test_build_schedule_input_venue_centric_contiguous_pins_merge_one_track(tmp_path):
+    """Contiguous venue-centric pins on the same gym/sport share one synthetic
+    court, mirroring the legacy same-resource_id merge behavior."""
+    from scheduler import validate_playoff_slots
+
+    path = _venue_centric_allocator_fixture(tmp_path, [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi",
+         "Main Gym", "2026-07-26", "14:00"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Main Gym", "2026-07-26", "15:00"],
+    ])
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    pinned = [r for r in si["resources"] if r.get("playoff_pinned")]
+    assert len(pinned) == 1, "contiguous pins should merge onto one court track"
+    assert pinned[0]["open_time"] == "14:00"
+    assert pinned[0]["close_time"] == "16:00"
+
+    entries = si["playoff_slots"]
+    assert [e["resource_id"] for e in entries] == ["BB-Sun-2-PF1", "BB-Sun-2-PF1"]
+    assert [e["slot"] for e in entries] == ["Sun-2-14:00", "Sun-2-15:00"]
+    validated, _blocked = validate_playoff_slots(entries, si["resources"])
+    assert len(validated) == 2
+
+
+def test_build_schedule_input_venue_centric_pin_resolves_direct_resource(tmp_path):
+    """Venue-centric rows for standalone (non-allocator) venues resolve to the
+    existing expanded resource IDs; concurrent pins land on distinct courts."""
+    from config import SPORT_TYPE
+    from scheduler import validate_playoff_slots
+
+    rows = [
+        ["TT Pod", "Orange Chapel", "Table Tennis Table", 2, "Sun-2",
+         "2026-07-26", 9, 16, 20, None, None, None, None, None],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["TT-Semi-1", SPORT_TYPE["TABLE_TENNIS"], "Semi",
+         "Orange Chapel", "2026-07-26", "15:00"],
+        ["TT-Semi-2", SPORT_TYPE["TABLE_TENNIS"], "Semi",
+         "Orange Chapel", "2026-07-26", "15:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows, playoff_rows=playoff_rows)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    # No synthetic resources for standalone venues — existing IDs are reused.
+    assert not any(r.get("playoff_pinned") for r in si["resources"])
+    entries = si["playoff_slots"]
+    assert {e["resource_id"] for e in entries} == {"TT-Sun-2-1", "TT-Sun-2-2"}
+    assert all(e["slot"] == "Sun-2-15:00" for e in entries)
+    validated, _blocked = validate_playoff_slots(entries, si["resources"])
+    assert len(validated) == 2
+
+
+def test_build_schedule_input_venue_centric_pin_unknown_gym_drops_row(tmp_path):
+    """A venue-centric row naming a gym/date absent from Venue-Input is dropped
+    with a clear error instead of failing deep in the solver."""
+    from loguru import logger as _loguru_logger
+
+    path = _venue_centric_allocator_fixture(tmp_path, [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Nonexistent Gym", "2026-07-26", "14:00"],
+    ])
+
+    messages = []
+    sink_id = _loguru_logger.add(messages.append, level="ERROR")
+    try:
+        builder = ScheduleWorkbookBuilder()
+        si = builder._build_schedule_input(_make_gym_roster(), [], path)
+    finally:
+        _loguru_logger.remove(sink_id)
+
+    assert si["playoff_slots"] == []
+    assert any(
+        "no Venue-Input row found for gym 'Nonexistent Gym'" in str(m)
+        for m in messages
+    )
+
+
+def test_build_schedule_input_venue_centric_and_explicit_forms_coexist(tmp_path):
+    """Both Playoff-Slots forms work in the same file; an explicit
+    resource_id + slot row passes through unchanged."""
+    from scheduler import validate_playoff_slots
+
+    path = _venue_centric_allocator_fixture(tmp_path, [
+        ["game_id", "event", "stage", "resource_id", "slot",
+         "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final", None, None,
+         "Main Gym", "2026-07-26", "14:00"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi", "GYM-Sat-1-1", "Sat-1-16:00",
+         None, None, None],
+    ])
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    by_game = {e["game_id"]: e for e in si["playoff_slots"]}
+    assert by_game["BBM-Final"]["resource_id"] == "BB-Sun-2-PF1"
+    assert by_game["BBM-Semi-1"]["resource_id"] == "GYM-Sat-1-1"
+    assert by_game["BBM-Semi-1"]["slot"] == "Sat-1-16:00"
+    validated, _blocked = validate_playoff_slots(si["playoff_slots"], si["resources"])
+    assert len(validated) == 2
+
+
+def test_venue_centric_pins_solve_end_to_end_with_precedence(tmp_path):
+    """Full #127 scenario: all BBM late rounds pinned by venue name on an
+    allocator-unvisited Sun-2 block.  The build must pass the schedule
+    contract, the QFs must solve onto the day before the pinned Semis
+    (precedence is enforceable because the pinned games share the Gym Core
+    pool), and no pool game may touch the pinned court."""
+    import scheduler
+    from schedule_contracts import validate_schedule_input
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+
+    rows = [
+        ["Main Gym", "EHS Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 4, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "EHS Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Practice Gym", "EHS Practice Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Practice Gym", None, None, None],
+        ["Practice Gym", "EHS Practice Gym", GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Practice Gym", None, None, None],
+        ["Main Gym", "EHS Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 9, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 4, 2],
+        ["Practice Gym", 1, 2],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi", "EHS Main Gym", "2026-07-26", "12:00"],
+        ["BBM-Semi-2", "Basketball - Men Team", "Semi", "EHS Main Gym", "2026-07-26", "13:00"],
+        ["BBM-3rd",    "Basketball - Men Team", "3rd",  "EHS Main Gym", "2026-07-26", "14:00"],
+        ["BBM-Final",  "Basketball - Men Team", "Final", "EHS Main Gym", "2026-07-26", "15:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows,
+                       gym_modes_rows=gym_modes, playoff_rows=playoff_rows)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(8), [], path)
+
+    assert validate_schedule_input(si) == []
+    pinned = [r for r in si["resources"] if r.get("playoff_pinned")]
+    assert [(r["resource_id"], r["open_time"], r["close_time"]) for r in pinned] == [
+        ("BB-Sun-2-PF1", "12:00", "16:00"),
+    ], "the four contiguous pins must merge onto one playoff court track"
+
+    out = scheduler.solve(si)
+    assert out["status"] == "OPTIMAL"
+    assert out["unscheduled"] == []
+    by_game = {a["game_id"]: a for a in out["assignments"]}
+    assert by_game["BBM-Final"]["slot"] == "Sun-2-15:00"
+    # QF precedence vs the pinned Semis must be enforced: QFs stay on Sat-1.
+    for n in range(1, 5):
+        day, _time = by_game[f"BBM-QF-{n}"]["slot"].rsplit("-", 1)
+        assert day == "Sat-1"
+    # Pool play never touches the pinned playoff court.
+    pinned_users = {
+        a["game_id"] for a in out["assignments"]
+        if a["resource_id"] == "BB-Sun-2-PF1"
+    }
+    assert pinned_users == {"BBM-Semi-1", "BBM-Semi-2", "BBM-3rd", "BBM-Final"}
+
+
+def test_load_playoff_slots_accepts_venue_centric_columns(tmp_path):
+    """The loader accepts gym_name/date/start_time rows, normalizes date and
+    start_time, and skips rows with neither complete placement form."""
+    rows = [
+        ["X", "Some Gym", "Basketball Court", 1, "Sat-1",
+         "2026-07-18", 8, 10, 60, None, None, None, None, None],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final", "Some Gym", "2026-07-26", "14:00"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi", "Some Gym", None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows, playoff_rows=playoff_rows)
+
+    slots = ScheduleWorkbookBuilder._load_playoff_slots(path)
+    assert len(slots) == 1, "incomplete venue-centric row must be skipped"
+    entry = slots[0]
+    assert entry["gym_name"] == "Some Gym"
+    assert entry["date"] == "2026-07-26"
+    assert entry["start_time"] == "14:00"
+    assert entry["resource_id"] == ""
 
 
 def test_build_schedule_input_qf_games_get_latest_slot_day_before_finals(tmp_path):

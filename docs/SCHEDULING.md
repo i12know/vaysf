@@ -413,10 +413,50 @@ games.  Add one row per playoff game.  Required columns:
 | `game_id` | `BBM-Final` | Unique identifier used in the schedule output |
 | `event` | `Basketball - Men Team` | Must match the event name exactly |
 | `stage` | `Final` | QF, Semi, Final, or 3rd |
+
+Each row must then carry **one of two placement forms** (Issue #127):
+
+*Venue-centric form (preferred)* — specify the physical venue directly; no
+knowledge of internal resource IDs required:
+
+| Column | Example | Notes |
+|--------|---------|-------|
+| `gym_name` | `EHS Main Gym` | Matches `Venue Name` or `Exclusive Venue Group` in Venue-Input (case-insensitive) |
+| `date` | `7/26/2026` | Must be a date that appears in Venue-Input (a day label like `Sun-2` also works) |
+| `start_time` | `14:00` | Must fall inside that venue's Venue-Input time window |
+| `slot_minutes` | `60` | Optional; defaults to the venue row's slot size |
+
+At build time (`export-church-teams`), each venue-centric row is validated
+against Venue-Input and resolved to a concrete resource:
+
+- For an **allocator-managed gym** (its `Exclusive Venue Group` has a
+  Gym-Modes entry), a dedicated playoff-pinned resource (e.g. `BB-Sun-2-PF1`)
+  is created covering only the pinned window, and that window is **reserved
+  out of the Stage-A allocator inventory** before pool-play demand is
+  satisfied — regular games can never consume a pinned Final's court time.
+  Contiguous pins on the same gym/sport (e.g. Semi at 14:00, Final at 15:00)
+  merge onto one playoff court.
+- For a **standalone venue row**, the pin resolves to one of the existing
+  expanded resource IDs (e.g. `TT-Sun-2-1`) and the exact `(resource, slot)`
+  pair is reserved from pool play at solve time, as always.
+- A row whose gym/date/start does not match Venue-Input is dropped with an
+  ERROR naming the gym, day, and available windows — fix the row and re-run
+  `export-church-teams`.
+
+*Explicit form (override / legacy)* — copy internal IDs from the generated
+`Schedule-Input` Resources section:
+
+| Column | Example | Notes |
+|--------|---------|-------|
 | `resource_id` | `GYM-Sat-2-1` or `BB-Sun-2-3` | Must match a resource_id in the Resources section |
 | `slot` | `Sat-2-14:00` | Slot label in `Day-HH:MM` format |
 
-Optional columns: `team_a_id`, `team_b_id`, `duration_minutes`.
+When a row carries both forms, the explicit `resource_id` + `slot` wins.
+Note that generated resource ordinals can drift when Venue-Input changes —
+the venue-centric form exists precisely so operators do not have to track
+that drift.
+
+Optional columns (either form): `team_a_id`, `team_b_id`, `duration_minutes`.
 
 Canonical direct-venue resource prefixes are now:
 - `BB-` Basketball Court

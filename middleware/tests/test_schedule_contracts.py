@@ -114,7 +114,10 @@ def test_documented_schema_fields_do_not_warn():
             {"game_id": "BBM-Final", "event": "Basketball - Men Team",
              "stage": "Final", "resource_id": "GYM-Sun-2-5",
              "slot": "Sat-1-10:00", "team_a_id": "BBM-P1-T1",
-             "team_b_id": "BBM-P2-T1", "duration_minutes": 60},
+             "team_b_id": "BBM-P2-T1", "duration_minutes": 60,
+             # Venue-centric placement intent kept on resolved rows (#127).
+             "gym_name": "EHS Main Gym", "date": "2026-07-26",
+             "start_time": "10:00"},
         ],
         "gym_modes": {"Midsize Gym": {"Basketball Court": 1}},
         "gym_allocation": {"source": "allocator"},

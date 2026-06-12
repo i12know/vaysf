@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Venue-centric Playoff-Slots — pin finals by gym + date + time — closes [#127](https://github.com/i12know/vaysf/issues/127)
+
+Operators can now pin playoff games without knowing internal allocator
+resource IDs. A `Playoff-Slots` row may specify `gym_name` + `date` +
+`start_time` (preferred) instead of `resource_id` + `slot`; the explicit form
+remains valid as an override and for legacy files.
+
+- **Two-pass reservation** — venue-centric rows are resolved against
+  `Venue-Input` *before* the Stage-A gym allocator runs. For
+  allocator-managed gyms, a dedicated playoff-pinned resource (e.g.
+  `BB-Sun-2-PF1`) is synthesized covering only the pinned window, and that
+  window is carved out of the allocator inventory (`gym_allocator.allocate()`
+  gains a `reserved_windows` parameter) — pool play can never consume a
+  pinned Final's court time, with any non-overlapping remainder of the block
+  still allocatable. This is the allocator "reserve" concept #133 needs.
+- **Standalone venues** — venue-centric rows resolve to the existing expanded
+  resource IDs (e.g. `TT-Sun-2-1`); concurrent pins land on distinct courts
+  and the exact `(resource, slot)` pairs are reserved from pool play at solve
+  time as before.
+- **Contiguous pins merge** — Semi at 14:00 + Final at 15:00 on the same
+  gym/sport share one synthetic playoff court, mirroring the legacy
+  same-`resource_id` merge behavior.
+- **Fail loudly, not deep** — a row whose gym, date, or start time does not
+  match `Venue-Input` is dropped at build time with an ERROR naming the gym,
+  day, and available windows, instead of surfacing later as an unknown
+  resource_id during `solve-schedule`.
+- **Schema** — resolved rows keep `gym_name`/`date`/`start_time` for
+  traceability; the schedule contract models the new fields on both playoff
+  slots and merged output assignments. The venue input template's
+  `Playoff-Slots` tab gained the new columns.
+- **Pinned gym resources now join the Gym Core solver pool.** Previously a
+  synthetic playoff-pinned BB/VB resource carried no `solver_pool`, so a
+  pinned Semi/Final (whose pool derives from its pinned resource) landed in a
+  different pool than its pool-play siblings — the auto-generated
+  QF→Semi→Final precedence rules became cross-pool, which the solver silently
+  dropped and the #161 contract rejected with exit 3. Pinned BB/VB resources
+  (venue-centric and legacy promotion alike) now take `solver_pool: Gym
+  Core`, keeping precedence enforceable; pool play still cannot use them
+  because their windows contain only reserved slots. Covered by an
+  end-to-end test (build → contract → solve) of the full pinned-finals
+  scenario.
+- Identified in the 2026 pre-season scheduling review (#165, P0b).
+
 ### Fail-fast contract validation for scheduling JSON files — closes [#161](https://github.com/i12know/vaysf/issues/161)
 
 The scheduling bridge files now have a Pydantic contract, so malformed or

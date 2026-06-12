@@ -88,7 +88,7 @@ Use this map when deciding whether to edit a sheet:
 |----------|-----|--------|------------|
 | `venue_input.xlsx` | `Venue-Input` | `EDITABLE INPUT` | Edit booked resource blocks here, then rerun `export-church-teams`. |
 | `venue_input.xlsx` | `Gym-Modes` | `EDITABLE INPUT` | Edit physical gym mode capacities here. |
-| `venue_input.xlsx` | `Playoff-Slots` | `EDITABLE OVERRIDE INPUT` | Optional playoff pins; copy exact `game_id`, `resource_id`, and `slot` values from `Schedule-Input`. |
+| `venue_input.xlsx` | `Playoff-Slots` | `EDITABLE OVERRIDE INPUT` | Optional playoff pins; pin by `gym_name` + `date` + `start_time` (preferred), or copy exact `resource_id` + `slot` values from `Schedule-Input`. |
 | `Church_Team_Status_ALL_*.xlsx` | `Summary`, `Contacts-Status`, sport tabs | `READ-ONLY OUTPUT` | Review only; rerun `export-church-teams` after source data changes. |
 | `Church_Team_Status_ALL_*.xlsx` | `Roster`, `Validation-Issues` | `GENERATED DATA SOURCE` | Scheduling reads these tabs; fix source data upstream instead of editing cells. |
 | `Schedule_Workbook_*.xlsx` | `Summary`, `Pod-Divisions` | `READ-ONLY OUTPUT` | Generated planning context. |
@@ -192,6 +192,28 @@ Required columns:
 | `game_id` | Exact game ID from `Schedule-Input -> GAMES` |
 | `event` | Exact event name from `Schedule-Input -> GAMES` |
 | `stage` | `QF`, `Semi`, `Final`, or `3rd` |
+
+Then pick **one** placement form per row:
+
+**Venue-centric (preferred — no internal IDs needed):**
+
+| Column | Meaning |
+|--------|---------|
+| `gym_name` | The venue as written in `Venue-Input` (`Venue Name` or `Exclusive Venue Group`) |
+| `date` | A date that appears in `Venue-Input` (a day label like `Sun-2` also works) |
+| `start_time` | `HH:MM`, inside that venue's `Venue-Input` window |
+| `slot_minutes` | Optional; defaults to the venue row's slot size |
+
+The build resolves the venue to a concrete resource automatically and, for
+allocator-managed gyms, reserves the pinned window so regular pool-play games
+can never claim it.  A row that does not match `Venue-Input` is dropped with
+an ERROR in the log naming the gym and date — fix and re-run
+`export-church-teams`.
+
+**Explicit (override / legacy):**
+
+| Column | Meaning |
+|--------|---------|
 | `resource_id` | Exact resource ID from `Schedule-Input -> RESOURCES` |
 | `slot` | `Day-HH:MM`, for example `Sun-2-14:00` |
 
@@ -201,6 +223,11 @@ Important:
 - allocator-managed gym blocks often use `GYM-*`
 - direct standalone rows often use prefixes like `BB-*`, `VB-*`, `BC-*`,
   `SOC-*`, `BAD-*`, `PCK-*`, `TT-*`, `TEN-*`
+- generated resource ordinals can **drift** when `Venue-Input` changes; if
+  you use the explicit form, refresh `resource_id` values from the newest
+  `Schedule-Input -> RESOURCES` after every venue edit (the venue-centric
+  form avoids this entirely)
+- when a row carries both forms, the explicit `resource_id` + `slot` wins
 - if a pinned row uses a `game_id` that already exists in the modeled
   `Schedule-Input -> GAMES` list, that pinned row **replaces** the modeled
   assignment for that game in the final schedule output
@@ -312,8 +339,11 @@ After `build-schedule-workbook`, open `Schedule_Workbook_*.xlsx` and use
 | `game_id` | `Schedule-Input -> GAMES` |
 | `event` | `Schedule-Input -> GAMES` |
 | `stage` | `Schedule-Input -> GAMES` |
-| `resource_id` | `Schedule-Input -> RESOURCES` |
-| `slot` | Build from the resource `day` plus the desired time |
+| `gym_name` (preferred form) | `Venue-Input` — `Venue Name` or `Exclusive Venue Group` |
+| `date` (preferred form) | `Venue-Input` — the booked date |
+| `start_time` (preferred form) | Any time inside that venue's window |
+| `resource_id` (explicit form) | `Schedule-Input -> RESOURCES` |
+| `slot` (explicit form) | Build from the resource `day` plus the desired time |
 
 Example:
 

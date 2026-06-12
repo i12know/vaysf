@@ -148,6 +148,11 @@ class _PlayoffSlotContract(BaseModel):
     team_a_id: Optional[str] = None
     team_b_id: Optional[str] = None
     duration_minutes: Optional[int] = Field(default=None, gt=0, strict=True)
+    # Venue-centric placement intent (Issue #127). Kept on the resolved row
+    # for traceability; resource_id/slot above are the resolved result.
+    gym_name: Optional[str] = None
+    date: Optional[str] = None
+    start_time: Optional[str] = None
 
 
 class _PrecedenceContract(BaseModel):
@@ -187,6 +192,13 @@ class _AssignmentContract(BaseModel):
     stage: Optional[str] = None
     resource_type: Optional[str] = None
     slot_minutes: Optional[int] = Field(default=None, gt=0, strict=True)
+    team_a_id: Optional[str] = None
+    team_b_id: Optional[str] = None
+    duration_minutes: Optional[int] = Field(default=None, gt=0, strict=True)
+    # Venue-centric playoff placement intent (Issue #127).
+    gym_name: Optional[str] = None
+    date: Optional[str] = None
+    start_time: Optional[str] = None
 
 
 class _PoolResultContract(BaseModel):
