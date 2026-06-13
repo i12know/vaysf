@@ -22,7 +22,6 @@ from chmeetings.backend_connector import ChMeetingsConnector  # Import for expor
 from wordpress.frontend_connector import WordPressConnector   # Import for export command
 from church_teams_export import ChurchTeamsExporter           # Import for export command
 from season_reset import SeasonResetter                       # Import for reset-season command
-from badges import BadgeRunner                                 # Import for generate-badges command
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for the VAYSF middleware."""
@@ -1223,7 +1222,7 @@ def main() -> None:
                     person_id=args.person_id,
                 )
     elif args.command == "generate-badges":
-        from badges import BadgeGenerator
+        from badges import BadgeGenerator, BadgeRunner
         from pathlib import Path as _Path
 
         output_dir = _Path(args.output) if args.output else None
