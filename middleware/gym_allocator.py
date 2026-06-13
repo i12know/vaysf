@@ -267,7 +267,7 @@ def allocate(
             if gym_modes[g].get(mode, 0) > 0
         ]
         eligible.sort(key=lambda x: (
-            _active_mode_count(x[0], gym_modes),
+            _active_mode_count(x[0], gym_modes, blocks),
             _switch_penalty(x[0], mode, decisions),
             -x[1],
             x[0],
@@ -459,9 +459,31 @@ def _switch_penalty(gym_name: str, mode: str, decisions: List[AllocationDecision
     return 0 if (last is None or last == mode) else 1
 
 
-def _active_mode_count(gym_name: str, gym_modes: Dict[str, Dict[str, int]]) -> int:
-    """Count how many sport modes this gym can host with non-zero capacity."""
-    return sum(1 for courts in gym_modes.get(gym_name, {}).values() if courts > 0)
+def _block_accepts_mode(block: GymBlock, mode: str) -> bool:
+    """Return whether an allocator block can actually be assigned to a mode."""
+    return not block.resource_types or mode in block.resource_types
+
+
+def _active_mode_count(
+    gym_name: str,
+    gym_modes: Dict[str, Dict[str, int]],
+    blocks: List[GymBlock],
+) -> int:
+    """Count non-zero modes that have at least one compatible block in the gym.
+
+    A Gym-Modes capability backed only by standalone Venue-Input rows must not
+    make an allocator-managed gym appear more flexible.  In production, EHS
+    Practice Gym has four standalone Table Tennis tables for playoffs but no
+    exclusive-group TT blocks.  Counting that unavailable mode changed the
+    BB/VB gym preference and indirectly consumed EHS Main Gym's Badminton
+    window.
+    """
+    gym_blocks = [block for block in blocks if block.gym_name == gym_name]
+    return sum(
+        1
+        for mode, courts in gym_modes.get(gym_name, {}).items()
+        if courts > 0 and any(_block_accepts_mode(block, mode) for block in gym_blocks)
+    )
 
 
 def _count_switches(decisions: List[AllocationDecision]) -> int:

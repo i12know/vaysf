@@ -531,6 +531,59 @@ def test_allocate_prefers_gym_with_more_courts():
     assert result.mode_shortfall["Badminton Court"] == pytest.approx(0.0)
 
 
+def test_unavailable_mode_does_not_change_gym_preference_or_consume_badminton():
+    """A standalone playoff capability must not affect Stage-A specialization.
+
+    EHS Practice Gym's Table Tennis Tables are standalone Venue-Input rows, not
+    exclusive-group blocks.  Enabling TT=4 in Gym-Modes therefore must not make
+    the Practice Gym look as flexible as the Main Gym and redirect Basketball
+    into the Main Gym's overlapping Badminton window.
+    """
+    demand = {
+        "Basketball Court": 8.0,
+        "Badminton Court": 24.0,
+        "Table Tennis Table": 4.0,
+    }
+    blocks = [
+        _block_with_types(
+            "EHS Practice Gym",
+            ["Basketball Court"],
+            open_t="08:00",
+            close_t="12:00",
+            day="Sat-1",
+        ),
+        _block_with_types(
+            "EHS Main Gym",
+            ["Basketball Court"],
+            open_t="08:00",
+            close_t="17:00",
+            day="Sat-2",
+        ),
+        _block_with_types(
+            "EHS Main Gym",
+            ["Badminton Court"],
+            open_t="13:00",
+            close_t="17:00",
+            day="Sat-2",
+        ),
+    ]
+    base_modes = {
+        "EHS Practice Gym": {"Basketball Court": 2, "Table Tennis Table": 0},
+        "EHS Main Gym": {"Basketball Court": 2, "Badminton Court": 6},
+    }
+    restored_modes = {
+        **base_modes,
+        "EHS Practice Gym": {"Basketball Court": 2, "Table Tennis Table": 4},
+    }
+
+    before = allocate(demand, base_modes, blocks)
+    after = allocate(demand, restored_modes, blocks)
+
+    assert after.decisions == before.decisions
+    assert after.mode_shortfall == before.mode_shortfall
+    assert after.mode_shortfall["Badminton Court"] == pytest.approx(0.0)
+
+
 # ---------------------------------------------------------------------------
 # Bug fixes: resource_types tracking and spreading pass
 # ---------------------------------------------------------------------------
