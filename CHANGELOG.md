@@ -21,7 +21,7 @@ and the `church_teams_export.py` method-copy loop keep working unchanged.
   method's original `@classmethod`/instance binding; the two pure functions
   (`_write_summary_tab`, `_build_scenario_schedule`) use `staticmethod()`
   aliases like Steps 1–3.
-- `schedule_workbook.py`: 5,753 → 4,780 lines (−973). Eleven now-orphaned
+- `schedule_workbook.py`: 5,714 → 4,770 lines (−944). Eleven now-orphaned
   imports removed (`deque`, `SCHEDULE_SKETCH_N_COURTS`, the
   `SCHEDULE_SKETCH_COLOR_*` set, the `POD_FIT_*` set).
 - All 11 extracted bodies verified AST-identical to the originals (docstring
