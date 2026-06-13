@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Generate athlete photo-ID badges — refs [#77](https://github.com/i12know/vaysf/issues/77)
+
+v1 scope: visual identity verification, local render only. Adds a
+`generate-badges` command that renders a 1080×1920 PNG credential per approved
+athlete (photo, name, church, sport(s), athlete ID, QR slot).
+
+- **`middleware/badges/generator.py`** — `BadgeGenerator`: Pillow rendering with
+  name auto-shrink, multiline church wrap, hide-empty event rows, circular photo
+  crop with an initials-on-colour fallback, and a deterministic
+  `{church}_{chmid}_{8hex}.png` filename. Vietnamese diacritics preserved.
+- **`middleware/badges/runner.py`** — `BadgeRunner`: fetches approved
+  participants from WordPress (re-checked client-side), resolves the photo from
+  the ChMeetings person record (fallback to WordPress `photo_url`), and drives
+  the generator. Supports `--church-code`, `--chm-id`, `--dry-run`, `--force`.
+- **`middleware/templates/build_placeholder.py`** + committed
+  `templates/badge_template.png` — placeholder background until a designer
+  delivers the real template.
+- Added Pillow and qrcode to `requirements.txt`; `data/badges/` is gitignored.
+- QR carries an ID-only placeholder payload; WordPress hosting, ChMeetings
+  `<img>` write-back, and the QR-interoperability spike are deferred follow-ups.
+- Documented in `docs/USAGE.md`; unit tests in `tests/test_badges.py`.
+
 ### Issue #165 follow-up review fixes
 
 - Fail safely when seasonal ChMeetings participant-role configuration is

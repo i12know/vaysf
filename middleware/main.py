@@ -22,6 +22,7 @@ from chmeetings.backend_connector import ChMeetingsConnector  # Import for expor
 from wordpress.frontend_connector import WordPressConnector   # Import for export command
 from church_teams_export import ChurchTeamsExporter           # Import for export command
 from season_reset import SeasonResetter                       # Import for reset-season command
+from badges import BadgeRunner                                 # Import for generate-badges command
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for the VAYSF middleware."""
@@ -154,6 +155,22 @@ def parse_args() -> argparse.Namespace:
                               help="Process a single ChMeetings person ID instead of the whole group (for testing)")
     reset_parser.add_argument("--probe", action="store_true",
                               help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id)")
+
+    # Generate-badges command (Issue #77)
+    badges_parser = subparsers.add_parser(
+        "generate-badges",
+        help="Render athlete photo-ID badges (PNG) for approved participants",
+    )
+    badges_parser.add_argument("--church-code", type=str, default=None,
+                               help="Limit to a single church by code (e.g. RPC)")
+    badges_parser.add_argument("--chm-id", type=str, default=None,
+                               help="Limit to a single ChMeetings person ID")
+    badges_parser.add_argument("--output", type=str, default=None,
+                               help="Output directory for PNGs (default: data/badges)")
+    badges_parser.add_argument("--dry-run", action="store_true",
+                               help="List who would be rendered without writing files")
+    badges_parser.add_argument("--force", action="store_true",
+                               help="Re-render even if a current badge file already exists")
 
     # Solve-schedule command
     solve_schedule_parser = subparsers.add_parser(
@@ -1205,6 +1222,20 @@ def main() -> None:
                     reset_only=args.reset_only,
                     person_id=args.person_id,
                 )
+    elif args.command == "generate-badges":
+        from badges import BadgeGenerator
+        from pathlib import Path as _Path
+
+        output_dir = _Path(args.output) if args.output else None
+        with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+            generator = BadgeGenerator(output_dir=output_dir)
+            runner = BadgeRunner(chm_conn, wp_conn, generator)
+            success = runner.run(
+                church_code=args.church_code,
+                chm_id=args.chm_id,
+                dry_run=args.dry_run,
+                force=args.force,
+            )
     elif args.command == "check-consent":
         if not os.path.exists(args.file):
             logger.error(f"Consent export file not found at {args.file}")

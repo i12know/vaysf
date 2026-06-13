@@ -470,6 +470,50 @@ python main.py reset-season --year 2025 --person-id 3139537 --dry-run
 python main.py reset-season --year 2025 --probe --person-id 3139537
 ```
 
+### Generating Athlete Badges
+
+Render a printable/displayable photo-ID badge (PNG, 1080×1920 portrait) for
+each approved athlete. The badge shows the athlete's photo, name, church,
+sport(s), and athlete ID, with a QR-code slot for check-in. Staff and church
+reps use it for visual identity verification before games (Issue #77).
+
+This is the **v1, local-render** workflow: badges are written to
+`data/badges/` (gitignored) for hand-distribution. WordPress hosting and
+ChMeetings `<img>` write-back are deliberate follow-ups, and the QR currently
+carries an ID-only placeholder payload pending the QR-interoperability spike.
+
+```bash
+# Render badges for all approved athletes
+python main.py generate-badges
+
+# Preview who would be rendered without writing any files
+python main.py generate-badges --dry-run
+
+# Limit to a single church
+python main.py generate-badges --church-code RPC
+
+# Render a single athlete by ChMeetings ID (for spot-checking layout)
+python main.py generate-badges --chm-id 3139537
+
+# Re-render even when a current badge file already exists
+python main.py generate-badges --force
+
+# Write to a custom output directory
+python main.py generate-badges --output "path/to/badges"
+```
+
+Only participants with `approval_status == "approved"` get a badge — a badge
+existing means the athlete is eligible. Athlete text (name, church, sport) is
+read from WordPress; the profile photo is pulled from the ChMeetings person
+record, falling back to an initials-on-colour placeholder when no usable photo
+exists, so missing photos are obvious to staff at review.
+
+**Fonts:** for production-quality Vietnamese diacritics, drop `Inter-Bold.ttf`,
+`Inter-Regular.ttf`, and `JetBrainsMono-Regular.ttf` into `middleware/fonts/`
+(see `fonts/README.md`). Without them the generator falls back to system fonts,
+so rendering still works in CI. To regenerate the placeholder background
+template, run `python templates/build_placeholder.py`.
+
 ### Church Team Group Assignment
 
 Use the assignment command to add people with a Church Team code into their
