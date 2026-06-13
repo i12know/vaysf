@@ -543,6 +543,14 @@ This command:
 This is useful when a Team-group membership looks stale and you need to confirm
 whether the person still exists in ChMeetings, WordPress, both, or neither.
 
+It is also the first diagnostic for approval-sync `404` errors. ChMeetings
+profile merges retire the old person ID but can leave a WordPress participant
+and unsynced approval pointing at it. If the current participant export contains
+an exact identity match under a different live ChMeetings ID, classify the old
+ID as a stale merge reference rather than an API outage. Compare the old and
+replacement WordPress approval records before cleanup; differing approval or
+`synced_to_chmeetings` values require reconciliation.
+
 ### Auditing Team Groups for Orphaned IDs
 
 Use this command when `export-church-teams` or `sync --type participants`

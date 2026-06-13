@@ -182,6 +182,48 @@ almost certainly gone and the Team-group row is just stale membership data.
 
 ## Data Synchronization Issues
 
+### Approval Sync Returns 404 for a Deleted or Merged Person ID
+
+**Issue**: Approval synchronization logs an error such as:
+
+```text
+Failed to add person 4371563 to group 1001617: 404 Client Error: Not Found
+API sync completed: 0 added, 1 failed, 0 marked synced.
+```
+
+**What it means**:
+- The approval record in WordPress still references an old ChMeetings person ID.
+- ChMeetings may have deleted that profile or merged it into another profile with
+  a different ID.
+- A confirmed profile merge is a stale-reference/data-reconciliation warning,
+  not an API outage or a failure of the rest of the daily workflow.
+
+**How to classify it**:
+1. Inspect the old ID:
+   ```bash
+   python main.py inspect-person --chm-id <OLD_CHMEETINGS_ID>
+   ```
+2. Search the current sync log or participant export for the same email, phone,
+   birthdate, and church under a different ChMeetings ID.
+3. Inspect the candidate replacement ID:
+   ```bash
+   python main.py inspect-person --chm-id <CURRENT_CHMEETINGS_ID>
+   ```
+
+Treat the result as:
+
+- **Expected stale reference**: the old ID returns `404`, and a live replacement
+  matches the person's identity and registration data.
+- **Needs investigation**: the old ID returns `404`, but no convincing live
+  replacement can be found.
+- **Needs approval reconciliation**: a replacement exists, but the old and new
+  WordPress records disagree on approval status or
+  `synced_to_chmeetings`. Reconcile the live record before removing the stale
+  duplicate.
+
+Do not mark every approval-sync `404` as harmless automatically. The replacement
+identity and approval state must be verified first.
+
 ### Missing Participants
 
 **Issue**: Some participants don't sync from ChMeetings to WordPress.
