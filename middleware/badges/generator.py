@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import io
+import json
 import os
 import unicodedata
 from pathlib import Path
@@ -50,6 +51,24 @@ ROWS_ORIGIN = (80, 1080)               # event-info rows start here
 ROW_HEIGHT = 96
 QR_RECT = (640, 1420, 940, 1720)       # 300x300 placeholder QR, bottom-right
 QR_CAPTION_BOX = (640, 1725, 940, 1785)  # caption sits above the footer band
+QR_CAPTION = "ID QR - not for check-in"
+
+_RENDER_VERSION = "issue-77-v1.1"
+_RENDER_FIELDS = (
+    "chmeetings_id",
+    "church_code",
+    "church_name",
+    "first_name",
+    "last_name",
+    "full_name",
+    "primary_sport",
+    "primary_format",
+    "primary_partner",
+    "secondary_sport",
+    "secondary_format",
+    "secondary_partner",
+    "other_events",
+)
 
 # Colours (placeholder palette; real branding comes with the designer template)
 COL_BG = (245, 247, 250, 255)
@@ -68,26 +87,29 @@ _INITIALS_COLORS = [
 ]
 
 # ── Font resolution ───────────────────────────────────────────────────────────
-# Preferred fonts ship under middleware/fonts/ (Inter has full Vietnamese
-# coverage).  When they are absent we fall back to system Liberation fonts so
-# local dev still renders real glyphs, then to Pillow's default as a last
-# resort so the renderer never hard-fails in CI.
+# Preferred fonts may be placed under middleware/fonts/ (Inter has full
+# Vietnamese coverage). Windows production falls back to Arial/Consolas;
+# Linux CI/dev falls back to Liberation or DejaVu. We intentionally do not use
+# Pillow's bitmap default because it silently replaces Vietnamese glyphs.
 
 _FONTS_DIR = Path(__file__).resolve().parent.parent / "fonts"
 
 _FONT_CANDIDATES = {
     "bold": [
         _FONTS_DIR / "Inter-Bold.ttf",
+        Path("C:/Windows/Fonts/arialbd.ttf"),
         Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
     ],
     "regular": [
         _FONTS_DIR / "Inter-Regular.ttf",
+        Path("C:/Windows/Fonts/arial.ttf"),
         Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     ],
     "mono": [
         _FONTS_DIR / "JetBrainsMono-Regular.ttf",
+        Path("C:/Windows/Fonts/consola.ttf"),
         Path("/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
     ],
@@ -128,16 +150,21 @@ class BadgeGenerator:
         base = Path(__file__).resolve().parent.parent
         self.template_path = Path(template_path) if template_path else base / "templates" / "badge_template.png"
         self.output_dir = Path(output_dir) if output_dir else base / "data" / "badges"
-        # Deterministic, non-enumerable filename suffix.  Local-only in v1, but
-        # this keeps the eventual public URL space un-guessable for free.
-        self.filename_salt = filename_salt or os.getenv("BADGE_FILENAME_SALT", "vaysf-badge")
+        salt = filename_salt if filename_salt is not None else os.getenv("BADGE_FILENAME_SALT")
+        if not salt or len(salt.strip()) < 16:
+            raise ValueError(
+                "BADGE_FILENAME_SALT must be set to a private value of at least 16 characters."
+            )
+        self.filename_salt = salt.strip()
         self._font_cache: Dict[Tuple[str, int], ImageFont.FreeTypeFont] = {}
+        self._resource_fingerprint_cache: Optional[bytes] = None
+        self.last_write_skipped = False
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     def filename_for(self, participant: Dict[str, Any]) -> str:
         """Deterministic ``{church}_{chmid}_{8hex}.png`` filename."""
-        chm_id = str(participant.get("chmeetings_id") or participant.get("id") or "unknown")
+        chm_id = self._required_chm_id(participant)
         church = (participant.get("church_code") or "NA").upper()
         digest = hmac.new(
             self.filename_salt.encode("utf-8"), chm_id.encode("utf-8"), hashlib.sha256
@@ -175,7 +202,7 @@ class BadgeGenerator:
         )
 
         # Athlete ID (fixed-width)
-        chm_id = str(participant.get("chmeetings_id") or participant.get("id") or "")
+        chm_id = self._required_chm_id(participant)
         self._draw_text_autoshrink(
             draw, f"ATHLETE ID  {chm_id}", ID_BOX, role="mono",
             max_size=44, min_size=24, fill=COL_ACCENT, anchor_center=True,
@@ -187,7 +214,7 @@ class BadgeGenerator:
         # QR placeholder (ID-only payload for now; interop spike is future work)
         self._draw_qr(canvas, chm_id or "unknown", QR_RECT)
         self._draw_text_autoshrink(
-            draw, "Scan at check-in", QR_CAPTION_BOX, role="regular",
+            draw, QR_CAPTION, QR_CAPTION_BOX, role="regular",
             max_size=30, min_size=18, fill=COL_MUTED, anchor_center=True,
         )
 
@@ -201,18 +228,78 @@ class BadgeGenerator:
     ) -> Path:
         """Render and write the PNG; returns the output path.
 
-        When ``force`` is False and a current file already exists, rendering is
-        skipped and the existing path returned.
+        When ``force`` is False and the PNG's render fingerprint still matches,
+        rendering is skipped and the existing path returned.
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
         out_path = self.output_dir / self.filename_for(participant)
-        if out_path.exists() and not force:
-            logger.debug(f"Badge already exists, skipping (use --force to regenerate): {out_path.name}")
+        fingerprint_path = out_path.with_suffix(".png.sha256")
+        fingerprint = self._render_fingerprint(participant, photo_bytes)
+        self.last_write_skipped = False
+        if (
+            out_path.exists()
+            and fingerprint_path.exists()
+            and not force
+            and fingerprint_path.read_text(encoding="ascii").strip() == fingerprint
+        ):
+            self.last_write_skipped = True
+            logger.debug(f"Badge content is current, skipping: {out_path.name}")
             return out_path
         image = self.render(participant, photo_bytes)
         image.save(out_path, format="PNG", optimize=True)
+        fingerprint_path.write_text(f"{fingerprint}\n", encoding="ascii")
         logger.debug(f"Rendered badge: {out_path.name}")
         return out_path
+
+    @staticmethod
+    def _required_chm_id(participant: Dict[str, Any]) -> str:
+        chm_id = str(participant.get("chmeetings_id") or "").strip()
+        if not chm_id:
+            raise ValueError("Cannot render a badge without chmeetings_id.")
+        return chm_id
+
+    def _render_fingerprint(
+        self,
+        participant: Dict[str, Any],
+        photo_bytes: Optional[bytes],
+    ) -> str:
+        render_data = {
+            key: participant.get(key)
+            for key in _RENDER_FIELDS
+        }
+        digest = hashlib.sha256()
+        digest.update(_RENDER_VERSION.encode("ascii"))
+        digest.update(
+            json.dumps(
+                render_data,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8")
+        )
+        digest.update(photo_bytes or b"<no-photo>")
+        digest.update(self._resource_fingerprint())
+        return digest.hexdigest()
+
+    def _resource_fingerprint(self) -> bytes:
+        if self._resource_fingerprint_cache is not None:
+            return self._resource_fingerprint_cache
+
+        digest = hashlib.sha256()
+        if self.template_path.is_file():
+            digest.update(self.template_path.read_bytes())
+        else:
+            digest.update(b"<fallback-template>")
+        for role in ("bold", "regular", "mono"):
+            path = _resolve_font_path(role)
+            if path is None:
+                raise RuntimeError(
+                    f"No scalable {role} font found. See middleware/fonts/README.md."
+                )
+            digest.update(role.encode("ascii"))
+            digest.update(path.read_bytes())
+        self._resource_fingerprint_cache = digest.digest()
+        return self._resource_fingerprint_cache
 
     # ── Layout helpers ──────────────────────────────────────────────────────────
 
@@ -364,7 +451,8 @@ class BadgeGenerator:
         else:
             # Initials-on-colour placeholder — deliberately obvious to staff.
             initials = _ascii_initials(first, last)
-            color = _INITIALS_COLORS[hash(f"{first}{last}") % len(_INITIALS_COLORS)]
+            name_digest = hashlib.sha256(f"{first}\0{last}".encode("utf-8")).digest()
+            color = _INITIALS_COLORS[name_digest[0] % len(_INITIALS_COLORS)]
             circle = Image.new("RGBA", (diameter, diameter), (0, 0, 0, 0))
             cdraw = ImageDraw.Draw(circle)
             cdraw.ellipse((0, 0, diameter, diameter), fill=color + (255,))
@@ -404,15 +492,19 @@ class BadgeGenerator:
         if key in self._font_cache:
             return self._font_cache[key]
         path = _resolve_font_path(role)
+        if path is None:
+            raise RuntimeError(
+                f"No scalable {role} font found. See middleware/fonts/README.md."
+            )
         try:
-            font = ImageFont.truetype(str(path), size) if path else ImageFont.load_default(size)
-        except Exception:  # noqa: BLE001
-            font = ImageFont.load_default(size)
+            font = ImageFont.truetype(str(path), size)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Could not load {role} font at {path}: {exc}") from exc
         self._font_cache[key] = font
         return font
 
     def _font_from(self, existing: ImageFont.FreeTypeFont, size: int) -> ImageFont.FreeTypeFont:
         try:
             return existing.font_variant(size=size)
-        except Exception:  # noqa: BLE001
-            return ImageFont.load_default(size)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Could not resize badge font to {size}px: {exc}") from exc

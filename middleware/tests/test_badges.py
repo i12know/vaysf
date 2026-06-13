@@ -9,9 +9,14 @@ import io
 import pytest
 from unittest.mock import MagicMock
 
-from PIL import Image
+from PIL import Image, ImageFont
 
-from badges.generator import BadgeGenerator, _ascii_initials
+from badges.generator import (
+    QR_CAPTION,
+    BadgeGenerator,
+    _ascii_initials,
+    _resolve_font_path,
+)
 from badges.runner import BadgeRunner
 
 
@@ -25,7 +30,10 @@ def _png_bytes(color=(80, 160, 200), size=(400, 500)) -> bytes:
 
 @pytest.fixture
 def generator(tmp_path):
-    return BadgeGenerator(output_dir=tmp_path / "badges")
+    return BadgeGenerator(
+        output_dir=tmp_path / "badges",
+        filename_salt="test-only-badge-salt",
+    )
 
 
 def _participant(**overrides):
@@ -83,6 +91,17 @@ def test_deterministic_filename(generator):
     assert name.endswith(".png")
 
 
+def test_filename_requires_chmeetings_id(generator):
+    with pytest.raises(ValueError, match="chmeetings_id"):
+        generator.filename_for(_participant(chmeetings_id=None, participant_id=42))
+
+
+def test_filename_salt_must_be_explicit_and_private(tmp_path, monkeypatch):
+    monkeypatch.delenv("BADGE_FILENAME_SALT", raising=False)
+    with pytest.raises(ValueError, match="BADGE_FILENAME_SALT"):
+        BadgeGenerator(output_dir=tmp_path / "badges")
+
+
 def test_render_to_file_skips_existing_without_force(generator):
     p = _participant()
     first = generator.render_to_file(p, photo_bytes=_png_bytes(), force=True)
@@ -91,6 +110,52 @@ def test_render_to_file_skips_existing_without_force(generator):
     again = generator.render_to_file(p, photo_bytes=_png_bytes())
     assert again == first
     assert again.stat().st_mtime_ns == mtime
+
+
+def test_render_to_file_refreshes_when_badge_data_changes(generator):
+    p = _participant()
+    out = generator.render_to_file(p, photo_bytes=_png_bytes(), force=True)
+    original = out.read_bytes()
+
+    p["first_name"] = "Updated"
+    p["primary_sport"] = "Basketball"
+    refreshed = generator.render_to_file(p, photo_bytes=_png_bytes())
+
+    assert refreshed == out
+    assert refreshed.read_bytes() != original
+    assert generator.last_write_skipped is False
+
+
+def test_render_to_file_refreshes_when_photo_changes(generator):
+    p = _participant()
+    out = generator.render_to_file(
+        p,
+        photo_bytes=_png_bytes(color=(80, 160, 200)),
+        force=True,
+    )
+    original = out.read_bytes()
+
+    generator.render_to_file(
+        p,
+        photo_bytes=_png_bytes(color=(200, 80, 120)),
+    )
+
+    assert out.read_bytes() != original
+    assert generator.last_write_skipped is False
+
+
+def test_resolved_fonts_render_vietnamese_glyphs():
+    for role in ("bold", "regular", "mono"):
+        path = _resolve_font_path(role)
+        assert path is not None
+        font = ImageFont.truetype(str(path), 48)
+        assert bytes(font.getmask("Nguyễn Hồ Phạm Trần Lê Đinh")) != bytes(
+            font.getmask("\ufffd" * 20)
+        )
+
+
+def test_qr_caption_marks_placeholder_as_not_for_check_in():
+    assert QR_CAPTION == "ID QR - not for check-in"
 
 
 def test_event_rows_hide_empty(generator):
@@ -134,6 +199,26 @@ def test_runner_filters_out_non_approved(generator):
     pngs = list(generator.output_dir.glob("*.png"))
     assert len(pngs) == 1
     assert any("3139537" in p.name for p in pngs)
+
+
+def test_runner_uses_approval_only_when_payment_status_is_unreliable(generator):
+    participant = _participant(payment_status="pending")
+    runner, chm, wp = _make_runner([participant], generator)
+
+    assert runner.run(force=True) is True
+    assert len(list(generator.output_dir.glob("*.png"))) == 1
+
+
+def test_runner_skips_approved_participant_without_chmeetings_id(generator):
+    participant = _participant(
+        participant_id=42,
+        chmeetings_id=None,
+    )
+    runner, chm, wp = _make_runner([participant], generator)
+
+    assert runner.run(force=True) is True
+    assert not list(generator.output_dir.glob("*.png"))
+    chm.get_person.assert_not_called()
 
 
 def test_runner_dry_run_writes_nothing(generator):

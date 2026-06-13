@@ -474,13 +474,21 @@ python main.py reset-season --year 2025 --probe --person-id 3139537
 
 Render a printable/displayable photo-ID badge (PNG, 1080×1920 portrait) for
 each approved athlete. The badge shows the athlete's photo, name, church,
-sport(s), and athlete ID, with a QR-code slot for check-in. Staff and church
-reps use it for visual identity verification before games (Issue #77).
+sport(s), and athlete ID, with a reserved QR-code slot. Staff and church reps
+use it for visual identity verification before games (Issue #77).
 
 This is the **v1, local-render** workflow: badges are written to
 `data/badges/` (gitignored) for hand-distribution. WordPress hosting and
 ChMeetings `<img>` write-back are deliberate follow-ups, and the QR currently
-carries an ID-only placeholder payload pending the QR-interoperability spike.
+carries an ID-only placeholder payload explicitly labeled **not for check-in**
+pending the QR-interoperability spike.
+
+Set a private, stable filename salt in `middleware/.env` before running the
+command. It must be at least 16 characters:
+
+```dotenv
+BADGE_FILENAME_SALT=replace-with-a-private-random-value
+```
 
 ```bash
 # Render badges for all approved athletes
@@ -495,24 +503,32 @@ python main.py generate-badges --church-code RPC
 # Render a single athlete by ChMeetings ID (for spot-checking layout)
 python main.py generate-badges --chm-id 3139537
 
-# Re-render even when a current badge file already exists
+# Re-render even when the content fingerprint says a badge is current
 python main.py generate-badges --force
 
 # Write to a custom output directory
 python main.py generate-badges --output "path/to/badges"
 ```
 
-Only participants with `approval_status == "approved"` get a badge — a badge
-existing means the athlete is eligible. Athlete text (name, church, sport) is
-read from WordPress; the profile photo is pulled from the ChMeetings person
-record, falling back to an initials-on-colour placeholder when no usable photo
-exists, so missing photos are obvious to staff at review.
+Only participants with `approval_status == "approved"` and a valid
+`chmeetings_id` get a badge. A badge existing means the athlete is eligible.
+Payment status is intentionally **not** an eligibility filter in the current
+real-world workflow because reliable payment information is not available yet;
+pastor approval is the operative signal.
 
-**Fonts:** for production-quality Vietnamese diacritics, drop `Inter-Bold.ttf`,
-`Inter-Regular.ttf`, and `JetBrainsMono-Regular.ttf` into `middleware/fonts/`
-(see `fonts/README.md`). Without them the generator falls back to system fonts,
-so rendering still works in CI. To regenerate the placeholder background
-template, run `python templates/build_placeholder.py`.
+Athlete text (name, church, sport) is read from WordPress; the profile photo is
+pulled from the ChMeetings person record, falling back to an
+initials-on-colour placeholder when no usable photo exists, so missing photos
+are obvious to staff at review. Each PNG has a SHA-256 render fingerprint, so
+name, sport, photo, template, or font changes regenerate the badge
+automatically. `--force` remains available for manual rebuilds.
+
+**Fonts:** the Windows deployment uses Arial/Consolas fallbacks with Vietnamese
+coverage; Linux uses Liberation/DejaVu. Optional Inter and JetBrains Mono files
+can be placed in `middleware/fonts/` for branding consistency (see
+`fonts/README.md`). The generator fails rather than emit unreadable missing
+glyphs when no supported scalable font exists. To regenerate the placeholder
+background template, run `python templates/build_placeholder.py`.
 
 ### Church Team Group Assignment
 

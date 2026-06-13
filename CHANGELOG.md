@@ -23,6 +23,14 @@ athlete (photo, name, church, sport(s), athlete ID, QR slot).
 - QR carries an ID-only placeholder payload; WordPress hosting, ChMeetings
   `<img>` write-back, and the QR-interoperability spike are deferred follow-ups.
 - Documented in `docs/USAGE.md`; unit tests in `tests/test_badges.py`.
+- **Current real-world eligibility status:** badges intentionally use pastor
+  approval only. Payment status is not currently reliable enough to filter
+  athletes, so an approved athlete is rendered regardless of the stored
+  payment flag.
+- Review hardening: use Vietnamese-capable Windows/Linux system fonts instead
+  of Pillow's missing-glyph fallback; skip records without `chmeetings_id`;
+  refresh stale PNGs using content/resource fingerprints; label the QR as not
+  for check-in; and require a private `BADGE_FILENAME_SALT`.
 
 ### Issue #165 follow-up review fixes
 

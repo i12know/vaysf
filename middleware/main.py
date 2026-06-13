@@ -1227,15 +1227,20 @@ def main() -> None:
         from pathlib import Path as _Path
 
         output_dir = _Path(args.output) if args.output else None
-        with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+        try:
             generator = BadgeGenerator(output_dir=output_dir)
-            runner = BadgeRunner(chm_conn, wp_conn, generator)
-            success = runner.run(
-                church_code=args.church_code,
-                chm_id=args.chm_id,
-                dry_run=args.dry_run,
-                force=args.force,
-            )
+        except ValueError as exc:
+            logger.error(f"Badge configuration error: {exc}")
+            success = False
+        else:
+            with ChMeetingsConnector() as chm_conn, WordPressConnector() as wp_conn:
+                runner = BadgeRunner(chm_conn, wp_conn, generator)
+                success = runner.run(
+                    church_code=args.church_code,
+                    chm_id=args.chm_id,
+                    dry_run=args.dry_run,
+                    force=args.force,
+                )
     elif args.command == "check-consent":
         if not os.path.exists(args.file):
             logger.error(f"Consent export file not found at {args.file}")

@@ -80,6 +80,13 @@ class BadgeRunner:
         rendered = skipped = errors = 0
         for p in tqdm(participants, desc="Rendering badges", unit="badge"):
             name = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() or p.get("chmeetings_id")
+            if not str(p.get("chmeetings_id") or "").strip():
+                skipped += 1
+                logger.warning(
+                    f"Skipping approved participant without chmeetings_id: "
+                    f"wp_participant_id={p.get('participant_id')}, name={name or 'unknown'}"
+                )
+                continue
             if dry_run:
                 logger.info(f"[DRY RUN] Would render badge for {name} "
                             f"(chm_id={p.get('chmeetings_id')}) -> {self.generator.filename_for(p)}")
@@ -89,7 +96,10 @@ class BadgeRunner:
                 self._enrich(p)
                 photo_bytes = self._fetch_photo_bytes(p)
                 out_path = self.generator.render_to_file(p, photo_bytes=photo_bytes, force=force)
-                rendered += 1
+                if self.generator.last_write_skipped:
+                    skipped += 1
+                else:
+                    rendered += 1
                 logger.debug(f"Badge ready for {name}: {out_path.name}")
             except Exception as e:  # noqa: BLE001 - one bad record shouldn't abort the batch
                 errors += 1

@@ -3,20 +3,21 @@
 `badges/generator.py` renders athlete badges (Issue #77) using these fonts,
 resolved in priority order:
 
-| Role     | Preferred file (drop here)   | Why |
-|----------|------------------------------|-----|
-| bold     | `Inter-Bold.ttf`             | Title + athlete name. Full Vietnamese (Latin Extended) coverage. |
-| regular  | `Inter-Regular.ttf`          | Church name, event-info rows, captions. |
-| mono     | `JetBrainsMono-Regular.ttf`  | Athlete ID (fixed-width). |
+| Role | Preferred file (drop here) | System fallback |
+|---|---|---|
+| bold | `Inter-Bold.ttf` | Windows Arial Bold; Linux Liberation/DejaVu Sans Bold |
+| regular | `Inter-Regular.ttf` | Windows Arial; Linux Liberation/DejaVu Sans |
+| mono | `JetBrainsMono-Regular.ttf` | Windows Consolas; Linux Liberation/DejaVu Mono |
 
-If a preferred file is absent, the generator falls back to system Liberation
-fonts, then to Pillow's built-in default — so rendering never hard-fails in
-CI. For production-quality Vietnamese diacritics, add the Inter and JetBrains
-Mono TTFs to this directory.
+The Windows and Linux fallback fonts are scalable and support Vietnamese.
+The renderer fails clearly when none are available instead of silently
+producing missing-glyph boxes with Pillow's bitmap default.
 
-Download:
-- Inter: https://github.com/rsms/inter/releases (Inter-Bold.ttf, Inter-Regular.ttf)
+Optional branding fonts:
+
+- Inter: https://github.com/rsms/inter/releases
 - JetBrains Mono: https://github.com/JetBrains/JetBrainsMono/releases
 
-These TTFs are intentionally **not committed** to keep the repo lean; the
-fallback chain covers local dev and CI without them.
+These TTFs are intentionally not committed to keep the repo lean. Inter and
+JetBrains Mono remain optional branding upgrades; the checked system-font paths
+provide a readable default on supported Windows and Linux environments.
