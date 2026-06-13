@@ -159,12 +159,24 @@ def test_qr_caption_marks_placeholder_as_not_for_check_in():
 
 
 def test_event_rows_hide_empty(generator):
-    # Only primary present -> exactly one event row.
+    # Only primary present -> name row + primary row (no secondary/others).
     p = _participant(primary_sport="Tennis", secondary_sport="", other_events="")
-    assert generator._event_rows(p) == ["Primary: Tennis"]
+    rows = generator._card_rows(p)
+    texts = [r[0] for r in rows]
+    tags  = [r[1] for r in rows]
+    assert "Tennis" in texts
+    assert "Primary" in tags
+    assert "2ndary" not in tags
+    assert "Others" not in tags
+
     # Unselected/NA sentinel values are treated as empty.
     p2 = _participant(primary_sport="Unselected/NA", secondary_sport="Badminton", other_events="")
-    assert generator._event_rows(p2) == ["Secondary: Badminton"]
+    rows2 = generator._card_rows(p2)
+    texts2 = [r[0] for r in rows2]
+    tags2  = [r[1] for r in rows2]
+    assert "Badminton" in texts2
+    assert "2ndary" in tags2
+    assert "Primary" not in tags2
 
 
 def test_ascii_initials_strips_accents():

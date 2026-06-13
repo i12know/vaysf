@@ -151,27 +151,49 @@ class BadgeRunner:
                 participant["church_name"] = names[code]
 
     def _fetch_photo_bytes(self, participant: Dict[str, Any]) -> Optional[bytes]:
-        """Resolve the photo URL (ChMeetings first, then WordPress) and download it."""
+        """Resolve the photo URL (ChMeetings first, then WordPress) and download it.
+
+        Logs which source was used: ``chm_photo``, ``wp_fallback``, or ``initials``
+        (initials is logged here as ``None`` and the caller logs "initials" when
+        this method returns ``None``).
+        """
         chm_id = str(participant.get("chmeetings_id") or "")
         photo_url = None
+        photo_source = None
         if chm_id:
             person = self.chm.get_person(chm_id)
             if person:
-                photo_url = person.get("photo")
+                chm_photo = person.get("photo")
+                if chm_photo and str(chm_photo).startswith(("http://", "https://")):
+                    photo_url = chm_photo
+                    photo_source = "chm_photo"
                 # Backfill names from ChMeetings when WordPress didn't carry them.
                 for key in ("first_name", "last_name"):
                     if not participant.get(key) and person.get(key):
                         participant[key] = person[key]
         if not photo_url:
-            photo_url = participant.get("photo_url")
-        if not photo_url or not str(photo_url).startswith(("http://", "https://")):
+            wp_url = participant.get("photo_url")
+            if wp_url and str(wp_url).startswith(("http://", "https://")):
+                photo_url = wp_url
+                photo_source = "wp_fallback"
+        if not photo_url:
+            logger.info(
+                f"Photo source=initials for chm_id={chm_id} "
+                f"(no usable URL from ChMeetings or WordPress)"
+            )
             return None
         try:
             resp = requests.get(photo_url, timeout=(5, 20))
             resp.raise_for_status()
+            logger.info(
+                f"Photo source={photo_source} for chm_id={chm_id} ({photo_url})"
+            )
             return resp.content
         except requests.RequestException as e:
-            logger.warning(f"Could not download photo for chm_id={chm_id} ({photo_url}): {e}")
+            logger.warning(
+                f"Could not download photo for chm_id={chm_id} ({photo_url}): {e} "
+                f"— falling back to initials"
+            )
             return None
 
     def _church_name_map(self) -> Dict[str, str]:
