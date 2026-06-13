@@ -31,6 +31,14 @@ athlete (photo, name, church, sport(s), athlete ID, QR slot).
   of Pillow's missing-glyph fallback; skip records without `chmeetings_id`;
   refresh stale PNGs using content/resource fingerprints; label the QR as not
   for check-in; and require a private `BADGE_FILENAME_SALT`.
+- Wireframe correction: keep all content inside the 80/80/120/180 safe area;
+  place the church code directly beneath the photo; keep the logo fully inside
+  the theme panel; and use the wireframe's divider-and-label event rows instead
+  of colored pills.
+- Photo resolution now tries a valid ChMeetings image first, then retries with
+  the WordPress `photo_url` when the ChMeetings request or image decode fails,
+  then uses initials. Logs record only source, result, ChMeetings ID, and error
+  type; private profile-photo URLs are not logged.
 
 ### Issue #165 follow-up review fixes
 

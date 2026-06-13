@@ -7,12 +7,27 @@ synthesised in-memory; connectors are MagicMocks.
 import io
 
 import pytest
+import requests
 from unittest.mock import MagicMock
 
 from PIL import Image, ImageFont
 
 from badges.generator import (
+    CARD_FIRST_Y,
+    CARD_OTHER_H,
+    CARD_X0,
+    CARD_X1,
+    CHURCH_CODE_CX,
+    PHOTO_LEFT,
+    PHOTO_TOP,
     QR_CAPTION,
+    QR_CARD,
+    SAFE_BOTTOM,
+    SAFE_LEFT,
+    SAFE_RIGHT,
+    SAFE_TOP,
+    TAGLINE_BOX,
+    THEME_BOX,
     BadgeGenerator,
     _ascii_initials,
     _resolve_font_path,
@@ -158,6 +173,27 @@ def test_qr_caption_marks_placeholder_as_not_for_check_in():
     assert QR_CAPTION == "ID QR - not for check-in"
 
 
+def test_wireframe_geometry_stays_inside_safe_area():
+    assert TAGLINE_BOX[1] >= SAFE_TOP
+    assert TAGLINE_BOX[0] >= SAFE_LEFT
+    assert TAGLINE_BOX[2] <= SAFE_RIGHT
+    assert THEME_BOX[0] >= SAFE_LEFT
+    assert THEME_BOX[2] <= SAFE_RIGHT
+    assert PHOTO_LEFT >= SAFE_LEFT
+    assert PHOTO_TOP > THEME_BOX[3]
+    assert QR_CARD[0] >= SAFE_LEFT
+    assert QR_CARD[2] <= SAFE_RIGHT
+    assert CARD_X0 >= SAFE_LEFT
+    assert CARD_X1 <= SAFE_RIGHT
+    assert CARD_FIRST_Y + (3 * 105) + (3 * 12) + CARD_OTHER_H <= SAFE_BOTTOM
+
+
+def test_church_code_is_centered_under_photo():
+    from badges.generator import PHOTO_DIAM
+
+    assert CHURCH_CODE_CX == PHOTO_LEFT + PHOTO_DIAM // 2
+
+
 def test_event_rows_hide_empty(generator):
     # Only primary present -> name row + primary row (no secondary/others).
     p = _participant(primary_sport="Tennis", secondary_sport="", other_events="")
@@ -258,3 +294,104 @@ def test_runner_chm_id_scope_queries_single(generator):
     runner, chm, wp = _make_runner([_participant()], generator)
     runner.run(chm_id="3139537", force=True)
     wp.get_participants.assert_called_with({"chmeetings_id": "3139537"})
+
+
+def test_photo_download_uses_chmeetings_first(generator, mocker):
+    runner, chm, wp = _make_runner(
+        [_participant(photo_url="https://wp.example/photo.jpg")],
+        generator,
+        person_photo="https://chm.example/photo.jpg",
+    )
+    response = MagicMock()
+    response.content = _png_bytes()
+    response.raise_for_status.return_value = None
+    get = mocker.patch("badges.runner.requests.get", return_value=response)
+
+    result = runner._fetch_photo_bytes(
+        _participant(photo_url="https://wp.example/photo.jpg")
+    )
+
+    assert result == response.content
+    get.assert_called_once_with(
+        "https://chm.example/photo.jpg",
+        timeout=(5, 20),
+    )
+
+
+def test_photo_download_falls_back_to_wordpress_after_chm_failure(
+    generator, mocker
+):
+    runner, chm, wp = _make_runner(
+        [_participant(photo_url="https://wp.example/photo.jpg")],
+        generator,
+        person_photo="https://chm.example/broken.jpg",
+    )
+    wp_response = MagicMock()
+    wp_response.content = _png_bytes(color=(10, 20, 30))
+    wp_response.raise_for_status.return_value = None
+
+    def get_photo(url, **kwargs):
+        if "chm.example" in url:
+            raise requests.ConnectionError("broken")
+        return wp_response
+
+    get = mocker.patch("badges.runner.requests.get", side_effect=get_photo)
+    result = runner._fetch_photo_bytes(
+        _participant(photo_url="https://wp.example/photo.jpg")
+    )
+
+    assert result == wp_response.content
+    assert [call.args[0] for call in get.call_args_list] == [
+        "https://chm.example/broken.jpg",
+        "https://wp.example/photo.jpg",
+    ]
+
+
+def test_photo_download_falls_back_when_chm_bytes_are_not_an_image(
+    generator, mocker
+):
+    runner, chm, wp = _make_runner(
+        [_participant(photo_url="https://wp.example/photo.jpg")],
+        generator,
+        person_photo="https://chm.example/not-image.jpg",
+    )
+    bad_response = MagicMock()
+    bad_response.content = b"<html>not an image</html>"
+    bad_response.raise_for_status.return_value = None
+    good_response = MagicMock()
+    good_response.content = _png_bytes()
+    good_response.raise_for_status.return_value = None
+    get = mocker.patch(
+        "badges.runner.requests.get",
+        side_effect=[bad_response, good_response],
+    )
+
+    result = runner._fetch_photo_bytes(
+        _participant(photo_url="https://wp.example/photo.jpg")
+    )
+
+    assert result == good_response.content
+    assert get.call_count == 2
+
+
+def test_photo_logging_does_not_include_profile_urls(generator, mocker):
+    runner, chm, wp = _make_runner(
+        [_participant(photo_url="https://wp.example/private-token")],
+        generator,
+        person_photo="https://chm.example/private-token",
+    )
+    response = MagicMock()
+    response.content = _png_bytes()
+    response.raise_for_status.return_value = None
+    mocker.patch("badges.runner.requests.get", return_value=response)
+    log = mocker.patch("badges.runner.logger")
+
+    runner._fetch_photo_bytes(
+        _participant(photo_url="https://wp.example/private-token")
+    )
+
+    messages = " ".join(
+        str(call.args[0])
+        for call in log.info.call_args_list + log.warning.call_args_list
+    )
+    assert "https://" not in messages
