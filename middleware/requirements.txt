@@ -16,6 +16,10 @@ uuid>=1.30
 # Scheduling / optimization
 ortools>=9.8
 
+# Athlete badge generation (Issue #77)
+Pillow>=10.0.0
+qrcode[pil]>=7.4.2
+
 # Validation and Testing
 pytest>=7.2.0
 pytest-mock>=3.10.0

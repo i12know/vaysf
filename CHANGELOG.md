@@ -27,6 +27,44 @@ and the `church_teams_export.py` method-copy loop keep working unchanged.
 - All 11 extracted bodies verified AST-identical to the originals (docstring
   reindentation to module level aside); 634 tests pass.
 
+### Generate athlete photo-ID badges — refs [#77](https://github.com/i12know/vaysf/issues/77)
+
+v1 scope: visual identity verification, local render only. Adds a
+`generate-badges` command that renders a 1080×1920 PNG credential per approved
+athlete (photo, name, church, sport(s), athlete ID, QR slot).
+
+- **`middleware/badges/generator.py`** — `BadgeGenerator`: Pillow rendering with
+  name auto-shrink, multiline church wrap, hide-empty event rows, circular photo
+  crop with an initials-on-colour fallback, and a deterministic
+  `{church}_{chmid}_{8hex}.png` filename. Vietnamese diacritics preserved.
+- **`middleware/badges/runner.py`** — `BadgeRunner`: fetches approved
+  participants from WordPress (re-checked client-side), resolves the photo from
+  the ChMeetings person record (fallback to WordPress `photo_url`), and drives
+  the generator. Supports `--church-code`, `--chm-id`, `--dry-run`, `--force`.
+- **`middleware/templates/build_placeholder.py`** + committed
+  `templates/badge_template.png` — placeholder background until a designer
+  delivers the real template.
+- Added Pillow and qrcode to `requirements.txt`; `data/badges/` is gitignored.
+- QR carries an ID-only placeholder payload; WordPress hosting, ChMeetings
+  `<img>` write-back, and the QR-interoperability spike are deferred follow-ups.
+- Documented in `docs/USAGE.md`; unit tests in `tests/test_badges.py`.
+- **Current real-world eligibility status:** badges intentionally use pastor
+  approval only. Payment status is not currently reliable enough to filter
+  athletes, so an approved athlete is rendered regardless of the stored
+  payment flag.
+- Review hardening: use Vietnamese-capable Windows/Linux system fonts instead
+  of Pillow's missing-glyph fallback; skip records without `chmeetings_id`;
+  refresh stale PNGs using content/resource fingerprints; label the QR as not
+  for check-in; and require a private `BADGE_FILENAME_SALT`.
+- Wireframe correction: keep all content inside the 80/80/120/180 safe area;
+  place the church code directly beneath the photo; keep the logo fully inside
+  the theme panel; and use the wireframe's divider-and-label event rows instead
+  of colored pills.
+- Photo resolution now tries a valid ChMeetings image first, then retries with
+  the WordPress `photo_url` when the ChMeetings request or image decode fails,
+  then uses initials. Logs record only source, result, ChMeetings ID, and error
+  type; private profile-photo URLs are not logged.
+
 ### Issue #165 follow-up review fixes
 
 - Fail safely when seasonal ChMeetings participant-role configuration is
