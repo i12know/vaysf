@@ -1054,11 +1054,43 @@ def main() -> None:
         else:
             today = datetime.date.today().strftime("%Y-%m-%d")
             out_path = Path(EXPORT_DIR) / f"VAYSF_Schedule_{today}.xlsx"
+        from schedule_contracts import (
+            ScheduleContractError,
+            validate_output_against_input,
+            validate_schedule_input,
+            validate_schedule_output,
+        )
         try:
-            so_data = json.loads(so_path.read_text(encoding="utf-8"))
-            si_data = json.loads(si_path.read_text(encoding="utf-8"))
+            parsed: dict[str, dict] = {}
+            for label, json_path in (
+                ("schedule_output", so_path), ("schedule_input", si_path),
+            ):
+                try:
+                    parsed[label] = json.loads(json_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as exc:
+                    # Surface a damaged event-week file as a controlled
+                    # contract failure, not a traceback.
+                    raise ScheduleContractError(
+                        json_path.name, [f"not valid JSON: {exc}"]
+                    ) from exc
+            so_data = parsed["schedule_output"]
+            si_data = parsed["schedule_input"]
+            for warning in validate_schedule_input(si_data):
+                logger.warning(f"schedule_input contract: {warning}")
+            for warning in validate_schedule_output(so_data):
+                logger.warning(f"schedule_output contract: {warning}")
+            for warning in validate_output_against_input(so_data, si_data):
+                logger.warning(f"schedule_output contract: {warning}")
         except FileNotFoundError as exc:
             logger.error(f"export-schedule: required file not found — {exc.filename}")
+            success = False
+        except ScheduleContractError as exc:
+            logger.error(
+                f"produce-schedule: {exc.file_label} failed contract validation "
+                f"with {len(exc.errors)} error(s):"
+            )
+            for violation in exc.errors:
+                logger.error(f"  - {violation}")
             success = False
         else:
             out_path.parent.mkdir(parents=True, exist_ok=True)

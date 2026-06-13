@@ -2,6 +2,304 @@
 
 ## Unreleased
 
+### Issue #165 follow-up review fixes
+
+- Fail safely when seasonal ChMeetings participant-role configuration is
+  missing or invalid: validation keeps the unfiltered WordPress population
+  instead of treating every athlete as ineligible.
+- Use deduplicated singles membership consistently for pod division counts and
+  bracket generation, preventing duplicate roster rows from creating phantom
+  entrants or `None` Round-1 opponents.
+- Merge game, playoff-slot, and assignment metadata in post-solve quality
+  diagnostics so manual-only pinned playoff games retain their event and
+  duration in actionable warnings.
+
+### Decompose schedule_workbook.py into scheduling/ package — refs [#152](https://github.com/i12know/vaysf/issues/152)
+
+Extraction-only refactor (Steps 1–3 of 8): no behavior changes, all imports
+and call sites unchanged. The three new modules live under
+`middleware/scheduling/` and are imported by `schedule_workbook.py` via
+backward-compat `staticmethod()` class aliases.
+
+- **`scheduling/xlsx_utils.py`** — 16 pure static helpers: `_clean_excel_text`,
+  `_float_from_excel`, `_normalize_resource_type_name`, `_resource_id_prefix`,
+  `_ordinal`, `_day_sort_key`, `_day_display_label`, `_coerce_excel_date`,
+  `_derive_day_labels_from_dates`, `_set_excel_comment`,
+  `_make_excel_note_shapes_visible`, `_stamp_tab_status_banner`,
+  `_annotate_header_row`, `_parse_hour`, `_read_xlsx_sheet_rows`, plus the
+  `_TAB_STATUS_GUIDE` dict and `_stamp_known_tab_statuses` function (moved here
+  to avoid circular imports from `output_report`).
+- **`scheduling/venue_loader.py`** — 7 venue-loading functions:
+  `_load_venue_input_rows`, `_load_playoff_slots`, `_load_venue_date_day_map`,
+  `_split_slot_label`, `_last_slot_label_on_day`, `_load_gym_modes`,
+  `_load_venue_input`.
+- **`scheduling/output_report.py`** — 4 output-report writers:
+  `_warn_if_schedules_mismatched`, `_build_schedule_output_flat_rows`,
+  `_write_schedule_diagnostics_tab`, `_write_schedule_output_report`.
+- **`schedule_workbook.py`** reduced from 7,703 → 5,706 lines (−1,997);
+  exposes all 27 symbols as `staticmethod()` class aliases for full
+  backward compatibility.
+- 629 tests pass unchanged.
+
+### Participant-level singles conflict protection — closes [#164](https://github.com/i12know/vaysf/issues/164)
+
+Extends #158's Round-1 conflict protection from racquet doubles to racquet
+**singles** entries. Singles membership is always known (one participant per
+entry, no partner declaration to fail), so every singles player now gets a
+stable entry ID and shared-athlete conflict edges.
+
+- **`_resolve_pod_singles()`** (`schedule_workbook.py`) — assigns each singles
+  roster row a stable, reproducible entry ID of the form
+  `{division_id}-S{nn}` (e.g. `BAD-Men-Singles-S01`), parallel to the doubles
+  `-E{nn}` model. Entries sort by participant ID before numbering; duplicate
+  roster rows for the same player in one division collapse.
+- **`_build_pod_game_objects()`** — singles divisions now use the same
+  bye-aware bracket math as doubles to attach entry IDs to **Round-1** games.
+  Bye entries and post-R1 rounds keep `team_a_id`/`team_b_id` of `null`
+  (bracket-unknown limitation, same as doubles).
+- **`_build_cross_sport_conflicts()`** — singles entries join the racquet
+  unit list, so the existing pairwise loops emit **team↔singles**,
+  **doubles↔singles**, and **singles↔singles** edges automatically — including
+  same-sport overlap (one player in Badminton singles *and* doubles).
+- **No solver or audit changes** — edges use the identical dict shape and
+  reference entry IDs that now appear as game team IDs, so in-pool overlap
+  penalties, C3x cross-pool avoidance, and Conflict-Audit attribution all act
+  on singles edges through the existing machinery.
+- `docs/SCHEDULING.md` — new "Singles conflict protection (Issue #164,
+  shipped)" section documenting the protection and its R1-only limits.
+- 6 new tests: R1 entry-ID assignment (N=4), bye entry unprotected (N=3),
+  team↔singles edge with Basketball, three-event participant (3 edges incl.
+  singles↔singles), same-sport singles+doubles edge, resolver determinism +
+  dedupe.
+- Identified in the 2026 pre-season scheduling review (#165). Scope narrowed
+  per issue review: protection covers known Round-1 participation only — no
+  claims about post-R1 rounds.
+
+### Move qualifying_roles into validation rules JSON — closes [#163](https://github.com/i12know/vaysf/issues/163)
+
+Eliminates the last hardcoded ChMeetings role-string set in business logic.
+Previously `qualifying_roles = {"athlete", "participant", "athlete/participant"}` was
+a literal constant in `sync/manager.py`; an unknown role would silently exclude the
+participant with no log entry.
+
+- **`validation/summer_2026.json`** — new `configuration.participant_roles` section:
+  ```json
+  "qualifying":      ["Athlete", "Participant", "Athlete/Participant"],
+  "known_excluded":  ["VAY SM Staff", "Fan and Supporter"]
+  ```
+- **`RulesManager`** (`validation/models.py`) — new `qualifying_roles` and
+  `known_excluded_roles` properties return case-folded `frozenset`s from the
+  `configuration` section. `_load_configuration()` reads the config key alongside
+  rules; an empty or missing key yields empty sets without crashing.
+- **`_is_eligible_by_role()`** (`sync/manager.py`) — new module-level helper
+  replaces the inline comprehension. Logs a WARNING (with ChMeetings ID, no PII
+  such as names) for any nonblank role that is neither qualifying nor
+  known_excluded, so new ChMeetings role values surface in logs rather than
+  causing silent exclusions.
+- **`_load_current_eligible_chm_ids()`** — calls `_is_eligible_by_role()` via
+  a `RulesManager(collection="SUMMER_2026")` instance; no behavior change for
+  the three existing role values.
+- 13 new tests across `test_validation.py` (RulesManager properties, empty
+  config, disjoint check) and `test_sync_manager.py` (all five suggested cases:
+  qualifying values, known-excluded silent skip, novel role warning,
+  comma-separated list, blank roles).
+
+### Post-solve quality audit — closes [#153](https://github.com/i12know/vaysf/issues/153)
+
+Adds a `quality_warnings` section to `build_schedule_diagnostics()` (and the
+`Schedule-Diagnostics` workbook tab) that runs after a feasible solve to flag
+schedules that technically fit but may be unreasonable to publish.
+
+Three checks are implemented, each separate from hard infeasibility findings:
+
+- **Late finish** (`late_finish`): flags any event+day where the last game ends
+  after 20:00. Reports the finish time and game ID so operators can widen the
+  resource window or reduce games on that day. Severity: medium.
+- **Tight stage turnaround** (`tight_turnaround`): for each QF→Semi, Semi→Final,
+  or Semi→3rd precedence edge, flags when the actual gap between end of the
+  prior round and start of the next is under 30 minutes. Suggests adding a
+  Playoff-Slots buffer. Severity: medium.
+- **Volleyball net-height switches** (`volleyball_switches`): surfaces the
+  `volleyball_adjacent_switches` count already computed by the solver. Medium
+  when > 4 switches; info when 1–4. Suggests pool assignment changes.
+
+Behaviour:
+- Quality checks are skipped for INFEASIBLE/UNKNOWN schedules (nothing to assess).
+- Medium-severity quality warnings propagate into `next_actions` as
+  `vector: "quality"` suggestions so operators see them in the CLI output.
+- `format_schedule_diagnostics()` logs a `Quality [severity/check]` line per
+  warning.
+- The `Schedule-Diagnostics` workbook tab renders a "Quality Warnings" section
+  with severity, check name, event, day, and actionable message.
+- 10 new tests in `test_schedule_diagnostics.py` cover all three checks plus
+  edge cases (clean schedule, infeasible schedule, propagation to next_actions,
+  format output).
+
+### Event-critical test coverage — closes [#162](https://github.com/i12know/vaysf/issues/162)
+
+Adds the two remaining coverage gaps identified in the 2026 pre-season
+scheduling review (#165, P0c).
+
+- **Solver timeout** — focused tests monkeypatch `_solve_one_pool` to return
+  `STATUS_UNKNOWN`, verifying both all-timeout and mixed solved/timed-out runs.
+  A mixed run preserves completed assignments under `PARTIAL` while returning
+  exit code 2 so automation can distinguish timeout from infeasibility.
+- **Vietnamese diacritics** — `test_main_produce_schedule_preserves_vietnamese_diacritics`
+  reads UTF-8 `schedule_input.json` and `schedule_output.json` through the real
+  `produce-schedule` command and verifies team and participant names in
+  Schedule-by-Time, Schedule-by-Sport, and Conflict-Audit.
+
+Coverage status after this change:
+
+| # | Failure path | Covered by |
+|---|---|---|
+| 1 | Solver timeout | `test_run_solve_schedule_timeout_writes_unknown` ✓ |
+| 2 | Malformed input | `test_run_solve_schedule_contract_violation_exits_3` + schedule-contract tests ✓ |
+| 3 | Duplicate/invalid playoff reservations | duplicate, overlap, capacity, unknown-resource, and invalid-slot tests ✓ |
+| 4 | Vietnamese diacritics survive | real `produce-schedule` JSON-to-workbook test across named tabs ✓ |
+| 5 | Solver determinism | `test_solver_uses_fixed_random_seed` ✓ |
+
+### Stage-aware racquet late-round game IDs — closes [#130](https://github.com/i12know/vaysf/issues/130)
+
+Racquet sport (TT, TT 35+, Pickleball, Pickleball 35+, Tennis, Badminton)
+bracket games now receive stable stage-aware IDs, enabling operators to pin
+late rounds via `Playoff-Slots` the same way team-sport finals are pinned.
+
+- **Bracket-aware game generation** — `_build_pod_game_objects()` replaces
+  the flat sequential `R1` loop with a round-by-round bracket. Late-round
+  games receive named IDs: `-QF-1..N` (bracket size ≥ 8), `-Semi-1`,
+  `-Semi-2`, `-Final`. Early rounds keep sequential numeric IDs (`-01`,
+  `-02`, …) for very large brackets.
+- **Precedence** — per-division precedence edges enforce round ordering
+  (every game in round R must complete before round R+1 starts,
+  `min_gap_slots=1`). These edges are included in `schedule_input.json`
+  alongside the existing Soccer and Basketball precedence chains.
+- **Duration-aware precedence** — the solver now combines the declared slot
+  gap with each prior game's real duration, so a 60-minute Tennis match on a
+  30-minute grid cannot be followed by the next round after only 30 minutes.
+- **Third place** — racquet brackets with two played Semis emit stable
+  `<division_id>-3rd` games when third-place scheduling is enabled, with both
+  Semis preceding the Final and third-place game.
+- **Large-bracket report order** — numeric early stages (`R1`, `R2`, ...)
+  sort chronologically before QF/Semi/Final in Schedule-by-Sport.
+- **Return type** — `_build_pod_game_objects()` now returns
+  `(games, precedence)` and the caller `_build_schedule_input()` extends the
+  top-level precedence list accordingly.
+- **Doubles assignment preserved** — bracket round-1 matchups for confirmed
+  doubles pairs carry real entry IDs as before; bye-aware math is unchanged.
+- Five new unit tests: TT bracket structures (P=8 with N=6 and N=8),
+  Pickleball P=4 bracket, precedence inclusion in `schedule_input.json`, and
+  an end-to-end Playoff-Slots pin of a `TT-Men-Singles-Final` game.
+- Identified in the 2026 pre-season scheduling review (#165, P0b).
+
+### Venue-centric Playoff-Slots — pin finals by gym + date + time — closes [#127](https://github.com/i12know/vaysf/issues/127)
+
+Operators can now pin playoff games without knowing internal allocator
+resource IDs. A `Playoff-Slots` row may specify `gym_name` + `date` +
+`start_time` (preferred) instead of `resource_id` + `slot`; the explicit form
+remains valid as an override and for legacy files.
+
+- **Two-pass reservation** — venue-centric rows are resolved against
+  `Venue-Input` *before* the Stage-A gym allocator runs. For
+  allocator-managed gyms, a dedicated playoff-pinned resource (e.g.
+  `BB-Sun-2-PF1`) is synthesized covering only the pinned window, and that
+  window is carved out of the allocator inventory (`gym_allocator.allocate()`
+  gains a `reserved_windows` parameter) — pool play can never consume a
+  pinned Final's court time, with any non-overlapping remainder of the block
+  still allocatable. This is the allocator "reserve" concept #133 needs.
+- **Standalone venues** — venue-centric rows resolve to the existing expanded
+  resource IDs (e.g. `TT-Sun-2-1`); concurrent pins land on distinct courts
+  and the exact `(resource, slot)` pairs are reserved from pool play at solve
+  time as before.
+- **Contiguous pins merge** — Semi at 14:00 + Final at 15:00 on the same
+  gym/sport share one synthetic playoff court, mirroring the legacy
+  same-`resource_id` merge behavior.
+- **Fail loudly, not deep** — invalid venue-centric rows abort schedule-input
+  generation with all detected errors instead of silently omitting playoff
+  intent. Validation covers unknown gym/date/start values, mutually-exclusive
+  gym-mode overlap, configured court-count overflow, and overlapping
+  multi-slot reservations.
+- **Duration-aware reservations** — generated game duration is used when a
+  playoff row omits `duration_minutes`, and every occupied resource slot is
+  reserved and collision-checked rather than only the start slot.
+- **Schema** — resolved rows keep `gym_name`/`date`/`start_time` for
+  traceability; the schedule contract models the new fields on both playoff
+  slots and merged output assignments. The venue input template's
+  `Playoff-Slots` tab gained the new columns.
+- **Pinned gym resources now join the Gym Core solver pool.** Previously a
+  synthetic playoff-pinned BB/VB resource carried no `solver_pool`, so a
+  pinned Semi/Final (whose pool derives from its pinned resource) landed in a
+  different pool than its pool-play siblings — the auto-generated
+  QF→Semi→Final precedence rules became cross-pool, which the solver silently
+  dropped and the #161 contract rejected with exit 3. Pinned BB/VB resources
+  (venue-centric and legacy promotion alike) now take `solver_pool: Gym
+  Core`, keeping precedence enforceable; pool play still cannot use them
+  because their windows contain only reserved slots. Covered by an
+  end-to-end test (build → contract → solve) of the full pinned-finals
+  scenario.
+- Identified in the 2026 pre-season scheduling review (#165, P0b).
+
+### Fail-fast contract validation for scheduling JSON files — closes [#161](https://github.com/i12know/vaysf/issues/161)
+
+The scheduling bridge files now have a Pydantic contract, so malformed or
+hand-edit-damaged input fails at load time with field-level messages instead
+of a mid-solve traceback or a silently wrong schedule.
+
+- **New `middleware/schedule_contracts.py`** — `validate_schedule_input()` /
+  `validate_schedule_output()` check `schedule_input.json` and
+  `schedule_output.json` against Pydantic models covering the full documented
+  schema (docs/SCHEDULING.md). Validation is read-only — valid inputs solve
+  without changing assignment/status semantics (proven by a behavioral
+  equivalence test comparing assignments, status, and unscheduled lists with
+  and without validation). All violations are collected into one
+  `ScheduleContractError`, each message carrying the offending
+  `game_id`/`resource_id`.
+- **Strict numerics** — numeric strings (`"60"`) and booleans are rejected on
+  every modeled numeric field, never coerced. Clock fields must be real times
+  (`HH:MM`, hours < 24, minutes < 60) with `close_time > open_time`, and
+  `min_gap_slots` must be ≥ 1 (the solver silently converts 0 to 1).
+- **Unknown fields warn instead of failing** — the schema grows every season,
+  so unknown fields are accepted with a deduplicated warning. The reserved
+  annotation namespace (`operator_notes` or any `x_*` field) never warns.
+- **`solve-schedule`** validates at load and exits 3 listing every violation,
+  and self-checks its own output against the contract before writing it (a
+  violating output is a solver bug — nothing is written, exit 3).
+  **`produce-schedule`** validates both files plus output→input referential
+  integrity (every assignment's `game_id`/`resource_id` must exist in the
+  input) before rendering. `diagnose-schedule` intentionally keeps reading
+  raw JSON so it can inspect broken files.
+- **Precedence integrity** — a cycle in `precedence` rules is reported as a
+  contract error naming the cycle members (previously a silent INFEASIBLE).
+  A rule spanning solver pools is also an error: the pool-decomposed solver
+  silently drops such rules, and a declared constraint that cannot be
+  enforced must not be silently ignored. A rule referencing an unknown
+  game/playoff id logs a warning (previously silently ignored).
+- **Reference checks** — duplicate game/resource IDs and playoff slots
+  pointing at unknown `resource_id`s are contract errors; slot-window
+  validity stays in `scheduler.validate_playoff_slots`. `team_conflicts`
+  endpoints are deliberately NOT required to appear in `games`: planning-only
+  edges (an event with no Layer-2 games yet) are a legitimate, documented
+  state with their own `PlanningOnly` conflict-audit status.
+- **Review fixes** — resource-fit checks are keyed by
+  `(solver_pool, resource_type)`, so a roomy same-type resource in a
+  different pool no longer masks that a game cannot fit within its own pool;
+  the resource model gained `venue_name`/`playoff_pinned` and the playoff
+  model gained `team_a_id`/`team_b_id`/`duration_minutes` so real exporter
+  output produces zero unknown-field warnings; a malformed (truncated) JSON
+  file at `produce-schedule` now fails through the controlled contract-error
+  path instead of an uncaught `JSONDecodeError`.
+- **Unfittable games are hard errors** — a game whose `duration_minutes`
+  cannot fit any resource of its `resource_type` (per C7 consecutive-slot
+  math) now fails the contract instead of surfacing downstream as a mystery
+  unscheduled/INFEASIBLE. A `resource_type` with *zero* resources stays a
+  warning, preserving the solver's documented unroutable-game exit-1 path,
+  and plain capacity shortages remain solver INFEASIBLE with diagnostics.
+- **Output sanity** — duplicate game assignments or a double-booked
+  `(resource_id, slot)` in `schedule_output.json` block rendering.
+- **Conflict-edge warning** — an edge with `primary_overlap_count > 0` but an
+  empty `shared_participant_names` list is flagged so empty Conflict-Audit
+  name cells get noticed at export time.
+
 ### Consolidated doubles selections in validation + scheduler↔validation reconciliation — closes [#160](https://github.com/i12know/vaysf/issues/160)
 
 Follow-up to the canonical resolver work below. The June 11, 2026 real-data run

@@ -24,6 +24,15 @@ def _status_banner_values(ws) -> set[str]:
     }
 
 
+def _sheet_texts(ws) -> list[str]:
+    return [
+        str(cell.value)
+        for row in ws.iter_rows()
+        for cell in row
+        if cell.value is not None
+    ]
+
+
 def _minimal_schedule_input() -> dict:
     return {
         "generated_at": "2026-05-15T00:00:00",
@@ -439,6 +448,145 @@ def test_main_produce_schedule_uses_default_paths(mocker, monkeypatch, tmp_path)
     assert out_path == tmp_path / "VAYSF_Schedule_2026-05-15.xlsx"
     assert so_data["status"] == "OPTIMAL"
     assert si_data["games"] == []
+
+
+def test_main_produce_schedule_malformed_json_fails_controlled(
+    mocker, monkeypatch, tmp_path
+):
+    """A damaged event-week JSON file must exit 1 via the contract-error
+    path, not raise an uncaught JSONDecodeError (#161 review finding 3)."""
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main, "EXPORT_DIR", tmp_path)
+
+    (tmp_path / "schedule_output.json").write_text(
+        '{"status": "OPTIMAL", "assignments": [',  # truncated mid-write
+        encoding="utf-8",
+    )
+    (tmp_path / "schedule_input.json").write_text(
+        json.dumps({"games": [], "resources": []}), encoding="utf-8"
+    )
+
+    mock_write = mocker.patch.object(
+        ScheduleWorkbookBuilder, "write_schedule_output_workbook"
+    )
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="produce-schedule",
+            schedule_output=None,
+            schedule_input=None,
+            output=None,
+        ),
+    )
+
+    _run_main_expect_exit(1)
+    mock_write.assert_not_called()
+
+
+def test_main_produce_schedule_preserves_vietnamese_diacritics(
+    monkeypatch, tmp_path
+):
+    """UTF-8 JSON names survive produce-schedule in every operator-facing tab."""
+    label_a = "Hội Thánh"
+    label_b = "Tin Lành"
+    participant_names = "Nguyễn Văn Đức; Trần Thị Mỹ Linh"
+    input_path = tmp_path / "schedule_input.json"
+    output_path = tmp_path / "schedule_output.json"
+    workbook_path = tmp_path / "schedule.xlsx"
+
+    schedule_input = {
+        "games": [{
+            "game_id": "BBM-01",
+            "event": "Basketball - Men Team",
+            "stage": "Pool",
+            "pool_id": "P1",
+            "round": 1,
+            "team_a_id": "BBM-P1-T1",
+            "team_b_id": "BBM-P1-T2",
+            "team_a_label": label_a,
+            "team_b_label": label_b,
+            "duration_minutes": 60,
+            "resource_type": "Gym Court",
+            "earliest_slot": None,
+            "latest_slot": None,
+        }],
+        "resources": [{
+            "resource_id": "GYM-Sat-1-1",
+            "resource_type": "Gym Court",
+            "label": "Court-1",
+            "day": "Sat-1",
+            "open_time": "08:00",
+            "close_time": "09:00",
+            "slot_minutes": 60,
+            "exclusive_group": "",
+        }],
+        "playoff_slots": [],
+    }
+    schedule_output = {
+        "solved_at": "2026-05-01T10:00:00+00:00",
+        "status": "OPTIMAL",
+        "solver_wall_seconds": 0.1,
+        "assignments": [{
+            "game_id": "BBM-01",
+            "resource_id": "GYM-Sat-1-1",
+            "slot": "Sat-1-08:00",
+        }],
+        "unscheduled": [],
+        "pool_results": [],
+        "conflict_audit_summary": {
+            "total_edges": 1,
+            "separated_edges": 1,
+            "overlapping_edges": 0,
+            "incomplete_edges": 0,
+            "remaining_primary_overlap_penalty": 0,
+            "remaining_secondary_overlap_penalty": 0,
+        },
+        "conflict_audit": [{
+            "team_a_label": label_a,
+            "event_a": "Basketball - Men Team",
+            "team_b_label": label_b,
+            "event_b": "Volleyball - Men Team",
+            "shared_count": 2,
+            "primary_overlap_count": 2,
+            "secondary_only_count": 0,
+            "status": "SeparatedInSchedule",
+            "overlap_count": 0,
+            "scheduled_team_a_games": 1,
+            "scheduled_team_b_games": 1,
+            "shared_participant_names": participant_names,
+            "overlap_game_pairs": "",
+        }],
+    }
+    input_path.write_text(
+        json.dumps(schedule_input, ensure_ascii=False), encoding="utf-8"
+    )
+    output_path.write_text(
+        json.dumps(schedule_output, ensure_ascii=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="produce-schedule",
+            schedule_output=str(output_path),
+            schedule_input=str(input_path),
+            output=str(workbook_path),
+        ),
+    )
+
+    _run_main_expect_exit(0)
+
+    wb = load_workbook(workbook_path)
+    by_time = _sheet_texts(wb["Schedule-by-Time"])
+    by_sport = _sheet_texts(wb["Schedule-by-Sport"])
+    conflict_audit = _sheet_texts(wb["Conflict-Audit"])
+    assert any(f"{label_a} vs {label_b}" in text for text in by_time)
+    assert label_a in by_sport
+    assert label_b in by_sport
+    assert label_a in conflict_audit
+    assert label_b in conflict_audit
+    assert participant_names in conflict_audit
 
 
 def test_schedule_pipeline_export_solve_produce_local(mocker, monkeypatch, tmp_path):

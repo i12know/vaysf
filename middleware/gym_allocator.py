@@ -197,6 +197,7 @@ def allocate(
     gym_modes: Dict[str, Dict[str, int]],
     blocks: List[GymBlock],
     spreading_excluded_days: Optional[set] = None,
+    reserved_windows: Optional[List[GymBlock]] = None,
 ) -> AllocationResult:
     """Greedy priority gym mode allocator.
 
@@ -205,6 +206,12 @@ def allocate(
     demand    : {mode_resource_type: court_hours_needed}
     gym_modes : {gym_name: {mode_resource_type: courts_per_block}}
     blocks    : unique GymBlock list from extract_gym_blocks()
+    reserved_windows : gym time windows (as GymBlock objects keyed by the same
+                gym_name as blocks) that are reserved for playoff use and must
+                never be claimed for pool play. They are removed from the
+                available inventory before the demand pass runs; any
+                non-overlapping remainder of a partially-reserved block stays
+                available (Issue #127).
 
     Returns an AllocationResult.  Never raises on demand/capacity mismatch —
     the shortfall field captures the gap instead.
@@ -234,6 +241,13 @@ def allocate(
     sorted_modes = sorted(demand, key=_mode_priority)
 
     available: set = set(blocks)
+
+    # Playoff-reserved windows are carved out of the inventory before any
+    # demand is satisfied, so pool play can never consume a pinned Final's
+    # court time (Issues #127 / #133).  Fragments of a block outside the
+    # reserved window are preserved by _claim_physical_gym_window.
+    for reserved in reserved_windows or []:
+        _claim_physical_gym_window(available, reserved)
     decisions: List[AllocationDecision] = []
     mode_supply: Dict[str, float] = dict.fromkeys(demand, 0.0)
 

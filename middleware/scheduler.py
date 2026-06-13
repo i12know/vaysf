@@ -65,6 +65,11 @@ from typing import Any
 from loguru import logger
 
 from config import SCHEDULE_SOLVER_RANDOM_SEED
+from schedule_contracts import (
+    ScheduleContractError,
+    validate_schedule_input,
+    validate_schedule_output,
+)
 
 _WEEKDAY_ORDER: dict[str, int] = {
     "Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3,
@@ -86,12 +91,15 @@ STATUS_UNKNOWN    = "UNKNOWN"
 # ---------------------------------------------------------------------------
 
 def load_schedule_input(path: Path) -> dict[str, Any]:
-    """Load schedule_input.json and validate required top-level keys."""
+    """Load schedule_input.json and validate it against the schedule contract.
+
+    Raises ScheduleContractError (with every violation listed) on malformed
+    input; logs contract warnings for conditions the solver tolerates.
+    """
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
-    for key in ("games", "resources"):
-        if key not in data:
-            raise ValueError(f"schedule_input.json missing required key: {key!r}")
+    for warning in validate_schedule_input(data):
+        logger.warning(f"schedule_input contract: {warning}")
     return data
 
 
@@ -409,7 +417,7 @@ def validate_playoff_slots(
         lambda: defaultdict(set)
     )
     validated: list[dict[str, Any]] = []
-    seen_keys: dict[tuple[str, str], str] = {}
+    seen_keys: dict[tuple[str, str], tuple[str, str]] = {}
 
     for playoff_slot in playoff_slots:
         game_id = str(playoff_slot.get("game_id", "")).strip() or "<unknown>"
@@ -426,26 +434,53 @@ def validate_playoff_slots(
                 f"Playoff slot {game_id!r} references unknown resource_id {resource_id!r}."
             )
 
-        valid_slots = set(res_slots.get(resource_id, []))
+        resource_slots = res_slots.get(resource_id, [])
+        valid_slots = set(resource_slots)
         if slot not in valid_slots:
             raise ValueError(
                 f"Playoff slot {game_id!r} uses slot {slot!r}, which is not a valid slot "
                 f"for resource {resource_id!r}."
             )
 
-        key = (resource_id, slot)
-        previous_game = seen_keys.get(key)
-        if previous_game is not None:
+        duration_minutes = int(
+            playoff_slot.get("duration_minutes")
+            or resource.get("slot_minutes")
+            or 60
+        )
+        slot_minutes = int(resource.get("slot_minutes") or 60)
+        occupied_count = max(1, math.ceil(duration_minutes / slot_minutes))
+        start_index = resource_slots.index(slot)
+        occupied_slots = resource_slots[start_index : start_index + occupied_count]
+        if len(occupied_slots) != occupied_count:
             raise ValueError(
-                f"Duplicate playoff slot reservation for {resource_id!r} at {slot!r}: "
-                f"{previous_game!r} and {game_id!r}."
+                f"Playoff slot {game_id!r} ({duration_minutes} min) does not fit "
+                f"resource {resource_id!r} starting at {slot!r}."
             )
-        seen_keys[key] = game_id
+
+        for occupied_slot in occupied_slots:
+            key = (resource_id, occupied_slot)
+            previous = seen_keys.get(key)
+            if previous is not None:
+                previous_game, previous_start = previous
+                if previous_start == slot:
+                    raise ValueError(
+                        f"Duplicate playoff slot reservation for {resource_id!r} "
+                        f"at {slot!r}: {previous_game!r} and {game_id!r}."
+                    )
+                raise ValueError(
+                    f"Overlapping playoff slot reservations on {resource_id!r} at "
+                    f"{occupied_slot!r}: {previous_game!r} and {game_id!r}."
+                )
+        for occupied_slot in occupied_slots:
+            seen_keys[(resource_id, occupied_slot)] = (game_id, slot)
 
         normalized = dict(playoff_slot)
         normalized.setdefault("resource_type", resource["resource_type"])
+        normalized.setdefault("duration_minutes", duration_minutes)
         validated.append(normalized)
-        reserved_by_type[resource["resource_type"]][resource_id].add(slot)
+        reserved_by_type[resource["resource_type"]][resource_id].update(
+            occupied_slots
+        )
 
     return validated, reserved_by_type
 
@@ -704,6 +739,23 @@ def _solve_one_pool(
         all_labels.update(slots)
     sorted_labels  = sorted(all_labels, key=_pool_slot_key)
     slot_to_global = {lbl: i for i, lbl in enumerate(sorted_labels)}
+    sorted_days = sorted(
+        {_slot_day_key(label) for label in sorted_labels},
+        key=lambda day: _pool_slot_key(f"{day}-00:00"),
+    )
+    day_to_absolute_index = {
+        day: index for index, day in enumerate(sorted_days)
+    }
+
+    def _slot_absolute_minutes(label: str) -> int:
+        day, time = _parse_slot_label(label)
+        hours, minutes = time.split(":")
+        return (
+            day_to_absolute_index[day] * 24 * 60
+            + int(hours) * 60
+            + int(minutes)
+        )
+
     # Map global slot index → day prefix (e.g. "Sat-1") for C6 day-boundary guard
     global_to_day: dict[int, str] = {
         i: _slot_day_key(lbl)
@@ -814,16 +866,35 @@ def _solve_one_pool(
                 ):
                     model.Add(var == 0)
 
-    # Global slot IntVar per game (enables C5 and C6)
+    precedence_rules = pool_input.get("precedence", []) or []
+
+    # Global slot IntVars enable C5/C6. Real-time IntVars are added only when
+    # precedence exists, avoiding needless search-symmetry changes in pools
+    # whose behavior does not use them.
     game_global_slot: dict[str, Any] = {}
+    game_start_minutes: dict[str, Any] = {}
+    max_absolute_minute = max(
+        (_slot_absolute_minutes(label) for label in sorted_labels),
+        default=0,
+    )
     for gid, vd in game_vars.items():
         if not vd:
             continue
         gv = model.NewIntVar(0, max(n_global - 1, 0), f"gslot_{gid}")
         game_global_slot[gid] = gv
+        start_var = None
+        if precedence_rules:
+            start_var = model.NewIntVar(
+                0, max_absolute_minute, f"start_minute_{gid}"
+            )
+            game_start_minutes[gid] = start_var
         for (rid, t), var in vd.items():
             label = res_slots[rid][t]
             model.Add(gv == slot_to_global[label]).OnlyEnforceIf(var)
+            if start_var is not None:
+                model.Add(
+                    start_var == _slot_absolute_minutes(label)
+                ).OnlyEnforceIf(var)
 
     # C6 — minimum rest: no team plays in two adjacent global slots
     team_global_assignments: dict[str, dict[int, list[Any]]] = {}
@@ -836,7 +907,6 @@ def _solve_one_pool(
             for team in teams:
                 team_global_assignments.setdefault(team, {}).setdefault(global_idx, []).append(var)
 
-    precedence_rules = pool_input.get("precedence", []) or []
     # pinned_game_global: {game_id: global_slot_index} for manually pinned playoff games.
     # Used below so precedence rules whose "after" side is pinned still constrain the
     # solver-assigned "before" pool game to finish early enough.
@@ -844,6 +914,17 @@ def _solve_one_pool(
         gid: slot_to_global[slot]
         for gid, slot in (pool_input.get("pinned_game_slots") or {}).items()
         if slot in slot_to_global
+    }
+    pinned_game_start_minutes: dict[str, int] = {
+        gid: _slot_absolute_minutes(slot)
+        for gid, slot in (pool_input.get("pinned_game_slots") or {}).items()
+        if slot in slot_to_global
+    }
+    pinned_game_durations: dict[str, int] = {
+        str(gid): int(duration)
+        for gid, duration in (
+            pool_input.get("pinned_game_durations") or {}
+        ).items()
     }
     for rule in precedence_rules:
         before_game_id = str(rule.get("before_game_id") or "").strip()
@@ -857,6 +938,11 @@ def _solve_one_pool(
                 game_global_slot[after_game_id]
                 >= game_global_slot[before_game_id] + min_gap_slots
             )
+            model.Add(
+                game_start_minutes[after_game_id]
+                >= game_start_minutes[before_game_id]
+                + int(game_meta[before_game_id]["duration_minutes"])
+            )
         elif before_game_id in game_global_slot and after_game_id in pinned_game_global:
             # "Before" is solver-assigned; "after" is a manually pinned playoff game.
             # Translate to an upper-bound on the pool game's slot so it must finish
@@ -865,12 +951,22 @@ def _solve_one_pool(
             model.Add(
                 game_global_slot[before_game_id] <= pinned_idx - min_gap_slots
             )
+            model.Add(
+                game_start_minutes[before_game_id]
+                + int(game_meta[before_game_id]["duration_minutes"])
+                <= pinned_game_start_minutes[after_game_id]
+            )
         elif before_game_id in pinned_game_global and after_game_id in game_global_slot:
             # "Before" is pinned; "after" is solver-assigned. Solver must place the
             # "after" game at or after the pinned "before" + min_gap.
             pinned_idx = pinned_game_global[before_game_id]
             model.Add(
                 game_global_slot[after_game_id] >= pinned_idx + min_gap_slots
+            )
+            model.Add(
+                game_start_minutes[after_game_id]
+                >= pinned_game_start_minutes[before_game_id]
+                + pinned_game_durations.get(before_game_id, 0)
             )
         # Skip if both are pinned (validated at merge time) or both are unknown.
 
@@ -1293,6 +1389,7 @@ def solve(
     # "after" side is pinned can still constrain pool games (fix for the bug
     # where VBM pool games spilled past VBM-QF-1 start time on 2nd Saturday).
     pinned_game_slots_by_pool: dict[str, dict[str, str]] = defaultdict(dict)
+    pinned_game_durations_by_pool: dict[str, dict[str, int]] = defaultdict(dict)
     for _ps in playoff_slots:
         _gid = str(_ps.get("game_id") or "").strip()
         _slot = str(_ps.get("slot") or "").strip()
@@ -1301,6 +1398,9 @@ def solve(
             _pk = resource_pool_by_id.get(_rid, "")
             if _pk:
                 pinned_game_slots_by_pool[_pk][_gid] = _slot
+                pinned_game_durations_by_pool[_pk][_gid] = int(
+                    _ps.get("duration_minutes") or 0
+                )
 
     team_conflicts = schedule_input.get("team_conflicts", []) or []
     team_conflicts_by_pool: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1449,6 +1549,9 @@ def solve(
             "day_order":           day_order,
             "cross_pool_avoidance": cross_pool_avoidance,
             "pinned_game_slots":   pinned_game_slots_by_pool.get(pool_key, {}),
+            "pinned_game_durations": pinned_game_durations_by_pool.get(
+                pool_key, {}
+            ),
         }
         result = _solve_one_pool(pool_input, timeout_seconds)
         result["resource_type"] = pool_key
@@ -1577,6 +1680,14 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
     """
     try:
         schedule_input = load_schedule_input(input_path)
+    except ScheduleContractError as e:
+        logger.error(
+            f"{input_path} failed contract validation with "
+            f"{len(e.errors)} error(s):"
+        )
+        for violation in e.errors:
+            logger.error(f"  - {violation}")
+        return 3
     except Exception as e:
         logger.error(f"Failed to load {input_path}: {e}")
         return 3
@@ -1600,6 +1711,21 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
         **result,
     }
 
+    # Self-check before writing: a contract-violating output here is a solver
+    # bug (e.g. a double-booked slot), not an operator problem — refuse to
+    # emit an artifact that produce-schedule would reject anyway.
+    try:
+        for warning in validate_schedule_output(output):
+            logger.warning(f"schedule_output contract: {warning}")
+    except ScheduleContractError as e:
+        logger.error(
+            f"Solver produced contract-violating output ({len(e.errors)} "
+            "error(s)) — this is a solver bug, nothing was written:"
+        )
+        for violation in e.errors:
+            logger.error(f"  - {violation}")
+        return 3
+
     try:
         output_path.write_text(
             json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -1608,6 +1734,29 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
     except OSError as e:
         logger.error(f"Failed to write {output_path}: {e}")
         return 3
+
+    timed_out_pools = [
+        pr for pr in result["pool_results"]
+        if pr["status"] == STATUS_UNKNOWN
+    ]
+    if timed_out_pools:
+        timeout_used = os.getenv("SCHEDULE_SOLVER_TIMEOUT", "90")
+        if result["status"] == STATUS_PARTIAL:
+            logger.warning(
+                f"PARTIAL: {len(timed_out_pools)} pool(s) timed out after "
+                f"{timeout_used}s. Assignments from completed pools have been "
+                "written, but the schedule is incomplete. Increase "
+                "SCHEDULE_SOLVER_TIMEOUT and re-run."
+            )
+        else:
+            logger.warning(
+                f"Solver timed out after {timeout_used}s without finding a solution. "
+                "This is not proven infeasible — increase SCHEDULE_SOLVER_TIMEOUT and "
+                f"re-run. Current timeout: {timeout_used}s."
+            )
+        for pr in timed_out_pools:
+            logger.error(f"  Timed-out pool: {pr['resource_type']!r}")
+        return 2
 
     if result["status"] == STATUS_PARTIAL:
         failed = [
@@ -1642,15 +1791,6 @@ def run_solve_schedule(input_path: Path, output_path: Path) -> int:
                 "same-team conflicts, stage ordering, or min-rest spacing."
             )
         return 1
-
-    if result["status"] == STATUS_UNKNOWN:
-        timeout_used = os.getenv("SCHEDULE_SOLVER_TIMEOUT", "90")
-        logger.warning(
-            f"Solver timed out after {timeout_used}s without finding a solution. "
-            "This is not proven infeasible — increase SCHEDULE_SOLVER_TIMEOUT and re-run. "
-            f"Current timeout: {timeout_used}s."
-        )
-        return 2
 
     # Defensive fallback: solved statuses should not carry unscheduled games, but if
     # they ever do, keep the CLI non-zero so callers do not silently accept it.

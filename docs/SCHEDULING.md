@@ -309,9 +309,35 @@ How it works:
   in `pod_unprotected_entries` and listed in the `Conflict-Audit` tab so
   operators can chase down the missing partner, never silently dropped.
 
+#### Singles conflict protection (Issue #164, shipped)
+
+The second slice extends the same Round-1 protection to racquet **singles**
+entries. Singles membership is always known — one participant per entry, no
+partner declaration to fail — so every singles player gets a stable entry ID
+and conflict edges, with no "unresolved" class.
+
+- `_resolve_pod_singles()` assigns each singles roster row a stable,
+  reproducible ID of the form `{division_id}-S{nn}` (e.g.
+  `BAD-Men-Singles-S01`), sorted by participant ID before numbering — the
+  same model `_resolve_pod_doubles()` uses for `-E{nn}` pairs. Duplicate
+  roster rows for the same player in one division are collapsed.
+- `_build_pod_game_objects()` attaches singles entry IDs to the division's
+  **Round-1** games using the same bye-aware bracket math as doubles.
+- `_build_cross_sport_conflicts()` includes singles entries as racquet units,
+  so the existing pairwise loops emit **team ↔ singles**,
+  **doubles ↔ singles**, and **singles ↔ singles** edges automatically —
+  including same-sport overlap (e.g. one player in Badminton singles *and*
+  Badminton doubles).
+
+Protection limits (same bracket-unknown limitation as doubles):
+
+- Only the **known Round-1 game** is protected. Bye entries (whose first
+  match is in round 2) and all post-R1 rounds keep
+  `team_a_id`/`team_b_id` of `null` — their participation depends on match
+  results, so a static map cannot cover them.
+
 Still future work within Phase 2:
 
-- **Singles** conflict protection (this slice is doubles-only).
 - Coarse division-level windowing to approximate **later-round** coverage
   beyond R1 without pretending to know bracket winners.
 
@@ -413,10 +439,53 @@ games.  Add one row per playoff game.  Required columns:
 | `game_id` | `BBM-Final` | Unique identifier used in the schedule output |
 | `event` | `Basketball - Men Team` | Must match the event name exactly |
 | `stage` | `Final` | QF, Semi, Final, or 3rd |
+
+Each row must then carry **one of two placement forms** (Issue #127):
+
+*Venue-centric form (preferred)* — specify the physical venue directly; no
+knowledge of internal resource IDs required:
+
+| Column | Example | Notes |
+|--------|---------|-------|
+| `gym_name` | `EHS Main Gym` | Matches `Venue Name` or `Exclusive Venue Group` in Venue-Input (case-insensitive) |
+| `date` | `7/26/2026` | Must be a date that appears in Venue-Input (a day label like `Sun-2` also works) |
+| `start_time` | `14:00` | Must fall inside that venue's Venue-Input time window |
+| `slot_minutes` | `60` | Optional synthetic-resource grid size; defaults to the venue row's slot size |
+
+At build time (`export-church-teams`), each venue-centric row is validated
+against Venue-Input and resolved to a concrete resource:
+
+- For an **allocator-managed gym** (its `Exclusive Venue Group` has a
+  Gym-Modes entry), a dedicated playoff-pinned resource (e.g. `BB-Sun-2-PF1`)
+  is created covering only the pinned window, and that window is **reserved
+  out of the Stage-A allocator inventory** before pool-play demand is
+  satisfied — regular games can never consume a pinned Final's court time.
+  Contiguous pins on the same gym/sport (e.g. Semi at 14:00, Final at 15:00)
+  merge onto one playoff court.
+- For a **standalone venue row**, the pin resolves to one of the existing
+  expanded resource IDs (e.g. `TT-Sun-2-1`) and the exact `(resource, slot)`
+  pair is reserved from pool play at solve time, as always.
+- Invalid venue pins abort schedule-input generation with all detected errors
+  listed. This includes unknown gym/date/start values, overlapping mutually
+  exclusive gym modes, court-count overflow, and overlapping multi-slot pins.
+  Fix the rows and re-run `export-church-teams`.
+
+*Explicit form (override / legacy)* — copy internal IDs from the generated
+`Schedule-Input` Resources section:
+
+| Column | Example | Notes |
+|--------|---------|-------|
 | `resource_id` | `GYM-Sat-2-1` or `BB-Sun-2-3` | Must match a resource_id in the Resources section |
 | `slot` | `Sat-2-14:00` | Slot label in `Day-HH:MM` format |
 
-Optional columns: `team_a_id`, `team_b_id`, `duration_minutes`.
+When a row carries both forms, the explicit `resource_id` + `slot` wins.
+Note that generated resource ordinals can drift when Venue-Input changes —
+the venue-centric form exists precisely so operators do not have to track
+that drift.
+
+Optional columns (either form): `team_a_id`, `team_b_id`, `duration_minutes`.
+When `duration_minutes` is omitted for a generated game, the build uses that
+game's configured duration and reserves every occupied resource slot.
 
 Canonical direct-venue resource prefixes are now:
 - `BB-` Basketball Court
@@ -637,8 +706,35 @@ Reads `schedule_input.json`, runs the OR-Tools CP-SAT model for **pool play
 games only**, reserves any manual `playoff_slots` from the same court/time
 inventory, then merges those playoff assignments into the output. Writes
 `schedule_output.json` to `DATA_DIR` (or `--output` path).
-Exit codes: 0 = OPTIMAL/FEASIBLE (all pools solved), 1 = PARTIAL/INFEASIBLE/UNKNOWN,
-2 = error.
+Exit codes: 0 = OPTIMAL/FEASIBLE (all pools solved), 1 = PARTIAL/INFEASIBLE
+without a timeout, 2 = at least one pool timed out (`UNKNOWN`), 3 = contract,
+input, solver, or output error. A mixed solve keeps top-level status `PARTIAL`
+and preserves completed assignments, but still exits 2 so automation knows to
+retry with a larger timeout.
+
+Before anything is solved, the input is checked against the schedule contract
+(`middleware/schedule_contracts.py`, Issue #161): Pydantic models covering the
+full schema documented here, with strict numerics (numeric strings and
+booleans rejected), real clock windows (`HH:MM`, `close_time > open_time`),
+`min_gap_slots >= 1`, plus cross-checks for duplicate IDs, playoff slots
+referencing unknown resources, precedence cycles, precedence rules spanning
+solver pools (unenforceable by the pool-decomposed solver, so rejected), and
+games whose `duration_minutes` cannot fit any resource of their
+`resource_type`. Contract violations exit 3 with every violation listed (each
+message names the offending `game_id`/`resource_id`); tolerable conditions —
+a `resource_type` with no resources, a precedence rule referencing an unknown
+game — are logged as warnings and the solve proceeds. The solver also
+self-checks its output against the contract before writing
+`schedule_output.json`, and `produce-schedule` validates both JSON files plus
+output→input referential integrity before rendering.
+
+Unknown fields are accepted with a deduplicated warning (the schema grows
+every season); the reserved annotation namespace — a field named
+`operator_notes` or any field starting with `x_` — never warns, so
+hand-annotated inputs stay clean. `team_conflicts` endpoints are deliberately
+not required to appear in `games`: planning-only edges (an event with no
+Layer-2 games yet) are a legitimate state with their own `PlanningOnly`
+conflict-audit status.
 
 Playoff slots are not re-assigned by the solver, but they **are** validated
 against the resource list and reserved before pool play is packed. If a
@@ -767,12 +863,13 @@ The JSON file stays in `DATA_DIR` as the machine-readable backup.
 | C6 | Minimum rest — no team plays in two adjacent global slots (within the same day only; cross-day pairs are skipped) | `AddBoolOr([v1.Not(), v2.Not()])` for same-day adjacent slot pairs |
 | C7 | Multi-slot games — duration > slot_minutes blocks consecutive slots | restrict start positions; expand slot_occupancy |
 
-**Playoff scheduling (not solver constraints):**
-Playoff game timing is controlled entirely by the Playoff-Slots tab in
-`venue_input.xlsx` — the exact slot and court for each QF/Semi/Final/3rd game
-is specified there by the coordinator.  The solver only packs pool play.
-Last-minute changes during the tournament are handled by editing the tab and
-re-running `produce-schedule` (no solver re-run needed).
+**Playoff scheduling:**
+Generated playoff games participate in solver precedence, including
+duration-aware round ordering. The optional Playoff-Slots tab in
+`venue_input.xlsx` fixes exact QF/Semi/Final/3rd games to operator-selected
+venues and times; unpinned playoff games remain solver-assigned. Last-minute
+pin changes require regenerating and solving the schedule before running
+`produce-schedule`.
 
 **Out of scope (future work):**
 - Cross-sport participant conflicts (person in both Basketball and Badminton).

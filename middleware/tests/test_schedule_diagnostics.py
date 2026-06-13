@@ -307,3 +307,256 @@ def test_run_diagnose_schedule_writes_json_report(tmp_path):
     report = json.loads(output_path.read_text(encoding="utf-8"))
     assert report["summary"]["game_count"] == 3
     assert report["next_actions"]
+
+
+# ---------------------------------------------------------------------------
+# Quality warnings — #153
+# ---------------------------------------------------------------------------
+
+def _quality_schedule_input() -> dict:
+    return {
+        "games": [
+            {
+                "game_id": "BBM-Semi-1",
+                "event": "Basketball - Men Team",
+                "stage": "Semi",
+                "pool_id": "",
+                "duration_minutes": 60,
+                "resource_type": "Gym Court",
+                "team_a_id": None,
+                "team_b_id": None,
+                "earliest_slot": None,
+                "latest_slot": None,
+            },
+            {
+                "game_id": "BBM-Final",
+                "event": "Basketball - Men Team",
+                "stage": "Final",
+                "pool_id": "",
+                "duration_minutes": 60,
+                "resource_type": "Gym Court",
+                "team_a_id": None,
+                "team_b_id": None,
+                "earliest_slot": None,
+                "latest_slot": None,
+            },
+            {
+                "game_id": "VBM-01",
+                "event": "Volleyball - Men Team",
+                "stage": "Pool",
+                "pool_id": "P1",
+                "duration_minutes": 60,
+                "resource_type": "Volleyball Court",
+                "team_a_id": None,
+                "team_b_id": None,
+                "earliest_slot": None,
+                "latest_slot": None,
+            },
+        ],
+        "resources": [
+            {
+                "resource_id": "GYM-1",
+                "resource_type": "Gym Court",
+                "label": "Court-1",
+                "day": "Sat-1",
+                "open_time": "08:00",
+                "close_time": "22:00",
+                "slot_minutes": 60,
+            },
+            {
+                "resource_id": "VB-1",
+                "resource_type": "Volleyball Court",
+                "label": "VB-Court-1",
+                "day": "Sat-1",
+                "open_time": "08:00",
+                "close_time": "22:00",
+                "slot_minutes": 60,
+            },
+        ],
+        "precedence": [
+            {
+                "before_game_id": "BBM-Semi-1",
+                "after_game_id": "BBM-Final",
+                "min_gap_slots": 1,
+            }
+        ],
+        "playoff_slots": [],
+    }
+
+
+def _quality_schedule_output(
+    semi_slot: str = "Sat-1-19:00",
+    final_slot: str = "Sat-1-20:30",
+    vb_slot: str = "Sat-1-19:00",
+    vb_switches: int = 0,
+) -> dict:
+    pool_result: dict = {
+        "resource_type": "Volleyball Court",
+        "status": "OPTIMAL",
+    }
+    if vb_switches:
+        pool_result["volleyball_adjacent_switches"] = vb_switches
+    return {
+        "status": "OPTIMAL",
+        "solver_wall_seconds": 0.1,
+        "assignments": [
+            {"game_id": "BBM-Semi-1", "resource_id": "GYM-1", "slot": semi_slot},
+            {"game_id": "BBM-Final",  "resource_id": "GYM-1", "slot": final_slot},
+            {"game_id": "VBM-01",     "resource_id": "VB-1",  "slot": vb_slot},
+        ],
+        "unscheduled": [],
+        "pool_results": [pool_result],
+        "conflict_audit_summary": {},
+        "conflict_audit": [],
+    }
+
+
+def test_quality_warnings_absent_for_clean_schedule():
+    """A schedule finishing before 20:00 with adequate gaps emits no quality warnings."""
+    si = _quality_schedule_input()
+    # Semi at 14:00, Final at 16:00 → finishes 17:00; gap = 60 min ≥ 30
+    so = _quality_schedule_output(semi_slot="Sat-1-14:00", final_slot="Sat-1-16:00")
+    diagnostics = build_schedule_diagnostics(si, so)
+    assert diagnostics["quality_warnings"] == []
+
+
+def test_quality_warnings_late_finish_flagged():
+    """An event finishing after 20:00 emits a late_finish warning."""
+    si = _quality_schedule_input()
+    # BBM-Final at 20:30 → finishes 21:30
+    so = _quality_schedule_output(semi_slot="Sat-1-18:00", final_slot="Sat-1-20:30")
+    diagnostics = build_schedule_diagnostics(si, so)
+    late = [w for w in diagnostics["quality_warnings"] if w["check"] == "late_finish"]
+    assert len(late) == 1
+    assert late[0]["event"] == "Basketball - Men Team"
+    assert late[0]["latest_finish"] == "21:30"
+    assert late[0]["severity"] == "medium"
+    assert late[0]["game_id"] == "BBM-Final"
+
+
+def test_quality_warnings_manual_playoff_assignment_keeps_metadata():
+    """Manual-only playoff rows retain event and duration in quality output."""
+    si = _quality_schedule_input()
+    si["games"] = [
+        game for game in si["games"] if game["game_id"] != "BBM-Final"
+    ]
+    si["playoff_slots"] = [{
+        "game_id": "BBM-Final",
+        "event": "Basketball - Men Team",
+        "stage": "Final",
+        "resource_id": "GYM-1",
+        "slot": "Sat-1-20:30",
+        "duration_minutes": 60,
+    }]
+    so = _quality_schedule_output(
+        semi_slot="Sat-1-18:00",
+        final_slot="Sat-1-20:30",
+    )
+
+    diagnostics = build_schedule_diagnostics(si, so)
+
+    late = [
+        warning
+        for warning in diagnostics["quality_warnings"]
+        if warning["check"] == "late_finish"
+        and warning["game_id"] == "BBM-Final"
+    ]
+    assert len(late) == 1
+    assert late[0]["event"] == "Basketball - Men Team"
+    assert late[0]["latest_finish"] == "21:30"
+
+
+def test_quality_warnings_tight_turnaround_flagged():
+    """Semi ending at 20:00 and Final starting at 20:15 (15 min gap) is flagged."""
+    si = _quality_schedule_input()
+    # Semi at 19:00 (60 min) ends at 20:00. Final at 20:15 → gap = 15 min < 30
+    # But we need 15-min slots for this to work. Use 30-min slots instead.
+    si["resources"][0]["slot_minutes"] = 30
+    si["games"][0]["duration_minutes"] = 60  # Semi is 60 min (2 slots)
+    si["games"][1]["duration_minutes"] = 60
+    so = _quality_schedule_output(semi_slot="Sat-1-19:00", final_slot="Sat-1-20:15")
+    # Semi ends at 20:00, Final at 20:15 → gap = 15 min
+    so["assignments"][1]["slot"] = "Sat-1-20:15"
+    diagnostics = build_schedule_diagnostics(si, so)
+    tight = [w for w in diagnostics["quality_warnings"] if w["check"] == "tight_turnaround"]
+    assert len(tight) == 1
+    assert tight[0]["before_game_id"] == "BBM-Semi-1"
+    assert tight[0]["after_game_id"] == "BBM-Final"
+    assert tight[0]["gap_minutes"] == 15
+    assert tight[0]["severity"] == "medium"
+
+
+def test_quality_warnings_adequate_turnaround_not_flagged():
+    """A 45-minute gap between Semi and Final is not flagged."""
+    si = _quality_schedule_input()
+    # Semi at 14:00 (60 min) ends at 15:00. Final at 15:45 → gap = 45 min
+    so = _quality_schedule_output(semi_slot="Sat-1-14:00", final_slot="Sat-1-15:45")
+    so["assignments"][1]["slot"] = "Sat-1-15:45"
+    diagnostics = build_schedule_diagnostics(si, so)
+    tight = [w for w in diagnostics["quality_warnings"] if w["check"] == "tight_turnaround"]
+    assert tight == []
+
+
+def test_quality_warnings_volleyball_switches_medium():
+    """Volleyball switches above the threshold emit a medium warning."""
+    si = _quality_schedule_input()
+    so = _quality_schedule_output(vb_switches=6)
+    diagnostics = build_schedule_diagnostics(si, so)
+    sw = [w for w in diagnostics["quality_warnings"] if w["check"] == "volleyball_switches"]
+    assert len(sw) == 1
+    assert sw[0]["severity"] == "medium"
+    assert sw[0]["switch_count"] == 6
+
+
+def test_quality_warnings_volleyball_switches_info():
+    """A small number of volleyball switches emits only an info-level warning."""
+    si = _quality_schedule_input()
+    so = _quality_schedule_output(vb_switches=2)
+    diagnostics = build_schedule_diagnostics(si, so)
+    sw = [w for w in diagnostics["quality_warnings"] if w["check"] == "volleyball_switches"]
+    assert len(sw) == 1
+    assert sw[0]["severity"] == "info"
+
+
+def test_quality_warnings_no_output_returns_empty():
+    """build_schedule_diagnostics without schedule_output has no quality_warnings."""
+    diagnostics = build_schedule_diagnostics(_quality_schedule_input())
+    assert diagnostics["quality_warnings"] == []
+
+
+def test_quality_warnings_infeasible_output_returns_empty():
+    """An INFEASIBLE schedule skips quality checks (nothing to assess)."""
+    si = _quality_schedule_input()
+    so = {
+        "status": "INFEASIBLE",
+        "assignments": [],
+        "unscheduled": ["BBM-Semi-1", "BBM-Final"],
+        "pool_results": [],
+        "conflict_audit_summary": {},
+        "conflict_audit": [],
+    }
+    diagnostics = build_schedule_diagnostics(si, so)
+    assert diagnostics["quality_warnings"] == []
+
+
+def test_quality_warnings_surface_in_next_actions():
+    """Medium quality warnings propagate into next_actions as quality-vector suggestions."""
+    si = _quality_schedule_input()
+    # Final at 21:00 → finishes 22:00 (late finish)
+    so = _quality_schedule_output(semi_slot="Sat-1-18:00", final_slot="Sat-1-21:00")
+    diagnostics = build_schedule_diagnostics(si, so)
+    quality_actions = [
+        a for a in diagnostics["next_actions"] if a["vector"] == "quality" and a["severity"] == "medium"
+    ]
+    assert quality_actions, "Expected medium quality actions from late finish"
+
+
+def test_quality_warnings_appear_in_format_output():
+    """format_schedule_diagnostics includes a Quality line for each warning."""
+    si = _quality_schedule_input()
+    so = _quality_schedule_output(semi_slot="Sat-1-18:00", final_slot="Sat-1-21:00")
+    diagnostics = build_schedule_diagnostics(si, so)
+    lines = format_schedule_diagnostics(diagnostics)
+    quality_lines = [ln for ln in lines if ln.startswith("Quality [")]
+    assert quality_lines, "Expected Quality lines in formatted output"
+    assert any("late_finish" in ln for ln in quality_lines)

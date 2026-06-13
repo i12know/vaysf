@@ -583,6 +583,97 @@ def test_solve_soccer_precedence_keeps_final_after_pool_games():
     assert max(slot_index[slot_by_game[game_id]] for game_id in semi_ids) < third_idx
 
 
+def test_solve_precedence_waits_for_multislot_game_completion():
+    """A later round cannot start while a multi-slot earlier round is active."""
+    pytest.importorskip("ortools")
+    from scheduler import solve, STATUS_OPTIMAL
+
+    games = [
+        {
+            "game_id": "TEN-Men-Singles-Semi-1",
+            "event": "Tennis",
+            "stage": "Semi",
+            "pool_id": "",
+            "round": 1,
+            "team_a_id": None,
+            "team_b_id": None,
+            "duration_minutes": 60,
+            "resource_type": "Tennis Court",
+            "earliest_slot": None,
+            "latest_slot": None,
+        },
+        {
+            "game_id": "TEN-Men-Singles-Semi-2",
+            "event": "Tennis",
+            "stage": "Semi",
+            "pool_id": "",
+            "round": 1,
+            "team_a_id": None,
+            "team_b_id": None,
+            "duration_minutes": 60,
+            "resource_type": "Tennis Court",
+            "earliest_slot": None,
+            "latest_slot": None,
+        },
+        {
+            "game_id": "TEN-Men-Singles-Final",
+            "event": "Tennis",
+            "stage": "Final",
+            "pool_id": "",
+            "round": 2,
+            "team_a_id": None,
+            "team_b_id": None,
+            "duration_minutes": 60,
+            "resource_type": "Tennis Court",
+            "earliest_slot": None,
+            "latest_slot": None,
+        },
+    ]
+    resources = [
+        {
+            "resource_id": f"TEN-Sat-1-{court}",
+            "resource_type": "Tennis Court",
+            "label": f"Court-{court}",
+            "day": "Sat-1",
+            "open_time": "08:00",
+            "close_time": "10:30",
+            "slot_minutes": 30,
+        }
+        for court in range(1, 4)
+    ]
+    precedence = [
+        {
+            "before_game_id": semi_id,
+            "after_game_id": "TEN-Men-Singles-Final",
+            "min_gap_slots": 1,
+        }
+        for semi_id in (
+            "TEN-Men-Singles-Semi-1",
+            "TEN-Men-Singles-Semi-2",
+        )
+    ]
+
+    result = solve(
+        {
+            "games": games,
+            "resources": resources,
+            "precedence": precedence,
+            "day_order": ["Sat-1"],
+        },
+        timeout_seconds=10.0,
+    )
+
+    assert result["status"] == STATUS_OPTIMAL
+    starts = {
+        row["game_id"]: int(row["slot"][-5:-3]) * 60 + int(row["slot"][-2:])
+        for row in result["assignments"]
+    }
+    assert starts["TEN-Men-Singles-Final"] >= max(
+        starts["TEN-Men-Singles-Semi-1"] + 60,
+        starts["TEN-Men-Singles-Semi-2"] + 60,
+    )
+
+
 def test_solve_team_conflict_infeasible():
     """Two games sharing a team on a single slot/court must be INFEASIBLE."""
     pytest.importorskip("ortools")
@@ -1689,6 +1780,89 @@ def test_solve_duplicate_playoff_slot_raises():
         solve(si, timeout_seconds=10.0)
 
 
+def test_validate_playoff_slots_rejects_overlapping_multislot_pins():
+    """Different start slots still collide when their occupied intervals overlap."""
+    from scheduler import validate_playoff_slots
+
+    resources = [{
+        "resource_id": "TT-Sun-2-1",
+        "resource_type": "Table Tennis Table",
+        "label": "Table-1",
+        "day": "Sun-2",
+        "open_time": "14:00",
+        "close_time": "18:00",
+        "slot_minutes": 20,
+    }]
+    playoff_slots = [
+        {
+            "game_id": "TT-Semi",
+            "resource_id": "TT-Sun-2-1",
+            "slot": "Sun-2-14:00",
+            "duration_minutes": 120,
+        },
+        {
+            "game_id": "TT-Final",
+            "resource_id": "TT-Sun-2-1",
+            "slot": "Sun-2-15:00",
+            "duration_minutes": 120,
+        },
+    ]
+
+    with pytest.raises(ValueError, match="Overlapping playoff slot reservations"):
+        validate_playoff_slots(playoff_slots, resources)
+
+
+def test_validate_playoff_slots_blocks_every_occupied_slot():
+    """A multi-slot playoff pin removes its whole interval from pool play."""
+    from scheduler import validate_playoff_slots
+
+    resources = [{
+        "resource_id": "TT-Sun-2-1",
+        "resource_type": "Table Tennis Table",
+        "label": "Table-1",
+        "day": "Sun-2",
+        "open_time": "14:00",
+        "close_time": "16:00",
+        "slot_minutes": 20,
+    }]
+    playoff_slots = [{
+        "game_id": "TT-Final",
+        "resource_id": "TT-Sun-2-1",
+        "slot": "Sun-2-14:00",
+        "duration_minutes": 60,
+    }]
+
+    validated, blocked = validate_playoff_slots(playoff_slots, resources)
+
+    assert validated[0]["duration_minutes"] == 60
+    assert blocked["Table Tennis Table"]["TT-Sun-2-1"] == {
+        "Sun-2-14:00", "Sun-2-14:20", "Sun-2-14:40",
+    }
+
+
+def test_validate_playoff_slots_rejects_invalid_slot_label():
+    """A playoff pin must start on a generated slot for its named resource."""
+    from scheduler import validate_playoff_slots
+
+    resources = [{
+        "resource_id": "TEN-1",
+        "resource_type": "Tennis Court",
+        "label": "Court 1",
+        "day": "Sat-1",
+        "open_time": "08:00",
+        "close_time": "10:00",
+        "slot_minutes": 30,
+    }]
+    playoff_slots = [{
+        "game_id": "TEN-Final",
+        "resource_id": "TEN-1",
+        "slot": "Sat-1-08:15",
+    }]
+
+    with pytest.raises(ValueError, match="not a valid slot"):
+        validate_playoff_slots(playoff_slots, resources)
+
+
 def test_solve_pinned_final_cannot_precede_solver_semis():
     """Regression: pinned playoff Final must not appear before solver-assigned Semis.
 
@@ -1813,3 +1987,108 @@ def test_solve_qf_semi_gap_enforced():
     assert semi_idx >= qf2_idx + 2, (
         f"Semi-1 at slot {semi_idx} is too close to QF-2 at slot {qf2_idx} (need gap >= 2)"
     )
+
+
+def test_run_solve_schedule_timeout_writes_unknown(tmp_path, monkeypatch):
+    """Solver timeout returns exit code 2 and writes a parseable output with status UNKNOWN.
+
+    Monkeypatches _solve_one_pool to return STATUS_UNKNOWN immediately so the test
+    never flakes on CI due to wall-clock timing.  Verifies the file is written (callers
+    must still be able to inspect partial results) and that all required top-level keys
+    are present.
+    """
+    pytest.importorskip("ortools")
+    import scheduler as _scheduler
+    from scheduler import STATUS_UNKNOWN, run_solve_schedule
+
+    def _mock_timeout(pool_input, timeout_seconds):
+        return {
+            "status":              STATUS_UNKNOWN,
+            "solver_wall_seconds": timeout_seconds,
+            "assignments":         [],
+            "unscheduled":         [g["game_id"] for g in pool_input.get("games", [])],
+            "diagnostics":         [],
+        }
+
+    monkeypatch.setattr(_scheduler, "_solve_one_pool", _mock_timeout)
+
+    si = _minimal_schedule_input(
+        games=[_gym_game("G1", "T1", "T2"), _gym_game("G2", "T3", "T4")],
+        resources=[_gym_resource("GYM-Sat-1-1")],
+    )
+    input_path = tmp_path / "schedule_input.json"
+    input_path.write_text(json.dumps(si), encoding="utf-8")
+    output_path = tmp_path / "schedule_output.json"
+
+    exit_code = run_solve_schedule(input_path, output_path)
+
+    assert exit_code == 2
+    assert output_path.exists(), "schedule_output.json must be written even on timeout"
+
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert data["status"] == STATUS_UNKNOWN
+    assert "solved_at" in data
+    assert "assignments" in data
+    assert "pool_results" in data
+
+
+def test_run_solve_schedule_mixed_timeout_returns_exit_2(
+    tmp_path, monkeypatch
+):
+    """Preserve completed pools but return the timeout-specific exit code."""
+    pytest.importorskip("ortools")
+    import scheduler as _scheduler
+    from scheduler import (
+        STATUS_OPTIMAL,
+        STATUS_PARTIAL,
+        STATUS_UNKNOWN,
+        run_solve_schedule,
+    )
+
+    def _mock_mixed_result(pool_input, timeout_seconds):
+        game_id = pool_input["games"][0]["game_id"]
+        if pool_input["resources"][0]["resource_type"] == "Gym Court":
+            return {
+                "status": STATUS_OPTIMAL,
+                "solver_wall_seconds": 0.01,
+                "assignments": [{
+                    "game_id": game_id,
+                    "resource_id": "GYM-Sat-1-1",
+                    "slot": "Sat-1-08:00",
+                }],
+                "unscheduled": [],
+                "diagnostics": [],
+            }
+        return {
+            "status": STATUS_UNKNOWN,
+            "solver_wall_seconds": timeout_seconds,
+            "assignments": [],
+            "unscheduled": [game_id],
+            "diagnostics": [],
+        }
+
+    monkeypatch.setattr(_scheduler, "_solve_one_pool", _mock_mixed_result)
+
+    si = _minimal_schedule_input(
+        games=[
+            _gym_game("G1", "T1", "T2"),
+            _bad_game("BAD-01"),
+        ],
+        resources=[
+            _gym_resource("GYM-Sat-1-1"),
+            _bad_resource("BAD-1"),
+        ],
+    )
+    input_path = tmp_path / "schedule_input.json"
+    input_path.write_text(json.dumps(si), encoding="utf-8")
+    output_path = tmp_path / "schedule_output.json"
+
+    exit_code = run_solve_schedule(input_path, output_path)
+
+    assert exit_code == 2
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert data["status"] == STATUS_PARTIAL
+    assert [a["game_id"] for a in data["assignments"]] == ["G1"]
+    pools = {pr["resource_type"]: pr for pr in data["pool_results"]}
+    assert pools["Gym Court"]["status"] == STATUS_OPTIMAL
+    assert pools["Badminton Court"]["status"] == STATUS_UNKNOWN

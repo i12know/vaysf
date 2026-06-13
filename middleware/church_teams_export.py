@@ -1785,7 +1785,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         was chosen for this run.
         """
         gym_games = self._build_gym_game_objects(roster_rows)
-        pod_games = self._build_pod_game_objects(roster_rows, validation_rows)
+        pod_games, _pod_precedence = self._build_pod_game_objects(roster_rows, validation_rows)
         all_games = gym_games + pod_games
 
         gym_resources = self._build_gym_resource_objects(SCHEDULE_SOLVER_GYM_COURTS)
@@ -3454,6 +3454,7 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_build_pod_divisions_rows",
     "_build_pod_entries_review_rows",
     "_resolve_pod_doubles",
+    "_resolve_pod_singles",
     "_expected_partner_issue_type",
     "_partner_validation_key",
     "_reconcile_pod_validation",
@@ -3495,6 +3496,8 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_float_from_excel",
     "_load_venue_input_rows",
     "_load_playoff_slots",
+    "_load_venue_date_day_map",
+    "_resolve_venue_playoff_slots",
     "_split_slot_label",
     "_load_gym_modes",
     "_build_schedule_input",

@@ -1,6 +1,7 @@
 import json
 
 import pandas as pd
+import pytest
 from openpyxl import load_workbook
 
 from church_teams_export import ChurchTeamsExporter
@@ -685,8 +686,9 @@ def test_write_schedule_workbook_uses_schedule_input_resources_offline(tmp_path)
 # ===========================================================================
 
 
-def _write_venue_input(path, headers, data_rows, gym_modes_rows=None):
-    """Write a venue_input.xlsx with a Venue-Input tab (and optional Gym-Modes)."""
+def _write_venue_input(path, headers, data_rows, gym_modes_rows=None, playoff_rows=None):
+    """Write a venue_input.xlsx with a Venue-Input tab (and optional Gym-Modes /
+    Playoff-Slots tabs; the first row of each optional tab is its header row)."""
     from openpyxl import Workbook
 
     wb = Workbook()
@@ -702,6 +704,11 @@ def _write_venue_input(path, headers, data_rows, gym_modes_rows=None):
         for r, data in enumerate(gym_modes_rows, start=1):
             for c, val in enumerate(data, start=1):
                 gm.cell(row=r, column=c, value=val)
+    if playoff_rows is not None:
+        ps = wb.create_sheet("Playoff-Slots")
+        for r, data in enumerate(playoff_rows, start=1):
+            for c, val in enumerate(data, start=1):
+                ps.cell(row=r, column=c, value=val)
     wb.save(path)
 
 
@@ -1954,10 +1961,13 @@ def test_build_schedule_input_playoff_pinned_resource_promoted_as_single_slot(tm
     assert p["open_time"] == "14:00"
     # close_time = 14:00 + 60 min = 15:00.
     assert p["close_time"] == "15:00"
-    # Must be flagged so the solver_pool assignment loop skips it.
+    # Must be flagged so capacity diagnostics skip it.
     assert p.get("playoff_pinned") is True
-    # Must NOT be assigned to the Gym Core solver pool.
-    assert "solver_pool" not in p, "playoff_pinned resource must not enter Gym Core pool"
+    # Must join the Gym Core pool: a pinned game takes its pool from its
+    # pinned resource, and QF→Semi→Final precedence is only enforceable when
+    # the pinned game shares a pool with its pool-play siblings.  Pool play
+    # still cannot use the resource — its only slot is reserved.
+    assert p.get("solver_pool") == ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL
 
 
 def test_build_schedule_input_playoff_pinned_resource_merges_multiple_slots(tmp_path):
@@ -2074,6 +2084,430 @@ def test_build_schedule_input_playoff_pinned_resource_rejects_implausible_ordina
     si = builder._build_schedule_input(_make_gym_roster(), [], path)
 
     assert not any(r["resource_id"] == "GYM-Sun-2-99" for r in si["resources"])
+
+
+_VENUE_CENTRIC_HEADERS = [
+    "Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+    "Date", "Start Time", "Last Start Time", "Slot Minutes",
+    "Available Slots", "Exclusive Venue Group", "Contact", "Cost", "Notes",
+]
+
+
+def _venue_centric_allocator_fixture(tmp_path, playoff_rows):
+    """venue_input.xlsx with an allocator-managed gym (Sat-1 + Sun-2 blocks)."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 4, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 4, 2],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows,
+                       gym_modes_rows=gym_modes, playoff_rows=playoff_rows)
+    return path
+
+
+def test_build_schedule_input_venue_centric_playoff_pin_creates_pinned_resource(tmp_path):
+    """A Playoff-Slots row with gym_name + date + start_time (no resource_id)
+    should resolve to a synthetic playoff-pinned single-slot resource (#127)."""
+    from scheduler import validate_playoff_slots
+
+    path = _venue_centric_allocator_fixture(tmp_path, [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Church Main Gym", "2026-07-26", "14:00"],
+    ])
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    pinned = [r for r in si["resources"] if r.get("playoff_pinned")]
+    assert len(pinned) == 1
+    p = pinned[0]
+    assert p["resource_id"] == "BB-Sun-2-PF1"
+    assert p["resource_type"] == "Basketball Court"
+    assert p["open_time"] == "14:00"
+    assert p["close_time"] == "15:00"
+    assert p["venue_name"] == "Church Main Gym"
+    # Joins Gym Core so precedence rules involving the pinned game stay
+    # same-pool and enforceable; all its slots are reserved from pool play.
+    assert p.get("solver_pool") == ScheduleWorkbookBuilder._GYM_CORE_SOLVER_POOL
+
+    # The playoff entry must be rewritten to the resolved resource_id + slot
+    # and still pass solver-side validation.
+    assert len(si["playoff_slots"]) == 1
+    entry = si["playoff_slots"][0]
+    assert entry["resource_id"] == "BB-Sun-2-PF1"
+    assert entry["slot"] == "Sun-2-14:00"
+    assert entry["gym_name"] == "Church Main Gym"
+    validated, _blocked = validate_playoff_slots(si["playoff_slots"], si["resources"])
+    assert len(validated) == 1
+
+
+def test_build_schedule_input_venue_centric_pin_reserves_allocator_window(tmp_path):
+    """The pinned window must be carved out of the allocator inventory: no
+    Stage-A decision may overlap it, even on a demand-claimed day (#127/#133)."""
+    path = _venue_centric_allocator_fixture(tmp_path, [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Main Gym", "2026-07-26", "14:00"],
+    ])
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    assert si["gym_allocation"]["source"] == "allocator"
+    for decision in si["gym_allocation"]["decisions"]:
+        if decision["day"] != "Sun-2":
+            continue
+        # Decision windows must not overlap the reserved 14:00–15:00 window.
+        assert (
+            decision["close_time"] <= "14:00" or decision["open_time"] >= "15:00"
+        ), f"allocator claimed reserved playoff window: {decision}"
+    # The same exclusion applies to allocator-emitted pool-play resources.
+    for resource in si["resources"]:
+        if resource.get("playoff_pinned") or resource["day"] != "Sun-2":
+            continue
+        assert resource["close_time"] <= "14:00" or resource["open_time"] >= "15:00"
+
+
+def test_build_schedule_input_venue_centric_contiguous_pins_merge_one_track(tmp_path):
+    """Contiguous venue-centric pins on the same gym/sport share one synthetic
+    court, mirroring the legacy same-resource_id merge behavior."""
+    from scheduler import validate_playoff_slots
+
+    path = _venue_centric_allocator_fixture(tmp_path, [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi",
+         "Main Gym", "2026-07-26", "14:00"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Main Gym", "2026-07-26", "15:00"],
+    ])
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    pinned = [r for r in si["resources"] if r.get("playoff_pinned")]
+    assert len(pinned) == 1, "contiguous pins should merge onto one court track"
+    assert pinned[0]["open_time"] == "14:00"
+    assert pinned[0]["close_time"] == "16:00"
+
+    entries = si["playoff_slots"]
+    assert [e["resource_id"] for e in entries] == ["BB-Sun-2-PF1", "BB-Sun-2-PF1"]
+    assert [e["slot"] for e in entries] == ["Sun-2-14:00", "Sun-2-15:00"]
+    validated, _blocked = validate_playoff_slots(entries, si["resources"])
+    assert len(validated) == 2
+
+
+def test_build_schedule_input_venue_centric_pin_resolves_direct_resource(tmp_path):
+    """Venue-centric rows for standalone (non-allocator) venues resolve to the
+    existing expanded resource IDs; concurrent pins land on distinct courts."""
+    from config import SPORT_TYPE
+    from scheduler import validate_playoff_slots
+
+    rows = [
+        ["TT Pod", "Orange Chapel", "Table Tennis Table", 2, "Sun-2",
+         "2026-07-26", 9, 16, 20, None, None, None, None, None],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["TT-Semi-1", SPORT_TYPE["TABLE_TENNIS"], "Semi",
+         "Orange Chapel", "2026-07-26", "15:00"],
+        ["TT-Semi-2", SPORT_TYPE["TABLE_TENNIS"], "Semi",
+         "Orange Chapel", "2026-07-26", "15:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows, playoff_rows=playoff_rows)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    # No synthetic resources for standalone venues — existing IDs are reused.
+    assert not any(r.get("playoff_pinned") for r in si["resources"])
+    entries = si["playoff_slots"]
+    assert {e["resource_id"] for e in entries} == {"TT-Sun-2-1", "TT-Sun-2-2"}
+    assert all(e["slot"] == "Sun-2-15:00" for e in entries)
+    validated, _blocked = validate_playoff_slots(entries, si["resources"])
+    assert len(validated) == 2
+
+
+def test_build_schedule_input_venue_centric_direct_overlap_fails(tmp_path):
+    """Multi-slot pins may not overlap on the same standalone resource."""
+    from config import SPORT_TYPE
+
+    rows = [
+        ["TT Pod", "Orange Chapel", "Table Tennis Table", 1, "Sun-2",
+         "2026-07-26", 9, 17, 20, None, None, None, None, None],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time",
+         "duration_minutes"],
+        ["TT-Semi", SPORT_TYPE["TABLE_TENNIS"], "Semi",
+         "Orange Chapel", "2026-07-26", "14:00", 120],
+        ["TT-Final", SPORT_TYPE["TABLE_TENNIS"], "Final",
+         "Orange Chapel", "2026-07-26", "15:00", 120],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows, playoff_rows=playoff_rows)
+
+    with pytest.raises(ValueError, match="already occupied during"):
+        ScheduleWorkbookBuilder()._build_schedule_input(
+            _make_gym_roster(), [], path
+        )
+
+
+def test_build_schedule_input_venue_centric_managed_capacity_fails(tmp_path):
+    """Two concurrent pins cannot be placed on a one-court gym mode."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL
+
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 1, 0],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi",
+         "Church Main Gym", "2026-07-26", "14:00"],
+        ["BBM-Semi-2", "Basketball - Men Team", "Semi",
+         "Church Main Gym", "2026-07-26", "14:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(
+        path, _VENUE_CENTRIC_HEADERS, rows,
+        gym_modes_rows=gym_modes, playoff_rows=playoff_rows,
+    )
+
+    with pytest.raises(ValueError, match="Gym-Modes provides 1"):
+        ScheduleWorkbookBuilder()._build_schedule_input(
+            _make_gym_roster(), [], path
+        )
+
+
+def test_build_schedule_input_venue_centric_cross_mode_overlap_fails(tmp_path):
+    """Mutually-exclusive gym modes cannot be pinned at the same time."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 2, 2],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Church Main Gym", "2026-07-26", "14:00"],
+        ["VBM-Final", "Volleyball - Men Team", "Final",
+         "Church Main Gym", "2026-07-26", "14:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(
+        path, _VENUE_CENTRIC_HEADERS, rows,
+        gym_modes_rows=gym_modes, playoff_rows=playoff_rows,
+    )
+
+    with pytest.raises(ValueError, match="mutually-exclusive gym"):
+        ScheduleWorkbookBuilder()._build_schedule_input(
+            _make_gym_roster(), [], path
+        )
+
+
+def test_build_schedule_input_venue_pin_uses_generated_game_duration(tmp_path):
+    """A 60-minute generated game on a 30-minute grid reserves two slots."""
+    from config import GYM_RESOURCE_TYPE_BASKETBALL
+    from scheduler import validate_playoff_slots
+
+    rows = [
+        ["Main Gym", "Church Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 12, 17, 30, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 2, 0],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Church Main Gym", "2026-07-26", "14:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(
+        path, _VENUE_CENTRIC_HEADERS, rows,
+        gym_modes_rows=gym_modes, playoff_rows=playoff_rows,
+    )
+
+    si = ScheduleWorkbookBuilder()._build_schedule_input(
+        _make_gym_roster(), [], path
+    )
+
+    entry = si["playoff_slots"][0]
+    pinned = next(r for r in si["resources"] if r.get("playoff_pinned"))
+    assert entry["duration_minutes"] == 60
+    assert pinned["slot_minutes"] == 30
+    assert pinned["open_time"] == "14:00"
+    assert pinned["close_time"] == "15:00"
+    _validated, blocked = validate_playoff_slots(
+        si["playoff_slots"], si["resources"]
+    )
+    assert blocked["Basketball Court"][pinned["resource_id"]] == {
+        "Sun-2-14:00", "Sun-2-14:30",
+    }
+
+
+def test_build_schedule_input_venue_centric_pin_unknown_gym_fails_build(tmp_path):
+    """An unknown venue fails generation instead of silently omitting the pin."""
+    from loguru import logger as _loguru_logger
+
+    path = _venue_centric_allocator_fixture(tmp_path, [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final",
+         "Nonexistent Gym", "2026-07-26", "14:00"],
+    ])
+
+    messages = []
+    sink_id = _loguru_logger.add(messages.append, level="ERROR")
+    try:
+        builder = ScheduleWorkbookBuilder()
+        with pytest.raises(
+            ValueError, match="Invalid venue-centric Playoff-Slots configuration"
+        ):
+            builder._build_schedule_input(_make_gym_roster(), [], path)
+    finally:
+        _loguru_logger.remove(sink_id)
+
+    assert any(
+        "no Venue-Input row found for gym 'Nonexistent Gym'" in str(m)
+        for m in messages
+    )
+
+
+def test_build_schedule_input_venue_centric_and_explicit_forms_coexist(tmp_path):
+    """Both Playoff-Slots forms work in the same file; an explicit
+    resource_id + slot row passes through unchanged."""
+    from scheduler import validate_playoff_slots
+
+    path = _venue_centric_allocator_fixture(tmp_path, [
+        ["game_id", "event", "stage", "resource_id", "slot",
+         "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final", None, None,
+         "Main Gym", "2026-07-26", "14:00"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi", "GYM-Sat-1-1", "Sat-1-16:00",
+         None, None, None],
+    ])
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(), [], path)
+
+    by_game = {e["game_id"]: e for e in si["playoff_slots"]}
+    assert by_game["BBM-Final"]["resource_id"] == "BB-Sun-2-PF1"
+    assert by_game["BBM-Semi-1"]["resource_id"] == "GYM-Sat-1-1"
+    assert by_game["BBM-Semi-1"]["slot"] == "Sat-1-16:00"
+    validated, _blocked = validate_playoff_slots(si["playoff_slots"], si["resources"])
+    assert len(validated) == 2
+
+
+def test_venue_centric_pins_solve_end_to_end_with_precedence(tmp_path):
+    """Full #127 scenario: all BBM late rounds pinned by venue name on an
+    allocator-unvisited Sun-2 block.  The build must pass the schedule
+    contract, the QFs must solve onto the day before the pinned Semis
+    (precedence is enforceable because the pinned games share the Gym Core
+    pool), and no pool game may touch the pinned court."""
+    import scheduler
+    from schedule_contracts import validate_schedule_input
+    from config import GYM_RESOURCE_TYPE_BASKETBALL, GYM_RESOURCE_TYPE_VOLLEYBALL
+
+    rows = [
+        ["Main Gym", "EHS Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 4, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Main Gym", "EHS Main Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Main Gym", None, None, None],
+        ["Practice Gym", "EHS Practice Gym", GYM_RESOURCE_TYPE_VOLLEYBALL, 2, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Practice Gym", None, None, None],
+        ["Practice Gym", "EHS Practice Gym", GYM_RESOURCE_TYPE_BASKETBALL, 1, "Sat-1",
+         "2026-07-18", 8, 17, 60, None, "Practice Gym", None, None, None],
+        ["Main Gym", "EHS Main Gym", GYM_RESOURCE_TYPE_BASKETBALL, 2, "Sun-2",
+         "2026-07-26", 9, 17, 60, None, "Main Gym", None, None, None],
+    ]
+    gym_modes = [
+        ["Gym Name", "Basketball Courts", "Volleyball Courts"],
+        ["Main Gym", 4, 2],
+        ["Practice Gym", 1, 2],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi", "EHS Main Gym", "2026-07-26", "12:00"],
+        ["BBM-Semi-2", "Basketball - Men Team", "Semi", "EHS Main Gym", "2026-07-26", "13:00"],
+        ["BBM-3rd",    "Basketball - Men Team", "3rd",  "EHS Main Gym", "2026-07-26", "14:00"],
+        ["BBM-Final",  "Basketball - Men Team", "Final", "EHS Main Gym", "2026-07-26", "15:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows,
+                       gym_modes_rows=gym_modes, playoff_rows=playoff_rows)
+
+    builder = ScheduleWorkbookBuilder()
+    si = builder._build_schedule_input(_make_gym_roster(8), [], path)
+
+    assert validate_schedule_input(si) == []
+    pinned = [r for r in si["resources"] if r.get("playoff_pinned")]
+    assert [(r["resource_id"], r["open_time"], r["close_time"]) for r in pinned] == [
+        ("BB-Sun-2-PF1", "12:00", "16:00"),
+    ], "the four contiguous pins must merge onto one playoff court track"
+
+    out = scheduler.solve(si)
+    assert out["status"] == "OPTIMAL"
+    assert out["unscheduled"] == []
+    by_game = {a["game_id"]: a for a in out["assignments"]}
+    assert by_game["BBM-Final"]["slot"] == "Sun-2-15:00"
+    # QF precedence vs the pinned Semis must be enforced: QFs stay on Sat-1.
+    for n in range(1, 5):
+        day, _time = by_game[f"BBM-QF-{n}"]["slot"].rsplit("-", 1)
+        assert day == "Sat-1"
+    # Pool play never touches the pinned playoff court.
+    pinned_users = {
+        a["game_id"] for a in out["assignments"]
+        if a["resource_id"] == "BB-Sun-2-PF1"
+    }
+    assert pinned_users == {"BBM-Semi-1", "BBM-Semi-2", "BBM-3rd", "BBM-Final"}
+
+
+def test_load_playoff_slots_accepts_venue_centric_columns(tmp_path):
+    """The loader accepts gym_name/date/start_time rows, normalizes date and
+    start_time, and skips rows with neither complete placement form."""
+    rows = [
+        ["X", "Some Gym", "Basketball Court", 1, "Sat-1",
+         "2026-07-18", 8, 10, 60, None, None, None, None, None],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["BBM-Final", "Basketball - Men Team", "Final", "Some Gym", "2026-07-26", "14:00"],
+        ["BBM-Semi-1", "Basketball - Men Team", "Semi", "Some Gym", None, None],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows, playoff_rows=playoff_rows)
+
+    slots = ScheduleWorkbookBuilder._load_playoff_slots(path)
+    assert len(slots) == 1, "incomplete venue-centric row must be skipped"
+    entry = slots[0]
+    assert entry["gym_name"] == "Some Gym"
+    assert entry["date"] == "2026-07-26"
+    assert entry["start_time"] == "14:00"
+    assert entry["resource_id"] == ""
 
 
 def test_build_schedule_input_qf_games_get_latest_slot_day_before_finals(tmp_path):
@@ -2256,7 +2690,10 @@ def test_build_schedule_input_via_church_teams_exporter_does_not_raise(tmp_path)
 
 
 def test_build_pod_game_objects_single_elimination():
-    """With 3 entries in a division, 2 game placeholders are generated."""
+    """With 3 entries, 2 game placeholders with stage-aware IDs are generated.
+
+    N=3, P=4: round 1 = Semi (1 game), round 2 = Final (1 game).
+    """
     from config import POD_RESOURCE_EVENT_TYPE
 
     roster_rows = [
@@ -2266,12 +2703,18 @@ def test_build_pod_game_objects_single_elimination():
         for i in range(1, 4)  # 3 entries
     ]
     builder = ScheduleWorkbookBuilder()
-    games = builder._build_pod_game_objects(roster_rows, [])
+    games, prec = builder._build_pod_game_objects(roster_rows, [])
     assert len(games) == 2, f"Expected 2 games (3-1=2), got {len(games)}"
     assert all(g["game_id"].startswith("BAD-Women-Singles-") for g in games)
-    assert all(g["stage"] == "R1" for g in games)
     assert all(g["resource_type"] == POD_RESOURCE_EVENT_TYPE[SPORT_TYPE["BADMINTON"]] for g in games)
-    assert games[0]["game_id"] == "BAD-Women-Singles-01"
+    game_ids = [g["game_id"] for g in games]
+    assert game_ids == ["BAD-Women-Singles-Semi-1", "BAD-Women-Singles-Final"]
+    stages = [g["stage"] for g in games]
+    assert stages == ["Semi", "Final"]
+    # Precedence: Semi must complete before Final
+    assert len(prec) == 1
+    assert prec[0]["before_game_id"] == "BAD-Women-Singles-Semi-1"
+    assert prec[0]["after_game_id"] == "BAD-Women-Singles-Final"
 
 
 def test_build_pod_game_objects_skips_empty_divisions():
@@ -2282,8 +2725,9 @@ def test_build_pod_game_objects_skips_empty_divisions():
          "sport_format": "Men Single"},
     ]
     builder = ScheduleWorkbookBuilder()
-    games = builder._build_pod_game_objects(roster_rows, [])
+    games, prec = builder._build_pod_game_objects(roster_rows, [])
     assert games == [], "Single-entry division should produce no games"
+    assert prec == []
 
 
 def test_build_gym_resource_objects_count():
@@ -4154,7 +4598,10 @@ def test_resolve_pod_doubles_assigns_stable_reproducible_ids():
 
 
 def test_pod_game_objects_assigns_r1_team_ids_for_confirmed_doubles():
-    """R1 games for confirmed doubles carry real entry IDs; later rounds stay None."""
+    """Round-1 games for confirmed doubles carry real entry IDs; later rounds stay None.
+
+    N=4, P=4: round 1 = Semi (2 games with team IDs), round 2 = Final (None).
+    """
     builder = ScheduleWorkbookBuilder()
     # 4 confirmed pairs → 4 planning entries → 3 games; R1 matchups = floor(4/2)=2.
     roster = _badminton_doubles_pair("Men", [
@@ -4163,23 +4610,31 @@ def test_pod_game_objects_assigns_r1_team_ids_for_confirmed_doubles():
         ("15", "Em", "16", "Phuc", "Badminton", "Badminton"),
         ("17", "Giang", "18", "Hai", "Badminton", "Badminton"),
     ])
-    games = builder._build_pod_game_objects(roster, [])
-    assert len(games) == 3  # 4 - 1
-    r1_with_teams = [g for g in games if g["team_a_id"] and g["team_b_id"]]
-    assert len(r1_with_teams) == 2
-    for g in r1_with_teams:
+    games, prec = builder._build_pod_game_objects(roster, [])
+    assert len(games) == 4  # 4 - 1 elimination games + third place
+    # N=4, P=4: Semi-1 and Semi-2 get team IDs; Final has None.
+    semi_games = [g for g in games if g["stage"] == "Semi"]
+    assert len(semi_games) == 2
+    for g in semi_games:
         assert g["team_a_id"].startswith("BAD-Men-Doubles-E")
         assert g["team_b_id"].startswith("BAD-Men-Doubles-E")
         assert g["team_a_id"] != g["team_b_id"]
-    # The remaining (later-round) game has no known participants.
-    assert any(g["team_a_id"] is None and g["team_b_id"] is None for g in games)
+    final_game = next(g for g in games if g["stage"] == "Final")
+    assert final_game["team_a_id"] is None and final_game["team_b_id"] is None
+    third_game = next(g for g in games if g["stage"] == "3rd")
+    assert third_game["game_id"] == "BAD-Men-Doubles-3rd"
+    assert third_game["team_a_id"] is None and third_game["team_b_id"] is None
+    # Precedence: Semi-1, Semi-2 → Final and 3rd
+    assert len(prec) == 4
+    after_ids = {p["after_game_id"] for p in prec}
+    assert after_ids == {"BAD-Men-Doubles-Final", "BAD-Men-Doubles-3rd"}
 
 
 def test_pod_game_objects_r1_matchups_are_bye_aware():
-    """P2 fix: bye-aware bracket math — N=5 yields 1 R1 match (not 2).
+    """Bye-aware bracket math: N=5 yields 1 first-round match (QF-1), not 2.
 
-    Standard single-elimination: P=8, byes=3, R1 games = (5-3)/2 = 1.
-    The two lowest-seeded entries (E04, E05) play; E01-E03 get byes.
+    N=5, P=8, byes=3: round 1 = QF (1 game), round 2 = Semi (2 games), round 3 = Final.
+    The two lowest-seeded entries (E04, E05) play in QF-1; E01-E03 get byes to Semi.
     """
     builder = ScheduleWorkbookBuilder()
     roster = _badminton_doubles_pair("Men", [
@@ -4189,19 +4644,38 @@ def test_pod_game_objects_r1_matchups_are_bye_aware():
         ("17", "Giang", "18", "Hai", "Badminton", "Badminton"),
         ("19", "Kiet", "20", "Long", "Badminton", "Badminton"),
     ])
-    games = builder._build_pod_game_objects(roster, [])
-    assert len(games) == 4  # 5 - 1
+    games, prec = builder._build_pod_game_objects(roster, [])
+    assert len(games) == 5  # 5 - 1 elimination games + third place
 
-    r1_with_teams = [g for g in games if g["team_a_id"] and g["team_b_id"]]
-    # Only 1 R1 matchup for N=5 (not 2 as the old floor(N/2) formula produced)
-    assert len(r1_with_teams) == 1
-    matched_ids = {r1_with_teams[0]["team_a_id"], r1_with_teams[0]["team_b_id"]}
-    # The matched entries must be E04 and E05 (the two without byes)
+    stages = [g["stage"] for g in games]
+    assert stages == ["QF", "Semi", "Semi", "Final", "3rd"]
+    game_ids = [g["game_id"] for g in games]
+    assert game_ids == [
+        "BAD-Men-Doubles-QF-1",
+        "BAD-Men-Doubles-Semi-1",
+        "BAD-Men-Doubles-Semi-2",
+        "BAD-Men-Doubles-Final",
+        "BAD-Men-Doubles-3rd",
+    ]
+
+    # Only QF-1 has known team IDs (the 2 non-bye players)
+    qf_game = games[0]
+    matched_ids = {qf_game["team_a_id"], qf_game["team_b_id"]}
     assert matched_ids == {"BAD-Men-Doubles-E04", "BAD-Men-Doubles-E05"}
-    # E01–E03 appear nowhere as team_a_id/team_b_id in R1
-    bye_ids = {f"BAD-Men-Doubles-E0{i}" for i in range(1, 4)}
-    r1_participants = {r1_with_teams[0]["team_a_id"], r1_with_teams[0]["team_b_id"]}
-    assert bye_ids.isdisjoint(r1_participants)
+    # Semi and Final games have no known participants yet
+    assert all(g["team_a_id"] is None for g in games[1:])
+
+    # Precedence: QF-1 → Semi-1, QF-1 → Semi-2, Semi-1 → Final, Semi-2 → Final
+    assert len(prec) == 6
+    prec_pairs = {(p["before_game_id"], p["after_game_id"]) for p in prec}
+    assert prec_pairs == {
+        ("BAD-Men-Doubles-QF-1", "BAD-Men-Doubles-Semi-1"),
+        ("BAD-Men-Doubles-QF-1", "BAD-Men-Doubles-Semi-2"),
+        ("BAD-Men-Doubles-Semi-1", "BAD-Men-Doubles-Final"),
+        ("BAD-Men-Doubles-Semi-2", "BAD-Men-Doubles-Final"),
+        ("BAD-Men-Doubles-Semi-1", "BAD-Men-Doubles-3rd"),
+        ("BAD-Men-Doubles-Semi-2", "BAD-Men-Doubles-3rd"),
+    }
 
 
 def test_pod_game_objects_byes_include_unresolved_planned_entries():
@@ -4230,9 +4704,10 @@ def test_pod_game_objects_byes_include_unresolved_planned_entries():
         },
     ])
 
-    games = builder._build_pod_game_objects(roster, [])
+    games, _prec = builder._build_pod_game_objects(roster, [])
 
-    assert len(games) == 4  # five planned entries
+    assert len(games) == 5  # four elimination games + third place
+    # First game (QF-1) has one known player; the other slot is None (unresolved entry)
     identified_r1 = [g for g in games if g["team_a_id"] or g["team_b_id"]]
     assert len(identified_r1) == 1
     assert {
@@ -4240,6 +4715,230 @@ def test_pod_game_objects_byes_include_unresolved_planned_entries():
         identified_r1[0]["team_b_id"],
     } == {"BAD-Men-Doubles-E04", None}
     assert all(g["division_entry_count"] == 5 for g in games)
+
+
+# ── Issue #130: stage-aware racquet late-round game IDs ──────────────────────
+
+
+def test_build_pod_game_objects_tt_singles_bracket_p8():
+    """TT Men Singles with N=6 uses a P=8 bracket: QF-1..2, Semi-1..2, Final.
+
+    N=6, P=8, byes=2: round 1 (QF) has 2 games, round 2 (Semi) 2 games, round 3 (Final) 1 game.
+    """
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["TABLE_TENNIS"], "sport_gender": "Men",
+         "sport_format": "Men Single"}
+        for i in range(1, 7)  # 6 entries
+    ]
+    games, prec = ScheduleWorkbookBuilder()._build_pod_game_objects(roster_rows, [])
+
+    assert len(games) == 6  # 6 - 1 elimination games + third place
+    game_ids = [g["game_id"] for g in games]
+    assert game_ids == [
+        "TT-Men-Singles-QF-1",
+        "TT-Men-Singles-QF-2",
+        "TT-Men-Singles-Semi-1",
+        "TT-Men-Singles-Semi-2",
+        "TT-Men-Singles-Final",
+        "TT-Men-Singles-3rd",
+    ]
+    stages = [g["stage"] for g in games]
+    assert stages == ["QF", "QF", "Semi", "Semi", "Final", "3rd"]
+    assert all(g["event"] == SPORT_TYPE["TABLE_TENNIS"] for g in games)
+    assert all(g["resource_type"] == "Table Tennis Table" for g in games)
+    assert all(g["duration_minutes"] == 20 for g in games)
+
+    # 4 QF→Semi + 2 Semi→Final + 2 Semi→3rd edges = 8 total
+    assert len(prec) == 8
+    qf_to_semi = [p for p in prec if "QF" in p["before_game_id"]]
+    assert len(qf_to_semi) == 4
+    semi_to_final = [p for p in prec if "Semi" in p["before_game_id"]]
+    assert len(semi_to_final) == 4
+    assert {
+        p["after_game_id"] for p in semi_to_final
+    } == {"TT-Men-Singles-Final", "TT-Men-Singles-3rd"}
+    assert all(p["min_gap_slots"] == 1 for p in prec)
+
+
+def test_build_pod_game_objects_tt_full_bracket_p8():
+    """TT Women Singles with N=8 (no byes): QF-1..4, Semi-1..2, Final — 7 games."""
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["TABLE_TENNIS"], "sport_gender": "Women",
+         "sport_format": "Women Single"}
+        for i in range(1, 9)  # 8 entries — full P=8 bracket, no byes
+    ]
+    games, prec = ScheduleWorkbookBuilder()._build_pod_game_objects(roster_rows, [])
+
+    assert len(games) == 8  # 8 - 1 elimination games + third place
+    game_ids = [g["game_id"] for g in games]
+    assert game_ids == [
+        "TT-Women-Singles-QF-1",
+        "TT-Women-Singles-QF-2",
+        "TT-Women-Singles-QF-3",
+        "TT-Women-Singles-QF-4",
+        "TT-Women-Singles-Semi-1",
+        "TT-Women-Singles-Semi-2",
+        "TT-Women-Singles-Final",
+        "TT-Women-Singles-3rd",
+    ]
+    # 8 QF→Semi + 2 Semi→Final + 2 Semi→3rd edges = 12 total
+    assert len(prec) == 12
+
+
+def test_build_pod_game_objects_pickleball_singles_bracket_p4():
+    """Pickleball Women Singles with N=4 (P=4): Semi-1, Semi-2, Final — 3 games."""
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["PICKLEBALL"], "sport_gender": "Women",
+         "sport_format": "Women Single"}
+        for i in range(1, 5)  # 4 entries — P=4 bracket
+    ]
+    games, prec = ScheduleWorkbookBuilder()._build_pod_game_objects(roster_rows, [])
+
+    assert len(games) == 4  # 4 - 1 elimination games + third place
+    game_ids = [g["game_id"] for g in games]
+    assert game_ids == [
+        "PCK-Women-Singles-Semi-1",
+        "PCK-Women-Singles-Semi-2",
+        "PCK-Women-Singles-Final",
+        "PCK-Women-Singles-3rd",
+    ]
+    stages = [g["stage"] for g in games]
+    assert stages == ["Semi", "Semi", "Final", "3rd"]
+    assert all(g["event"] == SPORT_TYPE["PICKLEBALL"] for g in games)
+    assert all(g["resource_type"] == "Pickleball Court" for g in games)
+
+    # 2 Semi→Final + 2 Semi→3rd edges
+    assert len(prec) == 4
+    assert {
+        p["after_game_id"] for p in prec
+    } == {"PCK-Women-Singles-Final", "PCK-Women-Singles-3rd"}
+    assert all(p["min_gap_slots"] == 1 for p in prec)
+
+
+def test_pod_precedence_included_in_schedule_input(tmp_path):
+    """Racquet sport precedence edges appear in the schedule_input.json output."""
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["TABLE_TENNIS"], "sport_gender": "Men",
+         "sport_format": "Men Single"}
+        for i in range(1, 5)  # 4 TT Men: P=4, Semi-1, Semi-2, Final
+    ]
+    si = ScheduleWorkbookBuilder()._build_schedule_input(
+        roster_rows, [], tmp_path / "no_venue.xlsx"
+    )
+
+    # TT-Men-Singles-Final must be in the games list
+    game_ids = {g["game_id"] for g in si["games"]}
+    assert "TT-Men-Singles-Final" in game_ids
+    assert "TT-Men-Singles-Semi-1" in game_ids
+    assert "TT-Men-Singles-Semi-2" in game_ids
+    assert "TT-Men-Singles-3rd" in game_ids
+
+    # Precedence edges from the TT bracket must be included
+    tt_prec = [p for p in si["precedence"] if "TT-Men-Singles" in p["before_game_id"]]
+    assert len(tt_prec) == 4  # both Semis → Final and 3rd
+    after_ids = {p["after_game_id"] for p in tt_prec}
+    assert after_ids == {"TT-Men-Singles-Final", "TT-Men-Singles-3rd"}
+
+
+def test_schedule_output_orders_all_early_racquet_rounds_before_qf():
+    """R2+ stages sort chronologically before QF/Semi/Final in the report."""
+    resource = {
+        "resource_id": "TT-Sat-1-1",
+        "resource_type": "Table Tennis Table",
+        "label": "Table-1",
+        "day": "Sat-1",
+        "open_time": "08:00",
+        "close_time": "12:00",
+        "slot_minutes": 20,
+    }
+    games = [
+        {
+            "game_id": f"TT-Men-Singles-{suffix}",
+            "event": SPORT_TYPE["TABLE_TENNIS"],
+            "stage": stage,
+            "round": round_num,
+            "duration_minutes": 20,
+            "resource_type": "Table Tennis Table",
+        }
+        for suffix, stage, round_num in (
+            ("Final", "Final", 5),
+            ("QF-1", "QF", 3),
+            ("02", "R2", 2),
+            ("01", "R1", 1),
+            ("Semi-1", "Semi", 4),
+        )
+    ]
+    assignments = [
+        {
+            "game_id": game["game_id"],
+            "resource_id": resource["resource_id"],
+            "slot": f"Sat-1-{8 + index:02d}:00",
+        }
+        for index, game in enumerate(games)
+    ]
+
+    rows = ScheduleWorkbookBuilder._build_schedule_output_flat_rows(
+        {"assignments": assignments},
+        {"games": games, "resources": [resource]},
+    )
+
+    assert [row["stage"] for row in rows] == [
+        "R1", "R2", "QF", "Semi", "Final",
+    ]
+
+
+def test_tt_final_pinned_via_playoff_slots(tmp_path):
+    """A TT-Men-Singles-Final game is generated and can be pinned via Playoff-Slots."""
+    from config import POD_RESOURCE_TYPE_TABLE_TENNIS
+
+    # 6 TT Men Singles entries → TT-Men-Singles-Final is generated (P=8 bracket)
+    roster_rows = [
+        {"Church Team": "RPC", "Participant ID (WP)": i,
+         "sport_type": SPORT_TYPE["TABLE_TENNIS"], "sport_gender": "Men",
+         "sport_format": "Men Single"}
+        for i in range(1, 7)
+    ]
+    # Venue-Input: standalone TT table at "Church Hall" on Sun-2
+    rows = [
+        ["TT Pod", "Church Hall", POD_RESOURCE_TYPE_TABLE_TENNIS, 2, "Sun-2",
+         "2026-07-26", 8, 17, 20, None, None, None, None, None],
+    ]
+    playoff_rows = [
+        ["game_id", "event", "stage", "gym_name", "date", "start_time"],
+        ["TT-Men-Singles-Final", SPORT_TYPE["TABLE_TENNIS"], "Final",
+         "Church Hall", "2026-07-26", "14:00"],
+    ]
+    path = tmp_path / "venue_input.xlsx"
+    _write_venue_input(path, _VENUE_CENTRIC_HEADERS, rows, playoff_rows=playoff_rows)
+
+    si = ScheduleWorkbookBuilder()._build_schedule_input(roster_rows, [], path)
+
+    # The Final game must exist in the GAMES list
+    final_game = next(
+        (g for g in si["games"] if g["game_id"] == "TT-Men-Singles-Final"),
+        None,
+    )
+    assert final_game is not None, "TT-Men-Singles-Final game not generated"
+    assert final_game["stage"] == "Final"
+    assert final_game["event"] == SPORT_TYPE["TABLE_TENNIS"]
+
+    # The playoff slot for the Final must be resolved (resource_id assigned)
+    pinned = [ps for ps in si["playoff_slots"]
+              if ps.get("game_id") == "TT-Men-Singles-Final"]
+    assert len(pinned) == 1, "Expected 1 pinned TT Final slot"
+    assert pinned[0].get("resource_id"), "TT Final slot should have a resource_id"
+    assert pinned[0].get("slot"), "TT Final slot should have a slot label"
+
+    # Precedence chain: Semi-1 and Semi-2 must precede the Final
+    tt_prec = [p for p in si["precedence"]
+               if p.get("after_game_id") == "TT-Men-Singles-Final"]
+    assert len(tt_prec) == 2
+    before_ids = {p["before_game_id"] for p in tt_prec}
+    assert before_ids == {"TT-Men-Singles-Semi-1", "TT-Men-Singles-Semi-2"}
 
 
 def test_pod_doubles_cross_sport_conflict_edge_with_basketball(tmp_path):
@@ -4356,6 +5055,234 @@ def test_pod_unresolved_doubles_reported_as_unprotected(tmp_path):
         e for e in si["team_conflicts"]
         if SPORT_TYPE["BADMINTON"] in {e.get("event_a"), e.get("event_b")}
     ]
+
+
+def _singles_roster_row(sport_type, pid, first, last, gender="Men",
+                        primary=None, church="RPC"):
+    return {
+        "sport_type": sport_type, "sport_gender": gender,
+        "sport_format": f"{gender} Single", "Participant ID (WP)": pid,
+        "First Name": first, "Last Name": last,
+        "Church Team": church,
+        "participant_primary_sport": primary or sport_type,
+    }
+
+
+def test_pod_singles_r1_games_carry_stable_entry_ids(tmp_path):
+    """Singles R1 games carry -S{nn} entry IDs using the bye-aware bracket math."""
+    builder = ScheduleWorkbookBuilder()
+    # 4 TT Men singles → P=4, no byes: Semi-1 = S01 v S02, Semi-2 = S03 v S04.
+    roster = [
+        _singles_roster_row(SPORT_TYPE["TABLE_TENNIS"], str(pid), f"P{pid}", "X")
+        for pid in (11, 12, 13, 14)
+    ]
+    games, _prec = builder._build_pod_game_objects(roster, [])
+    by_id = {g["game_id"]: g for g in games}
+
+    semi1 = by_id["TT-Men-Singles-Semi-1"]
+    semi2 = by_id["TT-Men-Singles-Semi-2"]
+    final = by_id["TT-Men-Singles-Final"]
+    assert semi1["team_a_id"] == "TT-Men-Singles-S01"
+    assert semi1["team_b_id"] == "TT-Men-Singles-S02"
+    assert semi2["team_a_id"] == "TT-Men-Singles-S03"
+    assert semi2["team_b_id"] == "TT-Men-Singles-S04"
+    # The Final's participants depend on Semi results — never pre-assigned.
+    assert final["team_a_id"] is None
+    assert final["team_b_id"] is None
+
+
+def test_pod_singles_bye_entry_unprotected(tmp_path):
+    """With N=3 (P=4), the bye entry appears in no game; only the one R1 game has IDs."""
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        _singles_roster_row(SPORT_TYPE["TABLE_TENNIS"], str(pid), f"P{pid}", "X")
+        for pid in (21, 22, 23)
+    ]
+    games, _prec = builder._build_pod_game_objects(roster, [])
+    by_id = {g["game_id"]: g for g in games}
+
+    # byes = 1 → S01 skips round 1; the single R1 game is S02 v S03.
+    semi1 = by_id["TT-Men-Singles-Semi-1"]
+    assert (semi1["team_a_id"], semi1["team_b_id"]) == (
+        "TT-Men-Singles-S02", "TT-Men-Singles-S03"
+    )
+    assert by_id["TT-Men-Singles-Final"]["team_a_id"] is None
+    all_team_ids = {
+        tid for g in games for tid in (g["team_a_id"], g["team_b_id"]) if tid
+    }
+    assert "TT-Men-Singles-S01" not in all_team_ids, (
+        "Bye entry's first match is round 2 — it must stay unprotected"
+    )
+
+
+def test_pod_singles_cross_sport_conflict_edge_with_basketball(tmp_path):
+    """A player on a BB team and in Badminton singles → team↔racquet edge (#164)."""
+    builder = ScheduleWorkbookBuilder()
+    shared_id = "42"
+    bb_rpc = [
+        {"Church Team": "RPC", "sport_type": SPORT_TYPE["BASKETBALL"],
+         "sport_gender": "Men", "sport_format": "Team", "Participant ID (WP)": pid,
+         "First Name": f"P{pid}", "Last Name": "X",
+         "participant_primary_sport": SPORT_TYPE["BASKETBALL"]}
+        for pid in ["40", "41", shared_id, "43", "44"]
+    ]
+    bb_anh = [
+        {"Church Team": "ANH", "sport_type": SPORT_TYPE["BASKETBALL"],
+         "sport_gender": "Men", "sport_format": "Team", "Participant ID (WP)": pid,
+         "First Name": f"P{pid}", "Last Name": "X",
+         "participant_primary_sport": SPORT_TYPE["BASKETBALL"]}
+        for pid in ["50", "51", "52", "53", "54"]
+    ]
+    # Two Badminton Men singles entries so the division has a game; one is the
+    # shared basketball player.
+    bad = [
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], shared_id, "P42", "X",
+                            primary=SPORT_TYPE["BASKETBALL"]),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "99", "Solo", "X"),
+    ]
+    si = builder._build_schedule_input(bb_rpc + bb_anh + bad, [], tmp_path / "no_venue.xlsx")
+
+    edges = [
+        e for e in si["team_conflicts"]
+        if {e.get("event_a"), e.get("event_b")}
+        == {SPORT_TYPE["BASKETBALL"], SPORT_TYPE["BADMINTON"]}
+    ]
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge["shared_count"] == 1
+    # Shared athlete's primary is Basketball (one of the two events) → primary.
+    assert edge["primary_overlap_count"] == 1
+    # The racquet side references a stable singles entry id, also present as a
+    # game team (with N=2 the round-1 game is the Final itself).
+    racquet_team = edge["team_a_id"] if "BAD-" in edge["team_a_id"] else edge["team_b_id"]
+    assert racquet_team.startswith("BAD-Men-Singles-S")
+    assert any(
+        racquet_team in (g.get("team_a_id"), g.get("team_b_id"))
+        for g in si["games"]
+    )
+
+
+def test_pod_singles_three_event_participant_edges(tmp_path):
+    """A three-event participant (BB team + BAD singles + TT singles) → 3 edges."""
+    builder = ScheduleWorkbookBuilder()
+    shared_id = "60"
+    bb_rpc = [
+        {"Church Team": "RPC", "sport_type": SPORT_TYPE["BASKETBALL"],
+         "sport_gender": "Men", "sport_format": "Team", "Participant ID (WP)": pid,
+         "First Name": f"P{pid}", "Last Name": "X",
+         "participant_primary_sport": SPORT_TYPE["BASKETBALL"]}
+        for pid in [shared_id, "61", "62", "63", "64"]
+    ]
+    bb_anh = [
+        {"Church Team": "ANH", "sport_type": SPORT_TYPE["BASKETBALL"],
+         "sport_gender": "Men", "sport_format": "Team", "Participant ID (WP)": pid,
+         "First Name": f"P{pid}", "Last Name": "X",
+         "participant_primary_sport": SPORT_TYPE["BASKETBALL"]}
+        for pid in ["65", "66", "67", "68", "69"]
+    ]
+    bad = [
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], shared_id, "P60", "X",
+                            primary=SPORT_TYPE["BASKETBALL"]),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "70", "Anh", "X"),
+    ]
+    tt = [
+        _singles_roster_row(SPORT_TYPE["TABLE_TENNIS"], shared_id, "P60", "X",
+                            primary=SPORT_TYPE["BASKETBALL"]),
+        _singles_roster_row(SPORT_TYPE["TABLE_TENNIS"], "71", "Binh", "X"),
+    ]
+    si = builder._build_schedule_input(
+        bb_rpc + bb_anh + bad + tt, [], tmp_path / "no_venue.xlsx"
+    )
+
+    def _edges_between(event_x, event_y):
+        return [
+            e for e in si["team_conflicts"]
+            if {e.get("event_a"), e.get("event_b")} == {event_x, event_y}
+        ]
+
+    bb_bad = _edges_between(SPORT_TYPE["BASKETBALL"], SPORT_TYPE["BADMINTON"])
+    bb_tt = _edges_between(SPORT_TYPE["BASKETBALL"], SPORT_TYPE["TABLE_TENNIS"])
+    bad_tt = _edges_between(SPORT_TYPE["BADMINTON"], SPORT_TYPE["TABLE_TENNIS"])
+    assert len(bb_bad) == 1
+    assert len(bb_tt) == 1
+    assert len(bad_tt) == 1, "singles↔singles edge must be generated"
+    for edge in (bb_bad[0], bb_tt[0], bad_tt[0]):
+        assert edge["shared_count"] == 1
+        assert "P60 X" in edge["shared_participant_names"]
+
+
+def test_pod_singles_and_doubles_same_sport_edge(tmp_path):
+    """One player in Badminton singles AND Badminton doubles → doubles↔singles edge."""
+    builder = ScheduleWorkbookBuilder()
+    shared_id = "80"
+    roster = [
+        # Confirmed doubles pair including the shared player.
+        {"sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Men",
+         "sport_format": "Men Doubles", "Participant ID (WP)": shared_id,
+         "First Name": "Khoa", "Last Name": "X", "partner_name": "Long X",
+         "Church Team": "RPC", "participant_primary_sport": SPORT_TYPE["BADMINTON"]},
+        {"sport_type": SPORT_TYPE["BADMINTON"], "sport_gender": "Men",
+         "sport_format": "Men Doubles", "Participant ID (WP)": "81",
+         "First Name": "Long", "Last Name": "X", "partner_name": "Khoa X",
+         "Church Team": "RPC", "participant_primary_sport": SPORT_TYPE["BADMINTON"]},
+        # The same shared player also in Badminton singles.
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], shared_id, "Khoa", "X"),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "82", "Minh", "X"),
+    ]
+    si = builder._build_schedule_input(roster, [], tmp_path / "no_venue.xlsx")
+
+    edges = [
+        e for e in si["team_conflicts"]
+        if {e["team_a_id"], e["team_b_id"]}
+        == {"BAD-Men-Doubles-E01", "BAD-Men-Singles-S01"}
+    ]
+    assert len(edges) == 1
+    assert edges[0]["shared_count"] == 1
+    assert "Khoa X" in edges[0]["shared_participant_names"]
+
+
+def test_resolve_pod_singles_deterministic_and_deduped():
+    """Entry IDs are sorted by participant ID and duplicate rows collapse."""
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "92", "Beta", "X"),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "90", "Alpha", "X"),
+        # Duplicate roster row for the same player — must collapse.
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "90", "Alpha", "X"),
+    ]
+    by_div = builder._resolve_pod_singles(roster)
+    entries = by_div["BAD-Men-Singles"]
+    assert [e["entry_id"] for e in entries] == [
+        "BAD-Men-Singles-S01", "BAD-Men-Singles-S02",
+    ]
+    assert entries[0]["participant_ids"] == ["90"]
+    assert entries[1]["participant_ids"] == ["92"]
+
+
+def test_pod_singles_duplicate_rows_do_not_inflate_bracket():
+    """Bracket sizing uses the same deduplicated singles membership as R1 IDs."""
+    builder = ScheduleWorkbookBuilder()
+    roster = [
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "90", "Alpha", "X"),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "90", "Alpha", "X"),
+        _singles_roster_row(SPORT_TYPE["BADMINTON"], "92", "Beta", "X"),
+    ]
+
+    division = builder._build_pod_divisions_rows(roster, [])[0]
+    games, precedence = builder._build_pod_game_objects(roster, [])
+
+    assert division["planning_entries"] == 2
+    assert division["confirmed_entries"] == 2
+    assert precedence == []
+    assert len(games) == 1
+    assert games[0]["game_id"] == "BAD-Men-Singles-Final"
+    assert {
+        games[0]["team_a_id"],
+        games[0]["team_b_id"],
+    } == {
+        "BAD-Men-Singles-S01",
+        "BAD-Men-Singles-S02",
+    }
 
 
 def test_soccer_schedule_input_creates_soccer_field_games(tmp_path):
