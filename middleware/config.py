@@ -373,7 +373,8 @@ APPROVAL_STATUS = {
     "VALIDATED": "validated",               ## Passed all technical validation checks. Their data is complete and valid according to the system rules
     "PENDING_APPROVAL": "pending_approval", ## Completed all required checklist items for Pastoral Approval and is now awaiting the pastor's decision
     "APPROVED": "approved",                 ## Set when a pastor explicitly approves a participant
-    "DENIED": "denied"                      ## Set when a pastor explicitly denies a participant
+    "DENIED": "denied",                     ## Set when a pastor explicitly denies a participant
+    "REAPPROVAL_REQUIRED": "reapproval_required",  ## Approval invalidated by post-approval identity drift; participant must be re-approved by pastor.
 }
 
 # Validation Severity Constants
