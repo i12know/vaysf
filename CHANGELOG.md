@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Decompose schedule_workbook.py — Step 4: planning_tabs.py — refs [#152](https://github.com/i12know/vaysf/issues/152)
+
+Extraction-only refactor (Step 4 of 8): no behavior changes, all call sites
+and the `church_teams_export.py` method-copy loop keep working unchanged.
+
+- **`scheduling/planning_tabs.py`** (new) — the offline planning-workbook tab
+  renderers: `_write_summary_tab`, `_write_schedule_input_tab`,
+  `_write_gym_allocation_tab`, `_write_court_schedule_sketch` +
+  `_build_scenario_schedule`, `_write_pod_resource_estimate` +
+  `_build_pod_resource_rows`, and the per-tab `_annotate_*` helpers
+  (Venue-Estimator, Pod-Divisions, Pod-Entries-Review, Pool-Assignment).
+- Because several of these renderers call **outward** into methods that stay
+  in the class (`_compute_court_slots`, `_count_racquet_entries`,
+  `_make_playoff_ids`, …), the nine builder-dependent functions take the
+  `ScheduleWorkbookBuilder` as a `builder` first parameter and reach class
+  state/methods through it. The class keeps thin wrappers preserving each
+  method's original `@classmethod`/instance binding; the two pure functions
+  (`_write_summary_tab`, `_build_scenario_schedule`) use `staticmethod()`
+  aliases like Steps 1–3.
+- `schedule_workbook.py`: 5,714 → 4,770 lines (−944). Eleven now-orphaned
+  imports removed (`deque`, `SCHEDULE_SKETCH_N_COURTS`, the
+  `SCHEDULE_SKETCH_COLOR_*` set, the `POD_FIT_*` set).
+- All 11 extracted bodies verified AST-identical to the originals (docstring
+  reindentation to module level aside); 634 tests pass.
+
 ### Generate athlete photo-ID badges — refs [#77](https://github.com/i12know/vaysf/issues/77)
 
 v1 scope: visual identity verification, local render only. Adds a

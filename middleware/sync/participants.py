@@ -12,6 +12,7 @@ from config import (Config, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION, C
                    SF_IS_MEMBER_OPTION_IDS, SF_FIELD_IDS)
 import datetime
 import pytz
+from uuid import uuid4
 
 # Add imports for validation
 from validation.individual_validator import IndividualValidator
@@ -398,6 +399,177 @@ class ParticipantSyncer:
 
 # In sync/participants.py, inside the ParticipantSyncer class
 
+    # ── Approval identity drift detection (Issue #171) ────────────────────────
+
+    @staticmethod
+    def _age_at_event(birthdate_str: str) -> Optional[int]:
+        """Return the participant's age at SPORTS_FEST_DATE, or None if unparseable."""
+        text = str(birthdate_str or "").strip().split("T", 1)[0].split(" ", 1)[0]
+        if not text:
+            return None
+        try:
+            bd = datetime.datetime.strptime(text, "%Y-%m-%d").date()
+            event_date = datetime.datetime.strptime(Config.SPORTS_FEST_DATE, "%Y-%m-%d").date()
+            return event_date.year - bd.year - (
+                (event_date.month, event_date.day) < (bd.month, bd.day)
+            )
+        except (ValueError, AttributeError):
+            return None
+
+    @staticmethod
+    def _normalize_sport_value(value: Any) -> str:
+        """Normalize a sport field value for drift comparison."""
+        v = str(value or "").strip()
+        return "" if v == SPORT_UNSELECTED else v
+
+    @staticmethod
+    def _requires_admin_acknowledgement(issue: Dict[str, Any]) -> bool:
+        """Return True for warning issues that should not auto-resolve."""
+        return issue.get("issue_type") == "approval_birthdate_correction"
+
+    def _detect_identity_drift(
+        self,
+        live_mapped: Dict[str, Any],
+        existing_wp: Dict[str, Any],
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Compare live ChMeetings data against the existing WordPress snapshot.
+
+        Returns:
+            (hard_drifts, soft_drifts)
+            hard_drifts — changes that invalidate the prior approval (name, gender,
+                          church, sport, or birthdate when the event-day age changes).
+            soft_drifts — birthdate corrections that leave age-at-event unchanged;
+                          these warrant an admin warning but do not reset approval.
+        """
+        hard_drifts: List[Dict[str, Any]] = []
+        soft_drifts: List[Dict[str, Any]] = []
+
+        for field, label in (
+            ("first_name", "First name"),
+            ("last_name", "Last name"),
+            ("gender", "Gender"),
+            ("church_code", "Church team"),
+        ):
+            old_val = str(existing_wp.get(field) or "").strip()
+            new_val = str(live_mapped.get(field) or "").strip()
+            if old_val != new_val:
+                hard_drifts.append({"field": field, "label": label, "old": old_val, "new": new_val})
+
+        for field, label in (
+            ("primary_sport", "Primary sport"),
+            ("secondary_sport", "Secondary sport"),
+        ):
+            old_val = self._normalize_sport_value(existing_wp.get(field))
+            new_val = self._normalize_sport_value(live_mapped.get(field))
+            if old_val != new_val:
+                hard_drifts.append({"field": field, "label": label, "old": old_val, "new": new_val})
+
+        # other_events: normalize order before comparing
+        old_events = ", ".join(sorted(
+            e.strip() for e in str(existing_wp.get("other_events") or "").split(",") if e.strip()
+        ))
+        new_events = ", ".join(sorted(
+            e.strip() for e in str(live_mapped.get("other_events") or "").split(",") if e.strip()
+        ))
+        if old_events != new_events:
+            hard_drifts.append({
+                "field": "other_events",
+                "label": "Other events",
+                "old": old_events,
+                "new": new_events,
+            })
+
+        # Birthdate: hard drift only when the age at the event date changes.
+        old_bd = str(existing_wp.get("birthdate") or "").strip().split("T", 1)[0]
+        new_bd = str(live_mapped.get("birthdate") or "").strip().split("T", 1)[0]
+        if old_bd != new_bd:
+            old_age = self._age_at_event(old_bd)
+            new_age = self._age_at_event(new_bd)
+            if old_age != new_age:
+                hard_drifts.append({
+                    "field": "birthdate",
+                    "label": "Birthdate (age changed)",
+                    "old": old_bd,
+                    "new": new_bd,
+                    "old_age": old_age,
+                    "new_age": new_age,
+                })
+            else:
+                soft_drifts.append({
+                    "field": "birthdate",
+                    "label": "Birthdate (age unchanged)",
+                    "old": old_bd,
+                    "new": new_bd,
+                    "age": new_age,
+                })
+
+        return hard_drifts, soft_drifts
+
+    def _reset_approval_for_drift(
+        self,
+        wp_participant_id: int,
+        chm_id: str,
+        hard_drifts: List[Dict[str, Any]],
+    ) -> None:
+        """Reset approval records after identity drift and rotate their tokens."""
+        try:
+            approvals = self.wordpress_connector.get_approvals(
+                params={"participant_id": wp_participant_id}
+            )
+            if not approvals:
+                logger.warning(
+                    f"[VAY SM] Identity drift for chm_id={chm_id} "
+                    f"(WP participant_id={wp_participant_id}): no approval record found to reset."
+                )
+                return
+            field_labels = [d["label"] for d in hard_drifts]
+            for approval in approvals:
+                approval_id = approval.get("approval_id")
+                if not approval_id:
+                    continue
+                church_id = approval.get("church_id")
+                pastor_email = str(approval.get("pastor_email") or "").strip()
+                if not church_id or not pastor_email:
+                    logger.error(
+                        f"[VAY SM] Cannot reset approval {approval_id} for "
+                        f"chm_id={chm_id}: missing church_id or pastor_email."
+                    )
+                    continue
+
+                expiry_date = datetime.datetime.now() + datetime.timedelta(
+                    days=Config.TOKEN_EXPIRY_DAYS
+                )
+                result = self.wordpress_connector.create_approval({
+                    "participant_id": wp_participant_id,
+                    "church_id": int(church_id),
+                    "approval_token": str(uuid4()),
+                    "token_expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S"),
+                    "pastor_email": pastor_email,
+                    "approval_status": APPROVAL_STATUS["PENDING"],
+                    "approval_notes": (
+                        "Approval reset by middleware after identity drift. "
+                        f"Drifted fields: {', '.join(field_labels)}."
+                    ),
+                    "synced_to_chmeetings": False,
+                })
+                if result:
+                    logger.info(
+                        f"[VAY SM] Reset approval {approval_id} to 'pending' with a fresh token for "
+                        f"chm_id={chm_id} (WP participant_id={wp_participant_id}). "
+                        f"Drifted fields: {field_labels}."
+                    )
+                else:
+                    logger.error(
+                        f"[VAY SM] Failed to reset approval {approval_id} for "
+                        f"chm_id={chm_id} (WP participant_id={wp_participant_id})."
+                    )
+        except Exception as exc:
+            logger.error(
+                f"[VAY SM] Exception resetting approval for chm_id={chm_id}: {exc}"
+            )
+
+    # ── End approval identity drift helpers ───────────────────────────────────
+
     def sync_participants(self, chm_id_to_sync: Optional[str] = None) -> bool:
         """
         Synchronize participant data from ChMeetings to WordPress.
@@ -612,7 +784,10 @@ class ParticipantSyncer:
 
         current_wp_status = mapped.get("approval_status", APPROVAL_STATUS["PENDING"]) # Default from mapping
         final_status_determined = False
-        wp_participant_id = None 
+        wp_participant_id = None
+        drift_issues: List[Dict[str, Any]] = []
+        existing_approvals: List[Dict[str, Any]] = []
+        approval_record_status = ""
 
         # Use mapped["chmeetings_id"] as it's directly from the mapped data which is from full_person_data
         participant_in_wp_list = self.wordpress_connector.get_participants({"chmeetings_id": mapped["chmeetings_id"]})
@@ -628,7 +803,11 @@ class ParticipantSyncer:
             if chm_id == target_chm_id_for_debug:
                 logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] P1 - WP Participant ID: {wp_participant_id}, Status from sf_participants: {status_in_sf_participants}")
 
-            if status_in_sf_participants in [APPROVAL_STATUS["APPROVED"], APPROVAL_STATUS["DENIED"]]:
+            if status_in_sf_participants in [
+                APPROVAL_STATUS["APPROVED"],
+                APPROVAL_STATUS["DENIED"],
+                APPROVAL_STATUS["REAPPROVAL_REQUIRED"],
+            ]:
                 current_wp_status = status_in_sf_participants
                 final_status_determined = True
                 if chm_id == target_chm_id_for_debug:
@@ -643,6 +822,7 @@ class ParticipantSyncer:
                 if existing_approvals:
                     approval_record = existing_approvals[0] 
                     status_from_sf_approvals = approval_record.get("approval_status")
+                    approval_record_status = str(status_from_sf_approvals or "")
                     if chm_id == target_chm_id_for_debug:
                         logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] P2 - Approval record found: {approval_record}")
                         logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] P2 - Status from sf_approvals: {status_from_sf_approvals}")
@@ -655,6 +835,77 @@ class ParticipantSyncer:
         
         if chm_id == target_chm_id_for_debug:
             logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] After P1/P2 - current_wp_status: {current_wp_status}, final_status_determined: {final_status_determined}")
+
+        # --- Approval identity drift guard (Issue #171) ---
+        # Run after the pastor approval surface has been reached. That includes
+        # final decisions and pending approval-token records, because the old
+        # token must not remain valid for a replaced identity.
+        approval_guard_statuses = {
+            APPROVAL_STATUS["APPROVED"],
+            APPROVAL_STATUS["DENIED"],
+            APPROVAL_STATUS["REAPPROVAL_REQUIRED"],
+        }
+        approval_record_guard_statuses = {
+            APPROVAL_STATUS["PENDING"],
+            APPROVAL_STATUS["APPROVED"],
+            APPROVAL_STATUS["DENIED"],
+        }
+        approval_guard_applies = (
+            final_status_determined
+            or current_wp_status in approval_guard_statuses
+            or approval_record_status in approval_record_guard_statuses
+        )
+        if approval_guard_applies and participant_in_wp:
+            hard_drifts, soft_drifts = self._detect_identity_drift(mapped, participant_in_wp)
+
+            if hard_drifts:
+                old_status = current_wp_status
+                current_wp_status = APPROVAL_STATUS["REAPPROVAL_REQUIRED"]
+                final_status_determined = True
+                self._reset_approval_for_drift(wp_participant_id, chm_id, hard_drifts)
+                drift_summary = "; ".join(
+                    f"{d['label']}: '{d['old']}' → '{d['new']}'" for d in hard_drifts
+                )
+                logger.warning(
+                    f"[VAY SM] APPROVAL IDENTITY DRIFT for chm_id={chm_id} "
+                    f"(WP participant_id={wp_participant_id}): {drift_summary}. "
+                    f"Prior '{old_status}' invalidated → 'reapproval_required'."
+                )
+                drift_issues.append({
+                    "type": "approval_identity_drift",
+                    "description": (
+                        f"Pastor approval invalidated: participant identity changed after "
+                        f"approval was granted. Changed: {drift_summary}. "
+                        f"Prior status was '{old_status}'. Reapproval required."
+                    ),
+                    "rule_code": "APPROVAL_IDENTITY_DRIFT",
+                    "rule_level": RULE_LEVEL["INDIVIDUAL"],
+                    "severity": VALIDATION_SEVERITY["ERROR"],
+                    "sport": None,
+                    "sport_format": None,
+                })
+
+            for soft in soft_drifts:
+                logger.warning(
+                    f"[VAY SM] Birthdate correction for chm_id={chm_id}: "
+                    f"'{soft['old']}' → '{soft['new']}' (age unchanged: {soft.get('age')}). "
+                    "Approval preserved; admin review recommended."
+                )
+                drift_issues.append({
+                    "type": "approval_birthdate_correction",
+                    "description": (
+                        f"Birthdate corrected after approval "
+                        f"('{soft['old']}' → '{soft['new']}'). "
+                        f"Age at event is unchanged ({soft.get('age')} years). "
+                        "Approval is preserved. Admin should confirm this was intentional."
+                    ),
+                    "rule_code": "APPROVAL_BIRTHDATE_CORRECTION",
+                    "rule_level": RULE_LEVEL["INDIVIDUAL"],
+                    "severity": VALIDATION_SEVERITY["WARNING"],
+                    "sport": None,
+                    "sport_format": None,
+                })
+        # --- End approval identity drift guard ---
 
         # --- Membership-flip defence (Issue #78) ---
         # If the approval token has already been issued, membership_claim_at_approval holds
@@ -715,7 +966,7 @@ class ParticipantSyncer:
                 )
             
             is_valid, validation_issues_list = self.validate_participant(participant_payload)
-            validation_issues_list = self_heal_issues + cutoff_issues + validation_issues_list
+            validation_issues_list = self_heal_issues + cutoff_issues + validation_issues_list + drift_issues
             is_valid = not any(
                 issue.get("severity") == VALIDATION_SEVERITY["ERROR"]
                 for issue in validation_issues_list
@@ -743,8 +994,8 @@ class ParticipantSyncer:
                     f"Issues: {validation_issues_list}"
                 )
         else:
-            validation_issues_list = self_heal_issues + cutoff_issues
-        
+            validation_issues_list = self_heal_issues + cutoff_issues + drift_issues
+
         if chm_id == target_chm_id_for_debug:
             logger.debug(
                 f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Final approval_status for "
@@ -1395,6 +1646,13 @@ class ParticipantSyncer:
         # (This means the issue has been resolved)
         for key, existing_issue in existing_lookup.items():
             if key not in current_issue_keys:
+                if self._requires_admin_acknowledgement(existing_issue):
+                    self.stats["validation_issues"]["unchanged"] += 1
+                    logger.info(
+                        f"Kept validation issue {existing_issue['issue_id']} open for "
+                        f"participant {participant_id}; admin acknowledgement is required."
+                    )
+                    continue
                 # Issue is no longer present, mark it as resolved
                 self.wordpress_connector.update_validation_issue(
                     existing_issue["issue_id"],

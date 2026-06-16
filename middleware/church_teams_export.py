@@ -2853,8 +2853,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         for contact in contacts_data:
             approval_status = contact.get("Approval_Status (WP)", "").lower()
             
-            # Category 1: Pending participants
-            if force_pending and approval_status in ["pending", "pending_approval"]:
+            # Category 1: Pending participants, including identity-drift reapproval.
+            if force_pending and approval_status in ["pending", "pending_approval", "reapproval_required"]:
                 participants_to_resend.append(contact)
                 logger.debug(f"Added pending participant: {contact.get('First Name')} {contact.get('Last Name')} ({contact.get('Church Team')})")
                 
