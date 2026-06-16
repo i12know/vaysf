@@ -100,7 +100,7 @@ def parse_args() -> argparse.Namespace:
     export_parser.add_argument("--church-code", help="Export for specific church code (if omitted, exports for all churches)")
     export_parser.add_argument("--output", help="Output directory path", default=EXPORT_DIR)
     export_parser.add_argument("--force-resend-pending", action="store_true",
-                            help="Resend approval emails for participants with pending/pending_approval status")
+                            help="Resend approval emails for participants with pending/pending_approval/reapproval_required status")
     export_parser.add_argument("--force-resend-validated1", action="store_true", 
                             help="Resend approval emails for 'validated' participants WITH data in Box 1-6 (under review)")
     export_parser.add_argument("--force-resend-validated2", action="store_true",

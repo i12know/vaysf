@@ -2057,6 +2057,7 @@ public function create_approval($request) {
                 token_expiry = VALUES(token_expiry),
                 pastor_email = VALUES(pastor_email),
                 approval_status = VALUES(approval_status),
+                approval_date = VALUES(approval_date),
                 approval_notes = VALUES(approval_notes),
                 synced_to_chmeetings = VALUES(synced_to_chmeetings),
                 updated_at = VALUES(updated_at)";

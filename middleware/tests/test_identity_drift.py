@@ -6,7 +6,7 @@ correctly identify and handle post-approval identity changes.
 """
 import datetime
 import pytest
-from unittest.mock import MagicMock, call
+from unittest.mock import ANY, MagicMock, call
 from sync.participants import ParticipantSyncer
 from config import APPROVAL_STATUS, RULE_LEVEL, VALIDATION_SEVERITY, SPORT_UNSELECTED
 
@@ -199,23 +199,53 @@ class TestDetectIdentityDrift:
 
 class TestResetApprovalForDrift:
     def test_resets_approval_record(self, syncer):
-        approval = {"approval_id": 182, "approval_status": "approved"}
+        approval = {
+            "approval_id": 182,
+            "church_id": 16,
+            "pastor_email": "pastor@wag.org",
+            "approval_status": "approved",
+        }
         syncer.wordpress_connector.get_approvals.return_value = [approval]
-        syncer.wordpress_connector.update_approval.return_value = {"approval_id": 182}
+        syncer.wordpress_connector.create_approval.return_value = {"approval_id": 182}
 
         syncer._reset_approval_for_drift(413, "4371570", [{"label": "First name"}])
 
-        syncer.wordpress_connector.update_approval.assert_called_once_with(
-            182,
-            {"approval_status": APPROVAL_STATUS["PENDING"], "synced_to_chmeetings": False},
-        )
+        syncer.wordpress_connector.create_approval.assert_called_once()
+        approval_payload = syncer.wordpress_connector.create_approval.call_args.args[0]
+        assert approval_payload == {
+            "participant_id": 413,
+            "church_id": 16,
+            "approval_token": ANY,
+            "token_expiry": ANY,
+            "pastor_email": "pastor@wag.org",
+            "approval_status": APPROVAL_STATUS["PENDING"],
+            "approval_notes": "Approval reset by middleware after identity drift. Drifted fields: First name.",
+            "synced_to_chmeetings": False,
+        }
+        assert approval_payload["approval_token"]
 
     def test_no_approval_record_logs_warning(self, syncer, caplog):
         syncer.wordpress_connector.get_approvals.return_value = []
         import logging
         with caplog.at_level(logging.WARNING):
             syncer._reset_approval_for_drift(413, "4371570", [{"label": "First name"}])
-        syncer.wordpress_connector.update_approval.assert_not_called()
+        syncer.wordpress_connector.create_approval.assert_not_called()
+
+    def test_soft_birthdate_warning_requires_admin_acknowledgement(self, syncer):
+        syncer.wordpress_connector.get_validation_issues.return_value = [{
+            "issue_id": 55,
+            "participant_id": "413",
+            "issue_type": "approval_birthdate_correction",
+            "rule_code": "APPROVAL_BIRTHDATE_CORRECTION",
+            "sport_type": None,
+            "sport_format": None,
+            "status": "open",
+        }]
+
+        syncer._sync_validation_issues("413", "WAG", [], "2026-06-15 23:30:00")
+
+        syncer.wordpress_connector.update_validation_issue.assert_not_called()
+        assert syncer.stats["validation_issues"]["unchanged"] == 1
 
 
 # ── _sync_single_participant integration tests ────────────────────────────────
@@ -299,16 +329,21 @@ class TestSyncSingleParticipantDrift:
         """Name + birthdate changed after approval → reapproval_required."""
         wp = _wp_participant()
         chm = _make_chm_person()  # Andy Nguyen, born 2006-05-23
-        approval = {"approval_id": 182, "approval_status": "approved"}
+        approval = {
+            "approval_id": 182,
+            "church_id": 16,
+            "pastor_email": "pastor@wag.org",
+            "approval_status": "approved",
+        }
         _setup_syncer_for_integration(syncer, wp, chm, existing_approval=approval)
-        syncer.wordpress_connector.update_approval.return_value = {"approval_id": 182}
+        syncer.wordpress_connector.create_approval.return_value = {"approval_id": 182}
 
         syncer._sync_single_participant("4371570")
 
-        # Approval record must be reset to pending
+        # Approval record must be reset to pending with a fresh token.
         reset_calls = [
-            c for c in syncer.wordpress_connector.update_approval.call_args_list
-            if (c[0][1] if len(c[0]) > 1 else {}).get("approval_status") == APPROVAL_STATUS["PENDING"]
+            c for c in syncer.wordpress_connector.create_approval.call_args_list
+            if c[0][0].get("approval_status") == APPROVAL_STATUS["PENDING"]
         ]
         assert len(reset_calls) >= 1, "Expected approval record to be reset to pending"
 
@@ -321,9 +356,14 @@ class TestSyncSingleParticipantDrift:
         """Hard drift must produce an approval_identity_drift validation issue."""
         wp = _wp_participant()
         chm = _make_chm_person()  # Different person
-        approval = {"approval_id": 182, "approval_status": "approved"}
+        approval = {
+            "approval_id": 182,
+            "church_id": 16,
+            "pastor_email": "pastor@wag.org",
+            "approval_status": "approved",
+        }
         _setup_syncer_for_integration(syncer, wp, chm, existing_approval=approval)
-        syncer.wordpress_connector.update_approval.return_value = {"approval_id": 182}
+        syncer.wordpress_connector.create_approval.return_value = {"approval_id": 182}
 
         syncer._sync_single_participant("4371570")
 
@@ -369,9 +409,50 @@ class TestSyncSingleParticipantDrift:
         """Drift after a 'denied' decision also triggers reapproval_required."""
         wp = _wp_participant({"approval_status": APPROVAL_STATUS["DENIED"]})
         chm = _make_chm_person()  # Andy Nguyen
-        approval = {"approval_id": 182, "approval_status": "denied"}
+        approval = {
+            "approval_id": 182,
+            "church_id": 16,
+            "pastor_email": "pastor@wag.org",
+            "approval_status": "denied",
+        }
         _setup_syncer_for_integration(syncer, wp, chm, existing_approval=approval)
-        syncer.wordpress_connector.update_approval.return_value = {"approval_id": 182}
+        syncer.wordpress_connector.create_approval.return_value = {"approval_id": 182}
+
+        syncer._sync_single_participant("4371570")
+
+        call_args = syncer.wordpress_connector.update_participant.call_args
+        payload = call_args[0][1]
+        assert payload["approval_status"] == APPROVAL_STATUS["REAPPROVAL_REQUIRED"]
+
+    def test_pending_approval_token_with_drift_resets_to_reapproval(self, syncer):
+        """A sent but undecided pastor token must not remain valid after identity drift."""
+        wp = _wp_participant({"approval_status": APPROVAL_STATUS["PENDING_APPROVAL"]})
+        chm = _make_chm_person()  # Andy Nguyen
+        approval = {
+            "approval_id": 182,
+            "church_id": 16,
+            "pastor_email": "pastor@wag.org",
+            "approval_status": APPROVAL_STATUS["PENDING"],
+        }
+        _setup_syncer_for_integration(syncer, wp, chm, existing_approval=approval)
+        syncer.wordpress_connector.create_approval.return_value = {"approval_id": 182}
+
+        syncer._sync_single_participant("4371570")
+
+        call_args = syncer.wordpress_connector.update_participant.call_args
+        payload = call_args[0][1]
+        assert payload["approval_status"] == APPROVAL_STATUS["REAPPROVAL_REQUIRED"]
+        syncer.wordpress_connector.create_approval.assert_called()
+
+    def test_reapproval_required_status_is_preserved(self, syncer):
+        """A participant awaiting reapproval must not be downgraded by normal validation."""
+        wp = _wp_participant({"approval_status": APPROVAL_STATUS["REAPPROVAL_REQUIRED"]})
+        chm = _make_chm_person({
+            "first_name": "Matthew",
+            "last_name": "Tran",
+            "birth_date": "2008-04-23",
+        })
+        _setup_syncer_for_integration(syncer, wp, chm)
 
         syncer._sync_single_participant("4371570")
 

@@ -12,6 +12,7 @@ from config import (Config, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION, C
                    SF_IS_MEMBER_OPTION_IDS, SF_FIELD_IDS)
 import datetime
 import pytz
+from uuid import uuid4
 
 # Add imports for validation
 from validation.individual_validator import IndividualValidator
@@ -421,6 +422,11 @@ class ParticipantSyncer:
         v = str(value or "").strip()
         return "" if v == SPORT_UNSELECTED else v
 
+    @staticmethod
+    def _requires_admin_acknowledgement(issue: Dict[str, Any]) -> bool:
+        """Return True for warning issues that should not auto-resolve."""
+        return issue.get("issue_type") == "approval_birthdate_correction"
+
     def _detect_identity_drift(
         self,
         live_mapped: Dict[str, Any],
@@ -505,7 +511,7 @@ class ParticipantSyncer:
         chm_id: str,
         hard_drifts: List[Dict[str, Any]],
     ) -> None:
-        """Reset the sf_approvals record to pending after identity drift is detected."""
+        """Reset approval records after identity drift and rotate their tokens."""
         try:
             approvals = self.wordpress_connector.get_approvals(
                 params={"participant_id": wp_participant_id}
@@ -521,16 +527,34 @@ class ParticipantSyncer:
                 approval_id = approval.get("approval_id")
                 if not approval_id:
                     continue
-                result = self.wordpress_connector.update_approval(
-                    approval_id,
-                    {
-                        "approval_status": APPROVAL_STATUS["PENDING"],
-                        "synced_to_chmeetings": False,
-                    },
+                church_id = approval.get("church_id")
+                pastor_email = str(approval.get("pastor_email") or "").strip()
+                if not church_id or not pastor_email:
+                    logger.error(
+                        f"[VAY SM] Cannot reset approval {approval_id} for "
+                        f"chm_id={chm_id}: missing church_id or pastor_email."
+                    )
+                    continue
+
+                expiry_date = datetime.datetime.now() + datetime.timedelta(
+                    days=Config.TOKEN_EXPIRY_DAYS
                 )
+                result = self.wordpress_connector.create_approval({
+                    "participant_id": wp_participant_id,
+                    "church_id": int(church_id),
+                    "approval_token": str(uuid4()),
+                    "token_expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S"),
+                    "pastor_email": pastor_email,
+                    "approval_status": APPROVAL_STATUS["PENDING"],
+                    "approval_notes": (
+                        "Approval reset by middleware after identity drift. "
+                        f"Drifted fields: {', '.join(field_labels)}."
+                    ),
+                    "synced_to_chmeetings": False,
+                })
                 if result:
                     logger.info(
-                        f"[VAY SM] Reset approval {approval_id} to 'pending' for "
+                        f"[VAY SM] Reset approval {approval_id} to 'pending' with a fresh token for "
                         f"chm_id={chm_id} (WP participant_id={wp_participant_id}). "
                         f"Drifted fields: {field_labels}."
                     )
@@ -762,6 +786,8 @@ class ParticipantSyncer:
         final_status_determined = False
         wp_participant_id = None
         drift_issues: List[Dict[str, Any]] = []
+        existing_approvals: List[Dict[str, Any]] = []
+        approval_record_status = ""
 
         # Use mapped["chmeetings_id"] as it's directly from the mapped data which is from full_person_data
         participant_in_wp_list = self.wordpress_connector.get_participants({"chmeetings_id": mapped["chmeetings_id"]})
@@ -777,7 +803,11 @@ class ParticipantSyncer:
             if chm_id == target_chm_id_for_debug:
                 logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] P1 - WP Participant ID: {wp_participant_id}, Status from sf_participants: {status_in_sf_participants}")
 
-            if status_in_sf_participants in [APPROVAL_STATUS["APPROVED"], APPROVAL_STATUS["DENIED"]]:
+            if status_in_sf_participants in [
+                APPROVAL_STATUS["APPROVED"],
+                APPROVAL_STATUS["DENIED"],
+                APPROVAL_STATUS["REAPPROVAL_REQUIRED"],
+            ]:
                 current_wp_status = status_in_sf_participants
                 final_status_determined = True
                 if chm_id == target_chm_id_for_debug:
@@ -792,6 +822,7 @@ class ParticipantSyncer:
                 if existing_approvals:
                     approval_record = existing_approvals[0] 
                     status_from_sf_approvals = approval_record.get("approval_status")
+                    approval_record_status = str(status_from_sf_approvals or "")
                     if chm_id == target_chm_id_for_debug:
                         logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] P2 - Approval record found: {approval_record}")
                         logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] P2 - Status from sf_approvals: {status_from_sf_approvals}")
@@ -806,14 +837,31 @@ class ParticipantSyncer:
             logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] After P1/P2 - current_wp_status: {current_wp_status}, final_status_determined: {final_status_determined}")
 
         # --- Approval identity drift guard (Issue #171) ---
-        # Run only when a prior approval decision (approved/denied) was found so we
-        # don't accidentally trigger on participants that haven't been approved yet.
-        if final_status_determined and participant_in_wp:
+        # Run after the pastor approval surface has been reached. That includes
+        # final decisions and pending approval-token records, because the old
+        # token must not remain valid for a replaced identity.
+        approval_guard_statuses = {
+            APPROVAL_STATUS["APPROVED"],
+            APPROVAL_STATUS["DENIED"],
+            APPROVAL_STATUS["REAPPROVAL_REQUIRED"],
+        }
+        approval_record_guard_statuses = {
+            APPROVAL_STATUS["PENDING"],
+            APPROVAL_STATUS["APPROVED"],
+            APPROVAL_STATUS["DENIED"],
+        }
+        approval_guard_applies = (
+            final_status_determined
+            or current_wp_status in approval_guard_statuses
+            or approval_record_status in approval_record_guard_statuses
+        )
+        if approval_guard_applies and participant_in_wp:
             hard_drifts, soft_drifts = self._detect_identity_drift(mapped, participant_in_wp)
 
             if hard_drifts:
                 old_status = current_wp_status
                 current_wp_status = APPROVAL_STATUS["REAPPROVAL_REQUIRED"]
+                final_status_determined = True
                 self._reset_approval_for_drift(wp_participant_id, chm_id, hard_drifts)
                 drift_summary = "; ".join(
                     f"{d['label']}: '{d['old']}' → '{d['new']}'" for d in hard_drifts
@@ -918,7 +966,7 @@ class ParticipantSyncer:
                 )
             
             is_valid, validation_issues_list = self.validate_participant(participant_payload)
-            validation_issues_list = self_heal_issues + cutoff_issues + validation_issues_list
+            validation_issues_list = self_heal_issues + cutoff_issues + validation_issues_list + drift_issues
             is_valid = not any(
                 issue.get("severity") == VALIDATION_SEVERITY["ERROR"]
                 for issue in validation_issues_list
@@ -1598,6 +1646,13 @@ class ParticipantSyncer:
         # (This means the issue has been resolved)
         for key, existing_issue in existing_lookup.items():
             if key not in current_issue_keys:
+                if self._requires_admin_acknowledgement(existing_issue):
+                    self.stats["validation_issues"]["unchanged"] += 1
+                    logger.info(
+                        f"Kept validation issue {existing_issue['issue_id']} open for "
+                        f"participant {participant_id}; admin acknowledgement is required."
+                    )
+                    continue
                 # Issue is no longer present, mark it as resolved
                 self.wordpress_connector.update_validation_issue(
                     existing_issue["issue_id"],
