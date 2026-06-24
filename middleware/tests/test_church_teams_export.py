@@ -1172,3 +1172,136 @@ def test_schedule_input_tab_absent_in_single_church_export(mock_connectors, tmp_
     exporter._write_excel_report(path, [], [], _make_gym_roster(2), [])
     sheets = pd.ExcelFile(path).sheet_names
     assert "Schedule-Input" not in sheets
+
+
+# ── Multi-Sport-Matrix tab tests (Issue #172) ────────────────────────────────
+
+
+def _make_matrix_contacts(wp_pid, chm_pid, first, last, gender="Male", age=25, approval="approved"):
+    return {
+        "Church Team": "RPC",
+        "ChMeetings ID": str(chm_pid),
+        "First Name": first,
+        "Last Name": last,
+        "Is_Participant": "Yes",
+        "Is_Member_ChM": "Yes",
+        "Participant ID (WP)": wp_pid,
+        "Approval_Status (WP)": approval,
+        "Total_Open_ERRORs (WP)": 0,
+        "Gender": gender,
+        "Birthdate": "2000-01-01",
+        "Age (at Event)": age,
+        "Mobile Phone": "",
+        "Email": "",
+        "Registration Date (WP)": "2026-05-01",
+        "Athlete Fee": 30,
+        "First_Open_ERROR_Desc (WP)": "",
+        "Box 1": "", "Box 2": "", "Box 3": "", "Box 4": "", "Box 5": "", "Box 6": "",
+        "Photo URL (WP)": "N/A",
+        "Update_on_ChM": "",
+    }
+
+
+def _make_roster_row(wp_pid, chm_pid, sport_type, sport_gender, sport_format,
+                     primary_sport="", secondary_sport="", other_events=""):
+    return {
+        "Church Team": "RPC",
+        "ChMeetings ID": str(chm_pid),
+        "Participant ID (WP)": wp_pid,
+        "Approval_Status (WP)": "approved",
+        "Is_Member_ChM": True,
+        "Photo": "",
+        "First Name": "Test",
+        "Last Name": "User",
+        "Gender": "Male",
+        "Age (at Event)": 25,
+        "Mobile Phone": "",
+        "Email": "",
+        "participant_primary_sport": primary_sport,
+        "participant_secondary_sport": secondary_sport,
+        "participant_other_events": other_events,
+        "sport_type": sport_type,
+        "sport_gender": sport_gender,
+        "sport_format": sport_format,
+        "team_order": None,
+        "partner_name": None,
+        "Open_TEAM_Issue_Count (WP)": 0,
+        "Open_TEAM_Issue_Desc (WP)": "",
+    }
+
+
+def test_multi_sport_matrix_tab_roles(mock_connectors, tmp_path):
+    """Multi-Sport-Matrix tab shows Primary/Secondary/Other correctly per participant."""
+    exporter = ChurchTeamsExporter()
+
+    # Dimitri: Basketball (Primary), Volleyball - Men Team (Secondary)
+    dimitri_contacts = _make_matrix_contacts(10, "201", "Dimitri", "Lam")
+    dimitri_roster_bb = _make_roster_row(
+        10, "201", "Basketball", "Men", "Team",
+        primary_sport="Basketball - Men Team",
+        secondary_sport="Volleyball - Men Team",
+    )
+    dimitri_roster_vb = _make_roster_row(
+        10, "201", "Volleyball", "Men", "Team",
+        primary_sport="Basketball - Men Team",
+        secondary_sport="Volleyball - Men Team",
+    )
+
+    # Lisa: Soccer primary, Track & Field + Pickleball as Other (two separate other events)
+    lisa_contacts = _make_matrix_contacts(11, "202", "Lisa", "Tran", gender="Female")
+    lisa_roster_soccer = _make_roster_row(
+        11, "202", "Soccer", "Mixed", "Team",
+        primary_sport="Soccer - Coed Exhibition",
+        other_events="Track & Field, Pickleball",
+    )
+    lisa_roster_track = _make_roster_row(
+        11, "202", "Track & Field", "Mixed", "Team",
+        primary_sport="Soccer - Coed Exhibition",
+        other_events="Track & Field, Pickleball",
+    )
+    lisa_roster_pickleball = _make_roster_row(
+        11, "202", "Pickleball", "Mixed", "Doubles",
+        primary_sport="Soccer - Coed Exhibition",
+        other_events="Track & Field, Pickleball",
+    )
+
+    contacts_rows = [dimitri_contacts, lisa_contacts]
+    roster_rows = [dimitri_roster_bb, dimitri_roster_vb,
+                   lisa_roster_soccer, lisa_roster_track, lisa_roster_pickleball]
+
+    path = tmp_path / "matrix_test.xlsx"
+    exporter._write_excel_report(path, [], contacts_rows, roster_rows, [])
+
+    assert "Multi-Sport-Matrix" in pd.ExcelFile(path).sheet_names
+
+    df = pd.read_excel(path, sheet_name="Multi-Sport-Matrix")
+    assert len(df) == 2
+
+    dimitri = df[df["First Name"] == "Dimitri"].iloc[0]
+    assert dimitri["Basketball Men Team"] == "Primary"
+    assert dimitri["Volleyball Men Team"] == "Secondary"
+
+    lisa = df[df["First Name"] == "Lisa"].iloc[0]
+    assert lisa["Soccer Mixed Team"] == "Primary"
+    assert lisa["Track & Field Mixed Team"] == "Other"
+    assert lisa["Pickleball Mixed Doubles"] == "Other"
+    # Bible Challenge not registered — column absent or blank
+    if "Bible Challenge Mixed Team" in df.columns:
+        assert lisa["Bible Challenge Mixed Team"] == "" or pd.isna(lisa["Bible Challenge Mixed Team"])
+
+
+def test_multi_sport_matrix_excludes_non_participants(mock_connectors, tmp_path):
+    """Non-participants (Is_Participant=No) are excluded from Multi-Sport-Matrix."""
+    exporter = ChurchTeamsExporter()
+
+    non_participant = _make_matrix_contacts(0, "999", "Observer", "Only")
+    non_participant["Is_Participant"] = "No"
+    non_participant["Participant ID (WP)"] = 0
+
+    contacts_rows = [non_participant]
+    path = tmp_path / "matrix_nonpart.xlsx"
+    exporter._write_excel_report(path, [], contacts_rows, [], [])
+
+    df = pd.read_excel(path, sheet_name="Multi-Sport-Matrix")
+    # The banner stamps rows 1-2 of extra columns on empty sheets; filter to actual data rows.
+    assert len(df[df["Church Team"].notna()]) == 0

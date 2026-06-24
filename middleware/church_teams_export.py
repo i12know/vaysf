@@ -920,6 +920,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                     "Email": chm_person["Email"],
                                     "participant_primary_sport": chm_person.get("ChM_Primary_Sport", ""),
                                     "participant_secondary_sport": chm_person.get("ChM_Secondary_Sport", ""),
+                                    "participant_other_events": chm_person.get("ChM_Other_Events", ""),
                                     "sport_type": roster_entry.get("sport_type"),
                                     "sport_gender": roster_entry.get("sport_gender"),
                                     "sport_format": roster_entry.get("sport_format"),
@@ -2617,6 +2618,38 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         if label not in sports_by_chm_id[chm_pid]:
                             sports_by_chm_id[chm_pid].append(label)
 
+                # Multi-Sport-Matrix: per-participant {sport_label: "Primary"|"Secondary"|"Other"}
+                sport_role_by_wp_id: Dict[str, Dict[str, str]] = {}
+                sport_role_by_chm_id: Dict[str, Dict[str, str]] = {}
+                for rrow in roster_rows:
+                    label_parts = [
+                        str(rrow.get("sport_type") or "").strip(),
+                        str(rrow.get("sport_gender") or "").strip(),
+                        str(rrow.get("sport_format") or "").strip(),
+                    ]
+                    label = " ".join(p for p in label_parts if p)
+                    if not label:
+                        continue
+                    sport_type_val = str(rrow.get("sport_type") or "").strip()
+                    primary_base = str(rrow.get("participant_primary_sport") or "").split(" - ")[0].strip()
+                    secondary_base = str(rrow.get("participant_secondary_sport") or "").split(" - ")[0].strip()
+                    if primary_base and primary_base == sport_type_val:
+                        role = "Primary"
+                    elif secondary_base and secondary_base == sport_type_val:
+                        role = "Secondary"
+                    else:
+                        role = "Other"
+                    wp_pid = str(rrow.get("Participant ID (WP)") or "").strip()
+                    chm_pid = str(rrow.get("ChMeetings ID") or "").strip()
+                    if wp_pid and wp_pid not in ("0", ""):
+                        sport_role_by_wp_id.setdefault(wp_pid, {})
+                        if label not in sport_role_by_wp_id[wp_pid]:
+                            sport_role_by_wp_id[wp_pid][label] = role
+                    if chm_pid and chm_pid not in ("0", ""):
+                        sport_role_by_chm_id.setdefault(chm_pid, {})
+                        if label not in sport_role_by_chm_id[chm_pid]:
+                            sport_role_by_chm_id[chm_pid][label] = role
+
                 for crow in contacts_rows:
                     wp_pid = str(crow.get("Participant ID (WP)") or "").strip()
                     chm_pid = str(crow.get("ChMeetings ID") or "").strip()
@@ -2677,6 +2710,57 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     )
                 df_roster.to_excel(writer, sheet_name="Roster", index=False)
                 logger.debug(f"Roster tab: {len(df_roster)} rows.")
+
+                # Multi-Sport-Matrix Tab
+                # One row per participant; one column per sport label; value = Primary / Secondary / Other.
+                all_sport_labels: list = sorted(
+                    {lbl for roles in sport_role_by_wp_id.values() for lbl in roles}
+                    | {lbl for roles in sport_role_by_chm_id.values() for lbl in roles}
+                )
+                matrix_rows: List[Dict[str, Any]] = []
+                seen_matrix_pids: set = set()
+                for crow in contacts_rows:
+                    if crow.get("Is_Participant") != "Yes":
+                        continue
+                    wp_pid = str(crow.get("Participant ID (WP)") or "").strip()
+                    chm_pid = str(crow.get("ChMeetings ID") or "").strip()
+                    participant_key = wp_pid if (wp_pid and wp_pid not in ("0", "")) else chm_pid
+                    if participant_key in seen_matrix_pids:
+                        continue
+                    seen_matrix_pids.add(participant_key)
+                    sport_roles = (
+                        sport_role_by_wp_id.get(wp_pid)
+                        or sport_role_by_chm_id.get(chm_pid)
+                        or {}
+                    )
+                    mrow: Dict[str, Any] = {
+                        "Church Team": crow.get("Church Team", ""),
+                        "ChMeetings ID": chm_pid,
+                        "Participant ID (WP)": wp_pid,
+                        "First Name": crow.get("First Name", ""),
+                        "Last Name": crow.get("Last Name", ""),
+                        "Gender": crow.get("Gender", ""),
+                        "Age (at Event)": crow.get("Age (at Event)", ""),
+                        "Approval_Status (WP)": crow.get("Approval_Status (WP)", ""),
+                    }
+                    for sport_col in all_sport_labels:
+                        mrow[sport_col] = sport_roles.get(sport_col, "")
+                    matrix_rows.append(mrow)
+                matrix_identity_cols = [
+                    "Church Team", "ChMeetings ID", "Participant ID (WP)",
+                    "First Name", "Last Name", "Gender", "Age (at Event)", "Approval_Status (WP)",
+                ]
+                df_matrix = pd.DataFrame(matrix_rows) if matrix_rows else pd.DataFrame(columns=matrix_identity_cols + all_sport_labels)
+                if not df_matrix.empty:
+                    matrix_all_cols = matrix_identity_cols + all_sport_labels
+                    for col in matrix_all_cols:
+                        if col not in df_matrix.columns:
+                            df_matrix[col] = ""
+                    df_matrix = df_matrix.reindex(columns=matrix_all_cols).sort_values(
+                        by=["Church Team", "Last Name", "First Name"]
+                    )
+                df_matrix.to_excel(writer, sheet_name="Multi-Sport-Matrix", index=False)
+                logger.debug(f"Multi-Sport-Matrix tab: {len(df_matrix)} rows.")
 
                 # Validation-Issues Tab
                 df_validation = pd.DataFrame(validation_rows)
