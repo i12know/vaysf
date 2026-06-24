@@ -10,7 +10,11 @@ from unittest.mock import MagicMock
 # Ensure the middleware package root is importable (mirrors conftest.py / pytest.ini)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from group_assignment import assign_people_to_church_team_groups, clear_team_groups
+from group_assignment import (
+    assign_people_to_church_team_groups,
+    audit_form_people,
+    clear_team_groups,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +300,97 @@ def test_assign_source_export_does_not_use_name_only_for_missing_profile_code(
 
     assert result is True
     mock_connector.add_person_to_group.assert_not_called()
+
+
+def test_audit_form_people_reports_missing_chmeetings_person(mocker, tmp_path):
+    """Form rows without visible ChMeetings People records should be audited."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([
+        {
+            "First Name": "Sayana",
+            "Last Name": "Lee",
+            "Church Team": "RPC",
+            "Email": "sayanaoaklee@gmail.com",
+            "Mobile Phone": "7143217013",
+            "My role is": "Athlete/Participant",
+            "Submission Date": "06/15/2026",
+            "Primary Sport": "Volleyball - Women Team",
+            "Secondary Sport": "",
+            "Other Events": "Track & Field, Soccer - Coed Exhibition",
+        },
+        {
+            "First Name": "Sam",
+            "Last Name": "Le",
+            "Church Team": "RPC",
+            "Email": "sam@example.com",
+            "Mobile Phone": "5625199430",
+            "My role is": "Athlete/Participant",
+            "Submission Date": "05/03/2026",
+            "Primary Sport": "Unselected/NA",
+            "Secondary Sport": "",
+            "Other Events": "Track & Field",
+        },
+    ]).to_excel(source_file, index=False)
+
+    result = audit_form_people(
+        str(source_file),
+        people=[
+            {
+                "id": "3318927",
+                "first_name": "Sam",
+                "last_name": "Le",
+                "email": "sam@example.com",
+                "mobile": "5625199430",
+            }
+        ],
+    )
+
+    assert result is True
+    audit_file = tmp_path / "form_people_audit.xlsx"
+    assert audit_file.exists()
+    df = pd.read_excel(audit_file)
+    sayana = df[df["Email"] == "sayanaoaklee@gmail.com"].iloc[0]
+    assert sayana["Match Status"] == "missing_person"
+    assert sayana["Primary Sport"] == "Volleyball - Women Team"
+    sam = df[df["Email"] == "sam@example.com"].iloc[0]
+    assert sam["Match Status"] == "matched_email"
+    assert str(int(sam["Matched ChMeetings IDs"])) == "3318927"
+
+
+def test_assign_source_export_writes_form_people_audit_even_when_no_assignment_needed(
+    mock_connector, mocker, tmp_path
+):
+    """assign-groups --file should surface stranded form rows even if no team adds run."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([
+        {
+            "First Name": "Sayana",
+            "Last Name": "Lee",
+            "Church Team": "RPC",
+            "Email": "sayanaoaklee@gmail.com",
+            "Mobile Phone": "7143217013",
+        }
+    ]).to_excel(source_file, index=False)
+
+    mock_connector.get_people.return_value = []
+    mock_connector.get_groups.return_value = [{"id": "870578", "name": "Team RPC"}]
+    mock_connector.get_group_people.return_value = []
+
+    result = assign_people_to_church_team_groups(
+        dry_run=False,
+        source_file=str(source_file),
+    )
+
+    assert result is True
+    mock_connector.add_person_to_group.assert_not_called()
+    audit_file = tmp_path / "form_people_audit.xlsx"
+    assert audit_file.exists()
+    df = pd.read_excel(audit_file)
+    assert df.iloc[0]["Match Status"] == "missing_person"
 
 
 def test_clear_team_groups_dry_run(mock_connector, mocker, tmp_path):

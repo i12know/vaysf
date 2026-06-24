@@ -60,6 +60,16 @@ def parse_args() -> argparse.Namespace:
         help="Preview only - show who would be assigned without making API calls",
     )
 
+    audit_form_people_parser = subparsers.add_parser(
+        "audit-form-people",
+        help="Audit Individual Application rows against ChMeetings People records",
+    )
+    audit_form_people_parser.add_argument(
+        "--file",
+        default=os.path.join("data", "individual_application_forms.xlsx"),
+        help="Path to the current-season Individual Application export",
+    )
+
     # Team-group clearing command
     clear_team_groups_parser = subparsers.add_parser(
         "clear-team-groups",
@@ -994,6 +1004,15 @@ def main() -> None:
                 logger.info("Dry-run complete. Check data/church_team_assignments.xlsx for the preview.")
             else:
                 logger.info("Group assignment complete. Check data/church_team_assignments.xlsx for the audit log.")
+    elif args.command == "audit-form-people":
+        from group_assignment import audit_form_people
+        if not os.path.exists(args.file):
+            logger.error(f"Individual Application export not found at {args.file}")
+            success = False
+        else:
+            success = audit_form_people(args.file)
+            if success:
+                logger.info("Form/People audit complete. Check data/form_people_audit.xlsx for the audit log.")
     elif args.command == "clear-team-groups":
         from group_assignment import clear_team_groups
         success = clear_team_groups(
