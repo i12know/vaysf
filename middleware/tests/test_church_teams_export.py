@@ -1203,7 +1203,8 @@ def _make_matrix_contacts(wp_pid, chm_pid, first, last, gender="Male", age=25, a
 
 
 def _make_roster_row(wp_pid, chm_pid, sport_type, sport_gender, sport_format,
-                     primary_sport="", secondary_sport="", other_events=""):
+                     primary_sport="", secondary_sport="", other_events="",
+                     primary_format="", secondary_format=""):
     return {
         "Church Team": "RPC",
         "ChMeetings ID": str(chm_pid),
@@ -1218,7 +1219,9 @@ def _make_roster_row(wp_pid, chm_pid, sport_type, sport_gender, sport_format,
         "Mobile Phone": "",
         "Email": "",
         "participant_primary_sport": primary_sport,
+        "participant_primary_format": primary_format,
         "participant_secondary_sport": secondary_sport,
+        "participant_secondary_format": secondary_format,
         "participant_other_events": other_events,
         "sport_type": sport_type,
         "sport_gender": sport_gender,
@@ -1285,9 +1288,40 @@ def test_multi_sport_matrix_tab_roles(mock_connectors, tmp_path):
     assert lisa["Soccer Mixed Team"] == "Primary"
     assert lisa["Track & Field Mixed Team"] == "Other"
     assert lisa["Pickleball Mixed Doubles"] == "Other"
-    # Bible Challenge not registered — column absent or blank
-    if "Bible Challenge Mixed Team" in df.columns:
-        assert lisa["Bible Challenge Mixed Team"] == "" or pd.isna(lisa["Bible Challenge Mixed Team"])
+    # Canonical sport columns are present even when a participant is not registered.
+    assert "Bible Challenge Mixed Team" in df.columns
+    assert lisa["Bible Challenge Mixed Team"] == "" or pd.isna(lisa["Bible Challenge Mixed Team"])
+
+
+def test_multi_sport_matrix_distinguishes_same_racquet_sport_formats(mock_connectors, tmp_path):
+    """Primary/secondary roles use full racquet format, not just the base sport name."""
+    exporter = ChurchTeamsExporter()
+
+    contact = _make_matrix_contacts(12, "203", "Andy", "Nguyen")
+    men_doubles = _make_roster_row(
+        12, "203", "Badminton", "Men", "Doubles",
+        primary_sport="Badminton",
+        primary_format="Men Double",
+        secondary_sport="Badminton",
+        secondary_format="Mixed Double",
+    )
+    mixed_doubles = _make_roster_row(
+        12, "203", "Badminton", "Mixed", "Doubles",
+        primary_sport="Badminton",
+        primary_format="Men Double",
+        secondary_sport="Badminton",
+        secondary_format="Mixed Double",
+    )
+
+    path = tmp_path / "matrix_same_sport_formats.xlsx"
+    exporter._write_excel_report(path, [], [contact], [men_doubles, mixed_doubles], [])
+
+    df = pd.read_excel(path, sheet_name="Multi-Sport-Matrix")
+    andy = df[df["First Name"] == "Andy"].iloc[0]
+    assert andy["Badminton Men Doubles"] == "Primary"
+    assert andy["Badminton Mixed Doubles"] == "Secondary"
+    assert "Badminton Women Singles" in df.columns
+    assert andy["Badminton Women Singles"] == "" or pd.isna(andy["Badminton Women Singles"])
 
 
 def test_multi_sport_matrix_excludes_non_participants(mock_connectors, tmp_path):

@@ -291,6 +291,7 @@ The generated workbook includes these operator-focused tabs:
 - `Summary`: church-level counts for participants, approvals, open individual `ERROR`s, open TEAM `ERROR`s, and warnings
 - `Contacts-Status`: participant directory plus open individual `ERROR` counts
 - `Roster`: roster rows with `Open_TEAM_Issue_Count (WP)` and `Open_TEAM_Issue_Desc (WP)`
+- `Multi-Sport-Matrix`: one row per participant with stable sport columns for conflict checks. Values are `Primary`, `Secondary`, `Other`, or blank. This tab is included in both all-church and single-church exports.
 - `Validation-Issues`: one row per open WordPress validation issue, including `INDIVIDUAL`, `TEAM`, and `CHURCH` issues
 
 The `Validation-Issues` tab is based on the current ChMeetings Team-group

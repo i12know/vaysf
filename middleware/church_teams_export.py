@@ -25,6 +25,8 @@ from config import (
     ATHLETE_FEE_LATE,
     REGISTRATION_DEADLINE,
     SPORT_TYPE,
+    SPORT_FORMAT,
+    GENDER,
     RACQUET_SPORTS,
     is_racquet_sport,
     COURT_ESTIMATE_EVENTS,
@@ -674,7 +676,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "ChM_Roles": additional_fields.get(CHM_FIELDS["ROLES"], ""),
                     "ChM_Completion_Checklist": additional_fields.get(CHM_FIELDS["COMPLETION_CHECKLIST"], ""),
                     "ChM_Primary_Sport": additional_fields.get(CHM_FIELDS["PRIMARY_SPORT"], ""),
+                    "ChM_Primary_Format": additional_fields.get(CHM_FIELDS["PRIMARY_FORMAT"], ""),
                     "ChM_Secondary_Sport": additional_fields.get(CHM_FIELDS["SECONDARY_SPORT"], ""),
+                    "ChM_Secondary_Format": additional_fields.get(CHM_FIELDS["SECONDARY_FORMAT"], ""),
                     "ChM_Other_Events": additional_fields.get(CHM_FIELDS["OTHER_EVENTS"], ""),
                     "Update_on_ChM": updated_on_dt.strftime("%Y-%m-%d %H:%M:%S") 
                 }
@@ -919,7 +923,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                     "Mobile Phone": chm_person["Mobile Phone"],
                                     "Email": chm_person["Email"],
                                     "participant_primary_sport": chm_person.get("ChM_Primary_Sport", ""),
+                                    "participant_primary_format": chm_person.get("ChM_Primary_Format", ""),
                                     "participant_secondary_sport": chm_person.get("ChM_Secondary_Sport", ""),
+                                    "participant_secondary_format": chm_person.get("ChM_Secondary_Format", ""),
                                     "participant_other_events": chm_person.get("ChM_Other_Events", ""),
                                     "sport_type": roster_entry.get("sport_type"),
                                     "sport_gender": roster_entry.get("sport_gender"),
@@ -1144,6 +1150,117 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             gender = ""
         sport_format = "Singles" if "SINGLES" in suffix else "Team"
         return sport_type, gender, sport_format
+
+    @staticmethod
+    def _matrix_sport_label(sport_type: Any, sport_gender: Any = "", sport_format: Any = "") -> str:
+        return " ".join(
+            str(part or "").strip()
+            for part in (sport_type, sport_gender, sport_format)
+            if str(part or "").strip()
+        )
+
+    @staticmethod
+    def _normalize_matrix_label(label: Any) -> str:
+        return " ".join(str(label or "").split()).casefold()
+
+    def _matrix_labels_for_selection(self, sport_value: Any, format_value: Any = "") -> set:
+        """Return possible matrix labels for a ChMeetings sport selection."""
+        sport_value = str(sport_value or "").strip()
+        format_value = str(format_value or "").strip()
+        if not sport_value or sport_value in ("Unselected/NA", "None"):
+            return set()
+
+        sport_parts = sport_value.split(" - ", 1)
+        sport_type = sport_parts[0].strip()
+
+        if sport_type in RACQUET_SPORTS:
+            if format_value in FORMAT_MAPPINGS:
+                sport_format, sport_gender = FORMAT_MAPPINGS[format_value]
+                return {self._matrix_sport_label(sport_type, sport_gender, sport_format)}
+            return {
+                self._matrix_sport_label(sport_type, gender, sport_format)
+                for sport_format, gender in dict.fromkeys(FORMAT_MAPPINGS.values())
+            }
+
+        if len(sport_parts) > 1:
+            decomposed_type, sport_gender, sport_format = self._decompose_event_name(sport_value)
+            return {self._matrix_sport_label(decomposed_type, sport_gender, sport_format)}
+
+        canonical = next(
+            (
+                value for value in SPORT_TYPE.values()
+                if value.split(" - ", 1)[0].strip().casefold() == sport_type.casefold()
+            ),
+            None,
+        )
+        if canonical and " - " in canonical:
+            decomposed_type, sport_gender, sport_format = self._decompose_event_name(canonical)
+            return {self._matrix_sport_label(decomposed_type, sport_gender, sport_format)}
+        return {self._matrix_sport_label(sport_type, GENDER["MIXED"], SPORT_FORMAT["TEAM"])}
+
+    def _matrix_labels_for_other_events(self, other_events: Any) -> set:
+        labels = set()
+        for event_name in str(other_events or "").split(","):
+            labels.update(self._matrix_labels_for_selection(event_name.strip()))
+        return labels
+
+    def _matrix_role_for_roster_row(self, roster_row: Dict[str, Any], label: str) -> str:
+        normalized_label = self._normalize_matrix_label(label)
+        primary_labels = {
+            self._normalize_matrix_label(item)
+            for item in self._matrix_labels_for_selection(
+                roster_row.get("participant_primary_sport"),
+                roster_row.get("participant_primary_format"),
+            )
+        }
+        if normalized_label in primary_labels:
+            return "Primary"
+
+        secondary_labels = {
+            self._normalize_matrix_label(item)
+            for item in self._matrix_labels_for_selection(
+                roster_row.get("participant_secondary_sport"),
+                roster_row.get("participant_secondary_format"),
+            )
+        }
+        if normalized_label in secondary_labels:
+            return "Secondary"
+
+        other_labels = {
+            self._normalize_matrix_label(item)
+            for item in self._matrix_labels_for_other_events(roster_row.get("participant_other_events"))
+        }
+        if normalized_label in other_labels:
+            return "Other"
+
+        return "Other"
+
+    def _canonical_matrix_sport_labels(self) -> List[str]:
+        labels: List[str] = []
+
+        def add(label: str) -> None:
+            if label and label not in labels:
+                labels.append(label)
+
+        for sport_value in SPORT_TYPE.values():
+            sport_type = sport_value.split(" - ", 1)[0].strip()
+            if sport_type in RACQUET_SPORTS:
+                for sport_format, sport_gender in dict.fromkeys(FORMAT_MAPPINGS.values()):
+                    add(self._matrix_sport_label(sport_type, sport_gender, sport_format))
+                continue
+
+            if " - " in sport_value:
+                decomposed_type, sport_gender, sport_format = self._decompose_event_name(sport_value)
+                add(self._matrix_sport_label(decomposed_type, sport_gender, sport_format))
+            else:
+                add(self._matrix_sport_label(sport_type, GENDER["MIXED"], SPORT_FORMAT["TEAM"]))
+
+        return labels
+
+    @staticmethod
+    def _prefer_matrix_role(existing: Optional[str], new: str) -> str:
+        rank = {"Primary": 3, "Secondary": 2, "Other": 1, "": 0, None: 0}
+        return new if rank.get(new, 0) > rank.get(existing, 0) else existing
 
     def _get_min_team_size(self, event_name: str) -> int:
         """Look up minimum team size from the validation ruleset; fall back
@@ -2599,12 +2716,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 sports_by_wp_id: Dict[str, list] = {}
                 sports_by_chm_id: Dict[str, list] = {}
                 for rrow in roster_rows:
-                    label_parts = [
-                        str(rrow.get("sport_type") or "").strip(),
-                        str(rrow.get("sport_gender") or "").strip(),
-                        str(rrow.get("sport_format") or "").strip(),
-                    ]
-                    label = " ".join(p for p in label_parts if p)
+                    label = self._matrix_sport_label(
+                        rrow.get("sport_type"),
+                        rrow.get("sport_gender"),
+                        rrow.get("sport_format"),
+                    )
                     if not label:
                         continue
                     wp_pid = str(rrow.get("Participant ID (WP)") or "").strip()
@@ -2622,33 +2738,28 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 sport_role_by_wp_id: Dict[str, Dict[str, str]] = {}
                 sport_role_by_chm_id: Dict[str, Dict[str, str]] = {}
                 for rrow in roster_rows:
-                    label_parts = [
-                        str(rrow.get("sport_type") or "").strip(),
-                        str(rrow.get("sport_gender") or "").strip(),
-                        str(rrow.get("sport_format") or "").strip(),
-                    ]
-                    label = " ".join(p for p in label_parts if p)
+                    label = self._matrix_sport_label(
+                        rrow.get("sport_type"),
+                        rrow.get("sport_gender"),
+                        rrow.get("sport_format"),
+                    )
                     if not label:
                         continue
-                    sport_type_val = str(rrow.get("sport_type") or "").strip()
-                    primary_base = str(rrow.get("participant_primary_sport") or "").split(" - ")[0].strip()
-                    secondary_base = str(rrow.get("participant_secondary_sport") or "").split(" - ")[0].strip()
-                    if primary_base and primary_base == sport_type_val:
-                        role = "Primary"
-                    elif secondary_base and secondary_base == sport_type_val:
-                        role = "Secondary"
-                    else:
-                        role = "Other"
+                    role = self._matrix_role_for_roster_row(rrow, label)
                     wp_pid = str(rrow.get("Participant ID (WP)") or "").strip()
                     chm_pid = str(rrow.get("ChMeetings ID") or "").strip()
                     if wp_pid and wp_pid not in ("0", ""):
                         sport_role_by_wp_id.setdefault(wp_pid, {})
-                        if label not in sport_role_by_wp_id[wp_pid]:
-                            sport_role_by_wp_id[wp_pid][label] = role
+                        sport_role_by_wp_id[wp_pid][label] = self._prefer_matrix_role(
+                            sport_role_by_wp_id[wp_pid].get(label),
+                            role,
+                        )
                     if chm_pid and chm_pid not in ("0", ""):
                         sport_role_by_chm_id.setdefault(chm_pid, {})
-                        if label not in sport_role_by_chm_id[chm_pid]:
-                            sport_role_by_chm_id[chm_pid][label] = role
+                        sport_role_by_chm_id[chm_pid][label] = self._prefer_matrix_role(
+                            sport_role_by_chm_id[chm_pid].get(label),
+                            role,
+                        )
 
                 for crow in contacts_rows:
                     wp_pid = str(crow.get("Participant ID (WP)") or "").strip()
@@ -2713,9 +2824,13 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                 # Multi-Sport-Matrix Tab
                 # One row per participant; one column per sport label; value = Primary / Secondary / Other.
-                all_sport_labels: list = sorted(
+                observed_sport_labels = (
                     {lbl for roles in sport_role_by_wp_id.values() for lbl in roles}
                     | {lbl for roles in sport_role_by_chm_id.values() for lbl in roles}
+                )
+                all_sport_labels: list = self._canonical_matrix_sport_labels()
+                all_sport_labels.extend(
+                    sorted(lbl for lbl in observed_sport_labels if lbl not in all_sport_labels)
                 )
                 matrix_rows: List[Dict[str, Any]] = []
                 seen_matrix_pids: set = set()
