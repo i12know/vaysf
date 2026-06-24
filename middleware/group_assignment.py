@@ -2,7 +2,7 @@
 import os
 import sys
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from loguru import logger
 from config import Config, CHM_FIELDS, DATA_DIR
@@ -47,11 +47,21 @@ def _write_audit_file(filename: str, rows: List[Dict[str, str]]) -> None:
 
 
 def _normalize_text(value: Optional[str]) -> str:
+    if pd.isna(value):
+        return ""
     return str(value or "").strip().lower()
 
 
 def _normalize_phone(value: Optional[str]) -> str:
+    if pd.isna(value):
+        return ""
     return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _clean_cell(value: Optional[str]) -> str:
+    if pd.isna(value):
+        return ""
+    return str(value or "").strip()
 
 
 def _load_source_export_rows(source_file: str) -> List[Dict[str, str]]:
@@ -68,13 +78,142 @@ def _load_source_export_rows(source_file: str) -> List[Dict[str, str]]:
         if not church_code:
             continue
         rows.append({
-            "first_name": str(row.get("First Name", "") or "").strip(),
-            "last_name": str(row.get("Last Name", "") or "").strip(),
+            "source_row": str(int(row.name) + 2),
+            "first_name": _clean_cell(row.get("First Name", "")),
+            "last_name": _clean_cell(row.get("Last Name", "")),
             "email": _normalize_text(row.get("Email", "")),
+            "email_display": _clean_cell(row.get("Email", "")),
             "mobile_phone": _normalize_phone(row.get("Mobile Phone", "")),
+            "mobile_phone_display": _clean_cell(row.get("Mobile Phone", "")),
             "church_code": church_code,
+            "role": _clean_cell(row.get("My role is", "")),
+            "submission_date": _clean_cell(row.get("Submission Date", "")),
+            "primary_sport": _clean_cell(row.get("Primary Sport", "")),
+            "secondary_sport": _clean_cell(row.get("Secondary Sport", "")),
+            "other_events": _clean_cell(row.get("Other Events", "")),
         })
     return rows
+
+
+def _index_people_for_form_audit(
+    people: List[Dict[str, str]],
+) -> Dict[str, Dict[object, List[Dict[str, str]]]]:
+    people_by_email: Dict[object, List[Dict[str, str]]] = {}
+    people_by_phone_name: Dict[object, List[Dict[str, str]]] = {}
+    people_by_name: Dict[object, List[Dict[str, str]]] = {}
+
+    for person in people:
+        first_name = _normalize_text(person.get("first_name", ""))
+        last_name = _normalize_text(person.get("last_name", ""))
+        email = _normalize_text(person.get("email", ""))
+        mobile = _normalize_phone(person.get("mobile", ""))
+
+        if email:
+            people_by_email.setdefault(email, []).append(person)
+        if mobile:
+            people_by_phone_name.setdefault((mobile, first_name, last_name), []).append(person)
+        people_by_name.setdefault((first_name, last_name), []).append(person)
+
+    return {
+        "email": people_by_email,
+        "phone_name": people_by_phone_name,
+        "name": people_by_name,
+    }
+
+
+def _source_row_people_match(
+    row: Dict[str, str],
+    people_index: Dict[str, Dict[object, List[Dict[str, str]]]],
+) -> Tuple[str, List[Dict[str, str]]]:
+    first_name = _normalize_text(row.get("first_name", ""))
+    last_name = _normalize_text(row.get("last_name", ""))
+    email = _normalize_text(row.get("email", ""))
+    mobile = _normalize_phone(row.get("mobile_phone", ""))
+
+    if email:
+        matches = people_index["email"].get(email, [])
+        if matches:
+            return "matched_email", matches
+
+    if mobile:
+        matches = people_index["phone_name"].get((mobile, first_name, last_name), [])
+        if matches:
+            return "matched_phone_name", matches
+
+    matches = people_index["name"].get((first_name, last_name), [])
+    if len(matches) == 1:
+        return "matched_name_only", matches
+    if len(matches) > 1:
+        return "ambiguous_name_only", matches
+    return "missing_person", []
+
+
+def audit_form_people(
+    source_file: str,
+    people: Optional[List[Dict[str, str]]] = None,
+    output_filename: str = "form_people_audit.xlsx",
+) -> bool:
+    """Audit Individual Application rows against visible ChMeetings People records."""
+    try:
+        source_rows = _load_source_export_rows(source_file)
+    except Exception as exc:
+        logger.error(f"Failed to load source export '{source_file}': {exc}")
+        return False
+
+    if people is None:
+        with ChMeetingsConnector() as chm_connector:
+            if not chm_connector.authenticate():
+                logger.error("Authentication with ChMeetings failed")
+                return False
+            people = chm_connector.get_people()
+
+    people_index = _index_people_for_form_audit(people)
+    audit_rows: List[Dict[str, str]] = []
+
+    for row in source_rows:
+        match_status, matches = _source_row_people_match(row, people_index)
+        audit_rows.append({
+            "Source Row": row.get("source_row", ""),
+            "First Name": row.get("first_name", ""),
+            "Last Name": row.get("last_name", ""),
+            "Email": row.get("email_display", ""),
+            "Mobile Phone": row.get("mobile_phone_display", ""),
+            "Church Code": row.get("church_code", ""),
+            "Role": row.get("role", ""),
+            "Submission Date": row.get("submission_date", ""),
+            "Primary Sport": row.get("primary_sport", ""),
+            "Secondary Sport": row.get("secondary_sport", ""),
+            "Other Events": row.get("other_events", ""),
+            "Match Status": match_status,
+            "Match Count": str(len(matches)),
+            "Matched ChMeetings IDs": ", ".join(str(person.get("id", "")) for person in matches),
+            "Matched Names": ", ".join(
+                f"{person.get('first_name', '')} {person.get('last_name', '')}".strip()
+                for person in matches
+            ),
+            "Matched Emails": ", ".join(str(person.get("email", "") or "") for person in matches),
+        })
+
+    _write_audit_file(output_filename, audit_rows)
+
+    missing_count = sum(1 for row in audit_rows if row["Match Status"] == "missing_person")
+    ambiguous_count = sum(1 for row in audit_rows if row["Match Status"] == "ambiguous_name_only")
+    if missing_count:
+        logger.warning(
+            f"Found {missing_count} Individual Application row(s) with no matching "
+            f"ChMeetings People record. See data/{output_filename}."
+        )
+    if ambiguous_count:
+        logger.warning(
+            f"Found {ambiguous_count} Individual Application row(s) with ambiguous "
+            f"name-only ChMeetings People matches. See data/{output_filename}."
+        )
+    if not missing_count and not ambiguous_count:
+        logger.info(
+            f"Individual Application People audit clean: {len(audit_rows)} row(s) matched. "
+            f"See data/{output_filename}."
+        )
+    return True
 
 
 def _person_matches_source_export(
@@ -187,6 +326,8 @@ def assign_people_to_church_team_groups(
         # --- Identification (unchanged logic) ---
         all_people = chm_connector.get_people()
         logger.info(f"Retrieved {len(all_people)} people from ChMeetings")
+        if source_file:
+            audit_form_people(source_file, people=all_people)
 
         all_groups = chm_connector.get_groups()
         team_groups = [g for g in all_groups if _is_team_group(g.get("name", ""))]
