@@ -220,6 +220,84 @@ def test_assign_source_export_filters_historical_people(mock_connector, mocker, 
     mock_connector.add_person_to_group.assert_called_once_with("870578", "3318927")
 
 
+def test_assign_source_export_supplies_missing_profile_church_code(
+    mock_connector, mocker, tmp_path
+):
+    """A unique email match should route a registrant whose profile field is blank."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([
+        {
+            "First Name": "PETER",
+            "Last Name": "PHAN",
+            "Church Team": "ORN",
+            "Email": "pphan0703@gmail.com",
+            "Mobile Phone": "714-624-1226",
+        }
+    ]).to_excel(source_file, index=False)
+
+    mock_connector.get_people.return_value = [
+        {
+            "id": "3632793",
+            "first_name": "Phuoc",
+            "last_name": "Phan",
+            "email": "pphan0703@gmail.com",
+            "mobile": "7146241226",
+            "additional_fields": [],
+        },
+    ]
+    mock_connector.get_groups.return_value = [{"id": "872490", "name": "Team ORN"}]
+    mock_connector.get_group_people.return_value = []
+
+    result = assign_people_to_church_team_groups(
+        dry_run=False,
+        source_file=str(source_file),
+    )
+
+    assert result is True
+    mock_connector.add_person_to_group.assert_called_once_with("872490", "3632793")
+
+
+def test_assign_source_export_does_not_use_name_only_for_missing_profile_code(
+    mock_connector, mocker, tmp_path
+):
+    """A common-name match alone is not strong enough to assign a team."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([
+        {
+            "First Name": "Andrew",
+            "Last Name": "Nguyen",
+            "Church Team": "TLC",
+            "Email": "current@example.com",
+            "Mobile Phone": "714-555-0100",
+        }
+    ]).to_excel(source_file, index=False)
+
+    mock_connector.get_people.return_value = [
+        {
+            "id": "999",
+            "first_name": "Andrew",
+            "last_name": "Nguyen",
+            "email": "different@example.com",
+            "mobile": "7145550199",
+            "additional_fields": [],
+        },
+    ]
+    mock_connector.get_groups.return_value = [{"id": "123", "name": "Team TLC"}]
+    mock_connector.get_group_people.return_value = []
+
+    result = assign_people_to_church_team_groups(
+        dry_run=False,
+        source_file=str(source_file),
+    )
+
+    assert result is True
+    mock_connector.add_person_to_group.assert_not_called()
+
+
 def test_clear_team_groups_dry_run(mock_connector, mocker, tmp_path):
     """dry_run=True previews removals and ignores non-Team groups."""
     mocker.patch("group_assignment.DATA_DIR", tmp_path)

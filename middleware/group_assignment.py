@@ -108,6 +108,42 @@ def _person_matches_source_export(
     return False
 
 
+def _source_export_church_code(
+    person: Dict[str, str],
+    source_rows: List[Dict[str, str]],
+) -> Optional[str]:
+    """Resolve one church code from the strongest current-season export match."""
+    first_name = _normalize_text(person.get("first_name", ""))
+    last_name = _normalize_text(person.get("last_name", ""))
+    email = _normalize_text(person.get("email", ""))
+    mobile = _normalize_phone(person.get("mobile", ""))
+
+    match_groups = [
+        [
+            row for row in source_rows
+            if row["email"] and email and row["email"] == email
+        ],
+        [
+            row for row in source_rows
+            if row["mobile_phone"]
+            and mobile
+            and row["mobile_phone"] == mobile
+            and _normalize_text(row["first_name"]) == first_name
+            and _normalize_text(row["last_name"]) == last_name
+        ],
+    ]
+
+    for matches in match_groups:
+        if not matches:
+            continue
+        church_codes = {row["church_code"] for row in matches}
+        if len(church_codes) == 1:
+            return church_codes.pop()
+        return None
+
+    return None
+
+
 def assign_people_to_church_team_groups(
     dry_run: bool = False,
     source_file: Optional[str] = None,
@@ -115,9 +151,9 @@ def assign_people_to_church_team_groups(
     """
     Assign people in ChMeetings to their church team groups via direct API calls.
 
-    Identifies people who have a church code in their ChMeetings profile but are
-    not yet members of the corresponding "Team XYZ" group, then calls
-    add_person_to_group() for each one.
+    Identifies people who have a church code in their ChMeetings profile, or a
+    unique match in the supplied current-season export, but are not yet members
+    of the corresponding "Team XYZ" group. Then calls add_person_to_group().
 
     Args:
         dry_run: If True, only generate the audit file — no API calls are made.
@@ -190,8 +226,16 @@ def assign_people_to_church_team_groups(
             # Check if they have a church code
             church_code = additional_fields.get(CHM_FIELDS["CHURCH_TEAM"], "").strip().upper()
             if not church_code:
-                continue
-            if source_rows is not None:
+                if source_rows is None:
+                    continue
+                church_code = _source_export_church_code(person, source_rows) or ""
+                if not church_code:
+                    continue
+                logger.info(
+                    f"[VAY SM] Using current-season source export church_code={church_code} "
+                    f"for chm_id={person_id} because the ChMeetings profile field is blank."
+                )
+            elif source_rows is not None:
                 if not _person_matches_source_export(person, church_code, source_rows):
                     continue
 
