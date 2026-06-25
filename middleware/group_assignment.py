@@ -1,11 +1,20 @@
 # middleware/group_assignment.py
+import html
 import os
 import sys
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 from loguru import logger
-from config import Config, CHM_FIELDS, DATA_DIR
+from config import (
+    Config, CHM_FIELDS, DATA_DIR,
+    SF_FIELD_IDS,
+    SF_CHURCH_TEAM_OPTIONS,
+    SF_MY_ROLE_OPTIONS,
+    SF_PRIMARY_SPORT_OPTIONS,
+    SF_SECONDARY_SPORT_OPTIONS,
+    SF_OTHER_EVENTS_OPTIONS,
+)
 
 # Add parent directory to import path to access other modules
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -146,6 +155,412 @@ def _source_row_people_match(
     if len(matches) > 1:
         return "ambiguous_name_only", matches
     return "missing_person", []
+
+
+# ── Label-to-option-id reverse maps for repair payload building ──────────────
+# Inverted at module load from the authoritative config dicts.
+# All lookups are exact-string; callers must unescape HTML entities first.
+_CHURCH_CODE_TO_OPTION_ID: Dict[str, int] = {v: k for k, v in SF_CHURCH_TEAM_OPTIONS.items()}
+_ROLE_LABEL_TO_OPTION_ID: Dict[str, int]  = {v: k for k, v in SF_MY_ROLE_OPTIONS.items()}
+_PRIMARY_SPORT_LABEL_TO_OPTION_ID: Dict[str, int]    = {v: k for k, v in SF_PRIMARY_SPORT_OPTIONS.items()}
+_SECONDARY_SPORT_LABEL_TO_OPTION_ID: Dict[str, int]  = {v: k for k, v in SF_SECONDARY_SPORT_OPTIONS.items()}
+_OTHER_EVENTS_LABEL_TO_OPTION_ID: Dict[str, int]     = {v: k for k, v in SF_OTHER_EVENTS_OPTIONS.items()}
+
+
+def _load_repair_extra_cols(source_file: str) -> Dict[str, Dict[str, str]]:
+    """Return racquet partner/format columns indexed by source_row key (e.g. '2').
+
+    Returns an empty dict on failure — these columns are optional for the
+    create payload so a missing or corrupt column should not abort a repair run.
+    """
+    try:
+        df = pd.read_excel(source_file)
+        result: Dict[str, Dict[str, str]] = {}
+        for i, row in df.iterrows():
+            row_key = str(int(i) + 2)
+            result[row_key] = {
+                "primary_format":   _clean_cell(row.get(CHM_FIELDS["PRIMARY_FORMAT"],   "")),
+                "primary_partner":  _clean_cell(row.get(CHM_FIELDS["PRIMARY_PARTNER"],  "")),
+                "secondary_format": _clean_cell(row.get(CHM_FIELDS["SECONDARY_FORMAT"], "")),
+                "secondary_partner":_clean_cell(row.get(CHM_FIELDS["SECONDARY_PARTNER"],"" )),
+            }
+        return result
+    except Exception as exc:
+        logger.warning(f"Could not load racquet extra columns from {source_file!r}: {exc}")
+        return {}
+
+
+def _build_create_payload(
+    row: Dict[str, str],
+    extra_cols: Optional[Dict[str, str]] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Build a CreatePersonDto payload from a form export source row.
+
+    Returns ``(payload, None)`` on success or ``(None, blocked_reason)`` when a
+    required field label cannot be mapped to a ChMeetings option_id.  An
+    unmappable required label is treated as a hard block (fail-closed) so the
+    caller can report it rather than create a partially-populated record.
+    """
+    extra = extra_cols or {}
+
+    first_name = row.get("first_name", "").strip()
+    last_name  = row.get("last_name", "").strip()
+    if not first_name or not last_name:
+        return None, "missing name"
+
+    church_code = row.get("church_code", "").strip().upper()
+    church_option_id = _CHURCH_CODE_TO_OPTION_ID.get(church_code)
+    if church_option_id is None:
+        return None, f"church_code {church_code!r} not in SF_CHURCH_TEAM_OPTIONS"
+
+    additional_fields: List[Dict[str, Any]] = [
+        {
+            "field_type": "dropdown",
+            "field_id": SF_FIELD_IDS["CHURCH_TEAM"],
+            "selected_option_id": church_option_id,
+        },
+    ]
+
+    # Role (checkbox, multi-select) — warn but do not block on unknown labels.
+    role_str = html.unescape(row.get("role", ""))
+    role_labels = [r.strip() for r in role_str.split(",") if r.strip()]
+    role_option_ids = []
+    for label in role_labels:
+        opt_id = _ROLE_LABEL_TO_OPTION_ID.get(label)
+        if opt_id is not None:
+            role_option_ids.append(opt_id)
+        else:
+            logger.warning(
+                f"Role label {label!r} not in SF_MY_ROLE_OPTIONS — "
+                f"omitting from create payload for {first_name} {last_name}"
+            )
+    if role_option_ids:
+        additional_fields.append({
+            "field_type": "checkbox",
+            "field_id": SF_FIELD_IDS["MY_ROLE"],
+            "selected_option_ids": role_option_ids,
+        })
+
+    # Primary sport (dropdown) — block if label is present and unmappable.
+    primary_sport = html.unescape(row.get("primary_sport", "").strip())
+    if primary_sport:
+        opt_id = _PRIMARY_SPORT_LABEL_TO_OPTION_ID.get(primary_sport)
+        if opt_id is None:
+            return None, f"primary_sport {primary_sport!r} not in SF_PRIMARY_SPORT_OPTIONS"
+        additional_fields.append({
+            "field_type": "dropdown",
+            "field_id": SF_FIELD_IDS["PRIMARY_SPORT"],
+            "selected_option_id": opt_id,
+        })
+
+    # Secondary sport (dropdown) — same treatment.
+    secondary_sport = html.unescape(row.get("secondary_sport", "").strip())
+    if secondary_sport:
+        opt_id = _SECONDARY_SPORT_LABEL_TO_OPTION_ID.get(secondary_sport)
+        if opt_id is None:
+            return None, f"secondary_sport {secondary_sport!r} not in SF_SECONDARY_SPORT_OPTIONS"
+        additional_fields.append({
+            "field_type": "dropdown",
+            "field_id": SF_FIELD_IDS["SECONDARY_SPORT"],
+            "selected_option_id": opt_id,
+        })
+
+    # Other events (checkbox, multi-select) — block if any single label is unmappable.
+    other_events_str = html.unescape(row.get("other_events", "").strip())
+    if other_events_str:
+        other_labels = [e.strip() for e in other_events_str.split(",") if e.strip()]
+        other_ids: List[int] = []
+        for label in other_labels:
+            opt_id = _OTHER_EVENTS_LABEL_TO_OPTION_ID.get(label)
+            if opt_id is None:
+                return None, f"other_events label {label!r} not in SF_OTHER_EVENTS_OPTIONS"
+            other_ids.append(opt_id)
+        if other_ids:
+            additional_fields.append({
+                "field_type": "checkbox",
+                "field_id": SF_FIELD_IDS["OTHER_EVENTS"],
+                "selected_option_ids": other_ids,
+            })
+
+    # Racquet partner text fields (optional) — skip gracefully if absent.
+    primary_partner = extra.get("primary_partner", "").strip()
+    if primary_partner:
+        additional_fields.append({
+            "field_type": "text",
+            "field_id": SF_FIELD_IDS["PRIMARY_PARTNER"],
+            "value": primary_partner,
+        })
+    secondary_partner = extra.get("secondary_partner", "").strip()
+    if secondary_partner:
+        additional_fields.append({
+            "field_type": "text",
+            "field_id": SF_FIELD_IDS["SECONDARY_PARTNER"],
+            "value": secondary_partner,
+        })
+
+    # Racquet format dropdowns (option_ids not yet in config) — warn and skip.
+    for fmt_key in ("primary_format", "secondary_format"):
+        fmt_val = extra.get(fmt_key, "").strip()
+        if fmt_val:
+            logger.warning(
+                f"{fmt_key} value {fmt_val!r} present but format option_ids are not yet "
+                f"mapped in SF_FIELD_IDS — omitting from create payload for {first_name} {last_name}. "
+                f"Run api-inspect and add the option_ids to config.py before re-running."
+            )
+
+    payload: Dict[str, Any] = {"first_name": first_name, "last_name": last_name}
+    email_display = row.get("email_display", "").strip()
+    mobile_display = row.get("mobile_phone_display", "").strip()
+    if email_display:
+        payload["email"] = email_display
+    if mobile_display:
+        payload["mobile"] = mobile_display
+    payload["additional_fields"] = additional_fields
+
+    return payload, None
+
+
+def _repair_audit_row(
+    row: Dict[str, str],
+    outcome: str,
+    outcome_detail: str,
+    matches: List[Dict[str, Any]],
+) -> Dict[str, str]:
+    return {
+        "Source Row": row.get("source_row", ""),
+        "First Name": row.get("first_name", ""),
+        "Last Name": row.get("last_name", ""),
+        "Email": row.get("email_display", ""),
+        "Mobile Phone": row.get("mobile_phone_display", ""),
+        "Church Code": row.get("church_code", ""),
+        "Role": row.get("role", ""),
+        "Submission Date": row.get("submission_date", ""),
+        "Primary Sport": row.get("primary_sport", ""),
+        "Other Events": row.get("other_events", ""),
+        "Outcome": outcome,
+        "Outcome Detail": outcome_detail,
+        "Existing ChM IDs": ", ".join(str(p.get("id", "")) for p in matches),
+    }
+
+
+def repair_form_people(
+    source_file: str,
+    *,
+    dry_run: bool = True,
+    chm_email: Optional[str] = None,
+    execute: bool = False,
+    people: Optional[List[Dict[str, Any]]] = None,
+    groups: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Create missing ChMeetings People records from Individual Application form rows.
+
+    Performs a fresh live re-check first so the repair set reflects current
+    ChMeetings state, not a stale audit file.  Only rows that are still
+    ``missing_person`` after the re-check are eligible for creation.
+
+    Args:
+        source_file: Path to the Individual Application form export xlsx.
+        dry_run: If True (default), log what would be done without any writes.
+        chm_email: Restrict the run to a single form row by email address.
+        execute: Must be True for any live creates or group-add calls.
+        people: Pre-fetched people list (injected in tests to skip get_people()).
+        groups: Pre-fetched groups list (injected in tests to skip get_groups()).
+
+    Returns:
+        Dict with integer counts: ``created``, ``linked``, ``skipped``,
+        ``blocked``, ``errored``.
+    """
+    empty: Dict[str, int] = {"created": 0, "linked": 0, "skipped": 0, "blocked": 0, "errored": 0}
+
+    if not dry_run and not execute:
+        logger.error("repair-form-people requires --dry-run or --execute.")
+        return empty
+
+    try:
+        source_rows = _load_source_export_rows(source_file)
+    except Exception as exc:
+        logger.error(f"Failed to load source export {source_file!r}: {exc}")
+        return empty
+
+    extra_cols_by_row = _load_repair_extra_cols(source_file)
+
+    if chm_email:
+        target = _normalize_text(chm_email)
+        source_rows = [r for r in source_rows if r["email"] == target]
+        if not source_rows:
+            logger.warning(f"No form rows found for email {chm_email!r}")
+            return empty
+
+    counts: Dict[str, int] = {"created": 0, "linked": 0, "skipped": 0, "blocked": 0, "errored": 0}
+    audit_rows: List[Dict[str, str]] = []
+
+    with ChMeetingsConnector() as chm_connector:
+        if not chm_connector.authenticate():
+            logger.error("Authentication with ChMeetings failed")
+            return empty
+
+        live_people: List[Dict[str, Any]] = (
+            people if people is not None else chm_connector.get_people()
+        )
+        live_groups: List[Dict[str, Any]] = (
+            groups if groups is not None else chm_connector.get_groups()
+        )
+        people_index = _index_people_for_form_audit(live_people)
+        team_group_by_name = {
+            g["name"]: str(g["id"])
+            for g in live_groups
+            if _is_team_group(g.get("name", ""))
+        }
+
+        for row in source_rows:
+            match_status, matches = _source_row_people_match(row, people_index)
+            row_key = row.get("source_row", "?")
+            name = f"{row['first_name']} {row['last_name']}"
+
+            if match_status != "missing_person":
+                # Person already exists in ChMeetings.
+                if match_status == "ambiguous_name_only":
+                    counts["blocked"] += 1
+                    outcome = "blocked_ambiguous"
+                    outcome_detail = (
+                        f"ambiguous name-only match: ids="
+                        f"{[str(p.get('id', '')) for p in matches]}"
+                    )
+                    logger.warning(
+                        f"[repair] Row {row_key} ({name}): blocked — {outcome_detail}"
+                    )
+                else:
+                    # matched_email / matched_phone_name / matched_name_only
+                    matched = matches[0]
+                    matched_id = str(matched.get("id", ""))
+                    church_code = row.get("church_code", "").strip().upper()
+                    group_name = _team_group_name(church_code)
+                    group_id = team_group_by_name.get(group_name)
+                    if execute and matched_id and group_id:
+                        ok = chm_connector.add_person_to_group(group_id, matched_id)
+                        time.sleep(0.2)
+                        if ok:
+                            counts["linked"] += 1
+                            outcome = "linked"
+                            outcome_detail = (
+                                f"matched by {match_status} (id={matched_id}), "
+                                f"added to {group_name}"
+                            )
+                        else:
+                            counts["errored"] += 1
+                            outcome = "errored"
+                            outcome_detail = (
+                                f"matched by {match_status} (id={matched_id}), "
+                                f"add_to_group failed"
+                            )
+                    elif dry_run:
+                        counts["skipped"] += 1
+                        outcome = "skipped_matched"
+                        outcome_detail = (
+                            f"matched by {match_status} (id={matched_id}) "
+                            f"[dry-run: would link to {group_name}]"
+                        )
+                    else:
+                        counts["skipped"] += 1
+                        outcome = "skipped_matched"
+                        outcome_detail = f"matched by {match_status} (id={matched_id})"
+
+                audit_rows.append(_repair_audit_row(row, outcome, outcome_detail, matches))
+                continue
+
+            # Row is still missing_person after fresh re-check.
+            extra = extra_cols_by_row.get(row_key, {})
+            payload, blocked_reason = _build_create_payload(row, extra)
+
+            if blocked_reason:
+                counts["blocked"] += 1
+                logger.warning(
+                    f"[repair] Row {row_key} ({name}): blocked — {blocked_reason}"
+                )
+                audit_rows.append(
+                    _repair_audit_row(row, "blocked", blocked_reason, [])
+                )
+                continue
+
+            if dry_run:
+                counts["skipped"] += 1
+                outcome_detail = (
+                    f"would create {name} for church {row.get('church_code')} "
+                    f"(sport={row.get('primary_sport')})"
+                )
+                logger.info(f"[dry-run] Row {row_key}: {outcome_detail}")
+                audit_rows.append(_repair_audit_row(row, "dry_run", outcome_detail, []))
+                continue
+
+            # Live execute path.
+            assert payload is not None
+            created_person = chm_connector.create_person(
+                first_name=payload["first_name"],
+                last_name=payload["last_name"],
+                email=payload.get("email"),
+                mobile=payload.get("mobile"),
+                additional_fields=payload.get("additional_fields"),
+            )
+            time.sleep(0.3)
+
+            if not created_person:
+                counts["errored"] += 1
+                logger.error(
+                    f"[repair] Row {row_key} ({name}): create_person API call failed"
+                )
+                audit_rows.append(
+                    _repair_audit_row(row, "errored", "create_person returned None", [])
+                )
+                continue
+
+            new_id = str(created_person.get("id") or created_person.get("person_id") or "")
+            logger.info(
+                f"[repair] Row {row_key}: created {name} as ChMeetings person_id={new_id}"
+            )
+
+            # Refresh index so a second row for the same person doesn't re-create.
+            live_people.append(created_person)
+            people_index = _index_people_for_form_audit(live_people)
+
+            # Add the new person to their Team group.
+            church_code = row.get("church_code", "").strip().upper()
+            group_name = _team_group_name(church_code)
+            group_id = team_group_by_name.get(group_name)
+            group_note = ""
+            if group_id and new_id:
+                ok = chm_connector.add_person_to_group(group_id, new_id)
+                time.sleep(0.2)
+                group_note = (
+                    f", added to {group_name}" if ok
+                    else f", failed to add to {group_name}"
+                )
+                if not ok:
+                    logger.error(
+                        f"[repair] Failed to add new person {new_id} to {group_name}"
+                    )
+            elif not group_id:
+                group_note = f", group {group_name!r} not found in ChMeetings"
+                logger.warning(
+                    f"[repair] Group {group_name!r} not found — cannot assign {name}"
+                )
+
+            counts["created"] += 1
+            audit_rows.append(
+                _repair_audit_row(
+                    row, "created",
+                    f"new_person_id={new_id}{group_note}",
+                    [],
+                )
+            )
+
+    _write_audit_file("form_people_repair.xlsx", audit_rows)
+    logger.info(
+        f"repair-form-people complete: "
+        f"{counts['created']} created, {counts['linked']} linked, "
+        f"{counts['skipped']} skipped, {counts['blocked']} blocked, "
+        f"{counts['errored']} errored."
+    )
+    return counts
 
 
 def audit_form_people(
