@@ -138,6 +138,55 @@ def test_get_people_request_params(chm_connector, mocker):
     assert captured["params"].get("page_size") == 100, \
         "page_size should default to 100"
 
+
+def test_create_person_posts_complete_payload(chm_connector, mocker):
+    """Mock create_person should POST standard fields and SF custom fields."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("create_person is a live mutation; covered in mock mode only")
+
+    captured = {}
+
+    def capturing_post(_session, url, **kwargs):
+        captured["url"] = url
+        captured["json"] = kwargs.get("json", {})
+        mock_resp = mocker.Mock()
+        mock_resp.ok = True
+        mock_resp.status_code = 201
+        mock_resp.json.return_value = {
+            "status_code": 201,
+            "data": {"id": "999001", "first_name": "Sayana", "last_name": "Lee"},
+        }
+        return mock_resp
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("requests.Session.post", capturing_post)
+        person = chm_connector.create_person(
+            "Sayana",
+            "Lee",
+            email="sayanaoaklee@gmail.com",
+            mobile="7143217013",
+            additional_fields=[
+                {
+                    "field_type": "dropdown",
+                    "field_id": 1281851,
+                    "selected_option_id": 199354,
+                }
+            ],
+            extra_fields={"gender": "Female", "birth_date": "2002-10-05"},
+        )
+
+    assert person["id"] == "999001"
+    assert captured["url"].endswith("/api/v1/people")
+    assert captured["json"]["first_name"] == "Sayana"
+    assert captured["json"]["last_name"] == "Lee"
+    assert captured["json"]["email"] == "sayanaoaklee@gmail.com"
+    assert captured["json"]["mobile"] == "7143217013"
+    assert captured["json"]["gender"] == "Female"
+    assert captured["json"]["birth_date"] == "2002-10-05"
+    assert captured["json"]["additional_fields"][0]["field_id"] == 1281851
+
+
 def test_get_person(chm_connector, mocker, mock_chm_people_data):
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
     # Use an ID that exists in mock_chm_people_data.json

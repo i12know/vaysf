@@ -557,11 +557,19 @@ def _sayana_row():
         "Church Team": "RPC",
         "Email": "sayanaoaklee@gmail.com",
         "Mobile Phone": "7143217013",
+        "Gender": "Female",
         "My role is": "Athlete/Participant",
+        "Birthdate": "10/05/2002",
+        "Would the church pastor say that you belong to his church?": "Yes",
+        "Age verification (by the date of Sports Fest)": "I am over 18 but under 35",
+        "Name of my parents or legal guardian": "",
+        "Email of my parents or legal guardian": "",
+        "Cell phone of my parents or legal guardian": "",
         "Submission Date": "06/15/2026",
         "Primary Sport": "Volleyball - Women Team",
         "Secondary Sport": "",
-        "Other Events": "",
+        "Other Events": "Track & Field, Soccer - Coed Exhibition",
+        "Additional Info": "",
     }
 
 
@@ -618,6 +626,20 @@ def test_repair_form_people_execute_creates_missing_person(mock_connector, mocke
     call_kwargs = mock_connector.create_person.call_args
     assert call_kwargs.kwargs["first_name"] == "Sayana"
     assert call_kwargs.kwargs["last_name"] == "Lee"
+    assert call_kwargs.kwargs["extra_fields"] == {
+        "gender": "Female",
+        "birth_date": "2002-10-05",
+    }
+    fields_by_id = {
+        field["field_id"]: field
+        for field in call_kwargs.kwargs["additional_fields"]
+    }
+    assert fields_by_id[1281851]["selected_option_id"] == 199354  # Church Team: RPC
+    assert fields_by_id[1282085]["selected_option_ids"] == [199442]  # Athlete/Participant
+    assert fields_by_id[1281852]["selected_option_id"] == 199355  # Member: Yes
+    assert fields_by_id[1283264]["selected_option_id"] == 199606  # Over 18 but under 35
+    assert fields_by_id[1281847]["selected_option_id"] == 199335  # VB Women
+    assert sorted(fields_by_id[1281849]["selected_option_ids"]) == [199341, 329599]
     mock_connector.add_person_to_group.assert_called_once_with("870578", "999001")
 
     audit_file = tmp_path / "form_people_repair.xlsx"
@@ -626,8 +648,8 @@ def test_repair_form_people_execute_creates_missing_person(mock_connector, mocke
     assert df.iloc[0]["Outcome"] == "created"
 
 
-def test_repair_form_people_execute_links_matched_person(mock_connector, mocker, tmp_path):
-    """execute=True, person already in ChMeetings → add_person_to_group called (linked)."""
+def test_repair_form_people_execute_skips_matched_person(mock_connector, mocker, tmp_path):
+    """execute=True, person already in ChMeetings → no create or group-add side effect."""
     mocker.patch("group_assignment.DATA_DIR", tmp_path)
 
     source_file = tmp_path / "individual.xlsx"
@@ -649,15 +671,15 @@ def test_repair_form_people_execute_links_matched_person(mock_connector, mocker,
         groups=[{"id": "870578", "name": "Team RPC"}],
     )
 
-    assert counts["linked"] == 1
+    assert counts["skipped_matched"] == 1
     assert counts["created"] == 0
     mock_connector.create_person.assert_not_called()
-    mock_connector.add_person_to_group.assert_called_once_with("870578", "3318927")
+    mock_connector.add_person_to_group.assert_not_called()
 
     audit_file = tmp_path / "form_people_repair.xlsx"
     assert audit_file.exists()
     df = pd.read_excel(audit_file)
-    assert df.iloc[0]["Outcome"] == "linked"
+    assert df.iloc[0]["Outcome"] == "skipped_matched"
 
 
 def test_repair_form_people_blocks_unmappable_church_code(mock_connector, mocker, tmp_path):
@@ -712,3 +734,38 @@ def test_repair_form_people_chm_email_filter_limits_to_one_row(mock_connector, m
     df = pd.read_excel(audit_file)
     assert len(df) == 1
     assert df.iloc[0]["Email"] == "sayanaoaklee@gmail.com"
+
+
+def test_repair_form_people_blocks_duplicate_source_submissions(mock_connector, mocker, tmp_path):
+    """Duplicate missing form identities require human review before creation."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    row1 = _sayana_row()
+    row1["First Name"] = "Kyle"
+    row1["Last Name"] = "Tran"
+    row1["Email"] = "kyletran3815@gmail.com"
+    row1["Church Team"] = "ORN"
+    row2 = row1.copy()
+    row2["Church Team"] = "GLA"
+    pd.DataFrame([row1, row2]).to_excel(source_file, index=False)
+
+    counts = repair_form_people(
+        str(source_file),
+        dry_run=False,
+        execute=True,
+        people=[],
+        groups=[
+            {"id": "872490", "name": "Team ORN"},
+            {"id": "870999", "name": "Team GLA"},
+        ],
+    )
+
+    assert counts["blocked"] == 2
+    assert counts["created"] == 0
+    mock_connector.create_person.assert_not_called()
+    mock_connector.add_person_to_group.assert_not_called()
+
+    audit_file = tmp_path / "form_people_repair.xlsx"
+    df = pd.read_excel(audit_file)
+    assert set(df["Outcome"]) == {"blocked_duplicate_source"}

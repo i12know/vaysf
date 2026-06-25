@@ -497,7 +497,11 @@ class ChMeetingsConnector:
             payload["additional_fields"] = additional_fields
 
         try:
-            logger.debug(f"create_person POST payload for {first_name!r} {last_name!r}: {payload}")
+            logger.debug(
+                f"create_person POST for {first_name!r} {last_name!r} with "
+                f"{len(additional_fields or [])} additional field(s)"
+                f"{' and extra standard fields' if extra_fields else ''}"
+            )
             response = self._api_request("POST", "api/v1/people", json=payload)
             if not response.ok:
                 logger.error(

@@ -1055,17 +1055,15 @@ def main() -> None:
             if args.dry_run:
                 logger.info(
                     f"Dry-run complete — would create {counts.get('dry_run', 0)}, "
-                    f"link {counts.get('linked', 0)}, "
                     f"skip {counts.get('skipped_matched', 0)} already-matched, "
-                    f"block {counts.get('blocked', 0) + counts.get('blocked_ambiguous', 0)}. "
+                    f"block {counts.get('blocked', 0)}. "
                     "Check data/form_people_repair.xlsx for details."
                 )
             else:
                 logger.info(
                     f"Repair complete — created {counts.get('created', 0)}, "
-                    f"linked {counts.get('linked', 0)}, "
                     f"skipped {counts.get('skipped_matched', 0)} already-matched, "
-                    f"blocked {counts.get('blocked', 0) + counts.get('blocked_ambiguous', 0)}, "
+                    f"blocked {counts.get('blocked', 0)}, "
                     f"errored {counts.get('errored', 0)}. "
                     "Check data/form_people_repair.xlsx for details."
                 )

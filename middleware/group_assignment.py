@@ -8,12 +8,15 @@ import pandas as pd
 from loguru import logger
 from config import (
     Config, CHM_FIELDS, DATA_DIR,
+    MEMBERSHIP_QUESTION,
     SF_FIELD_IDS,
     SF_CHURCH_TEAM_OPTIONS,
     SF_MY_ROLE_OPTIONS,
     SF_PRIMARY_SPORT_OPTIONS,
     SF_SECONDARY_SPORT_OPTIONS,
     SF_OTHER_EVENTS_OPTIONS,
+    SF_AGE_VERIFICATION_OPTIONS,
+    SF_IS_MEMBER_OPTION_IDS,
 )
 
 # Add parent directory to import path to access other modules
@@ -73,6 +76,14 @@ def _clean_cell(value: Optional[str]) -> str:
     return str(value or "").strip()
 
 
+def _row_first_clean(row: pd.Series, *columns: str) -> str:
+    for column in columns:
+        value = _clean_cell(row.get(column, ""))
+        if value:
+            return value
+    return ""
+
+
 def _load_source_export_rows(source_file: str) -> List[Dict[str, str]]:
     """Load current-season registrants from an Individual Application export."""
     df = pd.read_excel(source_file)
@@ -94,8 +105,20 @@ def _load_source_export_rows(source_file: str) -> List[Dict[str, str]]:
             "email_display": _clean_cell(row.get("Email", "")),
             "mobile_phone": _normalize_phone(row.get("Mobile Phone", "")),
             "mobile_phone_display": _clean_cell(row.get("Mobile Phone", "")),
+            "gender": _clean_cell(row.get("Gender", "")),
+            "birth_date": _parse_form_date(row.get("Birthdate", "")),
             "church_code": church_code,
             "role": _clean_cell(row.get("My role is", "")),
+            "is_member": _row_first_clean(
+                row,
+                MEMBERSHIP_QUESTION,
+                "Would the church pastor say that you belong to his church?",
+            ),
+            "age_verification": _clean_cell(row.get("Age verification (by the date of Sports Fest)", "")),
+            "parent_name": _clean_cell(row.get(CHM_FIELDS["PARENT_NAME"], "")),
+            "parent_email": _clean_cell(row.get(CHM_FIELDS["PARENT_EMAIL"], "")),
+            "parent_phone": _clean_cell(row.get(CHM_FIELDS["PARENT_PHONE"], "")),
+            "additional_info": _clean_cell(row.get("Additional Info", "")),
             "submission_date": _clean_cell(row.get("Submission Date", "")),
             "primary_sport": _clean_cell(row.get("Primary Sport", "")),
             "secondary_sport": _clean_cell(row.get("Secondary Sport", "")),
@@ -165,6 +188,35 @@ _ROLE_LABEL_TO_OPTION_ID: Dict[str, int]  = {v: k for k, v in SF_MY_ROLE_OPTIONS
 _PRIMARY_SPORT_LABEL_TO_OPTION_ID: Dict[str, int]    = {v: k for k, v in SF_PRIMARY_SPORT_OPTIONS.items()}
 _SECONDARY_SPORT_LABEL_TO_OPTION_ID: Dict[str, int]  = {v: k for k, v in SF_SECONDARY_SPORT_OPTIONS.items()}
 _OTHER_EVENTS_LABEL_TO_OPTION_ID: Dict[str, int]     = {v: k for k, v in SF_OTHER_EVENTS_OPTIONS.items()}
+_AGE_VERIFICATION_LABEL_TO_OPTION_ID: Dict[str, int] = {v: k for k, v in SF_AGE_VERIFICATION_OPTIONS.items()}
+_IS_MEMBER_LABEL_TO_OPTION_ID: Dict[str, int] = {
+    label.strip(): option_id
+    for label, option_id in SF_IS_MEMBER_OPTION_IDS.items()
+    if option_id
+}
+
+
+def _parse_form_date(value: Optional[str]) -> str:
+    """Return a ChMeetings date string (YYYY-MM-DD) from a form/export cell."""
+    if pd.isna(value):
+        return ""
+    if hasattr(value, "date"):
+        return value.date().isoformat()
+
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return pd.to_datetime(raw, format=fmt).date().isoformat()
+        except (TypeError, ValueError):
+            pass
+
+    try:
+        return pd.to_datetime(raw).date().isoformat()
+    except (TypeError, ValueError):
+        return ""
 
 
 def _load_repair_extra_cols(source_file: str) -> Dict[str, Dict[str, str]]:
@@ -240,6 +292,30 @@ def _build_create_payload(
             "field_id": SF_FIELD_IDS["MY_ROLE"],
             "selected_option_ids": role_option_ids,
         })
+    elif role_str:
+        return None, f"role {role_str!r} not in SF_MY_ROLE_OPTIONS"
+
+    is_member = html.unescape(row.get("is_member", "").strip())
+    if is_member:
+        opt_id = _IS_MEMBER_LABEL_TO_OPTION_ID.get(is_member)
+        if opt_id is None:
+            return None, f"membership answer {is_member!r} not in SF_IS_MEMBER_OPTION_IDS"
+        additional_fields.append({
+            "field_type": "multiple_choice",
+            "field_id": SF_FIELD_IDS["IS_MEMBER"],
+            "selected_option_id": opt_id,
+        })
+
+    age_verification = html.unescape(row.get("age_verification", "").strip())
+    if age_verification:
+        opt_id = _AGE_VERIFICATION_LABEL_TO_OPTION_ID.get(age_verification)
+        if opt_id is None:
+            return None, f"age_verification {age_verification!r} not in SF_AGE_VERIFICATION_OPTIONS"
+        additional_fields.append({
+            "field_type": "multiple_choice",
+            "field_id": SF_FIELD_IDS["AGE_VERIFICATION"],
+            "selected_option_id": opt_id,
+        })
 
     # Primary sport (dropdown) — block if label is present and unmappable.
     primary_sport = html.unescape(row.get("primary_sport", "").strip())
@@ -298,15 +374,29 @@ def _build_create_payload(
             "value": secondary_partner,
         })
 
-    # Racquet format dropdowns (option_ids not yet in config) — warn and skip.
+    # Racquet format dropdowns have field IDs but no option-id maps in config.
+    # Block instead of creating an incomplete racquet registration.
     for fmt_key in ("primary_format", "secondary_format"):
         fmt_val = extra.get(fmt_key, "").strip()
         if fmt_val:
-            logger.warning(
+            return None, (
                 f"{fmt_key} value {fmt_val!r} present but format option_ids are not yet "
-                f"mapped in SF_FIELD_IDS — omitting from create payload for {first_name} {last_name}. "
-                f"Run api-inspect and add the option_ids to config.py before re-running."
+                "mapped in config.py"
             )
+
+    for row_key, field_key in [
+        ("parent_name", "PARENT_NAME"),
+        ("parent_email", "PARENT_EMAIL"),
+        ("parent_phone", "PARENT_PHONE"),
+        ("additional_info", "ADDITIONAL_INFO"),
+    ]:
+        value = row.get(row_key, "").strip()
+        if value:
+            additional_fields.append({
+                "field_type": "multi_line_text" if field_key == "ADDITIONAL_INFO" else "text",
+                "field_id": SF_FIELD_IDS[field_key],
+                "value": value,
+            })
 
     payload: Dict[str, Any] = {"first_name": first_name, "last_name": last_name}
     email_display = row.get("email_display", "").strip()
@@ -315,9 +405,51 @@ def _build_create_payload(
         payload["email"] = email_display
     if mobile_display:
         payload["mobile"] = mobile_display
+    extra_fields: Dict[str, Any] = {}
+    gender = row.get("gender", "").strip()
+    birth_date = row.get("birth_date", "").strip()
+    if gender:
+        extra_fields["gender"] = gender
+    if birth_date:
+        extra_fields["birth_date"] = birth_date
+    if extra_fields:
+        payload["extra_fields"] = extra_fields
     payload["additional_fields"] = additional_fields
 
     return payload, None
+
+
+def _source_identity_keys(row: Dict[str, str]) -> List[Tuple[str, str]]:
+    keys: List[Tuple[str, str]] = []
+    email = row.get("email", "")
+    mobile = row.get("mobile_phone", "")
+    name_key = f"{_normalize_text(row.get('first_name', ''))}|{_normalize_text(row.get('last_name', ''))}"
+    if email:
+        keys.append(("email", email))
+    if mobile:
+        keys.append(("phone_name", f"{mobile}|{name_key}"))
+    return keys
+
+
+def _duplicate_source_repair_keys(rows: List[Dict[str, str]]) -> Dict[Tuple[str, str], List[Dict[str, str]]]:
+    by_key: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
+    for row in rows:
+        for key in _source_identity_keys(row):
+            by_key.setdefault(key, []).append(row)
+    return {key: value for key, value in by_key.items() if len(value) > 1}
+
+
+def _duplicate_source_reason(
+    row: Dict[str, str],
+    duplicate_keys: Dict[Tuple[str, str], List[Dict[str, str]]],
+) -> Optional[str]:
+    for key in _source_identity_keys(row):
+        duplicates = duplicate_keys.get(key)
+        if duplicates:
+            rows = ", ".join(str(item.get("source_row", "")) for item in duplicates)
+            churches = ", ".join(sorted({str(item.get("church_code", "")) for item in duplicates}))
+            return f"duplicate source submissions by {key[0]} on rows {rows} (churches: {churches})"
+    return None
 
 
 def _repair_audit_row(
@@ -332,10 +464,18 @@ def _repair_audit_row(
         "Last Name": row.get("last_name", ""),
         "Email": row.get("email_display", ""),
         "Mobile Phone": row.get("mobile_phone_display", ""),
+        "Gender": row.get("gender", ""),
+        "Birthdate": row.get("birth_date", ""),
         "Church Code": row.get("church_code", ""),
         "Role": row.get("role", ""),
+        "Membership Answer": row.get("is_member", ""),
+        "Age Verification": row.get("age_verification", ""),
+        "Parent Name": row.get("parent_name", ""),
+        "Parent Email": row.get("parent_email", ""),
+        "Parent Phone": row.get("parent_phone", ""),
         "Submission Date": row.get("submission_date", ""),
         "Primary Sport": row.get("primary_sport", ""),
+        "Secondary Sport": row.get("secondary_sport", ""),
         "Other Events": row.get("other_events", ""),
         "Outcome": outcome,
         "Outcome Detail": outcome_detail,
@@ -370,7 +510,15 @@ def repair_form_people(
         Dict with integer counts: ``created``, ``linked``, ``skipped``,
         ``blocked``, ``errored``.
     """
-    empty: Dict[str, int] = {"created": 0, "linked": 0, "skipped": 0, "blocked": 0, "errored": 0}
+    empty: Dict[str, int] = {
+        "created": 0,
+        "linked": 0,
+        "skipped": 0,
+        "skipped_matched": 0,
+        "dry_run": 0,
+        "blocked": 0,
+        "errored": 0,
+    }
 
     if not dry_run and not execute:
         logger.error("repair-form-people requires --dry-run or --execute.")
@@ -391,7 +539,15 @@ def repair_form_people(
             logger.warning(f"No form rows found for email {chm_email!r}")
             return empty
 
-    counts: Dict[str, int] = {"created": 0, "linked": 0, "skipped": 0, "blocked": 0, "errored": 0}
+    counts: Dict[str, int] = {
+        "created": 0,
+        "linked": 0,
+        "skipped": 0,
+        "skipped_matched": 0,
+        "dry_run": 0,
+        "blocked": 0,
+        "errored": 0,
+    }
     audit_rows: List[Dict[str, str]] = []
 
     with ChMeetingsConnector() as chm_connector:
@@ -411,6 +567,11 @@ def repair_form_people(
             for g in live_groups
             if _is_team_group(g.get("name", ""))
         }
+        repair_candidates: List[Dict[str, str]] = [
+            row for row in source_rows
+            if _source_row_people_match(row, people_index)[0] == "missing_person"
+        ]
+        duplicate_source_keys = _duplicate_source_repair_keys(repair_candidates)
 
         for row in source_rows:
             match_status, matches = _source_row_people_match(row, people_index)
@@ -430,45 +591,31 @@ def repair_form_people(
                         f"[repair] Row {row_key} ({name}): blocked — {outcome_detail}"
                     )
                 else:
-                    # matched_email / matched_phone_name / matched_name_only
+                    # matched_email / matched_phone_name / matched_name_only.
+                    # This command repairs missing People only. Existing People
+                    # are left for assign-groups to route into Team groups.
                     matched = matches[0]
                     matched_id = str(matched.get("id", ""))
-                    church_code = row.get("church_code", "").strip().upper()
-                    group_name = _team_group_name(church_code)
-                    group_id = team_group_by_name.get(group_name)
-                    if execute and matched_id and group_id:
-                        ok = chm_connector.add_person_to_group(group_id, matched_id)
-                        time.sleep(0.2)
-                        if ok:
-                            counts["linked"] += 1
-                            outcome = "linked"
-                            outcome_detail = (
-                                f"matched by {match_status} (id={matched_id}), "
-                                f"added to {group_name}"
-                            )
-                        else:
-                            counts["errored"] += 1
-                            outcome = "errored"
-                            outcome_detail = (
-                                f"matched by {match_status} (id={matched_id}), "
-                                f"add_to_group failed"
-                            )
-                    elif dry_run:
-                        counts["skipped"] += 1
-                        outcome = "skipped_matched"
-                        outcome_detail = (
-                            f"matched by {match_status} (id={matched_id}) "
-                            f"[dry-run: would link to {group_name}]"
-                        )
-                    else:
-                        counts["skipped"] += 1
-                        outcome = "skipped_matched"
-                        outcome_detail = f"matched by {match_status} (id={matched_id})"
+                    counts["skipped"] += 1
+                    counts["skipped_matched"] += 1
+                    outcome = "skipped_matched"
+                    outcome_detail = f"matched by {match_status} (id={matched_id}); no repair needed"
 
                 audit_rows.append(_repair_audit_row(row, outcome, outcome_detail, matches))
                 continue
 
             # Row is still missing_person after fresh re-check.
+            duplicate_reason = _duplicate_source_reason(row, duplicate_source_keys)
+            if duplicate_reason:
+                counts["blocked"] += 1
+                logger.warning(
+                    f"[repair] Row {row_key} ({name}): blocked — {duplicate_reason}"
+                )
+                audit_rows.append(
+                    _repair_audit_row(row, "blocked_duplicate_source", duplicate_reason, [])
+                )
+                continue
+
             extra = extra_cols_by_row.get(row_key, {})
             payload, blocked_reason = _build_create_payload(row, extra)
 
@@ -484,6 +631,7 @@ def repair_form_people(
 
             if dry_run:
                 counts["skipped"] += 1
+                counts["dry_run"] += 1
                 outcome_detail = (
                     f"would create {name} for church {row.get('church_code')} "
                     f"(sport={row.get('primary_sport')})"
@@ -500,6 +648,7 @@ def repair_form_people(
                 email=payload.get("email"),
                 mobile=payload.get("mobile"),
                 additional_fields=payload.get("additional_fields"),
+                extra_fields=payload.get("extra_fields"),
             )
             time.sleep(0.3)
 
