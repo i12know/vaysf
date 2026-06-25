@@ -291,6 +291,7 @@ The generated workbook includes these operator-focused tabs:
 - `Summary`: church-level counts for participants, approvals, open individual `ERROR`s, open TEAM `ERROR`s, and warnings
 - `Contacts-Status`: participant directory plus open individual `ERROR` counts
 - `Roster`: roster rows with `Open_TEAM_Issue_Count (WP)` and `Open_TEAM_Issue_Desc (WP)`
+- `Multi-Sport-Matrix`: one row per participant with stable sport columns for conflict checks. Values are `Primary`, `Secondary`, `Other`, or blank. This tab is included in both all-church and single-church exports.
 - `Validation-Issues`: one row per open WordPress validation issue, including `INDIVIDUAL`, `TEAM`, and `CHURCH` issues
 
 The `Validation-Issues` tab is based on the current ChMeetings Team-group
@@ -706,16 +707,22 @@ python main.py assign-groups
 
 # Limit the run to the current-season Individual Application export
 python main.py assign-groups --file "data/individual_application_forms.xlsx" --dry-run
+
+# Audit current-season form rows against ChMeetings People records
+python main.py audit-form-people --file "data/individual_application_forms.xlsx"
 ```
 
 This command:
 - Scans ChMeetings for participants with a "Church Team" additional field who are not yet in their `Team [Code]` group
 - Calls `add_person_to_group()` directly for each unassigned participant - no Excel import step required
 - Writes `data/church_team_assignments.xlsx` as an audit log (in both live and dry-run modes); the `Outcome` column shows `added`, `failed`, `missing_group`, or `dry_run` per person
+- When `--file` is provided, also writes `data/form_people_audit.xlsx` and warns about Individual Application rows that do not match any visible ChMeetings People record
 - Logs a warning and skips any church code that has no matching group in ChMeetings (e.g. `Team OTHER` if that group doesn't exist)
 - Safe to re-run - participants already in their group are detected during identification and skipped
 
 > **Current-season filter:** When `--file` is provided, only registrants present in that Individual Application export are considered for assignment; this is useful after a season reset when older ChMeetings people still retain stale church-team values.
+
+> **Missing People audit:** `audit-form-people` is diagnostic only. It does not create ChMeetings People records; it identifies form submissions that cannot be assigned to Team groups because the API has no matching person ID.
 
 > **Note:** Close `church_team_assignments.xlsx` in Excel before running, or you will see a warning that the audit file could not be written (the API calls still complete successfully).
 After assigning participants to their Team groups, run the approval sync to add approved participants to the `2025 Sports Fest` group:
