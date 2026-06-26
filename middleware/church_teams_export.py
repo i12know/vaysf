@@ -97,10 +97,21 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
     def _parse_church_code_from_group_name(self, group_name: str) -> Optional[str]:
         """Extracts church code from a ChMeetings group name like 'Team ABC'."""
+        group_name = str(group_name or "")
         if group_name.startswith(Config.TEAM_PREFIX + " "):
             return group_name[len(Config.TEAM_PREFIX + " "):].strip().upper()
         logger.warning(f"Could not parse church code from group name: '{group_name}'")
         return None
+
+    @staticmethod
+    def _excel_image_formula(photo_url: Any) -> str:
+        """Return an Excel IMAGE formula only for non-empty HTTP(S) URLs."""
+        if not isinstance(photo_url, str):
+            return ""
+        photo_url = photo_url.strip()
+        if photo_url.startswith(("http://", "https://")):
+            return f'=IMAGE("{photo_url}")'
+        return ""
 
     def _get_completion_checklist_statuses(self, checklist_str: Optional[str]) -> Dict[str, str]:
         """Parses the 'Completion Check List' string and returns status for each box."""
@@ -596,7 +607,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         orphaned_ids_by_church: Dict[str, List[str]] = {}
 
 
-        team_groups = [g for g in all_chm_groups if g.get("name", "").startswith(Config.TEAM_PREFIX + " ")]
+        team_groups = [
+            g for g in all_chm_groups
+            if str(g.get("name") or "").startswith(Config.TEAM_PREFIX + " ")
+        ]
         logger.info(f"Found {len(team_groups)} ChMeetings groups with prefix '{Config.TEAM_PREFIX} '.")
 
         for group in team_groups:
@@ -671,7 +685,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "Gender": person_data.get("gender", ""),
                     "Birthdate": person_data.get("birth_date", ""),
                     "Mobile Phone": person_data.get("mobile", ""),
-                    "Email": person_data.get("email", "").strip(),
+                    "Email": str(person_data.get("email") or "").strip(),
                     "Is_Member_ChM": additional_fields.get(MEMBERSHIP_QUESTION, "No") == "Yes",
                     "ChM_Roles": additional_fields.get(CHM_FIELDS["ROLES"], ""),
                     "ChM_Completion_Checklist": additional_fields.get(CHM_FIELDS["COMPLETION_CHECKLIST"], ""),
@@ -914,7 +928,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                     "Participant ID (WP)": wp_participant_id_val,
                                     "Approval_Status (WP)": approval_status_val,
                                     "Is_Member_ChM": chm_person.get("Is_Member_ChM", False),  # ADD THIS LINE
-                                    "Photo": f'=IMAGE("{photo_url_val}")' if photo_url_val != "N/A" and photo_url_val.startswith(("http://", "https://")) else "",  # ADD THIS LINE
+                                    "Photo": self._excel_image_formula(photo_url_val),  # ADD THIS LINE
 #NOTE: The above line assumes the Excel engine supports IMAGE formula, which is not standard in pandas and will insert "@" after "="
                                     "First Name": chm_person["First Name"], 
                                     "Last Name": chm_person["Last Name"],
@@ -2947,8 +2961,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     sport_groups = {}
                     
                     for _, row in df_roster.iterrows():
-                        sport_type = row.get("sport_type", "")
-                        sport_gender = row.get("sport_gender", "")
+                        sport_type = str(row.get("sport_type") or "")
+                        sport_gender = str(row.get("sport_gender") or "")
                         
                         if not sport_type:
                             continue

@@ -70,6 +70,32 @@ def parse_args() -> argparse.Namespace:
         help="Path to the current-season Individual Application export",
     )
 
+    repair_form_people_parser = subparsers.add_parser(
+        "repair-form-people",
+        help="Create missing ChMeetings People records identified by audit-form-people",
+    )
+    repair_form_people_parser.add_argument(
+        "--file",
+        default=os.path.join("data", "individual_application_forms.xlsx"),
+        help="Path to the current-season Individual Application export",
+    )
+    repair_form_people_parser.add_argument(
+        "--chm-email",
+        default=None,
+        help="Limit the run to a single form row by email address (for targeted testing)",
+    )
+    repair_mode = repair_form_people_parser.add_mutually_exclusive_group(required=True)
+    repair_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview what would be created without making any ChMeetings API calls",
+    )
+    repair_mode.add_argument(
+        "--execute",
+        action="store_true",
+        help="Re-check live and create ChMeetings People records for rows still missing_person",
+    )
+
     # Team-group clearing command
     clear_team_groups_parser = subparsers.add_parser(
         "clear-team-groups",
@@ -1013,6 +1039,34 @@ def main() -> None:
             success = audit_form_people(args.file)
             if success:
                 logger.info("Form/People audit complete. Check data/form_people_audit.xlsx for the audit log.")
+    elif args.command == "repair-form-people":
+        from group_assignment import repair_form_people
+        if not os.path.exists(args.file):
+            logger.error(f"Individual Application export not found at {args.file}")
+            success = False
+        else:
+            counts = repair_form_people(
+                args.file,
+                dry_run=args.dry_run,
+                chm_email=args.chm_email,
+                execute=args.execute,
+            )
+            success = counts is not None and counts.get("errored", 0) == 0
+            if args.dry_run:
+                logger.info(
+                    f"Dry-run complete — would create {counts.get('dry_run', 0)}, "
+                    f"skip {counts.get('skipped_matched', 0)} already-matched, "
+                    f"block {counts.get('blocked', 0)}. "
+                    "Check data/form_people_repair.xlsx for details."
+                )
+            else:
+                logger.info(
+                    f"Repair complete — created {counts.get('created', 0)}, "
+                    f"skipped {counts.get('skipped_matched', 0)} already-matched, "
+                    f"blocked {counts.get('blocked', 0)}, "
+                    f"errored {counts.get('errored', 0)}. "
+                    "Check data/form_people_repair.xlsx for details."
+                )
     elif args.command == "clear-team-groups":
         from group_assignment import clear_team_groups
         success = clear_team_groups(

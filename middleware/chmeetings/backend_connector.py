@@ -454,6 +454,78 @@ class ChMeetingsConnector:
             logger.error(f"Failed to add note to person {person_id}: {str(e)}")
             return False
 
+    def create_person(
+        self,
+        first_name: str,
+        last_name: str,
+        email: Optional[str] = None,
+        mobile: Optional[str] = None,
+        additional_fields: Optional[List[Dict[str, Any]]] = None,
+        extra_fields: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Create a new ChMeetings People record.
+
+        Calls POST /api/v1/people.  Returns the created person dict (which
+        includes the new ``id`` / ``person_id``) on success, or None on failure.
+
+        Args:
+            first_name: Person's first name (required by the API).
+            last_name: Person's last name (required by the API).
+            email: Primary email address.
+            mobile: Mobile phone number (raw; ChMeetings accepts various formats).
+            additional_fields: SF custom field payloads — every item must include
+                ``field_type``.
+            extra_fields: Optional additional standard profile fields (e.g. gender,
+                birth_date).  Read-only fields (full_name, photo, etc.) are silently
+                excluded.
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return None
+
+        payload: Dict[str, Any] = {"first_name": first_name, "last_name": last_name}
+        if email:
+            payload["email"] = email
+        if mobile:
+            payload["mobile"] = mobile
+        if extra_fields:
+            for k, v in extra_fields.items():
+                if k not in PERSON_PUT_EXCLUDE and k not in {"first_name", "last_name", "email", "mobile"}:
+                    payload[k] = v
+        if additional_fields:
+            payload["additional_fields"] = additional_fields
+
+        try:
+            logger.debug(
+                f"create_person POST for {first_name!r} {last_name!r} with "
+                f"{len(additional_fields or [])} additional field(s)"
+                f"{' and extra standard fields' if extra_fields else ''}"
+            )
+            response = self._api_request("POST", "api/v1/people", json=payload)
+            if not response.ok:
+                logger.error(
+                    f"Failed to create person {first_name!r} {last_name!r}: "
+                    f"HTTP {response.status_code} — {response.text}"
+                )
+                return None
+            raw = response.json()
+            person = self._extract_data(raw)
+            if not isinstance(person, dict):
+                logger.error(
+                    f"create_person: unexpected response type {type(person)} for "
+                    f"{first_name!r} {last_name!r}"
+                )
+                return None
+            person_id = person.get("id") or person.get("person_id")
+            logger.info(
+                f"Created ChMeetings person {first_name!r} {last_name!r} (id={person_id})"
+            )
+            return person
+        except requests.RequestException as e:
+            logger.error(f"Failed to create person {first_name!r} {last_name!r}: {e}")
+            return None
+
     def update_person(
         self,
         person_id: str,

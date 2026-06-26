@@ -79,6 +79,42 @@ def test_fetch_chm_church_team_data_skips_orphaned_memberships(mock_connectors):
     assert exporter.last_orphaned_memberships_by_church == {"RPC": 1}
 
 
+def test_fetch_chm_church_team_data_tolerates_null_email(mock_connectors):
+    chm_connector, _ = mock_connectors
+
+    chm_connector.get_groups.return_value = [{"id": "870578", "name": "Team RPC"}]
+    chm_connector.get_group_people.return_value = [{"person_id": "101"}]
+
+    person_with_null_email = {
+        "id": "101",
+        "first_name": "Bao",
+        "last_name": "Tran",
+        "gender": "Male",
+        "birth_date": "1999-03-04",
+        "mobile": "555-0102",
+        "email": None,  # ChMeetings returns the key present but null
+        "updated_on": "2026-05-07T22:17:30+00:00",
+        "additional_fields": [
+            {"field_name": MEMBERSHIP_QUESTION, "value": "Yes"},
+            {"field_name": CHM_FIELDS["ROLES"], "value": "Athlete"},
+            {"field_name": CHM_FIELDS["COMPLETION_CHECKLIST"], "value": ""},
+        ],
+    }
+
+    def fake_get_person(person_id):
+        chm_connector.last_get_person_status = "ok"
+        return person_with_null_email
+
+    chm_connector.get_person.side_effect = fake_get_person
+
+    exporter = ChurchTeamsExporter()
+    data = exporter._fetch_chm_church_team_data()
+
+    assert "RPC" in data
+    assert len(data["RPC"]) == 1
+    assert data["RPC"][0]["Email"] == ""
+
+
 def test_handle_force_resend_filters_to_one_chm_id(mock_connectors, mocker):
     _, wp_connector = mock_connectors
 
@@ -360,6 +396,65 @@ def test_generate_reports_surfaces_open_validation_issues(mock_connectors, mocke
     team_issue = next(row for row in validation_rows if row["Issue Type"] == "team_non_member_limit")
     assert team_issue["Rule Level"] == "TEAM"
     assert team_issue["Participant Name"] == ""
+
+
+def test_generate_reports_tolerates_null_wordpress_photo_url(mock_connectors, mocker, tmp_path):
+    chm_connector, wp_connector = mock_connectors
+    chm_connector.authenticate.return_value = True
+
+    exporter = ChurchTeamsExporter()
+    exporter.latest_chm_update_by_church = {"ANH": "2026-06-26 06:00:00"}
+    mocker.patch.object(
+        exporter,
+        "_fetch_chm_church_team_data",
+        return_value={
+            "ANH": [
+                {
+                    "Church Team": "ANH",
+                    "ChMeetings ID": "4464029",
+                    "First Name": "Ryan",
+                    "Last Name": "Kim",
+                    "Gender": "Male",
+                    "Birthdate": "2006-01-01",
+                    "Mobile Phone": "555-0101",
+                    "Email": "ryan@example.com",
+                    "Is_Member_ChM": True,
+                    "ChM_Roles": "Athlete/Participant",
+                    "ChM_Completion_Checklist": "",
+                    "ChM_Primary_Sport": "Volleyball - Men Team",
+                    "ChM_Primary_Format": "",
+                    "ChM_Secondary_Sport": "",
+                    "ChM_Secondary_Format": "",
+                    "ChM_Other_Events": "",
+                    "Update_on_ChM": "2026-06-26 06:00:00",
+                }
+            ]
+        },
+    )
+    wp_connector.get_church_by_code.return_value = {"church_id": 1, "church_code": "ANH"}
+    wp_connector.get_participants.return_value = [
+        {
+            "participant_id": 42,
+            "approval_status": "pending",
+            "photo_url": None,
+            "created_at": "2026-06-26 06:00:00",
+        }
+    ]
+    wp_connector.get_validation_issues.return_value = []
+    wp_connector.get_rosters.return_value = [
+        {
+            "sport_type": "Volleyball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "team_order": None,
+            "partner_name": "",
+        }
+    ]
+    write_report = mocker.patch.object(exporter, "_write_excel_report")
+
+    assert exporter.generate_reports("ANH", tmp_path) is True
+    _, _, _, roster_rows, _ = write_report.call_args.args
+    assert roster_rows[0]["Photo"] == ""
 
 
 def test_generate_reports_filters_stale_individual_validation_issues(mock_connectors, mocker, tmp_path):
