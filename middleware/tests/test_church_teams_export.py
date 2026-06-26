@@ -362,6 +362,65 @@ def test_generate_reports_surfaces_open_validation_issues(mock_connectors, mocke
     assert team_issue["Participant Name"] == ""
 
 
+def test_generate_reports_tolerates_null_wordpress_photo_url(mock_connectors, mocker, tmp_path):
+    chm_connector, wp_connector = mock_connectors
+    chm_connector.authenticate.return_value = True
+
+    exporter = ChurchTeamsExporter()
+    exporter.latest_chm_update_by_church = {"ANH": "2026-06-26 06:00:00"}
+    mocker.patch.object(
+        exporter,
+        "_fetch_chm_church_team_data",
+        return_value={
+            "ANH": [
+                {
+                    "Church Team": "ANH",
+                    "ChMeetings ID": "4464029",
+                    "First Name": "Ryan",
+                    "Last Name": "Kim",
+                    "Gender": "Male",
+                    "Birthdate": "2006-01-01",
+                    "Mobile Phone": "555-0101",
+                    "Email": "ryan@example.com",
+                    "Is_Member_ChM": True,
+                    "ChM_Roles": "Athlete/Participant",
+                    "ChM_Completion_Checklist": "",
+                    "ChM_Primary_Sport": "Volleyball - Men Team",
+                    "ChM_Primary_Format": "",
+                    "ChM_Secondary_Sport": "",
+                    "ChM_Secondary_Format": "",
+                    "ChM_Other_Events": "",
+                    "Update_on_ChM": "2026-06-26 06:00:00",
+                }
+            ]
+        },
+    )
+    wp_connector.get_church_by_code.return_value = {"church_id": 1, "church_code": "ANH"}
+    wp_connector.get_participants.return_value = [
+        {
+            "participant_id": 42,
+            "approval_status": "pending",
+            "photo_url": None,
+            "created_at": "2026-06-26 06:00:00",
+        }
+    ]
+    wp_connector.get_validation_issues.return_value = []
+    wp_connector.get_rosters.return_value = [
+        {
+            "sport_type": "Volleyball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+            "team_order": None,
+            "partner_name": "",
+        }
+    ]
+    write_report = mocker.patch.object(exporter, "_write_excel_report")
+
+    assert exporter.generate_reports("ANH", tmp_path) is True
+    _, _, _, roster_rows, _ = write_report.call_args.args
+    assert roster_rows[0]["Photo"] == ""
+
+
 def test_generate_reports_filters_stale_individual_validation_issues(mock_connectors, mocker, tmp_path):
     chm_connector, wp_connector = mock_connectors
     chm_connector.authenticate.return_value = True
