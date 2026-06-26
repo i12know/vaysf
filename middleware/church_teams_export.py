@@ -685,7 +685,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     "Gender": person_data.get("gender", ""),
                     "Birthdate": person_data.get("birth_date", ""),
                     "Mobile Phone": person_data.get("mobile", ""),
-                    "Email": person_data.get("email", "").strip(),
+                    "Email": str(person_data.get("email") or "").strip(),
                     "Is_Member_ChM": additional_fields.get(MEMBERSHIP_QUESTION, "No") == "Yes",
                     "ChM_Roles": additional_fields.get(CHM_FIELDS["ROLES"], ""),
                     "ChM_Completion_Checklist": additional_fields.get(CHM_FIELDS["COMPLETION_CHECKLIST"], ""),

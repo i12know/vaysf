@@ -79,6 +79,42 @@ def test_fetch_chm_church_team_data_skips_orphaned_memberships(mock_connectors):
     assert exporter.last_orphaned_memberships_by_church == {"RPC": 1}
 
 
+def test_fetch_chm_church_team_data_tolerates_null_email(mock_connectors):
+    chm_connector, _ = mock_connectors
+
+    chm_connector.get_groups.return_value = [{"id": "870578", "name": "Team RPC"}]
+    chm_connector.get_group_people.return_value = [{"person_id": "101"}]
+
+    person_with_null_email = {
+        "id": "101",
+        "first_name": "Bao",
+        "last_name": "Tran",
+        "gender": "Male",
+        "birth_date": "1999-03-04",
+        "mobile": "555-0102",
+        "email": None,  # ChMeetings returns the key present but null
+        "updated_on": "2026-05-07T22:17:30+00:00",
+        "additional_fields": [
+            {"field_name": MEMBERSHIP_QUESTION, "value": "Yes"},
+            {"field_name": CHM_FIELDS["ROLES"], "value": "Athlete"},
+            {"field_name": CHM_FIELDS["COMPLETION_CHECKLIST"], "value": ""},
+        ],
+    }
+
+    def fake_get_person(person_id):
+        chm_connector.last_get_person_status = "ok"
+        return person_with_null_email
+
+    chm_connector.get_person.side_effect = fake_get_person
+
+    exporter = ChurchTeamsExporter()
+    data = exporter._fetch_chm_church_team_data()
+
+    assert "RPC" in data
+    assert len(data["RPC"]) == 1
+    assert data["RPC"][0]["Email"] == ""
+
+
 def test_handle_force_resend_filters_to_one_chm_id(mock_connectors, mocker):
     _, wp_connector = mock_connectors
 
