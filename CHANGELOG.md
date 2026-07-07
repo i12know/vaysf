@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### ChMeetings profile photo upload — refs [#175](https://github.com/i12know/vaysf/issues/175)
+
+- Added a `ChMeetingsConnector.upload_person_photo()` wrapper for the new
+  `POST /api/v1/people/{person_id}/photo` multipart endpoint announced by
+  ChMeetings Developer Support on 2026-07-07. This keeps `photo` out of normal
+  People create/update payloads while giving the missing-person repair workflow
+  an API path to attach athlete headshots after creating a Person record.
+- Added an operator-gated `upload-person-photo --chm-id ... --photo-file ...`
+  command with documented `file` multipart-field handling, 2 MB local image
+  validation, dry-run support, and post-upload People re-read confirmation for
+  the first safe live mutation test.
+- Extended `upload-person-photo` with `--photo-url` for ChMeetings-hosted form
+  photo URLs, so an operator can promote a form-submission headshot into the
+  linked People profile without a manual download step.
+
 ### Decompose schedule_workbook.py — Step 4: planning_tabs.py — refs [#152](https://github.com/i12know/vaysf/issues/152)
 
 Extraction-only refactor (Step 4 of 8): no behavior changes, all call sites

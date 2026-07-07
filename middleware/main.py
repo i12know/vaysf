@@ -173,6 +173,29 @@ def parse_args() -> argparse.Namespace:
     inspect_parser.add_argument("--chm-id", type=str, required=True,
                                 help="ChMeetings person ID to inspect")
 
+    upload_photo_parser = subparsers.add_parser(
+        "upload-person-photo",
+        help="Upload one local image as a ChMeetings profile photo",
+    )
+    upload_photo_parser.add_argument("--chm-id", type=str, required=True,
+                                     help="ChMeetings person ID to update")
+    upload_photo_source = upload_photo_parser.add_mutually_exclusive_group(required=True)
+    upload_photo_source.add_argument("--photo-file", type=str,
+                                     help="Path to the local image file to upload")
+    upload_photo_source.add_argument("--photo-url", type=str,
+                                     help="ChMeetings-hosted form/profile photo URL to download and upload")
+    upload_photo_mode = upload_photo_parser.add_mutually_exclusive_group(required=True)
+    upload_photo_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the local image and show what would be uploaded",
+    )
+    upload_photo_mode.add_argument(
+        "--execute",
+        action="store_true",
+        help="Upload the image to ChMeetings and re-read the person to confirm photo presence",
+    )
+
     # Reset-season command
     reset_parser = subparsers.add_parser(
         "reset-season",
@@ -1272,6 +1295,20 @@ def main() -> None:
         success = test_connectivity(args.system, args.test_type, args.test_email)
     elif args.command == "inspect-person":
         success = inspect_person(args.chm_id)
+    elif args.command == "upload-person-photo":
+        from photo_repair import upload_person_photo
+
+        summary = upload_person_photo(
+            args.chm_id,
+            photo_file=args.photo_file,
+            photo_url=args.photo_url,
+            dry_run=args.dry_run,
+            execute=args.execute,
+        )
+        if args.dry_run:
+            success = bool(summary["validated"])
+        else:
+            success = bool(summary["uploaded"] and summary["confirmed_photo"])
     elif args.command == "reset-season":
         if args.archive_only and args.reset_only:
             logger.error("--archive-only and --reset-only are mutually exclusive.")
