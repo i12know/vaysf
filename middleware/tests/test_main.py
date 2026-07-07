@@ -146,6 +146,50 @@ def test_parse_args_assign_pools_defaults(monkeypatch):
     assert args.pool_assignments is None
 
 
+def test_parse_args_upload_person_photo_execute(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "upload-person-photo",
+            "--chm-id",
+            "999001",
+            "--photo-file",
+            "athlete.png",
+            "--execute",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "upload-person-photo"
+    assert args.chm_id == "999001"
+    assert args.photo_file == "athlete.png"
+    assert args.execute is True
+    assert args.dry_run is False
+
+
+def test_parse_args_upload_person_photo_url_dry_run(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "upload-person-photo",
+            "--chm-id",
+            "999001",
+            "--photo-url",
+            "https://cdne-chmeetings-content.azureedge.net/images/photo.jpg",
+            "--dry-run",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "upload-person-photo"
+    assert args.chm_id == "999001"
+    assert args.photo_url.startswith("https://")
+    assert args.photo_file is None
+    assert args.dry_run is True
+
+
 def test_main_build_schedule_workbook_writes_xlsx(monkeypatch, tmp_path):
     data_dir = tmp_path / "data"
     export_dir = tmp_path / "export"

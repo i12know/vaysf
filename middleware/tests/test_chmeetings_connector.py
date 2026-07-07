@@ -187,6 +187,47 @@ def test_create_person_posts_complete_payload(chm_connector, mocker):
     assert captured["json"]["additional_fields"][0]["field_id"] == 1281851
 
 
+
+def test_upload_person_photo_posts_multipart_bytes(chm_connector, mocker):
+    """Mock photo upload should POST multipart form data to the ChMeetings endpoint."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("upload_person_photo is a live mutation; covered in mock mode only")
+
+    captured = {}
+
+    def capturing_post(_session, url, **kwargs):
+        captured["url"] = url
+        captured["files"] = kwargs.get("files", {})
+        uploaded_file = captured["files"]["file"][1]
+        captured["uploaded_bytes"] = uploaded_file.read()
+        uploaded_file.seek(0)
+        mock_resp = mocker.Mock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "status_code": 200,
+            "data": {"id": "999001", "photo": "https://chm.example/profile.jpg"},
+        }
+        return mock_resp
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("requests.Session.post", capturing_post)
+        result = chm_connector.upload_person_photo(
+            "999001",
+            b"fake-jpeg-bytes",
+            filename="athlete.jpg",
+            content_type="image/jpeg",
+        )
+
+    assert result["id"] == "999001"
+    assert result["photo"] == "https://chm.example/profile.jpg"
+    assert captured["url"].endswith("/api/v1/people/999001/photo")
+    assert captured["files"]["file"][0] == "athlete.jpg"
+    assert captured["files"]["file"][2] == "image/jpeg"
+    assert captured["uploaded_bytes"] == b"fake-jpeg-bytes"
+
+
 def test_get_person(chm_connector, mocker, mock_chm_people_data):
     live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
     # Use an ID that exists in mock_chm_people_data.json

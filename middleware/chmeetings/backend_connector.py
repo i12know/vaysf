@@ -1,9 +1,11 @@
 # chmeetings/backend-connector.py
 
 import os
+import mimetypes
 import requests
 import time
-from typing import Dict, List, Optional, Union, Any
+from pathlib import Path
+from typing import BinaryIO, Dict, List, Optional, Union, Any
 from urllib.parse import urljoin
 from loguru import logger
 
@@ -525,6 +527,95 @@ class ChMeetingsConnector:
         except requests.RequestException as e:
             logger.error(f"Failed to create person {first_name!r} {last_name!r}: {e}")
             return None
+
+
+    def upload_person_photo(
+        self,
+        person_id: Union[str, int],
+        photo: Union[str, os.PathLike[str], bytes, BinaryIO],
+        *,
+        filename: Optional[str] = None,
+        content_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Upload or replace a ChMeetings People profile photo.
+
+        Calls POST /api/v1/people/{person_id}/photo, which ChMeetings exposed
+        in July 2026 for the missing-person repair workflow tracked in #175.
+        The endpoint is multipart/form-data using the ``file`` form field and
+        returns the updated person/photo payload on success.  ``photo`` may be
+        a filesystem path, raw bytes, or an already-open binary file object.
+
+        Args:
+            person_id: ChMeetings person ID whose profile photo should be set.
+            photo: Local image path, image bytes, or binary file object.
+            filename: Optional filename for byte/file-object uploads.  Path
+                uploads default to the path basename.
+            content_type: Optional MIME type.  If omitted, it is guessed from
+                the filename and defaults to application/octet-stream.
+
+        Returns:
+            The unwrapped response payload when the upload succeeds, or None on
+            failure.
+        """
+        if not self.use_api:
+            logger.error("API usage is disabled")
+            return None
+
+        close_after = False
+        file_obj: BinaryIO
+        resolved_filename = filename
+
+        try:
+            if isinstance(photo, (str, os.PathLike)):
+                photo_path = Path(photo)
+                resolved_filename = resolved_filename or photo_path.name
+                file_obj = photo_path.open("rb")
+                close_after = True
+            elif isinstance(photo, bytes):
+                from io import BytesIO
+
+                resolved_filename = resolved_filename or "profile-photo.jpg"
+                file_obj = BytesIO(photo)
+                close_after = True
+            else:
+                file_obj = photo
+                resolved_filename = resolved_filename or getattr(photo, "name", "profile-photo.jpg")
+                resolved_filename = os.path.basename(str(resolved_filename))
+
+            content_type = (
+                content_type
+                or mimetypes.guess_type(str(resolved_filename))[0]
+                or "application/octet-stream"
+            )
+
+            logger.info(f"Uploading ChMeetings profile photo for person {person_id}")
+            response = self._api_request(
+                "POST",
+                f"api/v1/people/{person_id}/photo",
+                files={"file": (resolved_filename, file_obj, content_type)},
+            )
+            if not response.ok:
+                logger.error(
+                    f"Failed to upload profile photo for person {person_id}: "
+                    f"HTTP {response.status_code}"
+                )
+                return None
+            raw = response.json()
+            uploaded = self._extract_data(raw)
+            if isinstance(uploaded, dict):
+                return uploaded
+            logger.error(
+                f"upload_person_photo: unexpected response type {type(uploaded)} "
+                f"for person {person_id}"
+            )
+            return None
+        except (OSError, requests.RequestException, ValueError) as e:
+            logger.error(f"Failed to upload profile photo for person {person_id}: {e}")
+            return None
+        finally:
+            if close_after and "file_obj" in locals():
+                file_obj.close()
 
     def update_person(
         self,
