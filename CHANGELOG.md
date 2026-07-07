@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Admin insurance PDF upload - refs [#180](https://github.com/i12know/vaysf/issues/180)
+
+- Added an admin-only PDF upload form to the Sports Fest Churches screen so staff
+  can attach a church's proof of insurance when the church rep cannot complete
+  the public upload flow.
+- Shared the public and admin upload paths through one validation/storage helper
+  for the 10 MB PDF limit, MIME/extension/magic-byte checks, uploads directory
+  storage, status update, token cleanup, and optional notification emails.
+- Admin uploads preserve an already approved insurance status; otherwise the
+  church moves to Submitted so the existing approval button remains the review
+  step.
+
 ### ChMeetings profile photo upload — refs [#175](https://github.com/i12know/vaysf/issues/175)
 
 - Added a `ChMeetingsConnector.upload_person_photo()` wrapper for the new

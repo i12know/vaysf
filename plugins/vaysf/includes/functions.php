@@ -788,6 +788,188 @@ function vaysf_format_insurance_status($status) {
 }
 
 /**
+ * Maximum accepted proof-of-insurance upload size in bytes (10 MB).
+ *
+ * @return int
+ */
+function vaysf_get_insurance_max_bytes() {
+    return 10485760;
+}
+
+/**
+ * Validate, store, and attach a proof-of-insurance PDF to a church record.
+ *
+ * Used by both the public token upload flow and the admin upload flow so the
+ * same PDF checks and storage behavior stay in one place.
+ *
+ * @param array $church Church row (associative)
+ * @param array $file   Uploaded file array from REST or $_FILES
+ * @param array $args   Optional behavior flags
+ * @return array|WP_Error Stored upload details or validation/storage error
+ */
+function vaysf_store_insurance_pdf_for_church($church, $file, $args = array()) {
+    global $wpdb;
+
+    $args = wp_parse_args($args, array(
+        'notify_rep'       => true,
+        'notify_admin'     => get_option('vaysf_insurance_admin_notify', false),
+        'preserve_approved' => true,
+    ));
+
+    if (empty($church) || empty($church['church_code'])) {
+        return new WP_Error(
+            'insurance_missing_church',
+            esc_html__('Church not found.', 'vaysf'),
+            array('status' => 404)
+        );
+    }
+
+    if (empty($file) || !isset($file['tmp_name'])) {
+        return new WP_Error(
+            'rest_no_file',
+            esc_html__('No file was uploaded.', 'vaysf'),
+            array('status' => 400)
+        );
+    }
+
+    if (!empty($file['error']) && $file['error'] !== UPLOAD_ERR_OK) {
+        return new WP_Error(
+            'rest_upload_error',
+            esc_html__('The file could not be uploaded. Please try again.', 'vaysf'),
+            array('status' => 400)
+        );
+    }
+
+    if (!isset($file['size']) || $file['size'] <= 0 || $file['size'] > vaysf_get_insurance_max_bytes()) {
+        return new WP_Error(
+            'rest_file_too_large',
+            esc_html__('The file must be a PDF no larger than 10 MB.', 'vaysf'),
+            array('status' => 422)
+        );
+    }
+
+    $declared_type = isset($file['type']) ? strtolower($file['type']) : '';
+    $name_ext = strtolower(pathinfo(isset($file['name']) ? $file['name'] : '', PATHINFO_EXTENSION));
+    $magic = '';
+    if (is_readable($file['tmp_name'])) {
+        $handle = fopen($file['tmp_name'], 'rb');
+        if ($handle) {
+            $magic = fread($handle, 5);
+            fclose($handle);
+        }
+    }
+
+    $is_pdf = ($declared_type === 'application/pdf')
+        && ($name_ext === 'pdf')
+        && (strpos((string) $magic, '%PDF-') === 0);
+
+    if (!$is_pdf) {
+        return new WP_Error(
+            'rest_invalid_file_type',
+            esc_html__('Only PDF files are accepted.', 'vaysf'),
+            array('status' => 422)
+        );
+    }
+
+    $upload_dir = wp_upload_dir();
+    if (!empty($upload_dir['error'])) {
+        return new WP_Error(
+            'rest_upload_dir_failed',
+            esc_html__('The upload directory is not available. Please try again.', 'vaysf'),
+            array('status' => 500)
+        );
+    }
+
+    $insurance_dir = trailingslashit($upload_dir['basedir']) . 'vaysf/insurance';
+    if (!file_exists($insurance_dir)) {
+        wp_mkdir_p($insurance_dir);
+    }
+
+    $filename = sanitize_file_name($church['church_code'] . '_' . current_time('YmdHis') . '.pdf');
+    $dest_path = trailingslashit($insurance_dir) . $filename;
+    $dest_url = trailingslashit($upload_dir['baseurl']) . 'vaysf/insurance/' . $filename;
+
+    $moved = @move_uploaded_file($file['tmp_name'], $dest_path);
+    if (!$moved) {
+        $moved = @copy($file['tmp_name'], $dest_path);
+    }
+
+    if (!$moved) {
+        return new WP_Error(
+            'rest_storage_failed',
+            esc_html__('The file could not be saved. Please try again.', 'vaysf'),
+            array('status' => 500)
+        );
+    }
+
+    $new_status = (!empty($args['preserve_approved']) && isset($church['insurance_status']) && $church['insurance_status'] === 'approved')
+        ? 'approved'
+        : 'submitted';
+
+    $uploaded_at = current_time('mysql');
+    $table_churches = vaysf_get_table_name('churches');
+    $updated = $wpdb->update(
+        $table_churches,
+        array(
+            'insurance_file_url'     => $dest_url,
+            'insurance_uploaded_at'  => $uploaded_at,
+            'insurance_status'       => $new_status,
+            'insurance_token'        => null,
+            'insurance_token_expiry' => null,
+            'updated_at'             => $uploaded_at,
+        ),
+        array('church_code' => $church['church_code']),
+        array('%s', '%s', '%s', '%s', '%s', '%s'),
+        array('%s')
+    );
+
+    if ($updated === false) {
+        return new WP_Error(
+            'rest_db_update_failed',
+            esc_html__('The insurance record could not be updated. Please try again.', 'vaysf'),
+            array('status' => 500)
+        );
+    }
+
+    $updated_church = array_merge($church, array(
+        'insurance_file_url'    => $dest_url,
+        'insurance_uploaded_at' => $uploaded_at,
+        'insurance_status'      => $new_status,
+    ));
+
+    $rep_email_sent = false;
+    if (!empty($args['notify_rep'])) {
+        $rep_email_sent = vaysf_send_insurance_confirmation_email($updated_church);
+    }
+
+    $admin_email_sent = false;
+    if (!empty($args['notify_admin'])) {
+        $admin_email = sanitize_email(get_option('vaysf_email_from', get_option('admin_email')));
+        if (!empty($admin_email)) {
+            $subject = sprintf(
+                esc_html__('Insurance uploaded: %s', 'vaysf'),
+                $church['church_name']
+            );
+            $message = '<p>' . sprintf(
+                esc_html__('%1$s (%2$s) has uploaded a proof-of-insurance document.', 'vaysf'),
+                esc_html($church['church_name']),
+                esc_html($church['church_code'])
+            ) . '</p>';
+            $message .= '<p><a href="' . esc_url($dest_url) . '">' . esc_html__('Download PDF', 'vaysf') . '</a></p>';
+            $admin_email_sent = vaysf_send_email($admin_email, $subject, $message);
+        }
+    }
+
+    return array(
+        'success'          => true,
+        'file_url'         => $dest_url,
+        'status'           => $new_status,
+        'rep_email_sent'   => $rep_email_sent,
+        'admin_email_sent' => $admin_email_sent,
+    );
+}
+
+/**
  * Send the one-time proof-of-insurance upload link to a church rep (Issue #154).
  *
  * @param array  $church Church row (associative)

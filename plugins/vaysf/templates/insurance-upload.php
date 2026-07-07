@@ -57,7 +57,7 @@ if (!empty($token)) {
 
 $request_link_url = esc_url_raw(rest_url('vaysf/v1/insurance/request-link'));
 $upload_url = esc_url_raw(rest_url('vaysf/v1/insurance/upload'));
-$max_bytes = 10485760;
+$max_bytes = vaysf_get_insurance_max_bytes();
 ?>
 
 <div class="vaysf-insurance-container" style="max-width: 640px; margin: 40px auto; padding: 20px; background: #fff; box-shadow: 0 0 10px rgba(0,0,0,0.1);">

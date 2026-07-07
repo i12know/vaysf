@@ -490,6 +490,51 @@ class VAYSF_Admin {
 				}
 			}
 		}
+
+		$vaysf_action = isset($_POST['vaysf_action'])
+			? sanitize_text_field(wp_unslash($_POST['vaysf_action']))
+			: '';
+
+		if ($vaysf_action === 'upload_insurance') {
+			$church_id = isset($_POST['church_id']) ? absint($_POST['church_id']) : 0;
+
+			if (!current_user_can('manage_options')) {
+				echo '<div class="notice notice-error"><p>You are not allowed to upload insurance documents.</p></div>';
+			} elseif (!$church_id || !isset($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'vaysf_upload_insurance_' . $church_id)) {
+				echo '<div class="notice notice-error"><p>Invalid insurance upload request.</p></div>';
+			} elseif (empty($_FILES['insurance_file']) || !isset($_FILES['insurance_file']['tmp_name'])) {
+				echo '<div class="notice notice-error"><p>Please choose a PDF file to upload.</p></div>';
+			} else {
+				$church = $wpdb->get_row(
+					$wpdb->prepare(
+						"SELECT * FROM $table_name WHERE church_id = %d",
+						$church_id
+					),
+					ARRAY_A
+				);
+
+				if (!$church) {
+					echo '<div class="notice notice-error"><p>Church not found.</p></div>';
+				} else {
+					$notify_rep = !empty($_POST['notify_rep']);
+					$stored = vaysf_store_insurance_pdf_for_church(
+						$church,
+						$_FILES['insurance_file'],
+						array('notify_rep' => $notify_rep)
+					);
+
+					if (is_wp_error($stored)) {
+						echo '<div class="notice notice-error"><p>' . esc_html($stored->get_error_message()) . '</p></div>';
+					} elseif ($notify_rep && empty($stored['rep_email_sent']) && !empty($church['church_rep_email'])) {
+						echo '<div class="notice notice-warning"><p>Insurance PDF uploaded for ' . esc_html($church['church_name']) . ', but the Church Rep notification email could not be sent.</p></div>';
+					} elseif ($notify_rep && empty($stored['rep_email_sent'])) {
+						echo '<div class="notice notice-warning"><p>Insurance PDF uploaded for ' . esc_html($church['church_name']) . ', but no Church Rep email is on file.</p></div>';
+					} else {
+						echo '<div class="notice notice-success"><p>Insurance PDF uploaded for ' . esc_html($church['church_name']) . '.</p></div>';
+					}
+				}
+			}
+		}
 		
         // Get churches
         $churches = $wpdb->get_results("SELECT * FROM $table_name ORDER BY church_name", ARRAY_A);
@@ -561,6 +606,24 @@ class VAYSF_Admin {
                                         );
                                         ?>
                                         <br><a href="<?php echo esc_url($approve_url); ?>" class="button button-small button-primary" onclick="return confirm('Approve this proof of insurance?');">Approve Insurance</a>
+                                    <?php endif; ?>
+                                    <?php if (current_user_can('manage_options')) : ?>
+                                        <?php
+                                        $replace_warning = !empty($church['insurance_file_url'])
+                                            ? "return confirm('Replace the existing proof-of-insurance PDF for " . esc_js($church['church_name']) . "?');"
+                                            : '';
+                                        ?>
+                                        <form method="post" enctype="multipart/form-data" style="margin-top:8px;" onsubmit="<?php echo esc_attr($replace_warning); ?>">
+                                            <?php wp_nonce_field('vaysf_upload_insurance_' . $church['church_id']); ?>
+                                            <input type="hidden" name="vaysf_action" value="upload_insurance">
+                                            <input type="hidden" name="church_id" value="<?php echo esc_attr($church['church_id']); ?>">
+                                            <input type="file" name="insurance_file" accept="application/pdf,.pdf" required style="max-width:180px;">
+                                            <label style="display:block;margin-top:4px;">
+                                                <input type="checkbox" name="notify_rep" value="1" checked>
+                                                <small>Notify rep</small>
+                                            </label>
+                                            <button type="submit" class="button button-small" style="margin-top:4px;">Upload PDF</button>
+                                        </form>
                                     <?php endif; ?>
                                 </td>
                                 <td><?php echo esc_html(ucfirst($church['payment_status'])); ?></td>
