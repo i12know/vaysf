@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Nightly middleware run robustness
+
+- Made console logging UTF-8 tolerant so names with diacritics do not break
+  Windows console or scheduled-task runs.
+- Hardened the ChMeetings form export helper against promotional overlays that
+  can block Export/Download clicks during `daily-run.bat`.
+- Suppressed `tqdm` progress bars when middleware sync runs are non-interactive,
+  keeping nightly logs readable while preserving interactive progress output.
+- Ignored generated form-repair workbooks and a local-only late-racquet override
+  filename for operator data that should not be published.
+
 ### Admin insurance PDF upload - refs [#180](https://github.com/i12know/vaysf/issues/180)
 
 - Added an admin-only PDF upload form to the Sports Fest Churches screen so staff

@@ -6,6 +6,7 @@
 import os
 import json
 import time
+import sys
 import pandas as pd
 from typing import Dict, Any, Optional
 from loguru import logger
@@ -21,6 +22,14 @@ from validation.models import RulesManager
 import datetime
 from uuid import uuid4
 from tqdm import tqdm
+
+
+def _progress(iterable, **kwargs):
+    """Return a tqdm iterator only when stderr is interactive and writable."""
+    disable = kwargs.pop("disable", None)
+    if disable is None:
+        disable = not getattr(sys.stderr, "isatty", lambda: False)()
+    return tqdm(iterable, disable=disable, **kwargs)
 
 
 def _is_eligible_by_role(
@@ -182,7 +191,7 @@ class SyncManager:
         # Counter for participants ready for pastor approval
         ready_for_approval_count = 0 
         
-        for participant in tqdm(wp_participants, desc="Generating approval tokens"):
+        for participant in _progress(wp_participants, desc="Generating approval tokens"):
             logger.debug(f"Processing participant for approval: WP_ID {participant['participant_id']}, Name: {participant['first_name']} {participant['last_name']}, Church: {participant['church_code']}, Status: {participant['approval_status']}") # <-- ADD THIS
             wp_participant_id_int = participant["participant_id"] # Keep as int for DB operations
             wp_participant_id_str = str(wp_participant_id_int)    # Use string for dict keys
@@ -566,7 +575,7 @@ class SyncManager:
         failed_count = 0
         marked_synced_count = 0
 
-        for participant in tqdm(participants_to_sync, desc="Adding to ChMeetings group via API"):
+        for participant in _progress(participants_to_sync, desc="Adding to ChMeetings group via API"):
             chm_id = participant["chmeetings_id"]
             wp_id_str = str(participant["participant_id"])
 
@@ -1196,7 +1205,7 @@ class SyncManager:
         team_validator = TeamValidator()
         church_validator = ChurchValidator()
         church_ids_to_process = set(participants_by_church) | set(existing_group_issues_by_church)
-        for church_id in tqdm(sorted(church_ids_to_process), desc="Syncing non-individual validation issues"):
+        for church_id in _progress(sorted(church_ids_to_process), desc="Syncing non-individual validation issues"):
             try:
                 current_issues = []
                 participant_team_issues = team_validator.validate_church(

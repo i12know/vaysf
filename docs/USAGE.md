@@ -176,7 +176,10 @@ Late new racquet registrations are blocked after the inclusive early-bird deadli
 - after a participant is first seen late, later re-syncs stay blocked unless you add an explicit override
 - the middleware interprets WordPress `created_at` in `WORDPRESS_CREATED_AT_TIMEZONE` and converts it into `BUSINESS_TIMEZONE` before comparing it to the deadline; keep these two `.env` values aligned with your WordPress server and your Sports Fest business timezone
 
-For rare approved exceptions, edit `middleware/data/late_racquet_overrides.json` on the middleware machine and add the athlete's ChMeetings ID:
+For rare approved exceptions, create an ignored local file such as
+`middleware/data/late_racquet_overrides.local.json`, set
+`LATE_RACQUET_OVERRIDES_FILE=data/late_racquet_overrides.local.json` in
+`middleware/.env`, and add the athlete's ChMeetings ID:
 
 ```json
 {
@@ -192,6 +195,8 @@ For rare approved exceptions, edit `middleware/data/late_racquet_overrides.json`
 - use the ChMeetings ID as the JSON key
 - omit `sports` or leave it empty to allow all racquet sports for that athlete
 - keep this file for one-off approved exceptions only; normal late racquet registrations should remain blocked
+- do not commit real override entries; the repo is public and the override file
+  can contain ChMeetings IDs and approval notes
 
 After saving the file, rerun a targeted participant sync:
 

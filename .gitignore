@@ -240,6 +240,8 @@ middleware/temp/
 middleware/.pytest_tmp*/
 middleware/data/*_audit.xlsx
 middleware/data/team_group_*.xlsx
+middleware/data/form_people_repair*.xlsx
+middleware/data/late_racquet_overrides.local.json
 
 # Office temp lock files
 ~$*

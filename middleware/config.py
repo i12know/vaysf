@@ -20,6 +20,15 @@ def _running_under_pytest() -> bool:
     argv0 = Path(sys.argv[0]).name.lower()
     return "pytest" in argv0 or "PYTEST_CURRENT_TEST" in os.environ
 
+
+def _make_console_stream_safe(stream):
+    """Use UTF-8 console output when available so names with diacritics do not break runs."""
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="backslashreplace")
+    return stream
+
+
 # Base directories - Windows-compatible using Path for robustness
 BASE_DIR = Path(__file__).parent.resolve()
 LOG_DIR = BASE_DIR / "logs"
@@ -62,7 +71,7 @@ log_file = LOG_DIR / f"sportsfest_{datetime.datetime.now().strftime('%Y%m%d')}.l
 logger.remove()  # Remove default handler
 logger.add(log_file, rotation="1 day", retention="30 days", level="DEBUG", 
            format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
-logger.add(sys.stdout, level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}", colorize=True)
+logger.add(_make_console_stream_safe(sys.stdout), level="DEBUG", format="{time:HH:mm:ss} | {level} | {message}", colorize=True)
 
 # Encryption setup
 def get_or_create_key() -> bytes:
@@ -789,6 +798,9 @@ SPORTS_FEST_DATE={DEFAULT_SPORTS_FEST_DATE}
 BUSINESS_TIMEZONE={DEFAULT_BUSINESS_TIMEZONE}
 WORDPRESS_CREATED_AT_TIMEZONE={DEFAULT_WORDPRESS_CREATED_AT_TIMEZONE}
 VAYSM_GROUP_ID=
+# Optional local-only JSON file for approved late racquet exceptions.
+# Keep real entries out of git; middleware/data/late_racquet_overrides.local.json is ignored.
+LATE_RACQUET_OVERRIDES_FILE=data/late_racquet_overrides.local.json
 
 # Export directory
 # Default is now 'G:\\Shared drives\\RP Google Drive\\VAY\\SportsFest\\VAYSF-data' if not set here.

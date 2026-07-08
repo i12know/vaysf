@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 # Configuration
@@ -26,6 +27,30 @@ PAGE_LOAD_TIMEOUT_MS = 2 * 60 * 1000
 DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000
 
 
+def make_console_stream_safe(stream):
+    """Use UTF-8 console output when available so names with diacritics do not break runs."""
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="backslashreplace")
+    return stream
+
+
+async def dismiss_blocking_overlays(page, form_name: str):
+    """Dismiss ChMeetings promotional dialogs that can block Export clicks."""
+    no_thank_you = page.locator("button:has-text('No, Thank You')").first
+    try:
+        if await no_thank_you.is_visible(timeout=2000):
+            logger.info(f"{form_name}: dismissing ChMeetings promotional overlay.")
+            await no_thank_you.click(force=True, timeout=5000)
+            await page.wait_for_timeout(500)
+            return
+    except PlaywrightTimeoutError:
+        pass
+
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(500)
+
+
 def configure_logging():
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = LOG_DIR / f"sportsfest_{datetime.now():%Y%m%d}.log"
@@ -39,7 +64,7 @@ def configure_logging():
         format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
     )
     logger.add(
-        sys.stdout,
+        make_console_stream_safe(sys.stdout),
         level="DEBUG",
         format="{time:HH:mm:ss} | {level} | {message}",
         colorize=True,
@@ -64,8 +89,19 @@ async def export_form(context, form):
         )
         logger.info(f"{form['name']} loaded. Clicking Export...")
 
-        # Click the Export button
-        await page.click("button:has-text('Export')")
+        # A prior interrupted export can leave a ChMeetings modal overlay in the
+        # tab, which blocks pointer events on the Export button. Close it if
+        # possible, then fall back to a force click if the overlay still wins.
+        await dismiss_blocking_overlays(page, form["name"])
+        export_button = page.locator("button:has-text('Export')").first
+        try:
+            await export_button.click(timeout=10000)
+        except PlaywrightTimeoutError:
+            logger.warning(
+                f"{form['name']} Export button was blocked by an overlay; "
+                "retrying with force click."
+            )
+            await export_button.click(force=True, timeout=10000)
 
         # Wait for the modal to appear
         await page.wait_for_selector("text=Export Submissions", timeout=10000)
@@ -74,7 +110,7 @@ async def export_form(context, form):
         # Format is already Excel and all columns are selected.
         logger.info(f"Waiting up to 15 minutes for {form['name']}...")
         async with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as download_info:
-            await page.click("button:has-text('Download')")
+            await page.locator("button:has-text('Download')").first.click(force=True)
 
         download = await download_info.value
         save_path = DOWNLOAD_DIR / form["filename"]
