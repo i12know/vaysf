@@ -32,6 +32,44 @@ def _make_person(person_id, church_code="RPC"):
     }
 
 
+def _individual_row(**overrides):
+    row = {
+        "First Name": "Brendan",
+        "Last Name": "Nguyen",
+        "Church Team": "SFV",
+        "Email": "bnguyen0217@gmail.com",
+        "Mobile Phone": "7142344207",
+        "Gender": "Male",
+        "My role is": "Athlete/Participant",
+        "Birthdate": "02/17/2003",
+        "Would the church pastor say that you belong to his church?": "Yes",
+        "Age verification (by the date of Sports Fest)": "I am over 18 but under 35",
+        "Submission Date": "06/12/2026",
+        "Primary Sport": "Volleyball - Men Team",
+        "Secondary Sport": "Unselected/NA",
+        "Other Events": "",
+        "Additional Info": "",
+    }
+    row.update(overrides)
+    return row
+
+
+def _blank_matched_person(person_id="3631503"):
+    return {
+        "id": person_id,
+        "first_name": "Brendan",
+        "last_name": "Nguyen",
+        "email": "bnguyen0217@gmail.com",
+        "mobile": "7142344207",
+        "additional_fields": [
+            {"field_id": 1282085, "field_name": "My role is", "field_type": "checkbox", "selected_option_ids": [], "value": ""},
+            {"field_id": 1281851, "field_name": "Church Team", "field_type": "dropdown", "selected_option_id": None, "value": ""},
+            {"field_id": 1281847, "field_name": "Primary Sport", "field_type": "dropdown", "selected_option_id": None, "value": ""},
+            {"field_id": 1281848, "field_name": "Secondary Sport", "field_type": "dropdown", "selected_option_id": None, "value": ""},
+        ],
+    }
+
+
 @pytest.fixture()
 def mock_connector(mocker):
     """
@@ -45,6 +83,15 @@ def mock_connector(mocker):
     connector.get_group_people.return_value = []
     connector.add_person_to_group.return_value = True
     connector.remove_person_from_group.return_value = True
+    connector.update_person.return_value = True
+
+    def _get_person(person_id):
+        for person in connector.get_people.return_value or []:
+            if str(person.get("id")) == str(person_id):
+                return person
+        return None
+
+    connector.get_person.side_effect = _get_person
 
     mock_cls = mocker.patch("group_assignment.ChMeetingsConnector")
     mock_cls.return_value.__enter__ = lambda s: connector
@@ -144,6 +191,365 @@ def test_assign_already_in_team(mock_connector, mocker, tmp_path):
     result = assign_people_to_church_team_groups(dry_run=False)
 
     assert result is True
+    mock_connector.add_person_to_group.assert_not_called()
+
+
+def test_assign_hydrates_matched_existing_person_already_in_team(
+    mock_connector, mocker, tmp_path
+):
+    """Matched current-season people are hydrated before the team-group skip."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([_individual_row()]).to_excel(source_file, index=False)
+
+    mock_connector.get_people.return_value = [_blank_matched_person()]
+    mock_connector.get_groups.return_value = [{"id": "885442", "name": "Team SFV"}]
+    mock_connector.get_group_people.return_value = [{"person_id": "3631503"}]
+
+    result = assign_people_to_church_team_groups(
+        dry_run=False,
+        source_file=str(source_file),
+    )
+
+    assert result is True
+    mock_connector.add_person_to_group.assert_not_called()
+    mock_connector.update_person.assert_called_once()
+    args, kwargs = mock_connector.update_person.call_args
+    assert args[:3] == ("3631503", "Brendan", "Nguyen")
+    assert kwargs["extra_person_data"] == mock_connector.get_people.return_value[0]
+    fields_by_id = {field["field_id"]: field for field in args[3]}
+    assert fields_by_id[1282085]["selected_option_ids"] == [199442]
+    assert fields_by_id[1281851]["selected_option_id"] == 227692
+    assert fields_by_id[1281847]["selected_option_id"] == 199334
+    assert fields_by_id[1281848]["selected_option_id"] == 199352
+
+    audit_file = tmp_path / "church_team_assignments.xlsx"
+    assert audit_file.exists()
+    df = pd.read_excel(audit_file)
+    assert df.iloc[0]["Outcome"] == "already_in_team"
+    assert df.iloc[0]["Hydration Outcome"] == "hydrated"
+    assert "My role is" in df.iloc[0]["Hydrated Fields"]
+
+
+def test_assign_hydrates_before_adding_to_team(mock_connector, mocker, tmp_path):
+    """A matched ungrouped person is hydrated and then assigned to the team group."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([_individual_row()]).to_excel(source_file, index=False)
+
+    mock_connector.get_people.return_value = [_blank_matched_person()]
+    mock_connector.get_groups.return_value = [{"id": "885442", "name": "Team SFV"}]
+    mock_connector.get_group_people.return_value = []
+
+    result = assign_people_to_church_team_groups(
+        dry_run=False,
+        source_file=str(source_file),
+    )
+
+    assert result is True
+    mock_connector.update_person.assert_called_once()
+    mock_connector.add_person_to_group.assert_called_once_with("885442", "3631503")
+
+
+def test_assign_rechecks_fresh_person_before_hydration_to_avoid_drift(
+    mock_connector, mocker, tmp_path
+):
+    """Fresh ChMeetings fields win over stale blank bulk-list fields."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([_individual_row()]).to_excel(source_file, index=False)
+
+    stale_person = _blank_matched_person()
+    fresh_person = _blank_matched_person()
+    fresh_person["additional_fields"] = [
+        {
+            "field_id": 1282085,
+            "field_name": "My role is",
+            "field_type": "checkbox",
+            "selected_option_ids": [199447],
+            "value": "Fan and Supporter",
+        },
+        {
+            "field_id": 1281851,
+            "field_name": "Church Team",
+            "field_type": "dropdown",
+            "selected_option_id": 227692,
+            "value": "SFV",
+        },
+        {
+            "field_id": 1281852,
+            "field_name": "Would the team's Senior Pastor say that you belong to his church?",
+            "field_type": "multiple_choice",
+            "selected_option_id": 199355,
+            "value": "Yes",
+        },
+        {
+            "field_id": 1283264,
+            "field_name": "Age verification (by the date of Sports Fest)",
+            "field_type": "multiple_choice",
+            "selected_option_id": 199606,
+            "value": "I am over 18 but under 35",
+        },
+        {
+            "field_id": 1281847,
+            "field_name": "Primary Sport",
+            "field_type": "dropdown",
+            "selected_option_id": 199334,
+            "value": "Volleyball - Men Team",
+        },
+        {
+            "field_id": 1281848,
+            "field_name": "Secondary Sport",
+            "field_type": "dropdown",
+            "selected_option_id": 199352,
+            "value": "Unselected/NA",
+        },
+    ]
+
+    mock_connector.get_people.return_value = [stale_person]
+    mock_connector.get_person.side_effect = None
+    mock_connector.get_person.return_value = fresh_person
+    mock_connector.get_groups.return_value = [{"id": "885442", "name": "Team SFV"}]
+    mock_connector.get_group_people.return_value = [{"person_id": "3631503"}]
+
+    result = assign_people_to_church_team_groups(
+        dry_run=False,
+        source_file=str(source_file),
+    )
+
+    assert result is True
+    mock_connector.get_person.assert_called_once_with("3631503")
+    mock_connector.update_person.assert_not_called()
+    mock_connector.add_person_to_group.assert_not_called()
+
+    df = pd.read_excel(tmp_path / "church_team_assignments.xlsx")
+    assert df.iloc[0]["Outcome"] == "already_in_team"
+    assert df.iloc[0]["Hydration Outcome"] == "conflict"
+    assert "Fan and Supporter" in df.iloc[0]["Hydration Conflicts"]
+
+
+def test_assign_chm_id_filter_limits_hydration_and_assignment(
+    mock_connector, mocker, tmp_path
+):
+    """Focused runs only process the requested ChMeetings IDs."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([
+        _individual_row(),
+        _individual_row(
+            **{
+                "First Name": "Other",
+                "Last Name": "Person",
+                "Email": "other@example.com",
+                "Mobile Phone": "7145550100",
+            }
+        ),
+    ]).to_excel(source_file, index=False)
+
+    other_person = _blank_matched_person("9999999")
+    other_person["first_name"] = "Other"
+    other_person["last_name"] = "Person"
+    other_person["email"] = "other@example.com"
+    other_person["mobile"] = "7145550100"
+    mock_connector.get_people.return_value = [_blank_matched_person(), other_person]
+    mock_connector.get_groups.return_value = [{"id": "885442", "name": "Team SFV"}]
+    mock_connector.get_group_people.return_value = []
+
+    result = assign_people_to_church_team_groups(
+        dry_run=False,
+        source_file=str(source_file),
+        chm_ids=["3631503"],
+    )
+
+    assert result is True
+    mock_connector.update_person.assert_called_once()
+    assert mock_connector.update_person.call_args.args[0] == "3631503"
+    mock_connector.add_person_to_group.assert_called_once_with("885442", "3631503")
+
+
+def test_assign_church_code_filter_limits_to_source_church(
+    mock_connector, mocker, tmp_path
+):
+    """Focused church runs only inspect current-season rows for that church."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([
+        _individual_row(**{"Church Team": "LBC"}),
+        _individual_row(
+            **{
+                "First Name": "Other",
+                "Last Name": "Person",
+                "Church Team": "SFV",
+                "Email": "other@example.com",
+                "Mobile Phone": "7145550100",
+            }
+        ),
+    ]).to_excel(source_file, index=False)
+
+    lbc_person = _blank_matched_person()
+    other_person = _blank_matched_person("9999999")
+    other_person["first_name"] = "Other"
+    other_person["last_name"] = "Person"
+    other_person["email"] = "other@example.com"
+    other_person["mobile"] = "7145550100"
+
+    mock_connector.get_people.return_value = [lbc_person, other_person]
+    mock_connector.get_groups.return_value = [
+        {"id": "885441", "name": "Team LBC"},
+        {"id": "885442", "name": "Team SFV"},
+    ]
+    mock_connector.get_group_people.return_value = []
+
+    result = assign_people_to_church_team_groups(
+        dry_run=True,
+        source_file=str(source_file),
+        church_codes=["lbc"],
+    )
+
+    assert result is True
+    mock_connector.get_person.assert_called_once_with("3631503")
+    mock_connector.update_person.assert_not_called()
+    mock_connector.add_person_to_group.assert_not_called()
+
+    df = pd.read_excel(tmp_path / "church_team_assignments.xlsx")
+    assert len(df) == 1
+    assert df.iloc[0]["Church Code"] == "LBC"
+    assert df.iloc[0]["Target Group"] == "Team LBC"
+    assert df.iloc[0]["Outcome"] == "dry_run"
+    assert df.iloc[0]["Hydration Outcome"] == "would_hydrate"
+
+
+def test_assign_hydration_dry_run_makes_no_update_call(
+    mock_connector, mocker, tmp_path
+):
+    """dry_run=True reports hydration without calling update_person."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([_individual_row()]).to_excel(source_file, index=False)
+
+    mock_connector.get_people.return_value = [_blank_matched_person()]
+    mock_connector.get_groups.return_value = [{"id": "885442", "name": "Team SFV"}]
+    mock_connector.get_group_people.return_value = [{"person_id": "3631503"}]
+
+    result = assign_people_to_church_team_groups(
+        dry_run=True,
+        source_file=str(source_file),
+    )
+
+    assert result is True
+    mock_connector.update_person.assert_not_called()
+    mock_connector.add_person_to_group.assert_not_called()
+    df = pd.read_excel(tmp_path / "church_team_assignments.xlsx")
+    assert df.iloc[0]["Hydration Outcome"] == "would_hydrate"
+
+
+def test_assign_hydration_preserves_nonblank_conflicting_role(
+    mock_connector, mocker, tmp_path
+):
+    """Conflicting nonblank ChMeetings fields are audited but not overwritten."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([_individual_row()]).to_excel(source_file, index=False)
+
+    person = _blank_matched_person()
+    person["additional_fields"][0] = {
+        "field_id": 1282085,
+        "field_name": "My role is",
+        "field_type": "checkbox",
+        "selected_option_ids": [199447],
+        "value": "Fan and Supporter",
+    }
+    mock_connector.get_people.return_value = [person]
+    mock_connector.get_groups.return_value = [{"id": "885442", "name": "Team SFV"}]
+    mock_connector.get_group_people.return_value = [{"person_id": "3631503"}]
+
+    result = assign_people_to_church_team_groups(
+        dry_run=False,
+        source_file=str(source_file),
+    )
+
+    assert result is True
+    mock_connector.update_person.assert_called_once()
+    update_fields = mock_connector.update_person.call_args.args[3]
+    role_field = next(field for field in update_fields if field["field_id"] == 1282085)
+    assert role_field["selected_option_ids"] == [199447]
+    df = pd.read_excel(tmp_path / "church_team_assignments.xlsx")
+    assert df.iloc[0]["Hydration Outcome"] == "hydrated_with_conflicts"
+    assert "Fan and Supporter" in df.iloc[0]["Hydration Conflicts"]
+
+
+def test_assign_hydration_noops_when_profile_already_matches(
+    mock_connector, mocker, tmp_path
+):
+    """Already-populated matching source data is idempotent."""
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([_individual_row()]).to_excel(source_file, index=False)
+
+    person = _blank_matched_person()
+    person["additional_fields"] = [
+        {
+            "field_id": 1282085,
+            "field_name": "My role is",
+            "field_type": "checkbox",
+            "selected_option_ids": [199442],
+            "value": "Athlete/Participant",
+        },
+        {
+            "field_id": 1281851,
+            "field_name": "Church Team",
+            "field_type": "dropdown",
+            "selected_option_id": 227692,
+            "value": "SFV",
+        },
+        {
+            "field_id": 1281847,
+            "field_name": "Primary Sport",
+            "field_type": "dropdown",
+            "selected_option_id": 199334,
+            "value": "Volleyball - Men Team",
+        },
+        {
+            "field_id": 1281848,
+            "field_name": "Secondary Sport",
+            "field_type": "dropdown",
+            "selected_option_id": 199352,
+            "value": "Unselected/NA",
+        },
+        {
+            "field_id": 1281852,
+            "field_name": "Would the team's Senior Pastor say that you belong to his church?",
+            "field_type": "multiple_choice",
+            "selected_option_id": 199355,
+            "value": "Yes",
+        },
+        {
+            "field_id": 1283264,
+            "field_name": "Age verification (by the date of Sports Fest)",
+            "field_type": "multiple_choice",
+            "selected_option_id": 199606,
+            "value": "I am over 18 but under 35",
+        },
+    ]
+    mock_connector.get_people.return_value = [person]
+    mock_connector.get_groups.return_value = [{"id": "885442", "name": "Team SFV"}]
+    mock_connector.get_group_people.return_value = [{"person_id": "3631503"}]
+
+    result = assign_people_to_church_team_groups(
+        dry_run=False,
+        source_file=str(source_file),
+    )
+
+    assert result is True
+    mock_connector.update_person.assert_not_called()
     mock_connector.add_person_to_group.assert_not_called()
 
 

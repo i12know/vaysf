@@ -593,6 +593,59 @@ def test_update_person(chm_connector, mocker):
             assert captured["json"]["last_name"] == "Phan"
 
 
+def test_update_person_preserves_only_writable_get_person_fields(chm_connector, mocker):
+    """GET-only person fields must not be echoed into the PUT body."""
+    with pytest.MonkeyPatch.context() as mp:
+        mock_response = mocker.Mock()
+        mock_response.ok = True
+        mock_response.status_code = 200
+        captured = {}
+
+        def fake_put(*args, **kwargs):
+            captured["json"] = kwargs.get("json")
+            return mock_response
+
+        mp.setattr("requests.Session.put", fake_put)
+        result = chm_connector.update_person(
+            "3631503",
+            "Brendan",
+            "Nguyen",
+            [],
+            extra_person_data={
+                "id": 3631503,
+                "first_name": "Brendan",
+                "last_name": "Nguyen",
+                "full_name": "Brendan Nguyen",
+                "family_role": None,
+                "created_on": "2025-05-12T00:00:00",
+                "updated_on": "2026-04-16T00:00:00",
+                "email": "bnguyen0217@gmail.com",
+                "birth_date": "2003-02-17",
+                "marriage_date": "",
+                "engagement_date": "",
+                "baptism_date": "",
+                "address": {
+                    "country": "US",
+                    "state": None,
+                    "city": None,
+                    "address_line": None,
+                    "zip_code": None,
+                },
+            },
+        )
+
+        assert result is True
+        assert captured["json"]["email"] == "bnguyen0217@gmail.com"
+        assert captured["json"]["birth_date"] == "2003-02-17"
+        assert "marriage_date" not in captured["json"]
+        assert "engagement_date" not in captured["json"]
+        assert "baptism_date" not in captured["json"]
+        assert "family_role" not in captured["json"]
+        assert "full_name" not in captured["json"]
+        assert "created_on" not in captured["json"]
+        assert "country" not in captured["json"]["address"]
+
+
 def test_update_person_returns_false_on_error(chm_connector, mocker):
     """update_person returns False when the API call fails."""
     import requests as req

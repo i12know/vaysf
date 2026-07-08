@@ -37,6 +37,49 @@ PERSON_PUT_EXCLUDE = frozenset({
     "additional_fields",
 })
 
+# Fields accepted by UpdatePersonDto.  GET /people/{id} can return additional
+# read-only or relationship fields; sending those can make the API reject the
+# whole body as unparseable before normal validation runs.
+PERSON_PUT_WRITABLE_FIELDS = frozenset({
+    "middle_name",
+    "nick_name",
+    "native_name",
+    "email",
+    "birth_date",
+    "mobile",
+    "do_not_text",
+    "do_not_email",
+    "facebook",
+    "gender",
+    "social_status",
+    "engagement_date",
+    "marriage_date",
+    "job_title",
+    "work_place",
+    "qualification",
+    "education_level",
+    "school",
+    "father_name",
+    "church",
+    "is_deacon",
+    "rank",
+    "bishop_donor",
+    "baptism_date",
+    "baptism_location",
+    "grade",
+    "graduation_year",
+    "telephone",
+    "talents_and_hobbies",
+    "address",
+})
+
+PERSON_PUT_DATE_FIELDS = frozenset({
+    "birth_date",
+    "engagement_date",
+    "marriage_date",
+    "baptism_date",
+})
+
 class ChMeetingsConnector:
     """Connector for ChMeetings API."""
 
@@ -659,17 +702,25 @@ class ChMeetingsConnector:
         payload: Dict[str, Any] = {"first_name": first_name, "last_name": last_name}
         if extra_person_data:
             for k, v in extra_person_data.items():
-                if k not in PERSON_PUT_EXCLUDE:
-                    if k == "address" and isinstance(v, dict):
-                        # The API rejects the 'country' key with HTTP 400:
-                        # "Changing country is not allowed."
-                        # Strip it so the rest of the address is preserved.
-                        v = {ak: av for ak, av in v.items() if ak != "country"}
-                    payload[k] = v
+                if k not in PERSON_PUT_WRITABLE_FIELDS:
+                    continue
+                if k in PERSON_PUT_DATE_FIELDS and v == "":
+                    continue
+                if k == "address" and isinstance(v, dict):
+                    # The API rejects the 'country' key with HTTP 400:
+                    # "Changing country is not allowed."
+                    # Strip it so the rest of the address is preserved.
+                    v = {ak: av for ak, av in v.items() if ak != "country"}
+                payload[k] = v
         payload["additional_fields"] = additional_fields
 
         try:
-            logger.debug(f"update_person [{method}] payload for {person_id}: {payload}")
+            field_ids = [field.get("field_id") for field in additional_fields]
+            logger.debug(
+                f"update_person [{method}] for {person_id}: "
+                f"{len(additional_fields)} additional field(s), field_ids={field_ids}"
+            )
+            logger.trace(f"update_person [{method}] payload for {person_id}: {payload}")
             response = self._api_request(method, f"api/v1/people/{person_id}", json=payload)
             if not response.ok:
                 logger.error(

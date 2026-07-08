@@ -358,13 +358,16 @@ class SeasonResetter:
         # Build a safe base payload using the same exclusion + address-country
         # stripping rules as update_person(), so probe results reflect what
         # the actual reset would send.
-        from chmeetings.backend_connector import PERSON_PUT_EXCLUDE
+        from chmeetings.backend_connector import PERSON_PUT_DATE_FIELDS, PERSON_PUT_WRITABLE_FIELDS
         safe_base: Dict[str, Any] = {"first_name": first_name, "last_name": last_name}
         for k, v in person.items():
-            if k not in PERSON_PUT_EXCLUDE:
-                if k == "address" and isinstance(v, dict):
-                    v = {ak: av for ak, av in v.items() if ak != "country"}
-                safe_base[k] = v
+            if k not in PERSON_PUT_WRITABLE_FIELDS:
+                continue
+            if k in PERSON_PUT_DATE_FIELDS and v == "":
+                continue
+            if k == "address" and isinstance(v, dict):
+                v = {ak: av for ak, av in v.items() if ak != "country"}
+            safe_base[k] = v
 
         # Build the actual reset payload (the operation we're trying to perform)
         reset_fields = _build_reset_additional_fields(current_fields)

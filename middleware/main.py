@@ -56,6 +56,20 @@ def parse_args() -> argparse.Namespace:
              "used to limit assignments to this year's registrants",
     )
     group_assignment_parser.add_argument(
+        "--chm-id",
+        action="append",
+        default=None,
+        help="Limit assignment/hydration to one ChMeetings person ID. "
+             "May be supplied multiple times.",
+    )
+    group_assignment_parser.add_argument(
+        "--church-code",
+        action="append",
+        default=None,
+        help="Limit assignment/hydration to current-season rows for one church code "
+             "(for example LBC). May be supplied multiple times.",
+    )
+    group_assignment_parser.add_argument(
         "--dry-run", action="store_true",
         help="Preview only - show who would be assigned without making API calls",
     )
@@ -1047,6 +1061,8 @@ def main() -> None:
         success = assign_people_to_church_team_groups(
             dry_run=dry_run,
             source_file=getattr(args, "file", None),
+            chm_ids=getattr(args, "chm_id", None),
+            church_codes=getattr(args, "church_code", None),
         )
         if success:
             if dry_run:

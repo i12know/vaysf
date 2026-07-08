@@ -3,6 +3,7 @@ import html
 import os
 import sys
 import time
+from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 from loguru import logger
@@ -195,6 +196,62 @@ _IS_MEMBER_LABEL_TO_OPTION_ID: Dict[str, int] = {
     if option_id
 }
 
+_ADDITIONAL_FIELD_PAYLOAD_KEYS = (
+    "field_id",
+    "field_type",
+    "selected_option_id",
+    "selected_option_ids",
+    "value",
+)
+
+_SF_FIELD_TYPE_BY_ID: Dict[int, str] = {
+    SF_FIELD_IDS["MY_ROLE"]: "checkbox",
+    SF_FIELD_IDS["CHURCH_TEAM"]: "dropdown",
+    SF_FIELD_IDS["IS_MEMBER"]: "multiple_choice",
+    SF_FIELD_IDS["PRIMARY_SPORT"]: "dropdown",
+    SF_FIELD_IDS["PRIMARY_FORMAT"]: "dropdown",
+    SF_FIELD_IDS["PRIMARY_PARTNER"]: "text",
+    SF_FIELD_IDS["SECONDARY_SPORT"]: "dropdown",
+    SF_FIELD_IDS["SECONDARY_FORMAT"]: "dropdown",
+    SF_FIELD_IDS["SECONDARY_PARTNER"]: "text",
+    SF_FIELD_IDS["OTHER_EVENTS"]: "checkbox",
+    SF_FIELD_IDS["AGE_VERIFICATION"]: "multiple_choice",
+    SF_FIELD_IDS["PARENT_NAME"]: "text",
+    SF_FIELD_IDS["PARENT_EMAIL"]: "text",
+    SF_FIELD_IDS["PARENT_PHONE"]: "text",
+    SF_FIELD_IDS["ADDITIONAL_INFO"]: "multi_line_text",
+}
+
+_FORM_FIELD_NAME_BY_ID: Dict[int, str] = {
+    SF_FIELD_IDS["MY_ROLE"]: CHM_FIELDS["ROLES"],
+    SF_FIELD_IDS["CHURCH_TEAM"]: CHM_FIELDS["CHURCH_TEAM"],
+    SF_FIELD_IDS["IS_MEMBER"]: MEMBERSHIP_QUESTION,
+    SF_FIELD_IDS["PRIMARY_SPORT"]: CHM_FIELDS["PRIMARY_SPORT"],
+    SF_FIELD_IDS["PRIMARY_PARTNER"]: CHM_FIELDS["PRIMARY_PARTNER"],
+    SF_FIELD_IDS["SECONDARY_SPORT"]: CHM_FIELDS["SECONDARY_SPORT"],
+    SF_FIELD_IDS["SECONDARY_PARTNER"]: CHM_FIELDS["SECONDARY_PARTNER"],
+    SF_FIELD_IDS["OTHER_EVENTS"]: CHM_FIELDS["OTHER_EVENTS"],
+    SF_FIELD_IDS["AGE_VERIFICATION"]: "Age verification (by the date of Sports Fest)",
+    SF_FIELD_IDS["PARENT_NAME"]: CHM_FIELDS["PARENT_NAME"],
+    SF_FIELD_IDS["PARENT_EMAIL"]: CHM_FIELDS["PARENT_EMAIL"],
+    SF_FIELD_IDS["PARENT_PHONE"]: CHM_FIELDS["PARENT_PHONE"],
+    SF_FIELD_IDS["ADDITIONAL_INFO"]: "Additional Info",
+}
+
+
+def _field_id(value: Any) -> Optional[int]:
+    try:
+        if value in (None, ""):
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_labels(raw_value: str) -> str:
+    labels = [label.strip() for label in html.unescape(raw_value or "").split(",") if label.strip()]
+    return ", ".join(labels)
+
 
 def _parse_form_date(value: Optional[str]) -> str:
     """Return a ChMeetings date string (YYYY-MM-DD) from a form/export cell."""
@@ -242,23 +299,14 @@ def _load_repair_extra_cols(source_file: str) -> Dict[str, Dict[str, str]]:
         return {}
 
 
-def _build_create_payload(
+def _build_form_additional_fields(
     row: Dict[str, str],
     extra_cols: Optional[Dict[str, str]] = None,
-) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Build a CreatePersonDto payload from a form export source row.
-
-    Returns ``(payload, None)`` on success or ``(None, blocked_reason)`` when a
-    required field label cannot be mapped to a ChMeetings option_id.  An
-    unmappable required label is treated as a hard block (fail-closed) so the
-    caller can report it rather than create a partially-populated record.
-    """
+) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+    """Build Sports Fest custom field payload from a form export source row."""
     extra = extra_cols or {}
-
     first_name = row.get("first_name", "").strip()
-    last_name  = row.get("last_name", "").strip()
-    if not first_name or not last_name:
-        return None, "missing name"
+    last_name = row.get("last_name", "").strip()
 
     church_code = row.get("church_code", "").strip().upper()
     church_option_id = _CHURCH_CODE_TO_OPTION_ID.get(church_code)
@@ -270,10 +318,12 @@ def _build_create_payload(
             "field_type": "dropdown",
             "field_id": SF_FIELD_IDS["CHURCH_TEAM"],
             "selected_option_id": church_option_id,
+            "value": church_code,
         },
     ]
 
-    # Role (checkbox, multi-select) — warn but do not block on unknown labels.
+    # Role (checkbox, multi-select) — skip unknown labels here; if every role
+    # label is unknown, the caller receives a blocked reason for the audit.
     role_str = html.unescape(row.get("role", ""))
     role_labels = [r.strip() for r in role_str.split(",") if r.strip()]
     role_option_ids = []
@@ -282,7 +332,7 @@ def _build_create_payload(
         if opt_id is not None:
             role_option_ids.append(opt_id)
         else:
-            logger.warning(
+            logger.debug(
                 f"Role label {label!r} not in SF_MY_ROLE_OPTIONS — "
                 f"omitting from create payload for {first_name} {last_name}"
             )
@@ -291,6 +341,7 @@ def _build_create_payload(
             "field_type": "checkbox",
             "field_id": SF_FIELD_IDS["MY_ROLE"],
             "selected_option_ids": role_option_ids,
+            "value": ", ".join(role_labels),
         })
     elif role_str:
         return None, f"role {role_str!r} not in SF_MY_ROLE_OPTIONS"
@@ -304,6 +355,7 @@ def _build_create_payload(
             "field_type": "multiple_choice",
             "field_id": SF_FIELD_IDS["IS_MEMBER"],
             "selected_option_id": opt_id,
+            "value": is_member,
         })
 
     age_verification = html.unescape(row.get("age_verification", "").strip())
@@ -315,6 +367,7 @@ def _build_create_payload(
             "field_type": "multiple_choice",
             "field_id": SF_FIELD_IDS["AGE_VERIFICATION"],
             "selected_option_id": opt_id,
+            "value": age_verification,
         })
 
     # Primary sport (dropdown) — block if label is present and unmappable.
@@ -327,6 +380,7 @@ def _build_create_payload(
             "field_type": "dropdown",
             "field_id": SF_FIELD_IDS["PRIMARY_SPORT"],
             "selected_option_id": opt_id,
+            "value": primary_sport,
         })
 
     # Secondary sport (dropdown) — same treatment.
@@ -339,6 +393,7 @@ def _build_create_payload(
             "field_type": "dropdown",
             "field_id": SF_FIELD_IDS["SECONDARY_SPORT"],
             "selected_option_id": opt_id,
+            "value": secondary_sport,
         })
 
     # Other events (checkbox, multi-select) — block if any single label is unmappable.
@@ -356,6 +411,7 @@ def _build_create_payload(
                 "field_type": "checkbox",
                 "field_id": SF_FIELD_IDS["OTHER_EVENTS"],
                 "selected_option_ids": other_ids,
+                "value": ", ".join(other_labels),
             })
 
     # Racquet partner text fields (optional) — skip gracefully if absent.
@@ -397,6 +453,88 @@ def _build_create_payload(
                 "field_id": SF_FIELD_IDS[field_key],
                 "value": value,
             })
+
+    return additional_fields, None
+
+
+def _form_field_display_values(
+    row: Dict[str, str],
+    extra_cols: Optional[Dict[str, str]] = None,
+) -> Dict[int, str]:
+    """Return human-readable source values keyed by ChMeetings field_id."""
+    extra = extra_cols or {}
+    values: Dict[int, str] = {}
+
+    church_code = row.get("church_code", "").strip().upper()
+    if church_code:
+        values[SF_FIELD_IDS["CHURCH_TEAM"]] = church_code
+
+    role = _format_labels(row.get("role", ""))
+    if role:
+        values[SF_FIELD_IDS["MY_ROLE"]] = role
+
+    is_member = html.unescape(row.get("is_member", "").strip())
+    if is_member:
+        values[SF_FIELD_IDS["IS_MEMBER"]] = is_member
+
+    age_verification = html.unescape(row.get("age_verification", "").strip())
+    if age_verification:
+        values[SF_FIELD_IDS["AGE_VERIFICATION"]] = age_verification
+
+    primary_sport = html.unescape(row.get("primary_sport", "").strip())
+    if primary_sport:
+        values[SF_FIELD_IDS["PRIMARY_SPORT"]] = primary_sport
+
+    secondary_sport = html.unescape(row.get("secondary_sport", "").strip())
+    if secondary_sport:
+        values[SF_FIELD_IDS["SECONDARY_SPORT"]] = secondary_sport
+
+    other_events = _format_labels(row.get("other_events", ""))
+    if other_events:
+        values[SF_FIELD_IDS["OTHER_EVENTS"]] = other_events
+
+    for extra_key, field_key in [
+        ("primary_partner", "PRIMARY_PARTNER"),
+        ("secondary_partner", "SECONDARY_PARTNER"),
+    ]:
+        value = extra.get(extra_key, "").strip()
+        if value:
+            values[SF_FIELD_IDS[field_key]] = value
+
+    for row_key, field_key in [
+        ("parent_name", "PARENT_NAME"),
+        ("parent_email", "PARENT_EMAIL"),
+        ("parent_phone", "PARENT_PHONE"),
+        ("additional_info", "ADDITIONAL_INFO"),
+    ]:
+        value = row.get(row_key, "").strip()
+        if value:
+            values[SF_FIELD_IDS[field_key]] = value
+
+    return values
+
+
+def _build_create_payload(
+    row: Dict[str, str],
+    extra_cols: Optional[Dict[str, str]] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Build a CreatePersonDto payload from a form export source row.
+
+    Returns ``(payload, None)`` on success or ``(None, blocked_reason)`` when a
+    required field label cannot be mapped to a ChMeetings option_id.  An
+    unmappable required label is treated as a hard block (fail-closed) so the
+    caller can report it rather than create a partially-populated record.
+    """
+    first_name = row.get("first_name", "").strip()
+    last_name  = row.get("last_name", "").strip()
+    if not first_name or not last_name:
+        return None, "missing name"
+
+    additional_fields, blocked_reason = _build_form_additional_fields(row, extra_cols)
+    if blocked_reason:
+        return None, blocked_reason
+
+    assert additional_fields is not None
 
     payload: Dict[str, Any] = {"first_name": first_name, "last_name": last_name}
     email_display = row.get("email_display", "").strip()
@@ -736,6 +874,24 @@ def audit_form_people(
 
     for row in source_rows:
         match_status, matches = _source_row_people_match(row, people_index)
+        blank_field_warnings: List[str] = []
+        source_values = _form_field_display_values(row)
+        for person in matches:
+            current_by_id, current_by_name = _current_field_indexes(person)
+            for field_id in [
+                SF_FIELD_IDS["MY_ROLE"],
+                SF_FIELD_IDS["CHURCH_TEAM"],
+                SF_FIELD_IDS["PRIMARY_SPORT"],
+                SF_FIELD_IDS["SECONDARY_SPORT"],
+                SF_FIELD_IDS["OTHER_EVENTS"],
+            ]:
+                if field_id not in source_values:
+                    continue
+                current_field = _current_field_for_id(field_id, current_by_id, current_by_name)
+                if _is_field_blank(current_field):
+                    blank_field_warnings.append(
+                        f"{person.get('id', '')}:{_FORM_FIELD_NAME_BY_ID.get(field_id, field_id)}"
+                    )
         audit_rows.append({
             "Source Row": row.get("source_row", ""),
             "First Name": row.get("first_name", ""),
@@ -756,12 +912,16 @@ def audit_form_people(
                 for person in matches
             ),
             "Matched Emails": ", ".join(str(person.get("email", "") or "") for person in matches),
+            "Matched Blank Sports Fest Fields": "; ".join(blank_field_warnings),
         })
 
     _write_audit_file(output_filename, audit_rows)
 
     missing_count = sum(1 for row in audit_rows if row["Match Status"] == "missing_person")
     ambiguous_count = sum(1 for row in audit_rows if row["Match Status"] == "ambiguous_name_only")
+    blank_field_count = sum(
+        1 for row in audit_rows if row.get("Matched Blank Sports Fest Fields")
+    )
     if missing_count:
         logger.warning(
             f"Found {missing_count} Individual Application row(s) with no matching "
@@ -772,7 +932,12 @@ def audit_form_people(
             f"Found {ambiguous_count} Individual Application row(s) with ambiguous "
             f"name-only ChMeetings People matches. See data/{output_filename}."
         )
-    if not missing_count and not ambiguous_count:
+    if blank_field_count:
+        logger.warning(
+            f"Found {blank_field_count} matched Individual Application row(s) with blank "
+            f"Sports Fest profile fields. See data/{output_filename}."
+        )
+    if not missing_count and not ambiguous_count and not blank_field_count:
         logger.info(
             f"Individual Application People audit clean: {len(audit_rows)} row(s) matched. "
             f"See data/{output_filename}."
@@ -847,7 +1012,251 @@ def _source_export_church_code(
     return None
 
 
-def assign_people_to_church_team_groups(
+def _source_export_row_match(
+    person: Dict[str, str],
+    source_rows: List[Dict[str, str]],
+) -> Tuple[str, Optional[Dict[str, str]], str]:
+    """Return one strong current-season source row match for a ChMeetings person."""
+    first_name = _normalize_text(person.get("first_name", ""))
+    last_name = _normalize_text(person.get("last_name", ""))
+    email = _normalize_text(person.get("email", ""))
+    mobile = _normalize_phone(person.get("mobile", ""))
+
+    match_groups = [
+        (
+            "matched_email",
+            [
+                row for row in source_rows
+                if row["email"] and email and row["email"] == email
+            ],
+        ),
+        (
+            "matched_phone_name",
+            [
+                row for row in source_rows
+                if row["mobile_phone"]
+                and mobile
+                and row["mobile_phone"] == mobile
+                and _normalize_text(row["first_name"]) == first_name
+                and _normalize_text(row["last_name"]) == last_name
+            ],
+        ),
+    ]
+
+    for match_status, matches in match_groups:
+        if len(matches) == 1:
+            return match_status, matches[0], ""
+        if len(matches) > 1:
+            source_rows_text = ", ".join(str(row.get("source_row", "")) for row in matches)
+            return (
+                f"ambiguous_{match_status.removeprefix('matched_')}",
+                None,
+                f"{len(matches)} source rows match by {match_status}: {source_rows_text}",
+            )
+
+    return "missing_source_row", None, ""
+
+
+def _current_field_indexes(
+    person: Dict[str, Any],
+) -> Tuple[Dict[int, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    by_id: Dict[int, Dict[str, Any]] = {}
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for field in person.get("additional_fields", []) or []:
+        field_id = _field_id(field.get("field_id"))
+        if field_id is not None:
+            by_id[field_id] = field
+        field_name = str(field.get("field_name", "") or "").strip()
+        if field_name:
+            by_name[field_name] = field
+    return by_id, by_name
+
+
+def _current_field_for_id(
+    field_id: int,
+    by_id: Dict[int, Dict[str, Any]],
+    by_name: Dict[str, Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    field = by_id.get(field_id)
+    if field is not None:
+        return field
+    field_name = _FORM_FIELD_NAME_BY_ID.get(field_id)
+    if field_name:
+        return by_name.get(field_name)
+    return None
+
+
+def _field_display_value(field: Optional[Dict[str, Any]]) -> str:
+    if not field:
+        return ""
+    value = field.get("value")
+    if value not in (None, ""):
+        return str(value).strip()
+    selected_option_ids = field.get("selected_option_ids")
+    if selected_option_ids:
+        return ", ".join(str(option_id) for option_id in selected_option_ids)
+    selected_option_id = field.get("selected_option_id")
+    if selected_option_id not in (None, ""):
+        return str(selected_option_id).strip()
+    return ""
+
+
+def _normalized_field_value(value: str) -> str:
+    labels = [
+        html.unescape(label).strip().casefold()
+        for label in str(value or "").split(",")
+        if label.strip()
+    ]
+    if len(labels) > 1:
+        labels = sorted(labels)
+    return ", ".join(labels)
+
+
+def _is_field_blank(field: Optional[Dict[str, Any]]) -> bool:
+    return not _field_display_value(field)
+
+
+def _sanitize_additional_field_payload(field: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    field_id = _field_id(field.get("field_id"))
+    if field_id is None:
+        return None
+
+    field_type = field.get("field_type") or _SF_FIELD_TYPE_BY_ID.get(field_id)
+    if not field_type:
+        return None
+
+    payload: Dict[str, Any] = {"field_id": field_id, "field_type": field_type}
+    for key in _ADDITIONAL_FIELD_PAYLOAD_KEYS:
+        if key in ("field_id", "field_type"):
+            continue
+        if key in field and field[key] is not None:
+            payload[key] = field[key]
+    return payload
+
+
+def _merge_additional_fields_for_update(
+    person: Dict[str, Any],
+    replacements_by_id: Dict[int, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    merged_by_id: Dict[int, Dict[str, Any]] = {}
+    field_order: List[int] = []
+
+    for field in person.get("additional_fields", []) or []:
+        payload = _sanitize_additional_field_payload(field)
+        if not payload:
+            continue
+        field_id = int(payload["field_id"])
+        if field_id not in merged_by_id:
+            field_order.append(field_id)
+        merged_by_id[field_id] = replacements_by_id.get(field_id, payload)
+
+    for field_id, payload in replacements_by_id.items():
+        if field_id not in merged_by_id:
+            field_order.append(field_id)
+        merged_by_id[field_id] = payload
+
+    return [merged_by_id[field_id] for field_id in field_order]
+
+
+def _hydration_audit(
+    outcome: str = "not_applicable",
+    *,
+    source_match: str = "",
+    source_row: str = "",
+    fields: Optional[List[str]] = None,
+    conflicts: Optional[List[str]] = None,
+    detail: str = "",
+) -> Dict[str, Any]:
+    return {
+        "outcome": outcome,
+        "source_match": source_match,
+        "source_row": source_row,
+        "fields": fields or [],
+        "conflicts": conflicts or [],
+        "detail": detail,
+    }
+
+
+def _should_audit_hydration(hydration: Dict[str, Any]) -> bool:
+    return hydration.get("outcome") not in ("not_applicable", "unchanged")
+
+
+def _build_hydration_update(
+    person: Dict[str, Any],
+    row: Dict[str, str],
+    extra_cols: Optional[Dict[str, str]],
+) -> Tuple[Optional[List[Dict[str, Any]]], Dict[str, Any]]:
+    form_fields, blocked_reason = _build_form_additional_fields(row, extra_cols)
+    if blocked_reason:
+        return None, _hydration_audit("blocked", detail=blocked_reason)
+
+    assert form_fields is not None
+
+    source_values = _form_field_display_values(row, extra_cols)
+    current_by_id, current_by_name = _current_field_indexes(person)
+    replacements_by_id: Dict[int, Dict[str, Any]] = {}
+    updated_fields: List[str] = []
+    conflicts: List[str] = []
+
+    for form_field in form_fields:
+        field_id = _field_id(form_field.get("field_id"))
+        if field_id is None:
+            continue
+        field_name = _FORM_FIELD_NAME_BY_ID.get(field_id, str(field_id))
+        source_value = source_values.get(field_id, "")
+        current_field = _current_field_for_id(field_id, current_by_id, current_by_name)
+        current_value = _field_display_value(current_field)
+
+        if _is_field_blank(current_field):
+            replacements_by_id[field_id] = form_field
+            updated_fields.append(field_name)
+        elif source_value and (
+            _normalized_field_value(current_value) != _normalized_field_value(source_value)
+        ):
+            conflicts.append(f"{field_name}: ChM={current_value!r}; form={source_value!r}")
+
+    if replacements_by_id:
+        merged_fields = _merge_additional_fields_for_update(person, replacements_by_id)
+        outcome = "pending_with_conflicts" if conflicts else "pending"
+        return merged_fields, _hydration_audit(
+            outcome,
+            fields=updated_fields,
+            conflicts=conflicts,
+        )
+
+    if conflicts:
+        return None, _hydration_audit("conflict", conflicts=conflicts)
+
+    return None, _hydration_audit("unchanged")
+
+
+def _assignment_audit_row(
+    person: Dict[str, Any],
+    *,
+    church_code: str,
+    target_group: str,
+    outcome: str,
+    hydration: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    hydration = hydration or _hydration_audit()
+    return {
+        "Person Id": str(person.get("person_id") or person.get("id", "")),
+        "First Name": person.get("first_name", ""),
+        "Last Name": person.get("last_name", ""),
+        "Email": person.get("email", ""),
+        "Church Code": church_code,
+        "Target Group": target_group,
+        "Outcome": outcome,
+        "Hydration Outcome": hydration.get("outcome", ""),
+        "Hydration Source Match": hydration.get("source_match", ""),
+        "Hydration Source Row": hydration.get("source_row", ""),
+        "Hydrated Fields": ", ".join(hydration.get("fields", [])),
+        "Hydration Conflicts": "; ".join(hydration.get("conflicts", [])),
+        "Hydration Detail": hydration.get("detail", ""),
+    }
+
+
+def _assign_people_to_church_team_groups_legacy(
     dry_run: bool = False,
     source_file: Optional[str] = None,
 ) -> bool:
@@ -872,12 +1281,14 @@ def assign_people_to_church_team_groups(
     )
 
     source_rows: Optional[List[Dict[str, str]]] = None
+    extra_cols_by_row: Dict[str, Dict[str, str]] = {}
     if source_file:
         try:
             source_rows = _load_source_export_rows(source_file)
         except Exception as exc:
             logger.error(f"Failed to load source export '{source_file}': {exc}")
             return False
+        extra_cols_by_row = _load_repair_extra_cols(source_file)
         logger.info(
             f"Loaded {len(source_rows)} row(s) from source export for current-season filtering"
         )
@@ -1061,6 +1472,432 @@ def assign_people_to_church_team_groups(
             )
 
         return failed == 0
+
+
+def assign_people_to_church_team_groups(
+    dry_run: bool = False,
+    source_file: Optional[str] = None,
+    chm_ids: Optional[List[str]] = None,
+    church_codes: Optional[List[str]] = None,
+) -> bool:
+    """
+    Assign people in ChMeetings to church team groups and hydrate source forms.
+
+    When a current-season source export is supplied, existing matched people
+    are hydrated from the form before the already-in-team idempotency skip.
+    """
+    target_chm_ids = {str(chm_id).strip() for chm_id in (chm_ids or []) if str(chm_id).strip()}
+    target_church_codes = {
+        str(church_code).strip().upper()
+        for church_code in (church_codes or [])
+        if str(church_code).strip()
+    }
+
+    logger.info(
+        f"Starting church team group assignment (dry_run={dry_run}, "
+        f"source_file={source_file or 'ALL_CHM_PEOPLE'}, "
+        f"chm_ids={sorted(target_chm_ids) if target_chm_ids else 'ALL'}, "
+        f"church_codes={sorted(target_church_codes) if target_church_codes else 'ALL'})..."
+    )
+
+    source_rows: Optional[List[Dict[str, str]]] = None
+    extra_cols_by_row: Dict[str, Dict[str, str]] = {}
+    if source_file:
+        try:
+            source_rows = _load_source_export_rows(source_file)
+        except Exception as exc:
+            logger.error(f"Failed to load source export '{source_file}': {exc}")
+            return False
+        extra_cols_by_row = _load_repair_extra_cols(source_file)
+        logger.info(
+            f"Loaded {len(source_rows)} row(s) from source export for current-season filtering"
+        )
+
+    with ChMeetingsConnector() as chm_connector:
+        if not chm_connector.authenticate():
+            logger.error("Authentication with ChMeetings failed")
+            return False
+
+        all_people = chm_connector.get_people()
+        logger.info(f"Retrieved {len(all_people)} people from ChMeetings")
+        if target_chm_ids:
+            found_target_ids = {str(person.get("id")) for person in all_people} & target_chm_ids
+            missing_target_ids = sorted(target_chm_ids - found_target_ids)
+            if missing_target_ids:
+                logger.warning(
+                    f"Requested ChMeetings ID(s) not found in People export: {missing_target_ids}"
+                )
+        if source_file and not target_chm_ids and not target_church_codes:
+            audit_form_people(source_file, people=all_people)
+        elif source_file and (target_chm_ids or target_church_codes):
+            logger.info(
+                "Skipping broad form/people audit because assign-groups is limited "
+                f"to ChMeetings ID(s): {sorted(target_chm_ids) if target_chm_ids else 'ALL'} "
+                f"and church code(s): {sorted(target_church_codes) if target_church_codes else 'ALL'}"
+            )
+
+        all_groups = chm_connector.get_groups()
+        team_groups = [g for g in all_groups if _is_team_group(g.get("name", ""))]
+        team_group_by_name = {g["name"]: str(g["id"]) for g in team_groups}
+
+        laf_group = next(
+            (g for g in all_groups if g.get("name") == Config.LOST_AND_FOUND_GROUP_NAME),
+            None,
+        )
+        laf_group_id: Optional[str] = str(laf_group["id"]) if laf_group else None
+        people_in_laf: set = set()
+        if laf_group_id:
+            for p in chm_connector.get_group_people(laf_group_id):
+                people_in_laf.add(str(p.get("person_id")))
+
+        people_in_teams = set()
+        for group in team_groups:
+            for person in chm_connector.get_group_people(group["id"]):
+                people_in_teams.add(str(person.get("person_id")))
+
+        logger.info(f"Found {len(people_in_teams)} people already in team groups")
+
+        people_for_assignment = []
+        audit_rows = []
+        hydrated = 0
+        hydration_failed = 0
+        hydration_blocked = 0
+        hydration_blocked_reasons: Counter[str] = Counter()
+        hydration_conflict_rows = 0
+        hydration_skipped_reasons: Counter[str] = Counter()
+
+        for person in all_people:
+            person_id = str(person.get("id"))
+            if target_chm_ids and person_id not in target_chm_ids:
+                continue
+            additional_fields = {
+                f["field_name"]: f["value"]
+                for f in person.get("additional_fields", [])
+                if "field_name" in f
+            }
+            if source_rows is None and target_church_codes:
+                profile_church_code = additional_fields.get(CHM_FIELDS["CHURCH_TEAM"], "").strip().upper()
+                if profile_church_code not in target_church_codes:
+                    continue
+            source_row: Optional[Dict[str, str]] = None
+            hydration = _hydration_audit()
+
+            if source_rows is not None:
+                source_match, source_row, source_detail = _source_export_row_match(person, source_rows)
+                if target_church_codes:
+                    if not source_row:
+                        continue
+                    source_church_code = source_row.get("church_code", "").strip().upper()
+                    if source_church_code not in target_church_codes:
+                        continue
+                if source_row:
+                    fresh_person = chm_connector.get_person(person_id)
+                    time.sleep(0.2)
+                    if not fresh_person:
+                        hydration = _hydration_audit(
+                            "blocked",
+                            source_match=source_match,
+                            source_row=source_row.get("source_row", ""),
+                            detail="fresh get_person failed before hydration",
+                        )
+                        hydration_blocked += 1
+                        hydration_blocked_reasons[hydration.get("detail", "")] += 1
+                        logger.debug(
+                            f"[VAY SM] Hydration blocked for chm_id={person_id}: "
+                            "fresh get_person failed before hydration"
+                        )
+                        if _should_audit_hydration(hydration):
+                            audit_rows.append(_assignment_audit_row(
+                                person,
+                                church_code="",
+                                target_group="",
+                                outcome="fresh_person_fetch_failed",
+                                hydration=hydration,
+                            ))
+                        continue
+
+                    person = fresh_person
+                    additional_fields = {
+                        f["field_name"]: f["value"]
+                        for f in person.get("additional_fields", [])
+                        if "field_name" in f
+                    }
+                    extra_cols = extra_cols_by_row.get(source_row.get("source_row", ""), {})
+                    update_fields, hydration = _build_hydration_update(person, source_row, extra_cols)
+                    hydration["source_match"] = source_match
+                    hydration["source_row"] = source_row.get("source_row", "")
+
+                    if update_fields:
+                        if dry_run:
+                            hydration["outcome"] = (
+                                "would_hydrate_with_conflicts"
+                                if hydration.get("conflicts")
+                                else "would_hydrate"
+                            )
+                            logger.info(
+                                f"[dry-run] Would hydrate {len(hydration['fields'])} "
+                                f"Sports Fest field(s) for chm_id={person_id}: "
+                                f"{hydration['fields']}"
+                            )
+                        else:
+                            ok = chm_connector.update_person(
+                                person_id,
+                                person.get("first_name", ""),
+                                person.get("last_name", ""),
+                                update_fields,
+                                extra_person_data=person,
+                            )
+                            time.sleep(0.2)
+                            if ok:
+                                hydrated += 1
+                                hydration["outcome"] = (
+                                    "hydrated_with_conflicts"
+                                    if hydration.get("conflicts")
+                                    else "hydrated"
+                                )
+                                logger.info(
+                                    f"[VAY SM] Hydrated {len(hydration['fields'])} "
+                                    f"Sports Fest field(s) for chm_id={person_id} "
+                                    f"from Individual Application row {hydration['source_row']}"
+                                )
+                            else:
+                                hydration_failed += 1
+                                hydration["outcome"] = "failed"
+                                hydration["detail"] = "update_person returned False"
+                                logger.error(
+                                    f"[VAY SM] Failed to hydrate Sports Fest fields "
+                                    f"for chm_id={person_id} from source row "
+                                    f"{hydration['source_row']}"
+                                )
+                    elif hydration["outcome"] == "blocked":
+                        hydration_blocked += 1
+                        hydration_blocked_reasons[hydration.get("detail", "")] += 1
+                        logger.debug(
+                            f"[VAY SM] Hydration blocked for chm_id={person_id}: "
+                            f"{hydration.get('detail', '')}"
+                        )
+                    elif hydration["outcome"] == "conflict":
+                        hydration_conflict_rows += 1
+                        logger.debug(
+                            f"[VAY SM] Hydration conflict for chm_id={person_id}: "
+                            f"{'; '.join(hydration.get('conflicts', []))}"
+                        )
+                elif source_match.startswith("ambiguous_"):
+                    hydration = _hydration_audit(
+                        source_match,
+                        source_match=source_match,
+                        detail=source_detail,
+                    )
+                    hydration_skipped_reasons[source_match] += 1
+                    logger.debug(
+                        f"[VAY SM] Hydration skipped for chm_id={person_id}: {source_detail}"
+                    )
+
+            church_code = additional_fields.get(CHM_FIELDS["CHURCH_TEAM"], "").strip().upper()
+            if not church_code:
+                if source_row:
+                    church_code = source_row.get("church_code", "")
+                elif source_rows is None:
+                    continue
+                else:
+                    church_code = _source_export_church_code(person, source_rows) or ""
+                if not church_code:
+                    if _should_audit_hydration(hydration):
+                        audit_rows.append(_assignment_audit_row(
+                            person,
+                            church_code="",
+                            target_group="",
+                            outcome="no_church_code",
+                            hydration=hydration,
+                        ))
+                    continue
+                logger.info(
+                    f"[VAY SM] Using current-season source export church_code={church_code} "
+                    f"for chm_id={person_id} because the ChMeetings profile field is blank."
+                )
+            elif source_rows is not None:
+                if not _person_matches_source_export(person, church_code, source_rows):
+                    if _should_audit_hydration(hydration):
+                        audit_rows.append(_assignment_audit_row(
+                            person,
+                            church_code=church_code,
+                            target_group="",
+                            outcome="source_filter_skip",
+                            hydration=hydration,
+                        ))
+                    continue
+
+            if person_id in people_in_teams:
+                if _should_audit_hydration(hydration):
+                    target_group = (
+                        Config.LOST_AND_FOUND_GROUP_NAME
+                        if church_code == "OTHER"
+                        else _team_group_name(church_code)
+                    )
+                    audit_rows.append(_assignment_audit_row(
+                        person,
+                        church_code=church_code,
+                        target_group=target_group,
+                        outcome="already_in_team",
+                        hydration=hydration,
+                    ))
+                continue
+
+            if church_code == "OTHER":
+                if person_id in people_in_laf:
+                    if _should_audit_hydration(hydration):
+                        audit_rows.append(_assignment_audit_row(
+                            person,
+                            church_code=church_code,
+                            target_group=Config.LOST_AND_FOUND_GROUP_NAME,
+                            outcome="already_in_lost_and_found",
+                            hydration=hydration,
+                        ))
+                    continue
+                people_for_assignment.append({
+                    "person_id": person_id,
+                    "first_name": person.get("first_name", ""),
+                    "last_name": person.get("last_name", ""),
+                    "email": person.get("email", ""),
+                    "church_code": church_code,
+                    "target_group": Config.LOST_AND_FOUND_GROUP_NAME,
+                    "hydration": hydration,
+                })
+            else:
+                people_for_assignment.append({
+                    "person_id": person_id,
+                    "first_name": person.get("first_name", ""),
+                    "last_name": person.get("last_name", ""),
+                    "email": person.get("email", ""),
+                    "church_code": church_code,
+                    "target_group": _team_group_name(church_code),
+                    "hydration": hydration,
+                })
+
+        if hydration_blocked_reasons:
+            top_reasons = "; ".join(
+                f"{reason or 'unknown'} ({count})"
+                for reason, count in hydration_blocked_reasons.most_common(8)
+            )
+            logger.warning(
+                f"Hydration blocked for {sum(hydration_blocked_reasons.values())} "
+                f"record(s). Top reasons: {top_reasons}. See data/church_team_assignments.xlsx."
+            )
+        if hydration_conflict_rows:
+            logger.warning(
+                f"Hydration found nonblank ChMeetings/form conflicts for "
+                f"{hydration_conflict_rows} record(s); preserved ChMeetings values. "
+                "See data/church_team_assignments.xlsx."
+            )
+        if hydration_skipped_reasons:
+            skipped_summary = "; ".join(
+                f"{reason} ({count})"
+                for reason, count in hydration_skipped_reasons.most_common()
+            )
+            logger.warning(
+                f"Hydration skipped {sum(hydration_skipped_reasons.values())} "
+                f"ambiguous source match(es): {skipped_summary}. "
+                "See data/church_team_assignments.xlsx."
+            )
+
+        logger.info(f"Found {len(people_for_assignment)} people needing team assignment")
+
+        if not people_for_assignment:
+            if audit_rows:
+                _write_audit_file("church_team_assignments.xlsx", audit_rows)
+            logger.info(
+                f"No people need team assignment. Hydration summary: "
+                f"{hydrated} hydrated, {hydration_failed} failed, "
+                f"{hydration_blocked} blocked."
+            )
+            return hydration_failed == 0
+
+        added = 0
+        failed = 0
+        missing_group = 0
+
+        for person in people_for_assignment:
+            target_group_name = person["target_group"]
+            is_laf = target_group_name == Config.LOST_AND_FOUND_GROUP_NAME
+            if is_laf:
+                group_id = laf_group_id
+                if group_id is None:
+                    logger.warning(
+                        f"Lost and Found group '{Config.LOST_AND_FOUND_GROUP_NAME}' not found "
+                        f"in ChMeetings - skipping {person['first_name']} {person['last_name']} "
+                        f"(id={person['person_id']}). Create the group in ChMeetings first."
+                    )
+                    missing_group += 1
+                    outcome = "missing_group"
+                elif dry_run:
+                    logger.info(
+                        f"[dry-run] Would add {person['first_name']} {person['last_name']} "
+                        f"(id={person['person_id']}) to '{target_group_name}' [REVIEW NEEDED]"
+                    )
+                    outcome = "dry_run"
+                else:
+                    ok = chm_connector.add_person_to_group(group_id, person["person_id"])
+                    time.sleep(0.2)
+                    if ok:
+                        logger.info(
+                            f"[REVIEW NEEDED] Added {person['first_name']} {person['last_name']} "
+                            f"(id={person['person_id']}) to '{Config.LOST_AND_FOUND_GROUP_NAME}' "
+                            f"- submitted church/team: Other"
+                        )
+                        added += 1
+                        outcome = "added"
+                    else:
+                        failed += 1
+                        outcome = "failed"
+            elif team_group_by_name.get(target_group_name) is None:
+                logger.warning(
+                    f"Group '{target_group_name}' not found in ChMeetings - "
+                    f"skipping {person['first_name']} {person['last_name']} "
+                    f"(id={person['person_id']})"
+                )
+                missing_group += 1
+                outcome = "missing_group"
+            elif dry_run:
+                logger.info(
+                    f"[dry-run] Would add {person['first_name']} {person['last_name']} "
+                    f"(id={person['person_id']}) to {target_group_name}"
+                )
+                outcome = "dry_run"
+            else:
+                group_id = team_group_by_name[target_group_name]
+                ok = chm_connector.add_person_to_group(group_id, person["person_id"])
+                time.sleep(0.2)
+                if ok:
+                    added += 1
+                    outcome = "added"
+                else:
+                    failed += 1
+                    outcome = "failed"
+
+            audit_rows.append(_assignment_audit_row(
+                person,
+                church_code=person["church_code"],
+                target_group=target_group_name,
+                outcome=outcome,
+                hydration=person.get("hydration"),
+            ))
+
+        _write_audit_file("church_team_assignments.xlsx", audit_rows)
+
+        if dry_run:
+            logger.info(
+                f"[dry-run] Would assign {len(people_for_assignment)} people "
+                f"({missing_group} with missing group). No API calls made."
+            )
+        else:
+            logger.info(
+                f"Group assignment complete: {added} added, {failed} failed, "
+                f"{missing_group} skipped (group not found in ChMeetings). "
+                f"Hydration: {hydrated} hydrated, {hydration_failed} failed, "
+                f"{hydration_blocked} blocked."
+            )
+
+        return failed == 0 and hydration_failed == 0
 
 
 def clear_team_groups(
