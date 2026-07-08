@@ -324,8 +324,8 @@ python main.py export-church-teams --force-resend-pending --dry-run
 
 ##### Actually resend to pending participants
 python main.py export-church-teams --force-resend-pending
-python main.py export-church-teams --force-resend-validate1 (still under review - any Box 1-6)
-python main.py export-church-teams --force-resend-validate2 (no review yet - no Box 1-6)
+python main.py export-church-teams --force-resend-validated1 (still under review - any Box 1-6)
+python main.py export-church-teams --force-resend-validated2 (no review yet - no Box 1-6)
 
 ##### Resend to specific church
 python main.py export-church-teams --church-code TLC --force-resend-pending
