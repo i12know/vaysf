@@ -71,22 +71,70 @@ class VAYSF_Statistics {
             'order' => 'ASC',
             'status' => '',
             'insurance_status' => '',
+            'include_stats' => false,
         );
         
         $args = wp_parse_args($args, $defaults);
+
+        $table_churches = $wpdb->prefix . 'sf_churches';
+        $table_participants = $wpdb->prefix . 'sf_participants';
+
+        $include_stats = !empty($args['include_stats']);
+
+        $allowed_orderby = array(
+            'church_name' => 'c.church_name',
+            'church_code' => 'c.church_code',
+            'registration_status' => 'c.registration_status',
+            'insurance_status' => 'c.insurance_status',
+            'insurance_uploaded_at' => 'c.insurance_uploaded_at',
+        );
+
+        if ($include_stats) {
+            $allowed_orderby['total_participants'] = 'total_participants';
+            $allowed_orderby['approved_participants'] = 'approved_participants';
+            $allowed_orderby['approval_percentage'] = 'approval_percentage';
+        }
+
+        $orderby = isset($allowed_orderby[$args['orderby']]) ? $allowed_orderby[$args['orderby']] : $allowed_orderby['church_name'];
+        $order = strtoupper($args['order']) === 'DESC' ? 'DESC' : 'ASC';
         
         // Build query
-        $query = "SELECT * FROM {$wpdb->prefix}sf_churches";
+        $query = "SELECT c.*";
+
+        if ($include_stats) {
+            $query .= ",
+                COALESCE(ps.total_participants, 0) AS total_participants,
+                COALESCE(ps.approved_participants, 0) AS approved_participants,
+                CASE
+                    WHEN COALESCE(ps.total_participants, 0) > 0
+                    THEN ROUND((COALESCE(ps.approved_participants, 0) / ps.total_participants) * 100, 1)
+                    ELSE 0
+                END AS approval_percentage";
+        }
+
+        $query .= " FROM $table_churches c";
+
+        if ($include_stats) {
+            $query .= " LEFT JOIN (
+                SELECT
+                    church_code,
+                    COUNT(*) AS total_participants,
+                    SUM(CASE WHEN approval_status = 'approved' THEN 1 ELSE 0 END) AS approved_participants
+                FROM $table_participants
+                GROUP BY church_code
+            ) ps ON ps.church_code = c.church_code";
+        }
+
         $where = array();
         $where_args = array();
         
         if (!empty($args['status'])) {
-            $where[] = "registration_status = %s";
+            $where[] = "c.registration_status = %s";
             $where_args[] = $args['status'];
         }
 
         if (!empty($args['insurance_status'])) {
-            $where[] = "insurance_status = %s";
+            $where[] = "c.insurance_status = %s";
             $where_args[] = $args['insurance_status'];
         }
         
@@ -94,7 +142,7 @@ class VAYSF_Statistics {
             $query .= " WHERE " . implode(' AND ', $where);
         }
         
-        $query .= " ORDER BY {$args['orderby']} {$args['order']} LIMIT %d";
+        $query .= " ORDER BY $orderby $order LIMIT %d";
         $where_args[] = (int) $args['limit'];
         
         // Get churches

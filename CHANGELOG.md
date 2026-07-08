@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Public church shortcode stats
+
+- Added optional per-church statistics to `[vaysf_churches]`, showing
+  WordPress participant totals and approval ratios beneath each church name by
+  default. The shortcode now supports `show_stats="no"` and a flexible
+  `stats="participants,approval_ratio"` list for future church-level metrics.
+
 ### Nightly middleware run robustness
 
 - Made console logging UTF-8 tolerant so names with diacritics do not break

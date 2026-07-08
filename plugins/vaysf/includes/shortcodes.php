@@ -121,7 +121,16 @@ class VAYSF_Shortcodes {
             'order' => 'ASC',
             'status' => '',
             'insurance_status' => '',
+            'show_stats' => 'yes',
+            'stats' => 'participants,approval_ratio',
         ), $atts);
+
+        $church_stat_keys = $this->get_requested_church_stats($atts['stats']);
+        if (!$this->is_truthy($atts['show_stats'])) {
+            $church_stat_keys = array();
+        }
+
+        $atts['include_stats'] = !empty($church_stat_keys);
         
         // Get churches
         $churches = VAYSF_Statistics::get_churches($atts);
@@ -143,7 +152,10 @@ class VAYSF_Shortcodes {
             
             foreach ($churches as $church) {
                 echo '<tr>';
-                echo '<td>' . esc_html($church['church_name']) . ' (' . esc_html($church['church_code']) . ')</td>';
+                echo '<td>';
+                echo '<div class="vaysf-church-name">' . esc_html($church['church_name']) . ' (' . esc_html($church['church_code']) . ')</div>';
+                $this->render_church_stats($church, $church_stat_keys);
+                echo '</td>';
                 echo '<td>' . esc_html($church['pastor_name']) . '</td>';
                 echo '<td>' . esc_html(ucfirst($church['registration_status'])) . '</td>';
                 echo '<td>';
@@ -266,6 +278,115 @@ class VAYSF_Shortcodes {
         echo '</div>';
         echo '</div>';
     }
+
+    /**
+     * Convert common shortcode truthy values to a boolean.
+     *
+     * @param string $value Shortcode value
+     * @return bool
+     */
+    private function is_truthy($value) {
+        return in_array(strtolower((string) $value), array('1', 'true', 'yes', 'on'), true);
+    }
+
+    /**
+     * Church-level stats available to the churches shortcode.
+     *
+     * @return array Stat definitions keyed by shortcode stat name
+     */
+    private function get_church_stat_definitions() {
+        return array(
+            'participants' => array(
+                'label' => 'Participants',
+            ),
+            'approved_participants' => array(
+                'label' => 'Approved',
+            ),
+            'approval_ratio' => array(
+                'label' => 'Approval',
+            ),
+        );
+    }
+
+    /**
+     * Parse the churches shortcode stats attribute.
+     *
+     * @param string $stats_attr Comma-separated stat keys or "all"
+     * @return array Requested stat keys
+     */
+    private function get_requested_church_stats($stats_attr) {
+        $definitions = $this->get_church_stat_definitions();
+        $stats_attr = strtolower(trim((string) $stats_attr));
+
+        if ($stats_attr === 'all') {
+            return array_keys($definitions);
+        }
+
+        $requested = array();
+        foreach (array_map('trim', explode(',', $stats_attr)) as $stat_key) {
+            if (isset($definitions[$stat_key])) {
+                $requested[] = $stat_key;
+            }
+        }
+
+        return array_values(array_unique($requested));
+    }
+
+    /**
+     * Render per-church stats under the church name.
+     *
+     * @param array $church Church row with aggregate stat columns
+     * @param array $stat_keys Requested stat keys
+     */
+    private function render_church_stats($church, $stat_keys) {
+        if (empty($stat_keys)) {
+            return;
+        }
+
+        $definitions = $this->get_church_stat_definitions();
+
+        echo '<div class="vaysf-church-stats">';
+        foreach ($stat_keys as $stat_key) {
+            if (!isset($definitions[$stat_key])) {
+                continue;
+            }
+
+            echo '<span class="vaysf-church-stat vaysf-church-stat-' . esc_attr(sanitize_html_class($stat_key)) . '">';
+            echo '<span class="vaysf-church-stat-label">' . esc_html($definitions[$stat_key]['label']) . '</span>';
+            echo '<span class="vaysf-church-stat-value">' . esc_html($this->format_church_stat_value($church, $stat_key)) . '</span>';
+            echo '</span>';
+        }
+        echo '</div>';
+    }
+
+    /**
+     * Format a church stat value for display.
+     *
+     * @param array $church Church row with aggregate stat columns
+     * @param string $stat_key Stat key
+     * @return string Display value
+     */
+    private function format_church_stat_value($church, $stat_key) {
+        $total = isset($church['total_participants']) ? (int) $church['total_participants'] : 0;
+        $approved = isset($church['approved_participants']) ? (int) $church['approved_participants'] : 0;
+
+        switch ($stat_key) {
+            case 'participants':
+                return number_format_i18n($total);
+            case 'approved_participants':
+                return number_format_i18n($approved);
+            case 'approval_ratio':
+                $percentage = $total > 0 ? round(($approved / $total) * 100, 1) : 0;
+                return sprintf(
+                    '%s/%s (%s%%)',
+                    number_format_i18n($approved),
+                    number_format_i18n($total),
+                    number_format_i18n($percentage)
+                );
+            default:
+                return '';
+        }
+    }
     
     /**
      * Include frontend styles
@@ -350,6 +471,39 @@ class VAYSF_Shortcodes {
                 .vaysf-participants-table th {
                     background-color: #f5f5f5;
                     font-weight: bold;
+                }
+
+                .vaysf-church-name {
+                    margin-bottom: 6px;
+                }
+
+                .vaysf-church-stats {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 6px;
+                    margin-top: 4px;
+                }
+
+                .vaysf-church-stat {
+                    display: inline-flex;
+                    align-items: baseline;
+                    gap: 4px;
+                    padding: 3px 7px;
+                    border: 1px solid #d7e3f0;
+                    border-radius: 3px;
+                    background-color: #f8fbff;
+                    color: #34495e;
+                    font-size: 12px;
+                    line-height: 1.4;
+                    white-space: nowrap;
+                }
+
+                .vaysf-church-stat-label {
+                    color: #667085;
+                }
+
+                .vaysf-church-stat-value {
+                    font-weight: 700;
                 }
                 
                 .approval-status {
