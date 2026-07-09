@@ -113,6 +113,7 @@ For detailed setup and usage instructions, see the [Installation Guide](docs/INS
 
 ## Documentation
 
+- [Chatable DeepWiki](https://deepwiki.com/i12know/vaysf)
 - [Installation Guide](docs/INSTALLATION.md)
 - [Architecture Overview](docs/ARCHITECTURE.md)
 - [Usage Guide](docs/USAGE.md)
