@@ -59,6 +59,7 @@ from schedule_styles import (
 )
 from scheduling import xlsx_utils, venue_loader, output_report
 from scheduling import planning_tabs
+from scheduling import manual_matchups
 
 
 class ScheduleWorkbookBuilder:
@@ -2820,6 +2821,7 @@ class ScheduleWorkbookBuilder:
         roster_rows: List[Dict[str, Any]],
         pool_assignment_rows: List[Dict[str, Any]],
         allow_placeholder_fallback: bool = True,
+        excluded_events: Optional[set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Return gym games (pool + auto-generated playoffs) plus precedence.
 
@@ -2839,8 +2841,11 @@ class ScheduleWorkbookBuilder:
         games: List[Dict[str, Any]] = []
         precedence: List[Dict[str, Any]] = []
         placeholder_map_by_event = cls._pool_assignment_placeholder_map(pool_assignment_rows)
+        excluded_events = excluded_events or set()
 
         for event_name, prefix, resource_type in sport_defs:
+            if event_name in excluded_events:
+                continue
             min_team_size = cls._get_min_team_size(event_name)
             counts = cls._count_estimating_teams(roster_rows, event_name, min_team_size)
             slot_map = placeholder_map_by_event.get(event_name, {})
@@ -2913,6 +2918,180 @@ class ScheduleWorkbookBuilder:
                 precedence.extend(playoff_precedence)
 
         return games, precedence
+
+    @classmethod
+    def _build_manual_team_sport_game_objects(
+        cls,
+        manual_matchup_payload: Optional[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], set[str], Optional[Dict[str, Any]]]:
+        """Return imported team-sport pool games plus generated playoff edges.
+
+        The manual sidecar owns pool-game pairings only. Playoff game objects
+        stay generated from the imported pool-game list so Playoff-Slots and
+        precedence rules continue to behave like the normal team-sport path.
+        """
+        if not manual_matchup_payload:
+            return [], [], set(), None
+
+        sidecar_errors = (
+            manual_matchup_payload.get("validation", {}) or {}
+        ).get("errors", [])
+        if sidecar_errors:
+            raise ValueError(
+                "Manual team matchup sidecar has validation errors; rerun "
+                "import-team-matchups and fix the workbook before exporting."
+            )
+
+        games_by_event: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for game in manual_matchup_payload.get("games", []) or []:
+            if not isinstance(game, dict):
+                continue
+            event_name = str(game.get("event") or "").strip()
+            if not event_name:
+                continue
+            games_by_event[event_name].append(dict(game))
+
+        imported_games: List[Dict[str, Any]] = []
+        precedence: List[Dict[str, Any]] = []
+        imported_events: set[str] = set()
+
+        event_metadata = {
+            str(event.get("event") or "").strip(): event
+            for event in manual_matchup_payload.get("events", []) or []
+            if isinstance(event, dict)
+        }
+
+        for event_name, event_games in games_by_event.items():
+            imported_events.add(event_name)
+            imported_games.extend(event_games)
+            event_meta = event_metadata.get(event_name, {})
+            prefix = str(event_meta.get("prefix") or cls._pool_assignment_event_prefix(event_name))
+            resource_type = str(event_meta.get("resource_type") or "")
+            duration = int(
+                COURT_ESTIMATE_MINUTES_PER_GAME.get(
+                    event_name,
+                    COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
+                )
+            )
+            team_codes = {
+                str(game.get(label_key) or "").strip()
+                for game in event_games
+                for label_key in ("team_a_label", "team_b_label", "team_c_label")
+                if str(game.get(label_key) or "").strip()
+            }
+            pool_game_ids = [
+                str(game.get("game_id") or "").strip()
+                for game in event_games
+                if str(game.get("game_id") or "").strip()
+            ]
+            if event_name == SPORT_TYPE["BIBLE_CHALLENGE"]:
+                if len(team_codes) >= COURT_ESTIMATE_BC_MIN_TEAMS_FOR_PLAYOFF:
+                    semi_ids: List[str] = []
+                    for semi_idx in range(1, 4):
+                        semi_id = f"{prefix}-Semi-{semi_idx}"
+                        semi_ids.append(semi_id)
+                        imported_games.append({
+                            "game_id": semi_id,
+                            "event": event_name,
+                            "stage": "Semi",
+                            "pool_id": "",
+                            "round": semi_idx,
+                            "team_a_id": f"{prefix}-Semi-{semi_idx}-A",
+                            "team_b_id": f"{prefix}-Semi-{semi_idx}-B",
+                            "team_c_id": f"{prefix}-Semi-{semi_idx}-C",
+                            "team_a_label": f"Semi {semi_idx} Qualifier A",
+                            "team_b_label": f"Semi {semi_idx} Qualifier B",
+                            "team_c_label": f"Semi {semi_idx} Qualifier C",
+                            "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+                            "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                            "earliest_slot": None,
+                            "latest_slot": None,
+                        })
+
+                    precedence.extend(
+                        {
+                            "before_game_id": pool_game_id,
+                            "after_game_id": semi_id,
+                            "min_gap_slots": 1,
+                        }
+                        for pool_game_id in pool_game_ids
+                        for semi_id in semi_ids
+                    )
+
+                    final_id = f"{prefix}-Final"
+                    imported_games.append({
+                        "game_id": final_id,
+                        "event": event_name,
+                        "stage": "Final",
+                        "pool_id": "",
+                        "round": 1,
+                        "team_a_id": f"WIN-{semi_ids[0]}",
+                        "team_b_id": f"WIN-{semi_ids[1]}",
+                        "team_c_id": f"WIN-{semi_ids[2]}",
+                        "team_a_label": "Winner Semi 1",
+                        "team_b_label": "Winner Semi 2",
+                        "team_c_label": "Winner Semi 3",
+                        "duration_minutes": COURT_ESTIMATE_MINUTES_BIBLE_CHALLENGE,
+                        "resource_type": TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
+                        "earliest_slot": None,
+                        "latest_slot": None,
+                    })
+                    precedence.extend(
+                        {
+                            "before_game_id": semi_id,
+                            "after_game_id": final_id,
+                            "min_gap_slots": 1,
+                        }
+                        for semi_id in semi_ids
+                    )
+                continue
+
+            playoff_teams = cls._get_playoff_teams_for_event(event_name, len(team_codes))
+            if playoff_teams >= 4:
+                extra_fields: Dict[str, Any] = {
+                    "duration_minutes": duration,
+                    "resource_type": resource_type,
+                    "earliest_slot": None,
+                    "latest_slot": None,
+                }
+                solver_pools = [
+                    str(game.get("solver_pool") or "").strip()
+                    for game in event_games
+                    if str(game.get("solver_pool") or "").strip()
+                ]
+                if solver_pools:
+                    extra_fields["solver_pool"] = solver_pools[0]
+                playoff_games, playoff_precedence = cls._build_single_elim_playoff(
+                    event_name=event_name,
+                    prefix=prefix,
+                    playoff_teams=playoff_teams,
+                    pool_game_ids=pool_game_ids,
+                    extra_fields=extra_fields,
+                    include_third=COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME,
+                )
+                imported_games.extend(playoff_games)
+                precedence.extend(playoff_precedence)
+
+        summary = {
+            "source_workbook": manual_matchup_payload.get("source_workbook"),
+            "imported_at": manual_matchup_payload.get("imported_at"),
+            "active_sheets": manual_matchup_payload.get("active_sheets", []),
+            "events": [
+                {
+                    "sheet_name": event.get("sheet_name"),
+                    "event": event.get("event"),
+                    "game_count": len(event.get("games", []) or []),
+                    "expected_games_per_team": event.get("expected_games_per_team"),
+                    "team_game_counts": event.get("team_game_counts", {}),
+                    "skipped_byes": event.get("skipped_byes", []),
+                    "count_warnings": event.get("count_warnings", []),
+                }
+                for event in manual_matchup_payload.get("events", []) or []
+                if isinstance(event, dict)
+            ],
+            "validation": manual_matchup_payload.get("validation", {}),
+        }
+        return imported_games, precedence, imported_events, summary
 
     # ── Schedule-Input JSON builders ─────────────────────────────────────────
 
@@ -3606,6 +3785,7 @@ class ScheduleWorkbookBuilder:
         validation_rows: List[Dict[str, Any]],
         venue_input_path: Path,
         pool_assignment_path: Optional[Path] = None,
+        manual_matchup_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Assemble the full schedule_input package consumed by OR-Tools.
 
@@ -3646,18 +3826,39 @@ class ScheduleWorkbookBuilder:
             roster_rows,
             pool_assignment_path,
         )
+        manual_matchup_payload = manual_matchups.load_manual_matchup_sidecar(
+            manual_matchup_path
+        )
+        (
+            manual_team_sport_games,
+            manual_team_sport_precedence,
+            manual_imported_events,
+            manual_matchup_summary,
+        ) = self._build_manual_team_sport_game_objects(manual_matchup_payload)
         gym_games, gym_precedence = self._build_assigned_gym_game_objects(
             roster_rows,
             pool_assignment_rows,
             allow_placeholder_fallback=(gym_resource_strategy == "fallback"),
+            excluded_events=manual_imported_events,
         )
-        bc_games, precedence = self._build_assigned_bc_game_objects(pool_assignment_rows)
-        soccer_games, soccer_precedence = self._build_assigned_soccer_game_objects(
-            roster_rows,
-            pool_assignment_rows,
-        )
+        if manual_imported_events:
+            logger.info(
+                "Manual team matchups imported for events: "
+                + ", ".join(sorted(manual_imported_events))
+            )
+        if SPORT_TYPE["BIBLE_CHALLENGE"] in manual_imported_events:
+            bc_games, precedence = [], []
+        else:
+            bc_games, precedence = self._build_assigned_bc_game_objects(pool_assignment_rows)
+        if SPORT_TYPE["SOCCER"] in manual_imported_events:
+            soccer_games, soccer_precedence = [], []
+        else:
+            soccer_games, soccer_precedence = self._build_assigned_soccer_game_objects(
+                roster_rows,
+                pool_assignment_rows,
+            )
         pod_games, pod_precedence = self._build_pod_game_objects(roster_rows, validation_rows)
-        all_games = gym_games + bc_games + soccer_games + pod_games
+        all_games = manual_team_sport_games + gym_games + bc_games + soccer_games + pod_games
         team_conflicts = self._build_gym_team_conflicts(roster_rows, pool_assignment_rows)
         team_conflicts += self._build_cross_sport_conflicts(
             roster_rows, pool_assignment_rows, validation_rows
@@ -3668,6 +3869,7 @@ class ScheduleWorkbookBuilder:
         pod_validation_reconciliation = self._reconcile_pod_validation(
             pod_unprotected_entries, _confirmed_pods, validation_rows
         )
+        precedence.extend(manual_team_sport_precedence)
         precedence.extend(gym_precedence)
         precedence.extend(soccer_precedence)
         precedence.extend(pod_precedence)
@@ -4065,7 +4267,7 @@ class ScheduleWorkbookBuilder:
                 if latest:
                     game["latest_slot"] = latest
 
-        return {
+        schedule_input = {
             "generated_at":       datetime.now().isoformat(timespec="seconds"),
             "gym_court_scenario": SCHEDULE_SOLVER_GYM_COURTS,
             "game_count":         len(all_games),
@@ -4081,6 +4283,9 @@ class ScheduleWorkbookBuilder:
             "precedence":         precedence,
             "day_order":          day_order,
         }
+        if manual_matchup_summary:
+            schedule_input["manual_matchups"] = manual_matchup_summary
+        return schedule_input
 
 
 
@@ -4555,6 +4760,7 @@ class ScheduleWorkbookBuilder:
         venue_input_path: Path,
         json_path: Path,
         pool_assignment_path: Optional[Path] = None,
+        manual_matchup_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Build schedule_input dict and write it as JSON. Returns the dict.
         Always called by export-church-teams, regardless of whether venue_input.xlsx
@@ -4565,6 +4771,7 @@ class ScheduleWorkbookBuilder:
             validation_rows,
             venue_input_path,
             pool_assignment_path=pool_assignment_path,
+            manual_matchup_path=manual_matchup_path,
         )
         json_path.write_text(json.dumps(schedule_input, indent=2, default=str), encoding="utf-8")
         logger.info(

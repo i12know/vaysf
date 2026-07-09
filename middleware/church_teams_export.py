@@ -2925,6 +2925,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                             venue_input_path,
                             filepath.parent / "schedule_input.json",
                             pool_assignment_path=filepath.parent / "pool_assignments.json",
+                            manual_matchup_path=filepath.parent / "manual_team_matchups.json",
                         )
                         json_path = filepath.parent / "schedule_input.json"
                         logger.info(
@@ -3696,6 +3697,7 @@ _SCHEDULE_WORKBOOK_METHOD_NAMES = (
     "_build_assigned_bc_game_objects",
     "_build_assigned_soccer_game_objects",
     "_build_single_elim_playoff",
+    "_build_manual_team_sport_game_objects",
     "_build_gym_game_objects",
     "_build_assigned_gym_game_objects",
     "_build_gym_team_conflicts",

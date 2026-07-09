@@ -328,6 +328,88 @@ If you did **not** change `Pool-Assignment`, you can skip `assign-pools`.
 
 ---
 
+## Step 4A - 2026 Manual Team-Sport Matchup Import
+
+For the 2026 event, team-sport pool games may use meeting-approved manual
+matchups instead of the generated `Pool-Assignment` pairings.
+
+This workflow is implemented by `import-team-matchups`, which validates the
+approved workbook and writes `manual_team_matchups.json` for
+`export-church-teams` to consume.
+
+The approved workbook lives in:
+
+```text
+middleware/data/2026-VAY-Lottery-Drawing_Team-Assignment(ALL-TEAM-SPORTS)_template.xlsx
+```
+
+The 2026 active imported worksheets are:
+
+| Worksheet | Event | Notes |
+|-----------|-------|-------|
+| `BB_round2` | Basketball - Men Team | Current Basketball source of truth, updated 2026-06-25 |
+| `MVB` | Volleyball - Men Team | Men's Volleyball source of truth, updated 2026-06-21 |
+| `WVB` | Volleyball - Women Team | Women's Volleyball source of truth, updated 2026-06-21 |
+| `SOC` | Soccer - Coed Exhibition | Two-team Soccer matchups; imported when populated |
+| `BC` | Bible Challenge - Mixed Team | Three-team Bible Challenge triplets; imported when populated |
+
+Run the import step:
+
+```bash
+python main.py import-team-matchups
+```
+
+By default, this reads the approved workbook from `middleware/data/` and writes
+`manual_team_matchups.json` to the normal export folder. If you are using a
+custom workbook or export folder, pass the paths explicitly:
+
+```bash
+python main.py import-team-matchups --file path/to/manual_matchups.xlsx
+python main.py import-team-matchups --output path/to/manual_team_matchups.json
+python main.py export-church-teams --output path/to
+```
+
+If you need to re-import the older BB/MVB/WVB-only workbook, select only those
+worksheets:
+
+```bash
+python main.py import-team-matchups --sheet BB_round2 --sheet MVB --sheet WVB
+```
+
+Then continue with:
+
+```bash
+python main.py export-church-teams
+python main.py build-schedule-workbook
+python main.py diagnose-schedule
+run-schedule.bat
+```
+
+What changes in this mode:
+
+- the manual matchup workbook is the source of truth for any populated imported
+  team-sport worksheet
+- pool roster / slot maps are optional when the matchup list has the required
+  slot numbers and team codes; imported games keep `pool_id` blank when no pool
+  map is provided
+- `bye` rows are skipped as non-games
+- WVB's 4-games-per-team matchup list is accepted as imported fixed games
+- you do **not** need to change `COURT_ESTIMATE_POOL_GAMES_VOLLEYBALL_WOMEN`
+  to `4`
+- BC rows contain three teams per game and create the normal BC semi/final
+  placeholders after imported round-robin games
+- BC does not operate by pools; its manual tab is expected to behave as one
+  global Jeopardy queue
+- `Pool-Assignment` should not be used to change pairings for events imported
+  from the manual workbook
+- `Pool-Assignment` still applies to sports that remain on the generated
+  assignment path
+
+Before solving, inspect `Schedule_Workbook_*.xlsx -> Schedule-Input` and make
+sure the imported games match the approved workbook.
+
+---
+
 ## Step 5 - Fill `Playoff-Slots`
 
 After `build-schedule-workbook`, open `Schedule_Workbook_*.xlsx` and use
@@ -453,6 +535,7 @@ This is the most important operator table.
 |---------------|---------------|
 | `Venue-Input` or `Gym-Modes` | `export-church-teams`, then `build-schedule-workbook` |
 | `Pool-Assignment` seeds / slots | `assign-pools`, then `export-church-teams`, then `build-schedule-workbook` |
+| 2026 manual team-sport matchup workbook | `import-team-matchups`, then `export-church-teams`, `build-schedule-workbook`, `diagnose-schedule`, and `run-schedule.bat` |
 | `Playoff-Slots` only | `export-church-teams`, then `run-schedule.bat` |
 | Want to inspect IDs before solving | `build-schedule-workbook` |
 | Roster / registrations changed upstream | `export-church-teams`, then `build-schedule-workbook`, then `run-schedule.bat` |

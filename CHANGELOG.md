@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### 2026 manual team-sport matchup import - refs [#190](https://github.com/i12know/vaysf/issues/190), [#191](https://github.com/i12know/vaysf/issues/191)
+
+- Added `import-team-matchups` for the 2026 all-team-sports matchup workbook,
+  writing `manual_team_matchups.json` for schedule generation.
+- Manual BB/MVB/WVB/SOC/BC pool-game matchups now replace generated team-sport
+  pairings, with BC imported as three-team Jeopardy-style `BC-RR-*` games and
+  Soccer accepting the exported `Mixed`/`Coed` roster shape.
+- Added the all-team-sports workbook template, documented the operator workflow,
+  and kept pool maps optional when the manual matchup list has complete slot
+  and team-code values.
+
 ### Public church shortcode stats
 
 - Added optional per-church statistics to `[vaysf_churches]`, showing
