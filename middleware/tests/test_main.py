@@ -146,6 +146,17 @@ def test_parse_args_assign_pools_defaults(monkeypatch):
     assert args.pool_assignments is None
 
 
+def test_parse_args_import_team_matchups_file_alias(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        ["main.py", "import-team-matchups", "--file", "Manual_Matchups.xlsx"],
+    )
+    args = main.parse_args()
+    assert args.command == "import-team-matchups"
+    assert args.workbook == "Manual_Matchups.xlsx"
+
+
 def test_parse_args_upload_person_photo_execute(monkeypatch):
     monkeypatch.setattr(
         main.sys,

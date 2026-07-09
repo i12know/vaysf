@@ -175,14 +175,13 @@ Key constraints the pipeline must respect:
   room and games never run concurrently. The scheduling problem for BC is a
   simple queue, not a resource-allocation problem. There is no "court-hours"
   model — only total room-minutes.
-- **Round-robin phase.** Each registered BC team is planned for **2 games** in
-  the round-robin once at least 3 church teams exist. Total RR games = ⌈N × 2 / 3⌉
-  where N is the number of teams. The queue is generated directly from the
-  `Pool-Assignment` draw:
-  - 3-team pool → 2 Jeopardy rounds with the same trio
-  - 4-team pool → 3 rounds, with the extra third appearance assigned to `T4`
-  - 5-team pool → 4 rounds, with the extra appearances assigned to `T4` and `T5`
-  This keeps the bonus rounds away from the top-seeded slots.
+- **Round-robin phase.** Each registered BC team is planned for **3 games** in
+  the round-robin when a no-repeat triplet schedule is possible. Total generated
+  RR games = `N` where `N` is the number of teams, because each game has 3 teams
+  and each team appears 3 times. The generated path uses the `Pool-Assignment`
+  draw and avoids repeating any pair of teams before playoffs. If the 2026
+  manual `BC` worksheet is populated, those approved triplets become the source
+  of truth instead.
 - **Playoff phase.** The **top 9 teams by cumulative Jeopardy score** advance
   to the playoff. Playoff structure: **3 semi-final games** (3 pools of 3
   teams) then **1 final game** (3 semi-final winners) = 4 total playoff games.
@@ -937,6 +936,37 @@ state in `pool_assignments.json` beside the workbook so later rebuilds can
 reload the same seed inputs. A later `export-church-teams` run in that same
 folder reads the sidecar back into `schedule_input.json`, so Layer 2 scheduling
 and the conflict audit use the same pool draw you reviewed in Excel.
+
+### 2026 manual team-sport matchup workbook
+
+For the 2026 event, team-sport pool matchups may come from a meeting-approved
+manual workbook instead of the generated pool-pairing templates. The
+`import-team-matchups` command validates the workbook and writes
+`manual_team_matchups.json`; `export-church-teams` consumes that sidecar when
+regenerating `schedule_input.json`.
+
+The workbook currently lives at:
+
+```text
+middleware/data/2026-VAY-Lottery-Drawing_Team-Assignment(ALL-TEAM-SPORTS)_template.xlsx
+```
+
+The current imported worksheets are `BB_round2`, `MVB`, `WVB`, `SOC`, and
+`BC`. `SOC` uses the same two-team matchup layout as the gym sports. `BC`
+uses three-team rows and imports them as `BC-RR-*` round-robin games. Pool
+roster / slot maps are optional for all manual-imported sports when the matchup
+list has the required slot numbers and team codes; imported games keep
+`pool_id` blank when no pool map is provided. BC is scheduled as one global
+Jeopardy queue.
+
+When this import mode is enabled for an event, the manual workbook is the
+source of truth for that event's pool games. `Pool-Assignment` still provides
+the normal generated workflow for sports that are not imported or whose tabs
+are still blank, but it should not be used to change pairings for imported
+events. WVB's 4-games-per-team schedule is handled as fixed imported games;
+this does not require generic `COURT_ESTIMATE_POOL_GAMES_* = 4` generation
+support. Imported BC pool games still create the normal three semi-final games
+and final placeholder with precedence after the imported round-robin queue.
 
 ### Changing `Target Pool Games/Team`
 

@@ -350,6 +350,40 @@ def parse_args() -> argparse.Namespace:
         help="Optional path to the persisted pool_assignments.json sidecar (default: pool_assignments.json beside the output workbook)",
     )
 
+    import_matchups_parser = subparsers.add_parser(
+        "import-team-matchups",
+        help="Validate/import the 2026 manual team-sport matchup workbook",
+    )
+    import_matchups_parser.add_argument(
+        "--workbook",
+        "--file",
+        dest="workbook",
+        default=None,
+        help=(
+            "Path to manual matchup workbook; --file is an alias "
+            "(default: data/2026-VAY-Lottery-Drawing_Team-Assignment(ALL-TEAM-SPORTS)_template.xlsx)"
+        ),
+    )
+    import_matchups_parser.add_argument(
+        "--input-xlsx",
+        default=None,
+        help="Optional Church_Team_Status_ALL workbook for roster-vs-matchup validation",
+    )
+    import_matchups_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output sidecar path (default: EXPORT_DIR/manual_team_matchups.json)",
+    )
+    import_matchups_parser.add_argument(
+        "--sheet",
+        action="append",
+        default=None,
+        help=(
+            "Active worksheet to import. May be supplied multiple times; "
+            "default is BB_round2, MVB, WVB, SOC, BC."
+        ),
+    )
+
     # Generate-venue-template command
     venue_template_parser = subparsers.add_parser(
         "generate-venue-template",
@@ -1296,6 +1330,59 @@ def main() -> None:
                 sidecar_path=pool_assignments_path,
             )
             logger.info(f"Pool assignments refreshed in: {output_path.resolve()}")
+            success = True
+    elif args.command == "import-team-matchups":
+        from schedule_workbook import ScheduleWorkbookBuilder
+        from scheduling import manual_matchups
+
+        workbook_path = (
+            Path(args.workbook)
+            if args.workbook
+            else manual_matchups.default_workbook_path(DATA_DIR)
+        )
+        output_path = (
+            Path(args.output)
+            if args.output
+            else manual_matchups.default_sidecar_path(Path(EXPORT_DIR))
+        )
+        builder = ScheduleWorkbookBuilder()
+        context_xlsx = Path(args.input_xlsx) if args.input_xlsx else None
+        if context_xlsx is None:
+            context_xlsx = _find_latest_all_workbook(output_path.parent)
+            if context_xlsx is None and Path(EXPORT_DIR) != output_path.parent:
+                context_xlsx = _find_latest_all_workbook(Path(EXPORT_DIR))
+
+        roster_rows = None
+        if context_xlsx:
+            logger.info(f"import-team-matchups: using roster context workbook {context_xlsx}")
+            roster_rows, _validation_rows = builder.read_roster_validation_rows(context_xlsx)
+        else:
+            logger.warning(
+                "import-team-matchups: no Church_Team_Status_ALL workbook found; "
+                "team-code validation against the roster will be skipped."
+            )
+
+        payload = manual_matchups.build_manual_matchup_payload(
+            workbook_path,
+            roster_rows=roster_rows,
+            active_sheets=args.sheet,
+        )
+        for line in manual_matchups.summarize_payload_for_log(payload):
+            logger.info(line)
+        validation = payload.get("validation", {}) or {}
+        for warning in validation.get("warnings", []) or []:
+            logger.warning(f"manual matchup validation: {warning}")
+        errors = validation.get("errors", []) or []
+        if errors:
+            logger.error(
+                f"manual matchup validation failed with {len(errors)} error(s):"
+            )
+            for error in errors:
+                logger.error(f"  - {error}")
+            success = False
+        else:
+            manual_matchups.write_manual_matchup_sidecar(payload, output_path)
+            logger.info(f"Manual team matchup sidecar written to: {output_path.resolve()}")
             success = True
     elif args.command == "generate-venue-template":
         out = Path(args.output) if args.output else None
