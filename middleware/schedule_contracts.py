@@ -52,7 +52,7 @@ _KNOWN_INPUT_TOP_LEVEL = {
     "team_conflicts", "precedence", "day_order", "generated_at",
     "gym_court_scenario", "game_count", "resource_count",
     "pod_unprotected_entries", "pod_validation_reconciliation",
-    "manual_matchups",
+    "manual_matchups", "manual_schedule_overrides",
 }
 _KNOWN_OUTPUT_TOP_LEVEL = {
     "solved_at", "status", "solver_wall_seconds", "assignments", "unscheduled",

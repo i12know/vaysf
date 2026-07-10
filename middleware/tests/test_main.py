@@ -157,6 +157,26 @@ def test_parse_args_import_team_matchups_file_alias(monkeypatch):
     assert args.workbook == "Manual_Matchups.xlsx"
 
 
+def test_parse_args_import_master_schedule_file_alias(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "import-master-schedule",
+            "--file",
+            "VAY2026_Main_Schedule_draft_4.xlsx",
+            "--schedule-input",
+            "schedule_input.json",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "import-master-schedule"
+    assert args.workbook == "VAY2026_Main_Schedule_draft_4.xlsx"
+    assert args.schedule_input == "schedule_input.json"
+    assert args.output is None
+
+
 def test_parse_args_upload_person_photo_execute(monkeypatch):
     monkeypatch.setattr(
         main.sys,

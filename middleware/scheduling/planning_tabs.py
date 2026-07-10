@@ -293,7 +293,10 @@ def _write_schedule_input_tab(builder, ws, schedule_input: Dict[str, Any]) -> No
         "resource_id", "resource_type", "label", "day",
         "open_time", "close_time", "slot_minutes", "exclusive_group",
     ]
-    playoff_slot_cols = ["game_id", "event", "stage", "resource_id", "slot"]
+    playoff_slot_cols = [
+        "game_id", "event", "stage", "resource_id", "slot",
+        "x_master_schedule_cell", "x_master_schedule_raw",
+    ]
     precedence_cols = ["before_game_id", "after_game_id", "min_gap_slots"]
 
     current_row = 1

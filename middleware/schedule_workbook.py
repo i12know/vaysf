@@ -60,6 +60,7 @@ from schedule_styles import (
 from scheduling import xlsx_utils, venue_loader, output_report
 from scheduling import planning_tabs
 from scheduling import manual_matchups
+from scheduling import master_schedule
 
 
 class ScheduleWorkbookBuilder:
@@ -432,6 +433,12 @@ class ScheduleWorkbookBuilder:
         ),
         "slot": (
             "Exact solver slot label, typically Day-HH:MM, that the playoff game must occupy."
+        ),
+        "x_master_schedule_cell": (
+            "Source cell in the imported visual master schedule workbook, when this fixed slot came from manual_schedule_overrides.json."
+        ),
+        "x_master_schedule_raw": (
+            "Raw source value from the imported visual master schedule workbook, useful for auditing unresolved or surprising pins."
         ),
     }
     _GYM_ALLOCATION_DECISION_HEADER_NOTES: Dict[str, str] = {
@@ -3786,6 +3793,7 @@ class ScheduleWorkbookBuilder:
         venue_input_path: Path,
         pool_assignment_path: Optional[Path] = None,
         manual_matchup_path: Optional[Path] = None,
+        manual_schedule_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Assemble the full schedule_input package consumed by OR-Tools.
 
@@ -3829,6 +3837,7 @@ class ScheduleWorkbookBuilder:
         manual_matchup_payload = manual_matchups.load_manual_matchup_sidecar(
             manual_matchup_path
         )
+        manual_schedule_summary: Dict[str, Any] = {}
         (
             manual_team_sport_games,
             manual_team_sport_precedence,
@@ -4192,6 +4201,33 @@ class ScheduleWorkbookBuilder:
                     f"{day} {time_part}) — single-slot, excluded from pool play."
                 )
 
+        manual_schedule_payload = master_schedule.load_master_schedule_sidecar(
+            manual_schedule_path
+        )
+        if manual_schedule_payload:
+            playoff_slots, manual_schedule_summary = (
+                master_schedule.merge_master_schedule_into_playoff_slots(
+                    playoff_slots,
+                    manual_schedule_payload,
+                    all_games,
+                    all_resources,
+                )
+            )
+            logger.info(
+                "Manual schedule overrides: "
+                f"{manual_schedule_summary.get('fixed_count', 0)} fixed assignment(s), "
+                f"{manual_schedule_summary.get('unresolved_count', 0)} unresolved row(s)"
+            )
+            for warning in manual_schedule_summary.get("warnings", []) or []:
+                logger.warning(f"manual schedule override: {warning}")
+            errors = manual_schedule_summary.get("errors", []) or []
+            if errors:
+                for error in errors:
+                    logger.error(f"manual schedule override: {error}")
+                raise ValueError(
+                    "manual_schedule_overrides.json contains conflicting fixed assignments"
+                )
+
         if bc_games and not any(
             str(resource.get("resource_type") or "").strip() == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE
             for resource in all_resources
@@ -4285,6 +4321,8 @@ class ScheduleWorkbookBuilder:
         }
         if manual_matchup_summary:
             schedule_input["manual_matchups"] = manual_matchup_summary
+        if manual_schedule_summary:
+            schedule_input["manual_schedule_overrides"] = manual_schedule_summary
         return schedule_input
 
 
@@ -4761,6 +4799,7 @@ class ScheduleWorkbookBuilder:
         json_path: Path,
         pool_assignment_path: Optional[Path] = None,
         manual_matchup_path: Optional[Path] = None,
+        manual_schedule_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Build schedule_input dict and write it as JSON. Returns the dict.
         Always called by export-church-teams, regardless of whether venue_input.xlsx
@@ -4772,6 +4811,7 @@ class ScheduleWorkbookBuilder:
             venue_input_path,
             pool_assignment_path=pool_assignment_path,
             manual_matchup_path=manual_matchup_path,
+            manual_schedule_path=manual_schedule_path,
         )
         json_path.write_text(json.dumps(schedule_input, indent=2, default=str), encoding="utf-8")
         logger.info(
