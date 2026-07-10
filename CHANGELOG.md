@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Tennis doubles rule update - refs [#194](https://github.com/i12know/vaysf/issues/194)
+
+- Updated the Summer 2026 validation rules so Tennis allows `Men Double`,
+  `Women Double`, and `Mixed Double` registrations while enforcing a combined
+  maximum of two resolved Tennis doubles teams per church across all doubles
+  genders.
+- Replaced the old regression test that disallowed men's Tennis doubles with
+  coverage for two total Tennis doubles teams being allowed and a third team
+  triggering `MAX_CHURCH_TENNIS_DOUBLES_TOTAL`.
+
 ### 2026 manual team-sport matchup import - refs [#190](https://github.com/i12know/vaysf/issues/190), [#191](https://github.com/i12know/vaysf/issues/191)
 
 - Added `import-team-matchups` for the 2026 all-team-sports matchup workbook,
