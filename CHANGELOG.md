@@ -10,6 +10,12 @@
 - Restyled generated lower-badge content for dark mode: light/gold church code
   and labels, dark event cards, gold outlines, and a white QR card retained for
   scanner contrast.
+- Bolded the lower-card athlete/event text for readability on the dark cards.
+- Default badge output now writes to `EXPORT_DIR/<church-code>/badges/`
+  (for example the church-specific Google Drive export folder), while
+  `--output` remains a direct flat-folder override for scratch review renders.
+- Limited partner-name display to racquet sports so team-sport rows do not
+  inherit stale doubles partner fields.
 - Bumped the badge render fingerprint and added regression coverage so template
   artwork is not overpainted and event cards remain dark-mode surfaces.
 

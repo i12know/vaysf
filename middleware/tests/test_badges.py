@@ -10,7 +10,7 @@ import pytest
 import requests
 from unittest.mock import MagicMock
 
-from PIL import Image, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 from badges.generator import (
     CARD_H,
@@ -80,6 +80,20 @@ def test_render_to_file_writes_png(generator):
     assert Image.open(out).size == (1080, 1920)
 
 
+def test_render_to_file_can_use_church_subfolders(tmp_path):
+    generator = BadgeGenerator(
+        output_dir=tmp_path / "exports",
+        filename_salt="test-only-badge-salt",
+        church_subdirs=True,
+    )
+
+    out = generator.render_to_file(_participant(), photo_bytes=_png_bytes(), force=True)
+
+    assert out.parent == tmp_path / "exports" / "RPC" / "badges"
+    assert out.name.startswith("RPC_3139537_")
+    assert out.with_suffix(".png.sha256").exists()
+
+
 def test_template_artwork_area_is_not_overpainted(tmp_path):
     sentinel = (9, 24, 64, 255)
     template_path = tmp_path / "dark-template.png"
@@ -111,6 +125,20 @@ def test_event_cards_render_as_dark_mode_surfaces(generator):
     assert card_pixel[0] < 40
     assert card_pixel[1] < 60
     assert card_pixel[2] < 100
+
+
+def test_event_card_content_uses_bold_font(generator, monkeypatch):
+    roles = []
+
+    def capture_text(*args, **kwargs):
+        roles.append(kwargs["role"])
+
+    monkeypatch.setattr(generator, "_draw_text_autoshrink", capture_text)
+    draw = ImageDraw.Draw(Image.new("RGBA", (1080, 1920)))
+
+    generator._draw_card(draw, "An Le", "#3139537", CARD_FIRST_Y, CARD_H, False)
+
+    assert "bold" in roles
 
 
 def test_long_vietnamese_name_autoshrinks_and_renders(generator):
@@ -247,6 +275,21 @@ def test_event_rows_hide_empty(generator):
     assert "Badminton" in texts2
     assert "2ndary" in tags2
     assert "Primary" not in tags2
+
+
+def test_team_sport_does_not_show_stale_racquet_partner(generator):
+    p = _participant(
+        primary_sport="Volleyball - Men Team",
+        primary_format="",
+        primary_partner="Timothy Dao",
+        secondary_sport="Pickleball",
+        secondary_format="Men Double",
+        secondary_partner="Timothy Dao",
+    )
+
+    rows = generator._card_rows(p)
+    assert ("Volleyball - Men Team", "Primary", False) in rows
+    assert ("Pickleball (Men Double) w/ Timothy Dao", "2ndary", False) in rows
 
 
 def test_ascii_initials_strips_accents():

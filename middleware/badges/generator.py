@@ -73,7 +73,7 @@ THEME_LINE2 = "G.O.A.L."
 THEME_LOGO_LABEL = "VAY SM logo"
 QR_CAPTION = "ID QR - not for check-in"
 
-_RENDER_VERSION = "issue-185-dark-v1.4"
+_RENDER_VERSION = "issue-185-dark-v1.5"
 _RENDER_FIELDS = (
     "chmeetings_id",
     "church_code",
@@ -100,6 +100,13 @@ _INITIALS_COLORS = [
     (243, 156, 18),
     (52, 73, 94),
 ]
+
+_RACQUET_SPORT_MARKERS = (
+    "badminton",
+    "pickleball",
+    "tennis",
+    "table tennis",
+)
 
 _FONTS_DIR = Path(__file__).resolve().parent.parent / "fonts"
 _FONT_CANDIDATES: Dict[str, List[Path]] = {
@@ -156,6 +163,7 @@ class BadgeGenerator:
         template_path: Optional[Path] = None,
         output_dir: Optional[Path] = None,
         filename_salt: Optional[str] = None,
+        church_subdirs: bool = False,
     ) -> None:
         base = Path(__file__).resolve().parent.parent
         self.template_path = (
@@ -166,6 +174,7 @@ class BadgeGenerator:
         self.output_dir = (
             Path(output_dir) if output_dir else base / "data" / "badges"
         )
+        self.church_subdirs = church_subdirs
         salt = (
             filename_salt
             if filename_salt is not None
@@ -192,6 +201,15 @@ class BadgeGenerator:
         ).hexdigest()[:8]
         return f"{church}_{chm_id}_{digest}.png"
 
+    def output_path_for(self, participant: Dict[str, Any]) -> Path:
+        """Return the concrete badge PNG path for a participant."""
+        filename = self.filename_for(participant)
+        if not self.church_subdirs:
+            return self.output_dir / filename
+
+        church = str(participant.get("church_code") or "NA").strip().upper()
+        return self.output_dir / church / "badges" / filename
+
     def render(
         self,
         participant: Dict[str, Any],
@@ -213,8 +231,8 @@ class BadgeGenerator:
         force: bool = False,
     ) -> Path:
         """Render the PNG unless its content fingerprint is current."""
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = self.output_dir / self.filename_for(participant)
+        out_path = self.output_path_for(participant)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         fingerprint_path = out_path.with_suffix(".png.sha256")
         fingerprint = self._render_fingerprint(participant, photo_bytes)
         self.last_write_skipped = False
@@ -355,9 +373,14 @@ class BadgeGenerator:
         line = sport
         if sport_format:
             line += f" ({sport_format})"
-        if partner:
+        if partner and BadgeGenerator._is_racquet_sport(sport):
             line += f" w/ {partner}"
         return line
+
+    @staticmethod
+    def _is_racquet_sport(sport: str) -> bool:
+        normalized = sport.casefold()
+        return any(marker in normalized for marker in _RACQUET_SPORT_MARKERS)
 
     def _draw_card(
         self,
@@ -401,7 +424,7 @@ class BadgeGenerator:
                 draw,
                 text,
                 box=text_box,
-                role="regular",
+                role="bold",
                 max_size=38,
                 min_size=24,
                 fill=COL_NAVY,
@@ -415,7 +438,7 @@ class BadgeGenerator:
         box: Tuple[int, int, int, int],
     ) -> None:
         left, top, right, bottom = box
-        font = self._font("regular", 34)
+        font = self._font("bold", 34)
         lines = self._wrap_lines(draw, text, font, right - left)
         while len(lines) > 3 and font.size > 24:
             font = self._font_from(font, font.size - 2)
