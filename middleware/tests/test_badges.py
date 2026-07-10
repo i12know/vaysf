@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 from PIL import Image, ImageFont
 
 from badges.generator import (
+    CARD_H,
     CARD_FIRST_Y,
     CARD_OTHER_H,
     CARD_X0,
@@ -77,6 +78,39 @@ def test_render_to_file_writes_png(generator):
     out = generator.render_to_file(_participant(), photo_bytes=_png_bytes(), force=True)
     assert out.exists()
     assert Image.open(out).size == (1080, 1920)
+
+
+def test_template_artwork_area_is_not_overpainted(tmp_path):
+    sentinel = (9, 24, 64, 255)
+    template_path = tmp_path / "dark-template.png"
+    Image.new("RGBA", (1080, 1920), sentinel).save(template_path)
+    generator = BadgeGenerator(
+        template_path=template_path,
+        output_dir=tmp_path / "badges",
+        filename_salt="test-only-badge-salt",
+    )
+
+    img = generator.render(_participant(), photo_bytes=None)
+
+    tagline_center = (
+        (TAGLINE_BOX[0] + TAGLINE_BOX[2]) // 2,
+        (TAGLINE_BOX[1] + TAGLINE_BOX[3]) // 2,
+    )
+    theme_center = (
+        (THEME_BOX[0] + THEME_BOX[2]) // 2,
+        (THEME_BOX[1] + THEME_BOX[3]) // 2,
+    )
+    assert img.getpixel(tagline_center) == sentinel
+    assert img.getpixel(theme_center) == sentinel
+
+
+def test_event_cards_render_as_dark_mode_surfaces(generator):
+    img = generator.render(_participant(), photo_bytes=None)
+    card_pixel = img.getpixel((CARD_X0 + 430, CARD_FIRST_Y + CARD_H // 2))
+
+    assert card_pixel[0] < 40
+    assert card_pixel[1] < 60
+    assert card_pixel[2] < 100
 
 
 def test_long_vietnamese_name_autoshrinks_and_renders(generator):

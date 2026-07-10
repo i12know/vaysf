@@ -3,10 +3,10 @@
 
 The v1 layout follows the posted 1080x1920 wireframe:
 
-1. A tagline panel below the 120 px top safe area.
-2. A bounded theme panel with a reserved VAY SM logo slot.
-3. A photo on the left, QR card on the right, and church code under the photo.
-4. Event rows with content on the left and plain labels after a divider.
+1. The template owns the upper event artwork and title.
+2. A photo on the left, QR card on the right, and church code under the photo.
+3. Dark-mode event rows with content on the left and plain labels after a
+   divider.
 
 This module performs no network calls. BadgeRunner fetches participant data and
 photo bytes before invoking BadgeGenerator.
@@ -33,7 +33,7 @@ CANVAS_W, CANVAS_H = 1080, 1920
 SAFE_LEFT, SAFE_RIGHT = 80, 1000
 SAFE_TOP, SAFE_BOTTOM = 120, 1740
 
-# Wireframe panels and element positions.
+# Template-owned artwork boxes and generated element positions.
 TAGLINE_BOX = (140, 150, 940, 235)
 THEME_BOX = (120, 260, 960, 720)
 
@@ -60,11 +60,12 @@ CARD_DIVIDER_X = 750
 LABEL_CX = (CARD_DIVIDER_X + CARD_X1) // 2
 
 COL_WHITE = (255, 255, 255, 255)
-COL_NAVY = (14, 22, 50, 255)
+COL_CARD = (6, 31, 67, 255)
+COL_NAVY = (246, 249, 255, 255)
 COL_MUTED = (100, 110, 130, 255)
-COL_BORDER = (70, 76, 90, 255)
-COL_DIVIDER = (160, 166, 178, 255)
-COL_LABEL = (200, 32, 48, 255)
+COL_BORDER = (247, 197, 101, 255)
+COL_DIVIDER = (143, 174, 210, 255)
+COL_LABEL = (247, 197, 101, 255)
 COL_PHOTO_RING = COL_BORDER
 
 THEME_LINE1 = "Ultimate"
@@ -72,7 +73,7 @@ THEME_LINE2 = "G.O.A.L."
 THEME_LOGO_LABEL = "VAY SM logo"
 QR_CAPTION = "ID QR - not for check-in"
 
-_RENDER_VERSION = "issue-77-v1.3"
+_RENDER_VERSION = "issue-185-dark-v1.4"
 _RENDER_FIELDS = (
     "chmeetings_id",
     "church_code",
@@ -236,64 +237,12 @@ class BadgeGenerator:
         return out_path
 
     def _draw_tagline(self, draw: ImageDraw.ImageDraw) -> None:
-        draw.rounded_rectangle(
-            TAGLINE_BOX,
-            radius=10,
-            fill=COL_WHITE,
-            outline=COL_BORDER,
-            width=3,
-        )
-        self._draw_text_autoshrink(
-            draw,
-            "VAY Sports Fest 2026",
-            box=(TAGLINE_BOX[0] + 25, TAGLINE_BOX[1] + 8,
-                 TAGLINE_BOX[2] - 25, TAGLINE_BOX[3] - 8),
-            role="bold",
-            max_size=48,
-            min_size=30,
-            fill=COL_NAVY,
-        )
+        # The production template owns the upper title/branding area.
+        return None
 
     def _draw_theme(self, draw: ImageDraw.ImageDraw) -> None:
-        draw.rounded_rectangle(
-            THEME_BOX,
-            radius=14,
-            fill=COL_WHITE,
-            outline=COL_BORDER,
-            width=3,
-        )
-        self._draw_text_autoshrink(
-            draw,
-            THEME_LINE1,
-            box=(180, 300, 900, 450),
-            role="bold",
-            max_size=112,
-            min_size=70,
-            fill=COL_NAVY,
-        )
-        self._draw_text_autoshrink(
-            draw,
-            THEME_LINE2,
-            box=(180, 430, 900, 570),
-            role="bold",
-            max_size=104,
-            min_size=66,
-            fill=COL_NAVY,
-        )
-
-        logo_box = (355, 575, 515, 685)
-        draw.rectangle(logo_box, outline=COL_BORDER, width=3)
-        draw.line((logo_box[0], logo_box[1], logo_box[2], logo_box[3]),
-                  fill=COL_BORDER, width=2)
-        draw.line((logo_box[2], logo_box[1], logo_box[0], logo_box[3]),
-                  fill=COL_BORDER, width=2)
-        draw.text(
-            (545, 630),
-            THEME_LOGO_LABEL,
-            font=self._font("regular", 34),
-            fill=COL_NAVY,
-            anchor="lm",
-        )
+        # The production template owns the upper theme artwork/logo area.
+        return None
 
     def _draw_identity(
         self,
@@ -325,7 +274,7 @@ class BadgeGenerator:
             (CHURCH_CODE_CX, CHURCH_CODE_CY),
             church_code,
             font=self._font("bold", 76),
-            fill=COL_NAVY,
+            fill=COL_LABEL,
             anchor="mm",
         )
 
@@ -422,7 +371,7 @@ class BadgeGenerator:
         draw.rounded_rectangle(
             (CARD_X0, y, CARD_X1, y + height),
             radius=CARD_RADIUS,
-            fill=COL_WHITE,
+            fill=COL_CARD,
             outline=COL_BORDER,
             width=2,
         )

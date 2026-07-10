@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Badge production template dark-mode pass - refs [#185](https://github.com/i12know/vaysf/issues/185)
+
+- Updated the athlete badge renderer so the new dark-blue production
+  `badge_template.png` owns the upper event artwork/title area instead of being
+  covered by generated placeholder panels.
+- Restyled generated lower-badge content for dark mode: light/gold church code
+  and labels, dark event cards, gold outlines, and a white QR card retained for
+  scanner contrast.
+- Bumped the badge render fingerprint and added regression coverage so template
+  artwork is not overpainted and event cards remain dark-mode surfaces.
+
 ### Tennis doubles rule update - refs [#194](https://github.com/i12know/vaysf/issues/194)
 
 - Updated the Summer 2026 validation rules so Tennis allows `Men Double`,

@@ -525,7 +525,9 @@ pastor approval is the operative signal.
 Athlete text (name, church, sport) is read from WordPress; the profile photo is
 pulled from the ChMeetings person record, falling back to an
 initials-on-colour placeholder when no usable photo exists, so missing photos
-are obvious to staff at review. Each PNG has a SHA-256 render fingerprint, so
+are obvious to staff at review. The production template owns the upper event
+artwork/title area, and the renderer adds dark-mode identity, QR, and event
+cards in the lower safe zone. Each PNG has a SHA-256 render fingerprint, so
 name, sport, photo, template, or font changes regenerate the badge
 automatically. `--force` remains available for manual rebuilds.
 
@@ -533,8 +535,10 @@ automatically. `--force` remains available for manual rebuilds.
 coverage; Linux uses Liberation/DejaVu. Optional Inter and JetBrains Mono files
 can be placed in `middleware/fonts/` for branding consistency (see
 `fonts/README.md`). The generator fails rather than emit unreadable missing
-glyphs when no supported scalable font exists. To regenerate the placeholder
-background template, run `python templates/build_placeholder.py`.
+glyphs when no supported scalable font exists. The old placeholder generator
+remains available at `python templates/build_placeholder.py` for development
+fallbacks, but production badges should use the committed branded
+`templates/badge_template.png`.
 
 ### Church Team Group Assignment
 
