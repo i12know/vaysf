@@ -60,6 +60,7 @@ def _participant(**overrides):
         "last_name": "Le",
         "approval_status": "approved",
         "primary_sport": "Tennis",
+        "consent_status": True,
     }
     base.update(overrides)
     return base
@@ -124,6 +125,30 @@ def test_event_cards_render_as_dark_mode_surfaces(generator):
     assert card_pixel[0] < 40
     assert card_pixel[1] < 60
     assert card_pixel[2] < 100
+
+
+def test_missing_consent_turns_name_card_red(generator):
+    img = generator.render(_participant(consent_status=False), photo_bytes=None)
+    name_card_pixel = img.getpixel((CARD_X0 + 40, CARD_FIRST_Y + 35))
+    sport_card_pixel = img.getpixel((CARD_X0 + 40, CARD_FIRST_Y + CARD_H + 40))
+
+    assert name_card_pixel[0] > 130
+    assert name_card_pixel[1] < 70
+    assert name_card_pixel[2] < 80
+    assert sport_card_pixel[2] > sport_card_pixel[0]
+
+
+def test_missing_consent_name_text_stays_white(generator, monkeypatch):
+    fills = []
+
+    def capture_text(*args, **kwargs):
+        fills.append(kwargs["fill"])
+
+    monkeypatch.setattr(generator, "_draw_text_autoshrink", capture_text)
+    draw = ImageDraw.Draw(Image.new("RGBA", (1080, 1920)))
+    generator._draw_cards(draw, _participant(consent_status=False))
+
+    assert fills[0] == (246, 249, 255, 255)
 
 
 def test_event_card_content_uses_bold_font(generator, monkeypatch):
@@ -478,3 +503,51 @@ def test_photo_logging_does_not_include_profile_urls(generator, mocker):
         for call in log.info.call_args_list + log.warning.call_args_list
     )
     assert "https://" not in messages
+
+
+def test_runner_backfills_consent_status_from_chmeetings_value(generator):
+    participant = _participant()
+    participant.pop("consent_status")
+    runner, chm, wp = _make_runner(
+        [participant],
+        generator,
+        person_photo=None,
+    )
+    chm.get_person.return_value = {
+        "id": "3139537",
+        "photo": None,
+        "additional_fields": [
+            {
+                "field_name": "Completion Check List",
+                "value": "2. Consent Form Signed by Self or Parents",
+            }
+        ],
+    }
+
+    runner._fetch_photo_bytes(participant)
+
+    assert participant["consent_status"] is True
+
+
+def test_runner_backfills_missing_consent_from_chmeetings_options(generator):
+    participant = _participant(consent_status=True)
+    runner, chm, wp = _make_runner(
+        [participant],
+        generator,
+        person_photo=None,
+    )
+    chm.get_person.return_value = {
+        "id": "3139537",
+        "photo": None,
+        "additional_fields": [
+            {
+                "field_name": "Completion Check List",
+                "value": "",
+                "selected_option_ids": [199608],
+            }
+        ],
+    }
+
+    runner._fetch_photo_bytes(participant)
+
+    assert participant["consent_status"] is False

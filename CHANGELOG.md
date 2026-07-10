@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Badge consent warning - refs [#199](https://github.com/i12know/vaysf/issues/199)
+
+- Turned missing ChMeetings Profile Box 2 consent into a red athlete-name card
+  on generated badges while keeping the athlete name in white for readability.
+- Backfilled badge `consent_status` from the live ChMeetings Completion Check
+  List when fetching the athlete person record, so the badge reflects the
+  profile checklist even if WordPress data is stale.
+- Added regression coverage for the red consent warning, white name text, and
+  ChMeetings checklist interpretation.
+
 ### Badge production template dark-mode pass - refs [#185](https://github.com/i12know/vaysf/issues/185)
 
 - Updated the athlete badge renderer so the new dark-blue production

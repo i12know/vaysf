@@ -25,6 +25,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from badges.generator import BadgeGenerator
+from config import CHECK_BOXES, CHM_FIELDS, SF_CHECKLIST_OPTIONS
 
 # Approval statuses that count as "approved" for badge eligibility.
 APPROVED_STATUSES = {"approved"}
@@ -167,6 +168,7 @@ class BadgeRunner:
                 for key in ("first_name", "last_name"):
                     if not participant.get(key) and person.get(key):
                         participant[key] = person[key]
+                participant["consent_status"] = self._person_has_consent(person)
 
         wp_url = participant.get("photo_url")
         if wp_url and str(wp_url).startswith(("http://", "https://")):
@@ -212,3 +214,32 @@ class BadgeRunner:
     @staticmethod
     def _is_approved(participant: Dict[str, Any]) -> bool:
         return str(participant.get("approval_status") or "").strip().lower() in APPROVED_STATUSES
+
+    @staticmethod
+    def _person_has_consent(person: Dict[str, Any]) -> bool:
+        consent_label = CHECK_BOXES["2-CONSENT"]
+        consent_option_ids = {
+            option_id
+            for option_id, label in SF_CHECKLIST_OPTIONS.items()
+            if label == consent_label
+        }
+        fields = person.get("additional_fields") or []
+        if isinstance(fields, dict):
+            checklist = fields.get(CHM_FIELDS["COMPLETION_CHECKLIST"], "")
+            selected_ids = fields.get("selected_option_ids") or []
+            return (
+                consent_label in str(checklist)
+                or any(option_id in consent_option_ids for option_id in selected_ids)
+            )
+        else:
+            for field in fields:
+                if not isinstance(field, dict):
+                    continue
+                if field.get("field_name") == CHM_FIELDS["COMPLETION_CHECKLIST"]:
+                    checklist = field.get("value") or ""
+                    selected_ids = field.get("selected_option_ids") or []
+                    return (
+                        consent_label in str(checklist)
+                        or any(option_id in consent_option_ids for option_id in selected_ids)
+                    )
+        return False

@@ -61,6 +61,7 @@ LABEL_CX = (CARD_DIVIDER_X + CARD_X1) // 2
 
 COL_WHITE = (255, 255, 255, 255)
 COL_CARD = (6, 31, 67, 255)
+COL_CONSENT_ALERT = (170, 31, 45, 255)
 COL_NAVY = (246, 249, 255, 255)
 COL_BORDER = (247, 197, 101, 255)
 COL_DIVIDER = (143, 174, 210, 255)
@@ -71,7 +72,7 @@ THEME_LINE1 = "Ultimate"
 THEME_LINE2 = "G.O.A.L."
 THEME_LOGO_LABEL = "VAY SM logo"
 
-_RENDER_VERSION = "issue-185-dark-v1.6"
+_RENDER_VERSION = "issue-199-consent-v1.7"
 _RENDER_FIELDS = (
     "chmeetings_id",
     "church_code",
@@ -86,6 +87,7 @@ _RENDER_FIELDS = (
     "secondary_format",
     "secondary_partner",
     "other_events",
+    "consent_status",
 )
 
 _INITIALS_COLORS = [
@@ -300,14 +302,23 @@ class BadgeGenerator:
         participant: Dict[str, Any],
     ) -> None:
         y = CARD_FIRST_Y
-        for text, label, multiline in self._card_rows(participant):
+        consent_missing = not self._has_consent(participant)
+        for index, (text, label, multiline) in enumerate(self._card_rows(participant)):
             height = CARD_OTHER_H if multiline else CARD_H
             if y + height > SAFE_BOTTOM:
                 logger.warning(
                     f"Badge event row omitted because it exceeds safe area: {label}"
                 )
                 break
-            self._draw_card(draw, text, label, y, height, multiline)
+            self._draw_card(
+                draw,
+                text,
+                label,
+                y,
+                height,
+                multiline,
+                alert=index == 0 and consent_missing,
+            )
             y += height + CARD_GAP
 
     def _card_rows(
@@ -380,6 +391,15 @@ class BadgeGenerator:
         normalized = sport.casefold()
         return any(marker in normalized for marker in _RACQUET_SPORT_MARKERS)
 
+    @staticmethod
+    def _has_consent(participant: Dict[str, Any]) -> bool:
+        value = participant.get("consent_status")
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().casefold() in {"1", "true", "yes", "y", "checked"}
+
     def _draw_card(
         self,
         draw: ImageDraw.ImageDraw,
@@ -388,11 +408,12 @@ class BadgeGenerator:
         y: int,
         height: int,
         multiline: bool,
+        alert: bool = False,
     ) -> None:
         draw.rounded_rectangle(
             (CARD_X0, y, CARD_X1, y + height),
             radius=CARD_RADIUS,
-            fill=COL_CARD,
+            fill=COL_CONSENT_ALERT if alert else COL_CARD,
             outline=COL_BORDER,
             width=2,
         )

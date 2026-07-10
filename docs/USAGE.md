@@ -535,8 +535,11 @@ initials-on-colour placeholder when no usable photo exists, so missing photos
 are obvious to staff at review. The production template owns the upper event
 artwork/title area, and the renderer adds dark-mode identity, QR, and event
 cards in the lower safe zone. The lower card content uses bold light text for
-readability on the dark surfaces. Each PNG has a SHA-256 render fingerprint, so
-name, sport, photo, template, font, or layout changes regenerate the badge
+readability on the dark surfaces. If the athlete's ChMeetings Profile does not
+have Box 2 consent checked (`Consent Form Signed by Self or Parents`), the
+athlete-name card turns red while keeping the name text white for scanner-line
+review. Each PNG has a SHA-256 render fingerprint, so name, sport, consent
+status, photo, template, font, or layout changes regenerate the badge
 automatically. `--force` remains available for manual rebuilds.
 
 **Fonts:** the Windows deployment uses Arial/Consolas fallbacks with Vietnamese
