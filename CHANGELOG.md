@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### 2026 main schedule workbook override import - closes [#196](https://github.com/i12know/vaysf/issues/196)
+
+- Added `import-master-schedule` to parse the visual
+  `VAY2026_Main_Schedule_draft_4.xlsx` master allocation workbook into a
+  `manual_schedule_overrides.json` sidecar, mapping numbered BB/MVB/WVB gym
+  games and BC three-team rows back to generated/manual game IDs.
+- Wired `export-church-teams` / `ScheduleWorkbookBuilder` to merge confidently
+  resolved master-schedule rows into `schedule_input.json["playoff_slots"]`
+  via the existing fixed-slot scheduler path, without replacing roster or
+  matchup import data.
+- Rows the importer cannot confidently map (unknown game IDs, missing
+  resources, unresolved slots) are preserved as comparison diagnostics
+  instead of guessed, and surfaced with source-cell/source-raw columns on the
+  Schedule-Input `PLAYOFF-SLOTS` echo.
+- Documented the operator workflow in `docs/SCHEDULE-HOW-TO.md` and
+  `docs/SCHEDULING.md`.
+
 ### Tennis doubles rule update - refs [#194](https://github.com/i12know/vaysf/issues/194)
 
 - Updated the Summer 2026 validation rules so Tennis allows `Men Double`,
