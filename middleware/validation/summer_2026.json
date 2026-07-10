@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "version": "2026.1.6",
+    "version": "2026.1.7",
     "collection": "SUMMER_2026",
     "event_date": "2026-07-18",
-    "last_updated": "2026-05-09T21:00:00",
+    "last_updated": "2026-07-09T08:30:00",
     "description": "Rules for Sports Fest 2026"
   },
   "configuration": {
@@ -697,9 +697,9 @@
       "category": "format",
       "sport_event": "Tennis",
       "parameter": "Men Double",
-      "value": "0",
+      "value": "2",
       "severity": "ERROR",
-      "description": "Each church may register at most 0 Tennis Men's Doubles teams",
+      "description": "Each church may register at most 2 Tennis Men's Doubles teams",
       "collection": "SUMMER_2026"
     },
     {
@@ -710,9 +710,9 @@
       "category": "format",
       "sport_event": "Tennis",
       "parameter": "Women Double",
-      "value": "0",
+      "value": "2",
       "severity": "ERROR",
-      "description": "Each church may register at most 0 Tennis Women's Doubles teams",
+      "description": "Each church may register at most 2 Tennis Women's Doubles teams",
       "collection": "SUMMER_2026"
     },
     {
@@ -726,6 +726,19 @@
       "value": "2",
       "severity": "ERROR",
       "description": "Each church may register at most 2 Tennis Mixed Doubles teams",
+      "collection": "SUMMER_2026"
+    },
+    {
+      "rule_id": 57,
+      "rule_code": "MAX_CHURCH_TENNIS_DOUBLES_TOTAL",
+      "rule_level": "CHURCH",
+      "rule_type": "entry_limit",
+      "category": "format_total",
+      "sport_event": "Tennis",
+      "parameter": "Doubles",
+      "value": "2",
+      "severity": "ERROR",
+      "description": "Each church may register at most 2 Tennis doubles teams total across men's, women's, and mixed doubles",
       "collection": "SUMMER_2026"
     },
     {

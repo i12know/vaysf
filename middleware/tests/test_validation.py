@@ -1681,8 +1681,8 @@ def test_church_validator_unmatched_doubles_do_not_count_toward_church_quota(chu
     ), issues
 
 
-def test_church_validator_tennis_men_double_disallowed(church_validator):
-    """Tennis men's doubles should be disallowed while mixed doubles remain allowed."""
+def test_church_validator_tennis_any_two_doubles_allowed(church_validator):
+    """Tennis allows any gender mix of doubles, up to two total teams per church."""
     participants = [
         _make_participant(
             participant_id=1,
@@ -1702,14 +1702,103 @@ def test_church_validator_tennis_men_double_disallowed(church_validator):
             primary_partner="Alan Le",
             is_member=True,
         ),
+        _make_participant(
+            participant_id=3,
+            first_name="Celine",
+            last_name="Nguyen",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Women Double",
+            primary_partner="Diane Pham",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=4,
+            first_name="Diane",
+            last_name="Pham",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Women Double",
+            primary_partner="Celine Nguyen",
+            is_member=True,
+        ),
     ]
 
     issues = church_validator.validate_church(1, participants)
 
-    issue = next(issue for issue in issues if issue["rule_code"] == "MAX_CHURCH_TENNIS_MEN_DOUBLE")
+    assert not any(
+        issue["rule_code"] in {
+            "MAX_CHURCH_TENNIS_MEN_DOUBLE",
+            "MAX_CHURCH_TENNIS_WOMEN_DOUBLE",
+            "MAX_CHURCH_TENNIS_DOUBLES_TOTAL",
+        }
+        for issue in issues
+    ), issues
+
+
+def test_church_validator_tennis_doubles_total_limit(church_validator):
+    """Tennis doubles are capped at two teams total, across men's, women's, and mixed."""
+    participants = [
+        _make_participant(
+            participant_id=1,
+            first_name="Alan",
+            last_name="Le",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Men Double",
+            primary_partner="Ben Tran",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=2,
+            first_name="Ben",
+            last_name="Tran",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Men Double",
+            primary_partner="Alan Le",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=3,
+            first_name="Chris",
+            last_name="Vo",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Men Double",
+            primary_partner="David Pham",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=4,
+            first_name="David",
+            last_name="Pham",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Men Double",
+            primary_partner="Chris Vo",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=5,
+            first_name="Ethan",
+            last_name="Do",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Mixed Double",
+            primary_partner="Frank Nguyen",
+            is_member=True,
+        ),
+        _make_participant(
+            participant_id=6,
+            first_name="Frank",
+            last_name="Nguyen",
+            primary_sport=SPORT_TYPE["TENNIS"],
+            primary_format="Mixed Double",
+            primary_partner="Ethan Do",
+            is_member=True,
+        ),
+    ]
+
+    issues = church_validator.validate_church(1, participants)
+
+    issue = next(issue for issue in issues if issue["rule_code"] == "MAX_CHURCH_TENNIS_DOUBLES_TOTAL")
     assert issue["rule_level"] == "CHURCH"
-    assert issue["sport_format"] == "Men Double"
-    assert "exceeding church limit of 0" in issue["issue_description"]
+    assert issue["sport_format"] == "Doubles"
+    assert "exceeding church limit of 2" in issue["issue_description"]
 
 
 def test_church_validator_table_tennis35_singles_disallowed(church_validator):
