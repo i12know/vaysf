@@ -21,7 +21,6 @@ from badges.generator import (
     CHURCH_CODE_CX,
     PHOTO_LEFT,
     PHOTO_TOP,
-    QR_CAPTION,
     QR_CARD,
     SAFE_BOTTOM,
     SAFE_LEFT,
@@ -231,8 +230,15 @@ def test_resolved_fonts_render_vietnamese_glyphs():
         )
 
 
-def test_qr_caption_marks_placeholder_as_not_for_check_in():
-    assert QR_CAPTION == "ID QR - not for check-in"
+def test_qr_card_does_not_draw_caption_text(generator, monkeypatch):
+    def fail_if_caption_is_drawn(*args, **kwargs):
+        raise AssertionError("QR card should not draw caption text")
+
+    monkeypatch.setattr(generator, "_draw_text_autoshrink", fail_if_caption_is_drawn)
+    canvas = Image.new("RGBA", (1080, 1920))
+    draw = ImageDraw.Draw(canvas)
+
+    generator._draw_qr_block(canvas, draw, "3615924")
 
 
 def test_wireframe_geometry_stays_inside_safe_area():

@@ -11,6 +11,8 @@
   and labels, dark event cards, gold outlines, and a white QR card retained for
   scanner contrast.
 - Bolded the lower-card athlete/event text for readability on the dark cards.
+- Removed the QR caption text after mobile scan review confirmed the QR exposes
+  the expected ChMeetings ID payload.
 - Default badge output now writes to `EXPORT_DIR/<church-code>/badges/`
   (for example the church-specific Google Drive export folder), while
   `--output` remains a direct flat-folder override for scratch review renders.
@@ -128,8 +130,8 @@ athlete (photo, name, church, sport(s), athlete ID, QR slot).
   `templates/badge_template.png` — placeholder background until a designer
   delivers the real template.
 - Added Pillow and qrcode to `requirements.txt`; `data/badges/` is gitignored.
-- QR carries an ID-only placeholder payload; WordPress hosting, ChMeetings
-  `<img>` write-back, and the QR-interoperability spike are deferred follow-ups.
+- QR carries the ChMeetings person ID payload; WordPress hosting and
+  ChMeetings `<img>` write-back are deferred follow-ups.
 - Documented in `docs/USAGE.md`; unit tests in `tests/test_badges.py`.
 - **Current real-world eligibility status:** badges intentionally use pastor
   approval only. Payment status is not currently reliable enough to filter
@@ -137,8 +139,8 @@ athlete (photo, name, church, sport(s), athlete ID, QR slot).
   payment flag.
 - Review hardening: use Vietnamese-capable Windows/Linux system fonts instead
   of Pillow's missing-glyph fallback; skip records without `chmeetings_id`;
-  refresh stale PNGs using content/resource fingerprints; label the QR as not
-  for check-in; and require a private `BADGE_FILENAME_SALT`.
+  refresh stale PNGs using content/resource fingerprints; and require a private
+  `BADGE_FILENAME_SALT`.
 - Wireframe correction: keep all content inside the 80/80/120/180 safe area;
   place the church code directly beneath the photo; keep the logo fully inside
   the theme panel; and use the wireframe's divider-and-label event rows instead

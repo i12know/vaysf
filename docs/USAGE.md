@@ -493,9 +493,8 @@ G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data\RPC\badges\RPC_313953
 ```
 
 WordPress hosting and ChMeetings `<img>` write-back are deliberate follow-ups,
-and the QR currently carries the ChMeetings person ID payload used by the
-mobile-app QR while still labeled **not for check-in** until live scanner
-testing confirms the downstream check-in behavior.
+and the QR carries the same ChMeetings person ID payload confirmed by mobile
+scan testing during badge review.
 
 Set a private, stable filename salt in `middleware/.env` before running the
 command. It must be at least 16 characters:

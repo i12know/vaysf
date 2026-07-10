@@ -62,7 +62,6 @@ LABEL_CX = (CARD_DIVIDER_X + CARD_X1) // 2
 COL_WHITE = (255, 255, 255, 255)
 COL_CARD = (6, 31, 67, 255)
 COL_NAVY = (246, 249, 255, 255)
-COL_MUTED = (100, 110, 130, 255)
 COL_BORDER = (247, 197, 101, 255)
 COL_DIVIDER = (143, 174, 210, 255)
 COL_LABEL = (247, 197, 101, 255)
@@ -71,9 +70,8 @@ COL_PHOTO_RING = COL_BORDER
 THEME_LINE1 = "Ultimate"
 THEME_LINE2 = "G.O.A.L."
 THEME_LOGO_LABEL = "VAY SM logo"
-QR_CAPTION = "ID QR - not for check-in"
 
-_RENDER_VERSION = "issue-185-dark-v1.5"
+_RENDER_VERSION = "issue-185-dark-v1.6"
 _RENDER_FIELDS = (
     "chmeetings_id",
     "church_code",
@@ -612,15 +610,6 @@ class BadgeGenerator:
         ).convert("RGBA")
         qr_image = qr_image.resize((QR_SIZE, QR_SIZE), Image.NEAREST)
         canvas.paste(qr_image, (QR_LEFT, QR_TOP), qr_image)
-        self._draw_text_autoshrink(
-            draw,
-            QR_CAPTION,
-            box=(QR_CARD[0] + 10, 1010, QR_CARD[2] - 10, 1065),
-            role="regular",
-            max_size=24,
-            min_size=16,
-            fill=COL_MUTED,
-        )
 
     def _load_template(self) -> Image.Image:
         if self.template_path.is_file():
