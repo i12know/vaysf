@@ -538,9 +538,12 @@ cards in the lower safe zone. The lower card content uses bold light text for
 readability on the dark surfaces. If the athlete's ChMeetings Profile does not
 have Box 2 consent checked (`Consent Form Signed by Self or Parents`), the
 athlete-name card turns red while keeping the name text white for scanner-line
-review. Each PNG has a SHA-256 render fingerprint, so name, sport, consent
-status, photo, template, font, or layout changes regenerate the badge
-automatically. `--force` remains available for manual rebuilds.
+review, and the QR card prints a small black `Consent Form Needed` tag. Athletes
+under 18 by the same event-date age calculation used in church exports also get
+a small black `Minor` tag under the QR code. Each PNG has a SHA-256 render
+fingerprint, so name, sport, consent status, minor status, photo, template,
+font, or layout changes regenerate the badge automatically. `--force` remains
+available for manual rebuilds.
 
 **Fonts:** the Windows deployment uses Arial/Consolas fallbacks with Vietnamese
 coverage; Linux uses Liberation/DejaVu. Optional Inter and JetBrains Mono files

@@ -22,6 +22,7 @@ from badges.generator import (
     PHOTO_LEFT,
     PHOTO_TOP,
     QR_CARD,
+    QR_TAG_TOP,
     SAFE_BOTTOM,
     SAFE_LEFT,
     SAFE_RIGHT,
@@ -151,6 +152,41 @@ def test_missing_consent_name_text_stays_white(generator, monkeypatch):
     assert fills[0] == (246, 249, 255, 255)
 
 
+def test_qr_tags_show_minor_and_missing_consent(generator, monkeypatch):
+    drawn = []
+
+    def capture_text(draw, text, **kwargs):
+        drawn.append((text, kwargs["box"], kwargs["fill"]))
+
+    monkeypatch.setattr(generator, "_draw_text_autoshrink", capture_text)
+    draw = ImageDraw.Draw(Image.new("RGBA", (1080, 1920)))
+    generator._draw_qr_tags(
+        draw,
+        _participant(consent_status=False, minor_status=True, age_at_event=17),
+    )
+
+    assert [item[0] for item in drawn] == ["Minor", "Consent Form Needed"]
+    assert all(item[2] == (0, 0, 0, 255) for item in drawn)
+    assert drawn[0][1][1] == QR_TAG_TOP
+
+
+def test_qr_tags_omit_adult_consent_complete(generator, monkeypatch):
+    drawn = []
+    monkeypatch.setattr(
+        generator,
+        "_draw_text_autoshrink",
+        lambda draw, text, **kwargs: drawn.append(text),
+    )
+    draw = ImageDraw.Draw(Image.new("RGBA", (1080, 1920)))
+
+    generator._draw_qr_tags(
+        draw,
+        _participant(consent_status=True, minor_status=False, age_at_event=18),
+    )
+
+    assert drawn == []
+
+
 def test_event_card_content_uses_bold_font(generator, monkeypatch):
     roles = []
 
@@ -263,7 +299,12 @@ def test_qr_card_does_not_draw_caption_text(generator, monkeypatch):
     canvas = Image.new("RGBA", (1080, 1920))
     draw = ImageDraw.Draw(canvas)
 
-    generator._draw_qr_block(canvas, draw, "3615924")
+    generator._draw_qr_block(
+        canvas,
+        draw,
+        "3615924",
+        _participant(consent_status=True, minor_status=False),
+    )
 
 
 def test_wireframe_geometry_stays_inside_safe_area():
@@ -516,6 +557,7 @@ def test_runner_backfills_consent_status_from_chmeetings_value(generator):
     chm.get_person.return_value = {
         "id": "3139537",
         "photo": None,
+        "birth_date": "2008-07-18",
         "additional_fields": [
             {
                 "field_name": "Completion Check List",
@@ -527,6 +569,8 @@ def test_runner_backfills_consent_status_from_chmeetings_value(generator):
     runner._fetch_photo_bytes(participant)
 
     assert participant["consent_status"] is True
+    assert participant["age_at_event"] == 18
+    assert participant["minor_status"] is False
 
 
 def test_runner_backfills_missing_consent_from_chmeetings_options(generator):
@@ -539,6 +583,7 @@ def test_runner_backfills_missing_consent_from_chmeetings_options(generator):
     chm.get_person.return_value = {
         "id": "3139537",
         "photo": None,
+        "birth_date": "2008-12-31",
         "additional_fields": [
             {
                 "field_name": "Completion Check List",
@@ -551,3 +596,13 @@ def test_runner_backfills_missing_consent_from_chmeetings_options(generator):
     runner._fetch_photo_bytes(participant)
 
     assert participant["consent_status"] is False
+    assert participant["age_at_event"] == 17
+    assert participant["minor_status"] is True
+
+
+def test_runner_age_at_event_matches_church_export_boundary(mocker):
+    mocker.patch("badges.runner.Config.SPORTS_FEST_DATE", "2026-07-18")
+
+    assert BadgeRunner._age_at_event("2008-07-18") == 18
+    assert BadgeRunner._age_at_event("2008-12-31") == 17
+    assert BadgeRunner._age_at_event("") is None

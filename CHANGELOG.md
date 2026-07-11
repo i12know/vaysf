@@ -6,11 +6,14 @@
 
 - Turned missing ChMeetings Profile Box 2 consent into a red athlete-name card
   on generated badges while keeping the athlete name in white for readability.
+- Added small black QR-card tags for `Minor` and `Consent Form Needed`, with
+  minor status calculated from the live ChMeetings birth date using the same
+  event-date age calculation as the church export.
 - Backfilled badge `consent_status` from the live ChMeetings Completion Check
-  List when fetching the athlete person record, so the badge reflects the
-  profile checklist even if WordPress data is stale.
+  List, plus event-day age and minor status from the live birth date, when
+  fetching the athlete person record.
 - Added regression coverage for the red consent warning, white name text, and
-  ChMeetings checklist interpretation.
+  ChMeetings checklist and minor-status interpretation.
 
 ### Badge production template dark-mode pass - refs [#185](https://github.com/i12know/vaysf/issues/185)
 

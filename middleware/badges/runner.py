@@ -17,6 +17,7 @@ deliberate follow-up (see Issue #77 plan comment).
 from __future__ import annotations
 
 import io
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -25,7 +26,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from badges.generator import BadgeGenerator
-from config import CHECK_BOXES, CHM_FIELDS, SF_CHECKLIST_OPTIONS
+from config import CHECK_BOXES, CHM_FIELDS, SF_CHECKLIST_OPTIONS, Config
 
 # Approval statuses that count as "approved" for badge eligibility.
 APPROVED_STATUSES = {"approved"}
@@ -169,6 +170,11 @@ class BadgeRunner:
                     if not participant.get(key) and person.get(key):
                         participant[key] = person[key]
                 participant["consent_status"] = self._person_has_consent(person)
+                age_at_event = self._age_at_event(person.get("birth_date"))
+                participant["age_at_event"] = age_at_event
+                participant["minor_status"] = (
+                    age_at_event is not None and age_at_event < 18
+                )
 
         wp_url = participant.get("photo_url")
         if wp_url and str(wp_url).startswith(("http://", "https://")):
@@ -243,3 +249,21 @@ class BadgeRunner:
                         or any(option_id in consent_option_ids for option_id in selected_ids)
                     )
         return False
+
+    @staticmethod
+    def _age_at_event(birthdate_str: Optional[str]) -> Optional[int]:
+        """Return age on SPORTS_FEST_DATE using the church-export calculation."""
+        text = str(birthdate_str or "").strip().split("T", 1)[0].split(" ", 1)[0]
+        if not text:
+            return None
+        try:
+            birth_date = datetime.strptime(text, "%Y-%m-%d").date()
+            event_date = datetime.strptime(Config.SPORTS_FEST_DATE, "%Y-%m-%d").date()
+        except ValueError:
+            logger.warning(
+                f"Invalid birthdate format encountered: '{birthdate_str}' for badge age calculation."
+            )
+            return None
+        return event_date.year - birth_date.year - (
+            (event_date.month, event_date.day) < (birth_date.month, birth_date.day)
+        )

@@ -45,6 +45,8 @@ QR_CARD = (650, 750, 940, 1080)
 QR_SIZE = 220
 QR_LEFT = 685
 QR_TOP = 775
+QR_TAG_TOP = QR_TOP + QR_SIZE + 18
+QR_TAG_LINE_H = 27
 
 CHURCH_CODE_CX = PHOTO_LEFT + PHOTO_DIAM // 2
 CHURCH_CODE_CY = 1105
@@ -72,7 +74,7 @@ THEME_LINE1 = "Ultimate"
 THEME_LINE2 = "G.O.A.L."
 THEME_LOGO_LABEL = "VAY SM logo"
 
-_RENDER_VERSION = "issue-199-consent-v1.7"
+_RENDER_VERSION = "issue-199-consent-tags-v1.8"
 _RENDER_FIELDS = (
     "chmeetings_id",
     "church_code",
@@ -88,6 +90,8 @@ _RENDER_FIELDS = (
     "secondary_partner",
     "other_events",
     "consent_status",
+    "minor_status",
+    "age_at_event",
 )
 
 _INITIALS_COLORS = [
@@ -283,7 +287,12 @@ class BadgeGenerator:
             first,
             last,
         )
-        self._draw_qr_block(canvas, draw, self._required_chm_id(participant))
+        self._draw_qr_block(
+            canvas,
+            draw,
+            self._required_chm_id(participant),
+            participant,
+        )
 
         church_code = str(
             participant.get("church_code") or "?"
@@ -399,6 +408,20 @@ class BadgeGenerator:
         if value is None:
             return False
         return str(value).strip().casefold() in {"1", "true", "yes", "y", "checked"}
+
+    @staticmethod
+    def _is_minor(participant: Dict[str, Any]) -> bool:
+        value = participant.get("minor_status")
+        if isinstance(value, bool):
+            return value
+        if value is not None:
+            return str(value).strip().casefold() in {"1", "true", "yes", "y", "minor"}
+
+        age = participant.get("age_at_event")
+        try:
+            return int(age) < 18
+        except (TypeError, ValueError):
+            return False
 
     def _draw_card(
         self,
@@ -611,6 +634,7 @@ class BadgeGenerator:
         canvas: Image.Image,
         draw: ImageDraw.ImageDraw,
         payload: str,
+        participant: Dict[str, Any],
     ) -> None:
         draw.rounded_rectangle(
             QR_CARD,
@@ -631,6 +655,35 @@ class BadgeGenerator:
         ).convert("RGBA")
         qr_image = qr_image.resize((QR_SIZE, QR_SIZE), Image.NEAREST)
         canvas.paste(qr_image, (QR_LEFT, QR_TOP), qr_image)
+        self._draw_qr_tags(draw, participant)
+
+    def _draw_qr_tags(
+        self,
+        draw: ImageDraw.ImageDraw,
+        participant: Dict[str, Any],
+    ) -> None:
+        tags: List[str] = []
+        if self._is_minor(participant):
+            tags.append("Minor")
+        if not self._has_consent(participant):
+            tags.append("Consent Form Needed")
+
+        if not tags:
+            return
+
+        y = QR_TAG_TOP
+        for tag in tags[:2]:
+            self._draw_text_autoshrink(
+                draw,
+                tag,
+                box=(QR_CARD[0] + 18, y, QR_CARD[2] - 18, y + QR_TAG_LINE_H),
+                role="bold",
+                max_size=24,
+                min_size=18,
+                fill=(0, 0, 0, 255),
+                center=True,
+            )
+            y += QR_TAG_LINE_H
 
     def _load_template(self) -> Image.Image:
         if self.template_path.is_file():
