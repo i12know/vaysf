@@ -354,6 +354,8 @@ This fits the existing data model without new machinery: placements go in `winne
 
 Background for context: T&F registrations live in the `Other Events` checkbox (not Primary/Secondary sport), are categorized `INDIVIDUAL`, and are not scheduled by the CP-SAT solver — so the six T&F rows will be entered via the schedule publication path as fixed-time entries rather than solver output.
 
+**Tug-of-War** uses this same final-placement form: one fixed-time schedule row (`TF`-style, e.g. `TOW-MIXED`), public display of 1st/2nd/3rd place churches. Scripture Memorization is excluded from the 2026 results system.
+
 ## 10. Sport Rules Configuration
 
 Each Sport Coordinator should supply or approve a one-page rules configuration containing:
@@ -426,7 +428,7 @@ Suggested mobile file input:
 
 Requirements:
 
-- validate MIME type and file size;
+- validate MIME type and file size (maximum 32 MB, the practical Bluehost limit);
 - generate a safe server filename;
 - calculate SHA-256;
 - store outside normal public browsing where practical;
@@ -435,7 +437,7 @@ Requirements:
 - allow a scan to be attached after the result is submitted;
 - show missing scans on the Results Desk dashboard.
 
-A nightly archive process may copy result manifests and scoresheet files into the VAY shared drive as a secondary archive.
+Storage split (decided 2026-07-11): blank scoresheets are generated to **Google Drive**; digital scoresheet scans collected from staff are archived to **Dropbox**; WordPress remains the operational store for submitted results and attachments. Paper and digital records are disposed of **6 months** after the event.
 
 ## 14. Public Display
 
@@ -585,9 +587,9 @@ Build the central Results Desk dashboard (§15) showing: overdue matches, unveri
 
 **Dependencies:** Issues 2–5 (needs results, files, and standings data to monitor).
 
-### Issue 7 — `results: add Track & Field final-placement entry`
+### Issue 7 — `results: add Track & Field and Tug-of-War final-placement entry`
 
-Add the six T&F events (§9.5) as fixed-time schedule rows and a simple final-placement form: 1st/2nd/3rd church, optional notes, optional attachment. Reuses the standard revision, attachment, and status flow — no heats, lanes, or measured results. Small enough to ship alongside or immediately after Issue 2.
+Add the six T&F events plus Tug-of-War (§9.5) as fixed-time schedule rows and a simple final-placement form: 1st/2nd/3rd church, optional notes, optional attachment. Reuses the standard revision, attachment, and status flow — no heats, lanes, or measured results. Small enough to ship alongside or immediately after Issue 2.
 
 **Dependencies:** Issue 1 (schema), Issue 2 (submission flow).
 
@@ -603,15 +605,14 @@ Add the six T&F events (§9.5) as fixed-time schedule rows and a simple final-pl
 6. **Is a scoresheet image required for every match?** No. The scoresheet QR leads to the web result form; the scan is optional supporting evidence, not a gate.
 7. **Security model?** Restricted WordPress coordinator accounts (decided 2026-07-11). SMS magic-links deferred.
 8. **Track & Field?** Six individual events with final medal placements only (1st/2nd/3rd church) — no heats, lanes, or race operations (§9.5, decided 2026-07-10).
+9. **Maximum upload size on Bluehost?** 32 MB.
+10. **File storage?** Blank scoresheets are generated to Google Drive. Digital scoresheet scans collected from staff are archived to Dropbox. WordPress remains the operational store for submissions.
+11. **Tug-of-War and Scripture Memorization?** Tug-of-War gets a public display of 1st/2nd/3rd place churches, using the same final-placement form as Track & Field (§9.5). Scripture Memorization is excluded from the 2026 results system entirely.
+12. **Who operates the Results Desk?** The Sports Fest administrator (Bumble) staffs it directly.
+13. **Schedule revisions?** No pre-event revision workflow. If the schedule changes before Sports Fest starts, re-run `publish-schedule` to reload the tables. Once matches begin, the §7 protections apply (completed matches are never overwritten; removed games are cancelled, not deleted).
+14. **Retention period?** Paper and digital records are disposed of 6 months after the event.
 
-### Still Open
-
-9. What maximum upload size is practical on Bluehost?
-10. Should scoresheet files remain only on WordPress or also be copied nightly to Google Drive or Dropbox?
-11. How should the remaining unscheduled events (Tug-of-War, Scripture Memorization) be represented in the public interface?
-12. Who will operate the central Results Desk during each venue block?
-13. How should schedule revisions be approved once matches have begun?
-14. What retention period is required for paper sheets, digital scans, and result revision history?
+All open decisions are now resolved. Implementation issues (§18) may be created.
 
 ## 20. Acceptance Criteria for the MVP
 
