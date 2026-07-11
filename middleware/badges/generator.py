@@ -3,10 +3,10 @@
 
 The v1 layout follows the posted 1080x1920 wireframe:
 
-1. A tagline panel below the 120 px top safe area.
-2. A bounded theme panel with a reserved VAY SM logo slot.
-3. A photo on the left, QR card on the right, and church code under the photo.
-4. Event rows with content on the left and plain labels after a divider.
+1. The template owns the upper event artwork and title.
+2. A photo on the left, QR card on the right, and church code under the photo.
+3. Dark-mode event rows with content on the left and plain labels after a
+   divider.
 
 This module performs no network calls. BadgeRunner fetches participant data and
 photo bytes before invoking BadgeGenerator.
@@ -33,7 +33,7 @@ CANVAS_W, CANVAS_H = 1080, 1920
 SAFE_LEFT, SAFE_RIGHT = 80, 1000
 SAFE_TOP, SAFE_BOTTOM = 120, 1740
 
-# Wireframe panels and element positions.
+# Template-owned artwork boxes and generated element positions.
 TAGLINE_BOX = (140, 150, 940, 235)
 THEME_BOX = (120, 260, 960, 720)
 
@@ -45,6 +45,8 @@ QR_CARD = (650, 750, 940, 1080)
 QR_SIZE = 220
 QR_LEFT = 685
 QR_TOP = 775
+QR_TAG_TOP = QR_TOP + QR_SIZE + 18
+QR_TAG_LINE_H = 27
 
 CHURCH_CODE_CX = PHOTO_LEFT + PHOTO_DIAM // 2
 CHURCH_CODE_CY = 1105
@@ -60,19 +62,19 @@ CARD_DIVIDER_X = 750
 LABEL_CX = (CARD_DIVIDER_X + CARD_X1) // 2
 
 COL_WHITE = (255, 255, 255, 255)
-COL_NAVY = (14, 22, 50, 255)
-COL_MUTED = (100, 110, 130, 255)
-COL_BORDER = (70, 76, 90, 255)
-COL_DIVIDER = (160, 166, 178, 255)
-COL_LABEL = (200, 32, 48, 255)
+COL_CARD = (6, 31, 67, 255)
+COL_CONSENT_ALERT = (170, 31, 45, 255)
+COL_NAVY = (246, 249, 255, 255)
+COL_BORDER = (247, 197, 101, 255)
+COL_DIVIDER = (143, 174, 210, 255)
+COL_LABEL = (247, 197, 101, 255)
 COL_PHOTO_RING = COL_BORDER
 
 THEME_LINE1 = "Ultimate"
 THEME_LINE2 = "G.O.A.L."
 THEME_LOGO_LABEL = "VAY SM logo"
-QR_CAPTION = "ID QR - not for check-in"
 
-_RENDER_VERSION = "issue-77-v1.3"
+_RENDER_VERSION = "issue-199-consent-tags-v1.8"
 _RENDER_FIELDS = (
     "chmeetings_id",
     "church_code",
@@ -87,6 +89,9 @@ _RENDER_FIELDS = (
     "secondary_format",
     "secondary_partner",
     "other_events",
+    "consent_status",
+    "minor_status",
+    "age_at_event",
 )
 
 _INITIALS_COLORS = [
@@ -99,6 +104,13 @@ _INITIALS_COLORS = [
     (243, 156, 18),
     (52, 73, 94),
 ]
+
+_RACQUET_SPORT_MARKERS = (
+    "badminton",
+    "pickleball",
+    "tennis",
+    "table tennis",
+)
 
 _FONTS_DIR = Path(__file__).resolve().parent.parent / "fonts"
 _FONT_CANDIDATES: Dict[str, List[Path]] = {
@@ -155,6 +167,7 @@ class BadgeGenerator:
         template_path: Optional[Path] = None,
         output_dir: Optional[Path] = None,
         filename_salt: Optional[str] = None,
+        church_subdirs: bool = False,
     ) -> None:
         base = Path(__file__).resolve().parent.parent
         self.template_path = (
@@ -165,6 +178,7 @@ class BadgeGenerator:
         self.output_dir = (
             Path(output_dir) if output_dir else base / "data" / "badges"
         )
+        self.church_subdirs = church_subdirs
         salt = (
             filename_salt
             if filename_salt is not None
@@ -191,6 +205,15 @@ class BadgeGenerator:
         ).hexdigest()[:8]
         return f"{church}_{chm_id}_{digest}.png"
 
+    def output_path_for(self, participant: Dict[str, Any]) -> Path:
+        """Return the concrete badge PNG path for a participant."""
+        filename = self.filename_for(participant)
+        if not self.church_subdirs:
+            return self.output_dir / filename
+
+        church = str(participant.get("church_code") or "NA").strip().upper()
+        return self.output_dir / church / "badges" / filename
+
     def render(
         self,
         participant: Dict[str, Any],
@@ -212,8 +235,8 @@ class BadgeGenerator:
         force: bool = False,
     ) -> Path:
         """Render the PNG unless its content fingerprint is current."""
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = self.output_dir / self.filename_for(participant)
+        out_path = self.output_path_for(participant)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         fingerprint_path = out_path.with_suffix(".png.sha256")
         fingerprint = self._render_fingerprint(participant, photo_bytes)
         self.last_write_skipped = False
@@ -236,64 +259,12 @@ class BadgeGenerator:
         return out_path
 
     def _draw_tagline(self, draw: ImageDraw.ImageDraw) -> None:
-        draw.rounded_rectangle(
-            TAGLINE_BOX,
-            radius=10,
-            fill=COL_WHITE,
-            outline=COL_BORDER,
-            width=3,
-        )
-        self._draw_text_autoshrink(
-            draw,
-            "VAY Sports Fest 2026",
-            box=(TAGLINE_BOX[0] + 25, TAGLINE_BOX[1] + 8,
-                 TAGLINE_BOX[2] - 25, TAGLINE_BOX[3] - 8),
-            role="bold",
-            max_size=48,
-            min_size=30,
-            fill=COL_NAVY,
-        )
+        # The production template owns the upper title/branding area.
+        return None
 
     def _draw_theme(self, draw: ImageDraw.ImageDraw) -> None:
-        draw.rounded_rectangle(
-            THEME_BOX,
-            radius=14,
-            fill=COL_WHITE,
-            outline=COL_BORDER,
-            width=3,
-        )
-        self._draw_text_autoshrink(
-            draw,
-            THEME_LINE1,
-            box=(180, 300, 900, 450),
-            role="bold",
-            max_size=112,
-            min_size=70,
-            fill=COL_NAVY,
-        )
-        self._draw_text_autoshrink(
-            draw,
-            THEME_LINE2,
-            box=(180, 430, 900, 570),
-            role="bold",
-            max_size=104,
-            min_size=66,
-            fill=COL_NAVY,
-        )
-
-        logo_box = (355, 575, 515, 685)
-        draw.rectangle(logo_box, outline=COL_BORDER, width=3)
-        draw.line((logo_box[0], logo_box[1], logo_box[2], logo_box[3]),
-                  fill=COL_BORDER, width=2)
-        draw.line((logo_box[2], logo_box[1], logo_box[0], logo_box[3]),
-                  fill=COL_BORDER, width=2)
-        draw.text(
-            (545, 630),
-            THEME_LOGO_LABEL,
-            font=self._font("regular", 34),
-            fill=COL_NAVY,
-            anchor="lm",
-        )
+        # The production template owns the upper theme artwork/logo area.
+        return None
 
     def _draw_identity(
         self,
@@ -316,7 +287,12 @@ class BadgeGenerator:
             first,
             last,
         )
-        self._draw_qr_block(canvas, draw, self._required_chm_id(participant))
+        self._draw_qr_block(
+            canvas,
+            draw,
+            self._required_chm_id(participant),
+            participant,
+        )
 
         church_code = str(
             participant.get("church_code") or "?"
@@ -325,7 +301,7 @@ class BadgeGenerator:
             (CHURCH_CODE_CX, CHURCH_CODE_CY),
             church_code,
             font=self._font("bold", 76),
-            fill=COL_NAVY,
+            fill=COL_LABEL,
             anchor="mm",
         )
 
@@ -335,14 +311,23 @@ class BadgeGenerator:
         participant: Dict[str, Any],
     ) -> None:
         y = CARD_FIRST_Y
-        for text, label, multiline in self._card_rows(participant):
+        consent_missing = not self._has_consent(participant)
+        for index, (text, label, multiline) in enumerate(self._card_rows(participant)):
             height = CARD_OTHER_H if multiline else CARD_H
             if y + height > SAFE_BOTTOM:
                 logger.warning(
                     f"Badge event row omitted because it exceeds safe area: {label}"
                 )
                 break
-            self._draw_card(draw, text, label, y, height, multiline)
+            self._draw_card(
+                draw,
+                text,
+                label,
+                y,
+                height,
+                multiline,
+                alert=index == 0 and consent_missing,
+            )
             y += height + CARD_GAP
 
     def _card_rows(
@@ -406,9 +391,37 @@ class BadgeGenerator:
         line = sport
         if sport_format:
             line += f" ({sport_format})"
-        if partner:
+        if partner and BadgeGenerator._is_racquet_sport(sport):
             line += f" w/ {partner}"
         return line
+
+    @staticmethod
+    def _is_racquet_sport(sport: str) -> bool:
+        normalized = sport.casefold()
+        return any(marker in normalized for marker in _RACQUET_SPORT_MARKERS)
+
+    @staticmethod
+    def _has_consent(participant: Dict[str, Any]) -> bool:
+        value = participant.get("consent_status")
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().casefold() in {"1", "true", "yes", "y", "checked"}
+
+    @staticmethod
+    def _is_minor(participant: Dict[str, Any]) -> bool:
+        value = participant.get("minor_status")
+        if isinstance(value, bool):
+            return value
+        if value is not None:
+            return str(value).strip().casefold() in {"1", "true", "yes", "y", "minor"}
+
+        age = participant.get("age_at_event")
+        try:
+            return int(age) < 18
+        except (TypeError, ValueError):
+            return False
 
     def _draw_card(
         self,
@@ -418,11 +431,12 @@ class BadgeGenerator:
         y: int,
         height: int,
         multiline: bool,
+        alert: bool = False,
     ) -> None:
         draw.rounded_rectangle(
             (CARD_X0, y, CARD_X1, y + height),
             radius=CARD_RADIUS,
-            fill=COL_WHITE,
+            fill=COL_CONSENT_ALERT if alert else COL_CARD,
             outline=COL_BORDER,
             width=2,
         )
@@ -452,7 +466,7 @@ class BadgeGenerator:
                 draw,
                 text,
                 box=text_box,
-                role="regular",
+                role="bold",
                 max_size=38,
                 min_size=24,
                 fill=COL_NAVY,
@@ -466,7 +480,7 @@ class BadgeGenerator:
         box: Tuple[int, int, int, int],
     ) -> None:
         left, top, right, bottom = box
-        font = self._font("regular", 34)
+        font = self._font("bold", 34)
         lines = self._wrap_lines(draw, text, font, right - left)
         while len(lines) > 3 and font.size > 24:
             font = self._font_from(font, font.size - 2)
@@ -620,6 +634,7 @@ class BadgeGenerator:
         canvas: Image.Image,
         draw: ImageDraw.ImageDraw,
         payload: str,
+        participant: Dict[str, Any],
     ) -> None:
         draw.rounded_rectangle(
             QR_CARD,
@@ -640,15 +655,35 @@ class BadgeGenerator:
         ).convert("RGBA")
         qr_image = qr_image.resize((QR_SIZE, QR_SIZE), Image.NEAREST)
         canvas.paste(qr_image, (QR_LEFT, QR_TOP), qr_image)
-        self._draw_text_autoshrink(
-            draw,
-            QR_CAPTION,
-            box=(QR_CARD[0] + 10, 1010, QR_CARD[2] - 10, 1065),
-            role="regular",
-            max_size=24,
-            min_size=16,
-            fill=COL_MUTED,
-        )
+        self._draw_qr_tags(draw, participant)
+
+    def _draw_qr_tags(
+        self,
+        draw: ImageDraw.ImageDraw,
+        participant: Dict[str, Any],
+    ) -> None:
+        tags: List[str] = []
+        if self._is_minor(participant):
+            tags.append("Minor")
+        if not self._has_consent(participant):
+            tags.append("Consent Form Needed")
+
+        if not tags:
+            return
+
+        y = QR_TAG_TOP
+        for tag in tags[:2]:
+            self._draw_text_autoshrink(
+                draw,
+                tag,
+                box=(QR_CARD[0] + 18, y, QR_CARD[2] - 18, y + QR_TAG_LINE_H),
+                role="bold",
+                max_size=24,
+                min_size=18,
+                fill=(0, 0, 0, 255),
+                center=True,
+            )
+            y += QR_TAG_LINE_H
 
     def _load_template(self) -> Image.Image:
         if self.template_path.is_file():

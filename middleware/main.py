@@ -238,7 +238,11 @@ def parse_args() -> argparse.Namespace:
     badges_parser.add_argument("--chm-id", type=str, default=None,
                                help="Limit to a single ChMeetings person ID")
     badges_parser.add_argument("--output", type=str, default=None,
-                               help="Output directory for PNGs (default: data/badges)")
+                               help=(
+                                   "Output directory for PNGs. Default writes to "
+                                   "EXPORT_DIR/<church-code>/badges; explicit "
+                                   "--output writes directly to that directory."
+                               ))
     badges_parser.add_argument("--dry-run", action="store_true",
                                help="List who would be rendered without writing files")
     badges_parser.add_argument("--force", action="store_true",
@@ -1547,9 +1551,13 @@ def main() -> None:
         from badges import BadgeGenerator, BadgeRunner
         from pathlib import Path as _Path
 
-        output_dir = _Path(args.output) if args.output else None
+        output_dir = _Path(args.output) if args.output else _Path(EXPORT_DIR)
+        church_subdirs = args.output is None
         try:
-            generator = BadgeGenerator(output_dir=output_dir)
+            generator = BadgeGenerator(
+                output_dir=output_dir,
+                church_subdirs=church_subdirs,
+            )
         except ValueError as exc:
             logger.error(f"Badge configuration error: {exc}")
             success = False

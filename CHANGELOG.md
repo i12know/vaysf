@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Badge consent warning - refs [#199](https://github.com/i12know/vaysf/issues/199)
+
+- Turned missing ChMeetings Profile Box 2 consent into a red athlete-name card
+  on generated badges while keeping the athlete name in white for readability.
+- Added small black QR-card tags for `Minor` and `Consent Form Needed`, with
+  minor status calculated from the live ChMeetings birth date using the same
+  event-date age calculation as the church export.
+- Backfilled badge `consent_status` from the live ChMeetings Completion Check
+  List, plus event-day age and minor status from the live birth date, when
+  fetching the athlete person record.
+- Added regression coverage for the red consent warning, white name text, and
+  ChMeetings checklist and minor-status interpretation.
+
+### Badge production template dark-mode pass - refs [#185](https://github.com/i12know/vaysf/issues/185)
+
+- Updated the athlete badge renderer so the new dark-blue production
+  `badge_template.png` owns the upper event artwork/title area instead of being
+  covered by generated placeholder panels.
+- Restyled generated lower-badge content for dark mode: light/gold church code
+  and labels, dark event cards, gold outlines, and a white QR card retained for
+  scanner contrast.
+- Bolded the lower-card athlete/event text for readability on the dark cards.
+- Removed the QR caption text after mobile scan review confirmed the QR exposes
+  the expected ChMeetings ID payload.
+- Default badge output now writes to `EXPORT_DIR/<church-code>/badges/`
+  (for example the church-specific Google Drive export folder), while
+  `--output` remains a direct flat-folder override for scratch review renders.
+- Limited partner-name display to racquet sports so team-sport rows do not
+  inherit stale doubles partner fields.
+- Bumped the badge render fingerprint and added regression coverage so template
+  artwork is not overpainted and event cards remain dark-mode surfaces.
+
 ### 2026 main schedule workbook override import - closes [#196](https://github.com/i12know/vaysf/issues/196)
 
 - Added `import-master-schedule` to parse the visual
@@ -128,8 +160,8 @@ athlete (photo, name, church, sport(s), athlete ID, QR slot).
   `templates/badge_template.png` — placeholder background until a designer
   delivers the real template.
 - Added Pillow and qrcode to `requirements.txt`; `data/badges/` is gitignored.
-- QR carries an ID-only placeholder payload; WordPress hosting, ChMeetings
-  `<img>` write-back, and the QR-interoperability spike are deferred follow-ups.
+- QR carries the ChMeetings person ID payload; WordPress hosting and
+  ChMeetings `<img>` write-back are deferred follow-ups.
 - Documented in `docs/USAGE.md`; unit tests in `tests/test_badges.py`.
 - **Current real-world eligibility status:** badges intentionally use pastor
   approval only. Payment status is not currently reliable enough to filter
@@ -137,8 +169,8 @@ athlete (photo, name, church, sport(s), athlete ID, QR slot).
   payment flag.
 - Review hardening: use Vietnamese-capable Windows/Linux system fonts instead
   of Pillow's missing-glyph fallback; skip records without `chmeetings_id`;
-  refresh stale PNGs using content/resource fingerprints; label the QR as not
-  for check-in; and require a private `BADGE_FILENAME_SALT`.
+  refresh stale PNGs using content/resource fingerprints; and require a private
+  `BADGE_FILENAME_SALT`.
 - Wireframe correction: keep all content inside the 80/80/120/180 safe area;
   place the church code directly beneath the photo; keep the logo fully inside
   the theme panel; and use the wireframe's divider-and-label event rows instead

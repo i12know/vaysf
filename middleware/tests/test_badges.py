@@ -10,9 +10,10 @@ import pytest
 import requests
 from unittest.mock import MagicMock
 
-from PIL import Image, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 from badges.generator import (
+    CARD_H,
     CARD_FIRST_Y,
     CARD_OTHER_H,
     CARD_X0,
@@ -20,8 +21,8 @@ from badges.generator import (
     CHURCH_CODE_CX,
     PHOTO_LEFT,
     PHOTO_TOP,
-    QR_CAPTION,
     QR_CARD,
+    QR_TAG_TOP,
     SAFE_BOTTOM,
     SAFE_LEFT,
     SAFE_RIGHT,
@@ -60,6 +61,7 @@ def _participant(**overrides):
         "last_name": "Le",
         "approval_status": "approved",
         "primary_sport": "Tennis",
+        "consent_status": True,
     }
     base.update(overrides)
     return base
@@ -77,6 +79,126 @@ def test_render_to_file_writes_png(generator):
     out = generator.render_to_file(_participant(), photo_bytes=_png_bytes(), force=True)
     assert out.exists()
     assert Image.open(out).size == (1080, 1920)
+
+
+def test_render_to_file_can_use_church_subfolders(tmp_path):
+    generator = BadgeGenerator(
+        output_dir=tmp_path / "exports",
+        filename_salt="test-only-badge-salt",
+        church_subdirs=True,
+    )
+
+    out = generator.render_to_file(_participant(), photo_bytes=_png_bytes(), force=True)
+
+    assert out.parent == tmp_path / "exports" / "RPC" / "badges"
+    assert out.name.startswith("RPC_3139537_")
+    assert out.with_suffix(".png.sha256").exists()
+
+
+def test_template_artwork_area_is_not_overpainted(tmp_path):
+    sentinel = (9, 24, 64, 255)
+    template_path = tmp_path / "dark-template.png"
+    Image.new("RGBA", (1080, 1920), sentinel).save(template_path)
+    generator = BadgeGenerator(
+        template_path=template_path,
+        output_dir=tmp_path / "badges",
+        filename_salt="test-only-badge-salt",
+    )
+
+    img = generator.render(_participant(), photo_bytes=None)
+
+    tagline_center = (
+        (TAGLINE_BOX[0] + TAGLINE_BOX[2]) // 2,
+        (TAGLINE_BOX[1] + TAGLINE_BOX[3]) // 2,
+    )
+    theme_center = (
+        (THEME_BOX[0] + THEME_BOX[2]) // 2,
+        (THEME_BOX[1] + THEME_BOX[3]) // 2,
+    )
+    assert img.getpixel(tagline_center) == sentinel
+    assert img.getpixel(theme_center) == sentinel
+
+
+def test_event_cards_render_as_dark_mode_surfaces(generator):
+    img = generator.render(_participant(), photo_bytes=None)
+    card_pixel = img.getpixel((CARD_X0 + 430, CARD_FIRST_Y + CARD_H // 2))
+
+    assert card_pixel[0] < 40
+    assert card_pixel[1] < 60
+    assert card_pixel[2] < 100
+
+
+def test_missing_consent_turns_name_card_red(generator):
+    img = generator.render(_participant(consent_status=False), photo_bytes=None)
+    name_card_pixel = img.getpixel((CARD_X0 + 40, CARD_FIRST_Y + 35))
+    sport_card_pixel = img.getpixel((CARD_X0 + 40, CARD_FIRST_Y + CARD_H + 40))
+
+    assert name_card_pixel[0] > 130
+    assert name_card_pixel[1] < 70
+    assert name_card_pixel[2] < 80
+    assert sport_card_pixel[2] > sport_card_pixel[0]
+
+
+def test_missing_consent_name_text_stays_white(generator, monkeypatch):
+    fills = []
+
+    def capture_text(*args, **kwargs):
+        fills.append(kwargs["fill"])
+
+    monkeypatch.setattr(generator, "_draw_text_autoshrink", capture_text)
+    draw = ImageDraw.Draw(Image.new("RGBA", (1080, 1920)))
+    generator._draw_cards(draw, _participant(consent_status=False))
+
+    assert fills[0] == (246, 249, 255, 255)
+
+
+def test_qr_tags_show_minor_and_missing_consent(generator, monkeypatch):
+    drawn = []
+
+    def capture_text(draw, text, **kwargs):
+        drawn.append((text, kwargs["box"], kwargs["fill"]))
+
+    monkeypatch.setattr(generator, "_draw_text_autoshrink", capture_text)
+    draw = ImageDraw.Draw(Image.new("RGBA", (1080, 1920)))
+    generator._draw_qr_tags(
+        draw,
+        _participant(consent_status=False, minor_status=True, age_at_event=17),
+    )
+
+    assert [item[0] for item in drawn] == ["Minor", "Consent Form Needed"]
+    assert all(item[2] == (0, 0, 0, 255) for item in drawn)
+    assert drawn[0][1][1] == QR_TAG_TOP
+
+
+def test_qr_tags_omit_adult_consent_complete(generator, monkeypatch):
+    drawn = []
+    monkeypatch.setattr(
+        generator,
+        "_draw_text_autoshrink",
+        lambda draw, text, **kwargs: drawn.append(text),
+    )
+    draw = ImageDraw.Draw(Image.new("RGBA", (1080, 1920)))
+
+    generator._draw_qr_tags(
+        draw,
+        _participant(consent_status=True, minor_status=False, age_at_event=18),
+    )
+
+    assert drawn == []
+
+
+def test_event_card_content_uses_bold_font(generator, monkeypatch):
+    roles = []
+
+    def capture_text(*args, **kwargs):
+        roles.append(kwargs["role"])
+
+    monkeypatch.setattr(generator, "_draw_text_autoshrink", capture_text)
+    draw = ImageDraw.Draw(Image.new("RGBA", (1080, 1920)))
+
+    generator._draw_card(draw, "An Le", "#3139537", CARD_FIRST_Y, CARD_H, False)
+
+    assert "bold" in roles
 
 
 def test_long_vietnamese_name_autoshrinks_and_renders(generator):
@@ -169,8 +291,20 @@ def test_resolved_fonts_render_vietnamese_glyphs():
         )
 
 
-def test_qr_caption_marks_placeholder_as_not_for_check_in():
-    assert QR_CAPTION == "ID QR - not for check-in"
+def test_qr_card_does_not_draw_caption_text(generator, monkeypatch):
+    def fail_if_caption_is_drawn(*args, **kwargs):
+        raise AssertionError("QR card should not draw caption text")
+
+    monkeypatch.setattr(generator, "_draw_text_autoshrink", fail_if_caption_is_drawn)
+    canvas = Image.new("RGBA", (1080, 1920))
+    draw = ImageDraw.Draw(canvas)
+
+    generator._draw_qr_block(
+        canvas,
+        draw,
+        "3615924",
+        _participant(consent_status=True, minor_status=False),
+    )
 
 
 def test_wireframe_geometry_stays_inside_safe_area():
@@ -213,6 +347,21 @@ def test_event_rows_hide_empty(generator):
     assert "Badminton" in texts2
     assert "2ndary" in tags2
     assert "Primary" not in tags2
+
+
+def test_team_sport_does_not_show_stale_racquet_partner(generator):
+    p = _participant(
+        primary_sport="Volleyball - Men Team",
+        primary_format="",
+        primary_partner="Timothy Dao",
+        secondary_sport="Pickleball",
+        secondary_format="Men Double",
+        secondary_partner="Timothy Dao",
+    )
+
+    rows = generator._card_rows(p)
+    assert ("Volleyball - Men Team", "Primary", False) in rows
+    assert ("Pickleball (Men Double) w/ Timothy Dao", "2ndary", False) in rows
 
 
 def test_ascii_initials_strips_accents():
@@ -395,3 +544,65 @@ def test_photo_logging_does_not_include_profile_urls(generator, mocker):
         for call in log.info.call_args_list + log.warning.call_args_list
     )
     assert "https://" not in messages
+
+
+def test_runner_backfills_consent_status_from_chmeetings_value(generator):
+    participant = _participant()
+    participant.pop("consent_status")
+    runner, chm, wp = _make_runner(
+        [participant],
+        generator,
+        person_photo=None,
+    )
+    chm.get_person.return_value = {
+        "id": "3139537",
+        "photo": None,
+        "birth_date": "2008-07-18",
+        "additional_fields": [
+            {
+                "field_name": "Completion Check List",
+                "value": "2. Consent Form Signed by Self or Parents",
+            }
+        ],
+    }
+
+    runner._fetch_photo_bytes(participant)
+
+    assert participant["consent_status"] is True
+    assert participant["age_at_event"] == 18
+    assert participant["minor_status"] is False
+
+
+def test_runner_backfills_missing_consent_from_chmeetings_options(generator):
+    participant = _participant(consent_status=True)
+    runner, chm, wp = _make_runner(
+        [participant],
+        generator,
+        person_photo=None,
+    )
+    chm.get_person.return_value = {
+        "id": "3139537",
+        "photo": None,
+        "birth_date": "2008-12-31",
+        "additional_fields": [
+            {
+                "field_name": "Completion Check List",
+                "value": "",
+                "selected_option_ids": [199608],
+            }
+        ],
+    }
+
+    runner._fetch_photo_bytes(participant)
+
+    assert participant["consent_status"] is False
+    assert participant["age_at_event"] == 17
+    assert participant["minor_status"] is True
+
+
+def test_runner_age_at_event_matches_church_export_boundary(mocker):
+    mocker.patch("badges.runner.Config.SPORTS_FEST_DATE", "2026-07-18")
+
+    assert BadgeRunner._age_at_event("2008-07-18") == 18
+    assert BadgeRunner._age_at_event("2008-12-31") == 17
+    assert BadgeRunner._age_at_event("") is None

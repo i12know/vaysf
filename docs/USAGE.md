@@ -483,11 +483,18 @@ each approved athlete. The badge shows the athlete's photo, name, church,
 sport(s), and athlete ID, with a reserved QR-code slot. Staff and church reps
 use it for visual identity verification before games (Issue #77).
 
-This is the **v1, local-render** workflow: badges are written to
-`data/badges/` (gitignored) for hand-distribution. WordPress hosting and
-ChMeetings `<img>` write-back are deliberate follow-ups, and the QR currently
-carries an ID-only placeholder payload explicitly labeled **not for check-in**
-pending the QR-interoperability spike.
+This is the **v1, local-render** workflow: badges are written under
+`EXPORT_DIR/<church-code>/badges/` so each church's folder can be shared from
+Google Drive before WordPress hosting is implemented. With the standard
+production export directory, an RPC badge path looks like:
+
+```text
+G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data\RPC\badges\RPC_3139537_ab12cd34.png
+```
+
+WordPress hosting and ChMeetings `<img>` write-back are deliberate follow-ups,
+and the QR carries the same ChMeetings person ID payload confirmed by mobile
+scan testing during badge review.
 
 Set a private, stable filename salt in `middleware/.env` before running the
 command. It must be at least 16 characters:
@@ -512,7 +519,7 @@ python main.py generate-badges --chm-id 3139537
 # Re-render even when the content fingerprint says a badge is current
 python main.py generate-badges --force
 
-# Write to a custom output directory
+# Write directly to a custom flat output directory for scratch reviews
 python main.py generate-badges --output "path/to/badges"
 ```
 
@@ -525,16 +532,27 @@ pastor approval is the operative signal.
 Athlete text (name, church, sport) is read from WordPress; the profile photo is
 pulled from the ChMeetings person record, falling back to an
 initials-on-colour placeholder when no usable photo exists, so missing photos
-are obvious to staff at review. Each PNG has a SHA-256 render fingerprint, so
-name, sport, photo, template, or font changes regenerate the badge
-automatically. `--force` remains available for manual rebuilds.
+are obvious to staff at review. The production template owns the upper event
+artwork/title area, and the renderer adds dark-mode identity, QR, and event
+cards in the lower safe zone. The lower card content uses bold light text for
+readability on the dark surfaces. If the athlete's ChMeetings Profile does not
+have Box 2 consent checked (`Consent Form Signed by Self or Parents`), the
+athlete-name card turns red while keeping the name text white for scanner-line
+review, and the QR card prints a small black `Consent Form Needed` tag. Athletes
+under 18 by the same event-date age calculation used in church exports also get
+a small black `Minor` tag under the QR code. Each PNG has a SHA-256 render
+fingerprint, so name, sport, consent status, minor status, photo, template,
+font, or layout changes regenerate the badge automatically. `--force` remains
+available for manual rebuilds.
 
 **Fonts:** the Windows deployment uses Arial/Consolas fallbacks with Vietnamese
 coverage; Linux uses Liberation/DejaVu. Optional Inter and JetBrains Mono files
 can be placed in `middleware/fonts/` for branding consistency (see
 `fonts/README.md`). The generator fails rather than emit unreadable missing
-glyphs when no supported scalable font exists. To regenerate the placeholder
-background template, run `python templates/build_placeholder.py`.
+glyphs when no supported scalable font exists. The old placeholder generator
+remains available at `python templates/build_placeholder.py` for development
+fallbacks, but production badges should use the committed branded
+`templates/badge_template.png`.
 
 ### Church Team Group Assignment
 
