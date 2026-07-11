@@ -325,6 +325,36 @@ class TestSyncSingleParticipantDrift:
         payload = call_args[0][1]
         assert payload["approval_status"] == APPROVAL_STATUS["APPROVED"]
 
+    def test_approved_minor_missing_consent_still_syncs_validation_issue(self, syncer):
+        """Approved status is preserved, but current missing consent still reports."""
+        wp = _wp_participant({
+            "first_name": "Adam",
+            "last_name": "Lien",
+            "birthdate": "2010-08-05",
+            "approval_status": APPROVAL_STATUS["APPROVED"],
+        })
+        chm = _make_chm_person({
+            "first_name": "Adam",
+            "last_name": "Lien",
+            "birth_date": "2010-08-05",
+        })
+        _setup_syncer_for_integration(syncer, wp, chm)
+
+        syncer._sync_single_participant("4371570")
+
+        payload = syncer.wordpress_connector.update_participant.call_args.args[1]
+        assert payload["approval_status"] == APPROVAL_STATUS["APPROVED"]
+
+        created_issues = [
+            call.args[0]
+            for call in syncer.wordpress_connector.create_validation_issue.call_args_list
+        ]
+        consent_issue = next(
+            issue for issue in created_issues if issue.get("issue_type") == "missing_consent"
+        )
+        assert consent_issue["participant_id"] == "413"
+        assert consent_issue["severity"] == VALIDATION_SEVERITY["ERROR"]
+
     def test_hard_drift_resets_to_reapproval_required(self, syncer):
         """Name + birthdate changed after approval → reapproval_required."""
         wp = _wp_participant()
