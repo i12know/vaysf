@@ -323,58 +323,36 @@ Bible Challenge requires special treatment because a game may have three teams, 
 
 ### 9.4 Placement or measured result
 
-Examples: Track and Field or other individually measured events.
+A fully measured result type (heats, attempts, times, distances) is **out of scope for 2026**. Track & Field — the event that would have needed it — instead uses the simple final-placement form in §9.5. Revisit only if a future season requires detailed meet management.
 
-Capture:
+### 9.5 Track & Field final-placement events
 
-- participant or team;
-- heat or attempt;
-- time, distance, or score;
-- placement;
-- qualification status.
+**Scope decision (2026-07-10):** Track & Field is modeled as a container of six individual events, not one competition. For 2026, the system does **not** model heats, lanes, qualifying rounds, or race operations — T&F staff handle those manually on the field. The digital record exists for medal preparation and accurate closing-ceremony announcements only.
 
-This form type may be deferred if the first rollout focuses on scheduled head-to-head and Bible Challenge games.
+The six events:
 
-### 9.5 Track & Field sub-event management
+1. Women 100m
+2. Men 100m
+3. Women Half-Mile
+4. Women 4x100m Relay
+5. Men 4x100m Relay
+6. Men Mile
 
-Track & Field is unlike every other Sports Fest competition in several ways that the results system must account for:
+Each event is its own row in `sf_schedules` with its own `game_key` (e.g. `TF-W100M`, `TF-M4X100`), its own QR code, and its own result record. The "Track & Field" category is only a display grouping, never a scoring entity — the data model must not hard-code T&F as one sport with one set of results.
 
-**Registration model.** T&F lives in the `Other Events` checkbox (`config.py` field ID 199341), not the Primary/Secondary sport dropdown. It is categorized as `INDIVIDUAL` and does not count against the two-event limit. This means T&F participants are not organized into church teams the way Basketball or Volleyball athletes are — they register individually and may participate in multiple sub-events.
+The result form is a simple **final-placement entry**, per event:
 
-**No scheduler integration today.** The gym allocator explicitly skips T&F (along with Bible Challenge and Soccer); the CP-SAT solver does not generate `game_id` entries for T&F. T&F scheduling is currently handled outside the digital pipeline.
+- 1st place team/church;
+- 2nd place team/church;
+- 3rd place team/church;
+- optional notes;
+- optional scoresheet/photo attachment;
+- submitted by / submitted at;
+- official or under-review status.
 
-**Sub-event structure.** A single "Track & Field" registration encompasses multiple sub-events (e.g. 100m dash, 200m, 4x100 relay, long jump, shot put). The results system must decide how to represent this:
+This fits the existing data model without new machinery: placements go in `winner_keys_json` (ordered 1st→3rd), and the standard revision, attachment, and status flow from §§4.4, 8.2–8.4 applies unchanged. No `sub_event` hierarchy, participant lists, or measured-result fields are needed for 2026.
 
-- **Option A — one parent event, many sub-events.** A `Track & Field` event contains sub-events, each with its own heats, results, and placements. The `game_id` convention would need a hierarchy: e.g. `TF-100M-H1` (100m Heat 1), `TF-LJ-F` (Long Jump Final). Sub-events would share a coordinator assignment and a common public display page.
-- **Option B — flat, each sub-event is its own event.** Treat `100m Dash`, `Long Jump`, etc. as independent events in `sf_schedules`. Simpler data model, but coordinator assignment and public grouping must be handled separately.
-
-**Recommendation:** Option A is the better fit. T&F is one coordinator assignment, one venue block, one set of paper scoresheets, and one public page — the sub-event hierarchy should reflect that operational reality. The `game_id` prefix `TF-` already follows the codebase naming convention (`BBM-`, `VBM-`, `SOC-`, etc.).
-
-**Heats and finals.** Running events may have qualifying heats before a final. The results form must capture:
-
-- heat number or round (qualifying, semifinal, final);
-- lane assignment (optional, for printed heat sheets);
-- finish time or measurement;
-- placement within the heat;
-- qualification status (advanced, eliminated, DNS, DNF, DQ).
-
-**Field events.** Field events (long jump, shot put, etc.) use attempts rather than heats:
-
-- attempt number;
-- measurement (distance or height);
-- foul indicator;
-- best mark;
-- final placement.
-
-**Relay teams.** The 4x100 relay is church-based (a team of 4 runners from the same church), so it bridges the individual and team models. The results system should allow a relay entry to reference a church code and its 4 runners.
-
-**Implications for the schema.** If T&F is included in the results system (even post-MVP), `sf_schedules` needs:
-
-- a `parent_event_id` or `sub_event` field to group sub-events under the T&F umbrella;
-- support for more than 2–3 teams per row (heats may have 6–8 runners);
-- `team_ids_json` (already proposed in §8.1) to hold a variable-length participant list.
-
-**MVP scope decision.** The first release targets Basketball, Soccer, Volleyball Men, and Volleyball Women (per owner decision). T&F sub-event support should be designed into the schema now (so the `game_id` hierarchy and `sub_event` field exist) but the T&F-specific result forms (§9.4) can ship in a follow-up issue after the core head-to-head workflow is proven.
+Background for context: T&F registrations live in the `Other Events` checkbox (not Primary/Secondary sport), are categorized `INDIVIDUAL`, and are not scheduled by the CP-SAT solver — so the six T&F rows will be entered via the schedule publication path as fixed-time entries rather than solver output.
 
 ## 10. Sport Rules Configuration
 
@@ -567,7 +545,7 @@ The following issues should be created as sub-issues of a tracking Epic once the
 
 Redesign the existing `sf_competitions`, `sf_schedules`, and `sf_results` tables (currently empty and unused) to support the data model in §8. Add the new `sf_result_revisions` and `sf_result_files` tables. Key columns: `game_key` (maps to scheduler `game_id`), `schedule_version`, `game_status`, `score_json`, `winner_keys_json`, `current_revision`, `sub_event` (for T&F hierarchy). Build the `publish-schedule --dry-run` and `--execute` middleware commands (§7) that load `schedule_output.json`, diff against the current WordPress state, and upsert matches by stable `game_key`. Refuse to overwrite completed matches. Include a `--force-cancel` flag for marking removed future games as cancelled rather than deleting them.
 
-**Schema design note:** The `sf_schedules` redesign must accommodate Track & Field sub-events from the start, even though T&F result forms ship later. Add a `sub_event` VARCHAR field and support the `TF-` game_id prefix convention so T&F entries can be grouped under a parent event. The `team_ids_json` column handles variable participant counts (2 for basketball, 3 for Bible Challenge, 6–8 for T&F heats).
+**Schema design note:** Track & Field needs nothing special — each of the six T&F events (§9.5) is an ordinary `sf_schedules` row with a `TF-` game_key, entered as a fixed-time entry rather than solver output. The `team_ids_json` column handles variable participant counts (2 for basketball, 3 for Bible Challenge).
 
 **QR code coordination:** The badge pipeline (#184–#188) already generates person-ID QR codes for athlete check-in. This issue must define the match-QR payload format so scanners can distinguish person QRs from match QRs. Suggested: person QRs use `CHM:<person_id>`, match QRs use `MATCH:<game_key>`.
 
@@ -607,11 +585,11 @@ Build the central Results Desk dashboard (§15) showing: overdue matches, unveri
 
 **Dependencies:** Issues 2–5 (needs results, files, and standings data to monitor).
 
-### Issue 7 (follow-up) — `results: add Track & Field sub-event result forms`
+### Issue 7 — `results: add Track & Field final-placement entry`
 
-Implement the placement/measured result form type (§9.4) and the T&F sub-event management model (§9.5). Add heat/attempt-based scoring, DNS/DNF/DQ states, relay team references, and the T&F-specific public display grouping. This issue depends on the sub_event schema field from Issue 1 but ships after the core head-to-head workflow is proven.
+Add the six T&F events (§9.5) as fixed-time schedule rows and a simple final-placement form: 1st/2nd/3rd church, optional notes, optional attachment. Reuses the standard revision, attachment, and status flow — no heats, lanes, or measured results. Small enough to ship alongside or immediately after Issue 2.
 
-**Dependencies:** Issue 1 (schema), Issue 2 (submission flow), Issue 4 (public display).
+**Dependencies:** Issue 1 (schema), Issue 2 (submission flow).
 
 ## 19. Open Decisions for Review
 
@@ -624,15 +602,16 @@ Implement the placement/measured result form type (§9.4) and the T&F sub-event 
 5. **Who may confirm advancement for each sport?** Decided by a human (Sport Coordinator or Results Desk administrator) on a case-by-case basis.
 6. **Is a scoresheet image required for every match?** No. The scoresheet QR leads to the web result form; the scan is optional supporting evidence, not a gate.
 7. **Security model?** Restricted WordPress coordinator accounts (decided 2026-07-11). SMS magic-links deferred.
+8. **Track & Field?** Six individual events with final medal placements only (1st/2nd/3rd church) — no heats, lanes, or race operations (§9.5, decided 2026-07-10).
 
 ### Still Open
 
-8. What maximum upload size is practical on Bluehost?
-9. Should scoresheet files remain only on WordPress or also be copied nightly to Google Drive or Dropbox?
-10. How should unscheduled events (Track & Field, Tug-of-War, Scripture Memorization) and individual placements be represented in the same public interface as scheduled head-to-head matches?
-11. Who will operate the central Results Desk during each venue block?
-12. How should schedule revisions be approved once matches have begun?
-13. What retention period is required for paper sheets, digital scans, and result revision history?
+9. What maximum upload size is practical on Bluehost?
+10. Should scoresheet files remain only on WordPress or also be copied nightly to Google Drive or Dropbox?
+11. How should the remaining unscheduled events (Tug-of-War, Scripture Memorization) be represented in the public interface?
+12. Who will operate the central Results Desk during each venue block?
+13. How should schedule revisions be approved once matches have begun?
+14. What retention period is required for paper sheets, digital scans, and result revision history?
 
 ## 20. Acceptance Criteria for the MVP
 
