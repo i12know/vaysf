@@ -335,6 +335,47 @@ Capture:
 
 This form type may be deferred if the first rollout focuses on scheduled head-to-head and Bible Challenge games.
 
+### 9.5 Track & Field sub-event management
+
+Track & Field is unlike every other Sports Fest competition in several ways that the results system must account for:
+
+**Registration model.** T&F lives in the `Other Events` checkbox (`config.py` field ID 199341), not the Primary/Secondary sport dropdown. It is categorized as `INDIVIDUAL` and does not count against the two-event limit. This means T&F participants are not organized into church teams the way Basketball or Volleyball athletes are — they register individually and may participate in multiple sub-events.
+
+**No scheduler integration today.** The gym allocator explicitly skips T&F (along with Bible Challenge and Soccer); the CP-SAT solver does not generate `game_id` entries for T&F. T&F scheduling is currently handled outside the digital pipeline.
+
+**Sub-event structure.** A single "Track & Field" registration encompasses multiple sub-events (e.g. 100m dash, 200m, 4x100 relay, long jump, shot put). The results system must decide how to represent this:
+
+- **Option A — one parent event, many sub-events.** A `Track & Field` event contains sub-events, each with its own heats, results, and placements. The `game_id` convention would need a hierarchy: e.g. `TF-100M-H1` (100m Heat 1), `TF-LJ-F` (Long Jump Final). Sub-events would share a coordinator assignment and a common public display page.
+- **Option B — flat, each sub-event is its own event.** Treat `100m Dash`, `Long Jump`, etc. as independent events in `sf_schedules`. Simpler data model, but coordinator assignment and public grouping must be handled separately.
+
+**Recommendation:** Option A is the better fit. T&F is one coordinator assignment, one venue block, one set of paper scoresheets, and one public page — the sub-event hierarchy should reflect that operational reality. The `game_id` prefix `TF-` already follows the codebase naming convention (`BBM-`, `VBM-`, `SOC-`, etc.).
+
+**Heats and finals.** Running events may have qualifying heats before a final. The results form must capture:
+
+- heat number or round (qualifying, semifinal, final);
+- lane assignment (optional, for printed heat sheets);
+- finish time or measurement;
+- placement within the heat;
+- qualification status (advanced, eliminated, DNS, DNF, DQ).
+
+**Field events.** Field events (long jump, shot put, etc.) use attempts rather than heats:
+
+- attempt number;
+- measurement (distance or height);
+- foul indicator;
+- best mark;
+- final placement.
+
+**Relay teams.** The 4x100 relay is church-based (a team of 4 runners from the same church), so it bridges the individual and team models. The results system should allow a relay entry to reference a church code and its 4 runners.
+
+**Implications for the schema.** If T&F is included in the results system (even post-MVP), `sf_schedules` needs:
+
+- a `parent_event_id` or `sub_event` field to group sub-events under the T&F umbrella;
+- support for more than 2–3 teams per row (heats may have 6–8 runners);
+- `team_ids_json` (already proposed in §8.1) to hold a variable-length participant list.
+
+**MVP scope decision.** The first release targets Basketball, Soccer, Volleyball Men, and Volleyball Women (per owner decision). T&F sub-event support should be designed into the schema now (so the `game_id` hierarchy and `sub_event` field exist) but the T&F-specific result forms (§9.4) can ship in a follow-up issue after the core head-to-head workflow is proven.
+
 ## 10. Sport Rules Configuration
 
 Each Sport Coordinator should supply or approve a one-page rules configuration containing:
@@ -354,7 +395,7 @@ Automatic standings should be enabled only when the governing rules are confirme
 
 ## 11. Security Model
 
-For the rapid 2026 rollout, use individual WordPress accounts rather than shared passwords or anonymous result links.
+**Decision (2026-07-11):** Use restricted individual WordPress coordinator accounts for the 2026 release. SMS magic-link authentication (via WSMS) was considered as an alternative but is deferred — the setup and gateway integration risk is too high this close to the event. QR codes on scoresheets will link directly to the match result form; coordinators log in with their WordPress credentials.
 
 Each submission should require:
 
@@ -518,31 +559,80 @@ Simulate a mini-tournament and test:
 - public display on iPhone and Android;
 - final audit export.
 
-## 18. Suggested Implementation Issues After Approval
+## 18. Implementation Issues
 
-1. `results: import and freeze published schedule in WordPress`
-2. `results: add secure mobile coordinator submission and score revisions`
-3. `results: add protected scoresheet archive`
-4. `results: add public live schedule and results display`
-5. `results: add sport standings and advancement confirmation`
-6. `results: add Results Desk monitoring and archive export`
+The following issues should be created as sub-issues of a tracking Epic once the remaining open decisions (§19) are resolved. Each issue is scoped to be independently shippable and testable.
 
-These issues should be created only after this RFC is reviewed and the open decisions below are resolved.
+### Issue 1 — `results: redesign schedule/results schema and publish-schedule command`
+
+Redesign the existing `sf_competitions`, `sf_schedules`, and `sf_results` tables (currently empty and unused) to support the data model in §8. Add the new `sf_result_revisions` and `sf_result_files` tables. Key columns: `game_key` (maps to scheduler `game_id`), `schedule_version`, `game_status`, `score_json`, `winner_keys_json`, `current_revision`, `sub_event` (for T&F hierarchy). Build the `publish-schedule --dry-run` and `--execute` middleware commands (§7) that load `schedule_output.json`, diff against the current WordPress state, and upsert matches by stable `game_key`. Refuse to overwrite completed matches. Include a `--force-cancel` flag for marking removed future games as cancelled rather than deleting them.
+
+**Schema design note:** The `sf_schedules` redesign must accommodate Track & Field sub-events from the start, even though T&F result forms ship later. Add a `sub_event` VARCHAR field and support the `TF-` game_id prefix convention so T&F entries can be grouped under a parent event. The `team_ids_json` column handles variable participant counts (2 for basketball, 3 for Bible Challenge, 6–8 for T&F heats).
+
+**QR code coordination:** The badge pipeline (#184–#188) already generates person-ID QR codes for athlete check-in. This issue must define the match-QR payload format so scanners can distinguish person QRs from match QRs. Suggested: person QRs use `CHM:<person_id>`, match QRs use `MATCH:<game_key>`.
+
+**Dependencies:** None — this is the foundation issue. Must land before Issues 2–6.
+
+### Issue 2 — `results: add coordinator accounts, sport authorization, and mobile submission`
+
+Create restricted WordPress coordinator accounts with per-sport authorization stored in user meta (§11). Build the mobile coordinator interface (§12): `Needs Result`, `Reported Today`, `All My Matches` views. Implement the three MVP result form types (§9.1 simple score, §9.2 set-based, §9.3 multi-team). Each submission records submitter, timestamp, schedule version, certification flag, and creates an append-only revision in `sf_result_revisions` (§4.4). Corrections require a reason and create a new revision without deleting history. A match may be flagged `Under Review` if a correction affects standings.
+
+**Scope for 2026 MVP:** Basketball (simple score), Soccer (simple score), Volleyball Men/Women (set-based — best of 3 or 5 sets). Bible Challenge (multi-team) may be included if time permits.
+
+**Dependencies:** Issue 1 (schema and published schedule must exist).
+
+### Issue 3 — `results: add protected scoresheet file upload and archive`
+
+Implement secure file upload for JPEG/PNG/PDF scoresheets (§13). Files are stored outside the public web root, require authorization to download, and are associated with a specific result revision in `sf_result_files`. Calculate SHA-256 on upload. Allow scans to be attached after the result is submitted (scan status: `pending`, `uploaded`, `verified`). A failed upload must never block or erase a valid score submission.
+
+**Dependencies:** Issue 2 (result revisions must exist to attach files to).
+
+### Issue 4 — `results: add public live schedule, results, and standings display`
+
+Build the public-facing shortcodes: `[vaysf_live_schedule]`, `[vaysf_standings]`, `[vaysf_advancement]` (§14). Support filtering by sport, day, and venue. Show now-playing, recently-completed, and coming-next sections. Auto-refresh every 20–30 seconds. Public REST endpoints must exclude scoresheet paths, coordinator identities, internal notes, and revision history. Display reported results immediately with a visual indicator (red highlight) when multiple submissions have discrepant scores — show the average per the owner's decision.
+
+**Dependencies:** Issue 1 (published schedule) and Issue 2 (submitted results).
+
+### Issue 5 — `results: add standings calculation and advancement confirmation`
+
+Implement provisional standings calculation for configured sports (§10). Standings are calculated automatically when all pool matches have results, but advancement to semifinals/finals requires explicit human confirmation by an authorized coordinator or Results Desk administrator (§4.5, §6.3). If a post-advancement correction changes the qualifiers, previously confirmed advancement is reset and must be re-confirmed. Automatic standings should be enabled only for sports whose ranking metrics and tiebreak rules are confirmed in writing (per the Sports Fest Handbook).
+
+**2026 scope:** No automatic standings for the first version (per owner decision). The infrastructure should exist so standings can be enabled per-sport via configuration once the rules are confirmed.
+
+**Dependencies:** Issue 2 (results must exist to calculate standings from).
+
+### Issue 6 — `results: add Results Desk dashboard and event archive export`
+
+Build the central Results Desk dashboard (§15) showing: overdue matches, unverified results, missing scans, duplicates/conflicts, corrections, disputes, pools awaiting advancement confirmation, and a last-updated heartbeat. Add an event archive export that bundles result manifests and optionally scoresheet files for the VAY shared drive (§13).
+
+**Dependencies:** Issues 2–5 (needs results, files, and standings data to monitor).
+
+### Issue 7 (follow-up) — `results: add Track & Field sub-event result forms`
+
+Implement the placement/measured result form type (§9.4) and the T&F sub-event management model (§9.5). Add heat/attempt-based scoring, DNS/DNF/DQ states, relay team references, and the T&F-specific public display grouping. This issue depends on the sub_event schema field from Issue 1 but ships after the core head-to-head workflow is proven.
+
+**Dependencies:** Issue 1 (schema), Issue 2 (submission flow), Issue 4 (public display).
 
 ## 19. Open Decisions for Review
 
-1. Which sports must be included in the first event-day release?
-2. Which sports require automatic standings before the first weekend?
-3. What are the official ranking and tiebreak rules for each included sport?
-4. Should a coordinator submission immediately be public as `Reported`, or remain private until Results Desk verification?
-5. Who may confirm advancement for each sport?
-6. Is a scoresheet image required for every match, or required only before final archive completion?
-7. What maximum upload size is practical on Bluehost?
-8. Should files remain only on WordPress or also be copied nightly to Google Drive or Dropbox?
-9. How should unscheduled events, individual events, and placements be represented in the same public interface?
-10. Who will operate the central Results Desk during each venue block?
-11. How should schedule revisions be approved once matches have begun?
-12. What retention period is required for paper sheets, digital scans, and result revision history?
+### Resolved
+
+1. **Which sports must be included in the first event-day release?** Basketball, Soccer, Volleyball Men, Volleyball Women.
+2. **Which sports require automatic standings before the first weekend?** None for the first version. Infrastructure will exist to enable per-sport once tiebreak rules are confirmed.
+3. **What are the official ranking and tiebreak rules for each included sport?** Defined in the Sports Fest Handbook. Must be transcribed into the sport rules configuration (§10) before standings are enabled.
+4. **Should a coordinator submission immediately be public as `Reported`, or remain private until Results Desk verification?** Yes, show publicly. When multiple submissions have discrepant scores, display the average and flag in red.
+5. **Who may confirm advancement for each sport?** Decided by a human (Sport Coordinator or Results Desk administrator) on a case-by-case basis.
+6. **Is a scoresheet image required for every match?** No. The scoresheet QR leads to the web result form; the scan is optional supporting evidence, not a gate.
+7. **Security model?** Restricted WordPress coordinator accounts (decided 2026-07-11). SMS magic-links deferred.
+
+### Still Open
+
+8. What maximum upload size is practical on Bluehost?
+9. Should scoresheet files remain only on WordPress or also be copied nightly to Google Drive or Dropbox?
+10. How should unscheduled events (Track & Field, Tug-of-War, Scripture Memorization) and individual placements be represented in the same public interface as scheduled head-to-head matches?
+11. Who will operate the central Results Desk during each venue block?
+12. How should schedule revisions be approved once matches have begun?
+13. What retention period is required for paper sheets, digital scans, and result revision history?
 
 ## 20. Acceptance Criteria for the MVP
 
