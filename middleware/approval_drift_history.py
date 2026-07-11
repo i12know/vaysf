@@ -23,7 +23,11 @@ STATUS_WORKBOOK_GLOB = "Church_Team_Status_ALL_*.xlsx"
 LOG_GLOB = "sportsfest_*.log"
 APPROVED_STATUS = "approved"
 DEFAULT_REAPPROVAL_STATUS = "reapproval_required"
-IDENTITY_DRIFT_ISSUE_TYPE = "approval_identity_drift"
+REAPPROVAL_REASON_ISSUE_TYPES = (
+    "approval_identity_drift",
+    "approval_registration_drift",
+    "reapproval_required_reason_missing",
+)
 OPEN_STATUS = "open"
 RESOLVED_STATUS = "resolved"
 
@@ -624,14 +628,18 @@ def _accept_one_participant(
         )
         return row
 
-    drift_issues = wordpress_connector.get_validation_issues(
-        params={
-            "participant_id": int(wp_participant_id),
-            "issue_type": IDENTITY_DRIFT_ISSUE_TYPE,
-            "status": OPEN_STATUS,
-            "per_page": 100,
-        }
-    )
+    drift_issues = []
+    for issue_type in REAPPROVAL_REASON_ISSUE_TYPES:
+        drift_issues.extend(
+            wordpress_connector.get_validation_issues(
+                params={
+                    "participant_id": int(wp_participant_id),
+                    "issue_type": issue_type,
+                    "status": OPEN_STATUS,
+                    "per_page": 100,
+                }
+            )
+        )
     row["Open Drift Issues Found"] = str(len(drift_issues))
 
     if not execute:
