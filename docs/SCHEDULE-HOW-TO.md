@@ -410,6 +410,68 @@ sure the imported games match the approved workbook.
 
 ---
 
+## Step 4B - 2026 Main Schedule Workbook Override
+
+The 2026 main schedule workbook is an operator-authored allocation plan. It is
+not the roster source and it is not the matchup source. It tells the scheduler
+where and when already-known games should land.
+
+The workbook currently lives in:
+
+```text
+middleware/data/VAY2026_Main_Schedule_draft_4.xlsx
+```
+
+Run the import step after the matchup import and before the next
+`export-church-teams` run:
+
+```bash
+python main.py import-master-schedule --file "data/VAY2026_Main_Schedule_draft_4.xlsx"
+```
+
+By default, this writes `manual_schedule_overrides.json` to the normal export
+folder. To validate against a specific `schedule_input.json` or write a custom
+sidecar path:
+
+```bash
+python main.py import-master-schedule \
+  --file "data/VAY2026_Main_Schedule_draft_4.xlsx" \
+  --schedule-input path/to/schedule_input.json \
+  --output path/to/manual_schedule_overrides.json
+```
+
+What changes in this mode:
+
+- parsed workbook rows are classified as numbered games, playoff/stage games,
+  Bible Challenge three-team games, or broad manual blocks
+- confidently resolved rows are merged into `schedule_input.json` as fixed
+  assignments using the existing `playoff_slots` mechanism
+- unresolved rows are logged and kept in the sidecar for comparison; they are
+  not guessed into another court or time
+- duplicate fixed-game or duplicate fixed-slot conflicts fail the import/export
+  so the operator can fix the workbook or venue inputs
+- `manual_team_matchups.json` remains the source of truth for team pairings
+- roster/registration data still comes from ChMeetings and WordPress
+
+Recommended 2026 override loop:
+
+```bash
+python main.py import-team-matchups --file "data/2026-VAY-Lottery-Drawing_Team-Assignment(ALL-TEAM-SPORTS)_template.xlsx"
+python main.py import-master-schedule --file "data/VAY2026_Main_Schedule_draft_4.xlsx"
+python main.py export-church-teams
+python main.py build-schedule-workbook
+python main.py diagnose-schedule
+run-schedule.bat
+```
+
+If `import-master-schedule` says a row is unresolved, treat it as a comparison
+finding between the manual schedule and the current system model. Common causes
+are a manual game ID that does not exist in `schedule_input.json`, a court/time
+that is not available in `venue_input.xlsx`, or a visual lane count that differs
+from the current generated resources.
+
+---
+
 ## Step 5 - Fill `Playoff-Slots`
 
 After `build-schedule-workbook`, open `Schedule_Workbook_*.xlsx` and use
@@ -536,6 +598,7 @@ This is the most important operator table.
 | `Venue-Input` or `Gym-Modes` | `export-church-teams`, then `build-schedule-workbook` |
 | `Pool-Assignment` seeds / slots | `assign-pools`, then `export-church-teams`, then `build-schedule-workbook` |
 | 2026 manual team-sport matchup workbook | `import-team-matchups`, then `export-church-teams`, `build-schedule-workbook`, `diagnose-schedule`, and `run-schedule.bat` |
+| 2026 main schedule workbook | `import-master-schedule`, then `export-church-teams`, `build-schedule-workbook`, `diagnose-schedule`, and `run-schedule.bat` |
 | `Playoff-Slots` only | `export-church-teams`, then `run-schedule.bat` |
 | Want to inspect IDs before solving | `build-schedule-workbook` |
 | Roster / registrations changed upstream | `export-church-teams`, then `build-schedule-workbook`, then `run-schedule.bat` |

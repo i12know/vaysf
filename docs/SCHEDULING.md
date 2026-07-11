@@ -968,6 +968,38 @@ this does not require generic `COURT_ESTIMATE_POOL_GAMES_* = 4` generation
 support. Imported BC pool games still create the normal three semi-final games
 and final placeholder with precedence after the imported round-robin queue.
 
+### 2026 visual main schedule workbook
+
+The 2026 main schedule workbook is a visual, operator-authored allocation plan:
+it captures where and when already-known games should be played. It is not a
+roster source and it does not create team pairings.
+
+The workbook currently lives at:
+
+```text
+middleware/data/VAY2026_Main_Schedule_draft_4.xlsx
+```
+
+Import it with:
+
+```bash
+python main.py import-master-schedule --file "data/VAY2026_Main_Schedule_draft_4.xlsx"
+```
+
+The command writes `manual_schedule_overrides.json` beside the normal export
+artifacts. When a current `schedule_input.json` is available, the importer also
+validates each parsed workbook row against generated games and resources.
+`export-church-teams` consumes the sidecar on the next run and merges
+confidently resolved rows into `schedule_input.json["playoff_slots"]`, using
+the existing fixed-slot path in the solver.
+
+Rows that cannot be proven are kept as unresolved diagnostics instead of being
+guessed into another slot. Typical unresolved findings mean the manual workbook
+references a game ID the system did not generate, a court/time that is not in
+the current resource model, or a visual lane that does not exist in
+`schedule_input.json`. Duplicate fixed-game or duplicate fixed-slot conflicts
+are treated as hard errors because they would make the override ambiguous.
+
 ### Changing `Target Pool Games/Team`
 
 For the core gym team sports (`Basketball - Men Team`, `Volleyball - Men Team`,
@@ -1036,6 +1068,7 @@ So the practical rerun loops are:
 | `Venue-Input` or `Gym-Modes` | `export-church-teams`, then `build-schedule-workbook` |
 | `Pool-Assignment` | `assign-pools`, then `export-church-teams`, then `build-schedule-workbook` |
 | `Playoff-Slots` only | `export-church-teams`, then `produce-schedule` (or `run-schedule.bat` if you want a full rerun) |
+| 2026 manual main schedule workbook | `import-master-schedule`, then `export-church-teams`, then `build-schedule-workbook`, then `run-schedule.bat` |
 
 The step-by-step operator walkthrough for these loops lives in
 `docs/SCHEDULE-HOW-TO.md`.

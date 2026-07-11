@@ -2926,6 +2926,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                             filepath.parent / "schedule_input.json",
                             pool_assignment_path=filepath.parent / "pool_assignments.json",
                             manual_matchup_path=filepath.parent / "manual_team_matchups.json",
+                            manual_schedule_path=filepath.parent / "manual_schedule_overrides.json",
                         )
                         json_path = filepath.parent / "schedule_input.json"
                         logger.info(

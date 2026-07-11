@@ -388,6 +388,34 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
+    import_master_schedule_parser = subparsers.add_parser(
+        "import-master-schedule",
+        help="Import the 2026 visual main schedule workbook as fixed schedule overrides",
+    )
+    import_master_schedule_parser.add_argument(
+        "--workbook",
+        "--file",
+        dest="workbook",
+        default=None,
+        help=(
+            "Path to the master schedule workbook; --file is an alias "
+            "(default: data/VAY2026_Main_Schedule_draft_4.xlsx)"
+        ),
+    )
+    import_master_schedule_parser.add_argument(
+        "--schedule-input",
+        default=None,
+        help=(
+            "Optional schedule_input.json used to validate workbook game/resource "
+            "mapping (default: EXPORT_DIR/schedule_input.json)"
+        ),
+    )
+    import_master_schedule_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output sidecar path (default: EXPORT_DIR/manual_schedule_overrides.json)",
+    )
+
     # Generate-venue-template command
     venue_template_parser = subparsers.add_parser(
         "generate-venue-template",
@@ -1388,6 +1416,87 @@ def main() -> None:
             manual_matchups.write_manual_matchup_sidecar(payload, output_path)
             logger.info(f"Manual team matchup sidecar written to: {output_path.resolve()}")
             success = True
+    elif args.command == "import-master-schedule":
+        from scheduling import master_schedule
+
+        workbook_path = (
+            Path(args.workbook)
+            if args.workbook
+            else master_schedule.default_workbook_path(DATA_DIR)
+        )
+        output_path = (
+            Path(args.output)
+            if args.output
+            else master_schedule.default_sidecar_path(Path(EXPORT_DIR))
+        )
+        schedule_input_path = (
+            Path(args.schedule_input)
+            if args.schedule_input
+            else _default_schedule_json_path("schedule_input.json")
+        )
+
+        if not workbook_path.exists():
+            logger.error(f"import-master-schedule: workbook not found at {workbook_path}")
+            success = False
+        else:
+            games = resources = None
+            if schedule_input_path.exists():
+                try:
+                    schedule_input = json.loads(
+                        schedule_input_path.read_text(encoding="utf-8")
+                    )
+                except json.JSONDecodeError as exc:
+                    logger.error(
+                        f"import-master-schedule: schedule_input.json is not valid JSON "
+                        f"at {schedule_input_path}: {exc}"
+                    )
+                    success = False
+                else:
+                    games = schedule_input.get("games", []) or []
+                    resources = schedule_input.get("resources", []) or []
+                    logger.info(
+                        "import-master-schedule: validating against "
+                        f"{schedule_input_path} ({len(games)} game(s), "
+                        f"{len(resources)} resource(s))"
+                    )
+                    success = True
+            else:
+                logger.warning(
+                    "import-master-schedule: no schedule_input.json found at "
+                    f"{schedule_input_path}; writing parse-only sidecar."
+                )
+                success = True
+
+            if success:
+                payload = master_schedule.build_master_schedule_payload(
+                    workbook_path,
+                    games=games,
+                    resources=resources,
+                )
+                for line in master_schedule.summarize_payload_for_log(payload):
+                    logger.info(line)
+                diagnostics = payload.get("diagnostics", {}) or {}
+                for warning in diagnostics.get("warnings", []) or []:
+                    logger.warning(f"master schedule import: {warning}")
+                validation = payload.get("validation", {}) or {}
+                for warning in validation.get("warnings", []) or []:
+                    logger.warning(f"master schedule validation: {warning}")
+                errors = list(diagnostics.get("errors", []) or [])
+                errors.extend(validation.get("errors", []) or [])
+                if errors:
+                    logger.error(
+                        f"master schedule import failed with {len(errors)} error(s):"
+                    )
+                    for error in errors:
+                        logger.error(f"  - {error}")
+                    success = False
+                else:
+                    master_schedule.write_master_schedule_sidecar(payload, output_path)
+                    logger.info(
+                        "Manual schedule override sidecar written to: "
+                        f"{output_path.resolve()}"
+                    )
+                    success = True
     elif args.command == "generate-venue-template":
         out = Path(args.output) if args.output else None
         success = generate_venue_template(out)
