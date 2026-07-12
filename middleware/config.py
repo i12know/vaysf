@@ -399,6 +399,17 @@ VALIDATION_STATUS = {
     "RESOLVED": "resolved"
 }
 
+# QR payload prefixes (Issue #203) — distinguish person check-in QRs from
+# match-result QRs when scanned at event day. Badge QR codes are still a bare
+# unprefixed ChMeetings ID today (see badges/__init__.py); the "PERSON" prefix
+# is defined here for the day badge generation adopts it (tracked separately,
+# coordinated with the badge pipeline), so match QRs can already be minted
+# using the "MATCH" prefix without waiting on that follow-up.
+QR_PAYLOAD_PREFIX = {
+    "PERSON": "CHM:",
+    "MATCH": "MATCH:",
+}
+
 # Rule Level Constants (for validation)
 RULE_LEVEL = {
     "INDIVIDUAL": "INDIVIDUAL",

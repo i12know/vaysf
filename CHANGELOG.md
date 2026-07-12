@@ -12,6 +12,51 @@
   created a `missing_consent` ERROR for WP participant `199`, and an RPC scratch
   export included that row while preserving `approval_status=approved`.
 
+### Publish-schedule post-merge hardening - refs [#203](https://github.com/i12know/vaysf/issues/203)
+
+- Fixed a `main.py` Python scoping regression from PR #213 that could crash
+  later commands such as `check-consent` after adding `publish-schedule`.
+- Made `publish-schedule` fail closed when WordPress schedules cannot be read,
+  instead of treating a failed read as an empty published schedule.
+- Blocked publishing `PARTIAL` or otherwise unscheduled `schedule_output.json`
+  by default; added explicit `--allow-partial` for emergency operator-approved
+  publishes.
+- Made WordPress schedule upsert responses report `success=false` when any row
+  is skipped or fails, and hardened the `sf_schedules.game_key` migration for
+  legacy rows before adding the unique index.
+
+### Event-day results schema + publish-schedule command - closes [#203](https://github.com/i12know/vaysf/issues/203)
+
+- Redesigned `sf_schedules`/`sf_results` around the string `game_key`
+  scheduling model (dropping the old numeric `team_a_id`/`team_b_id` shape,
+  which was never used in production) and added `sf_result_revisions`
+  (append-only submission/correction history) and `sf_result_files`
+  (protected scoresheet attachments), per the event-day results RFC
+  (`docs/EVENT_DAY_RESULTS_WORKFLOW_RFC.md` §8). Bumped plugin `DB_VERSION`
+  to `1.0.5`.
+- Added `GET /schedules`, `GET /schedules/{game_key}`, and
+  `POST /schedules/upsert` REST endpoints. Upsert refuses to touch any row
+  whose current status is `reported`/`official`/`under_review`, and refuses
+  cancellations unless the request is marked `force_cancel`, independent of
+  the middleware-side diff.
+- Added `python main.py publish-schedule --dry-run|--execute [--force-cancel]`:
+  merges `schedule_output.json` assignments against `schedule_input.json`
+  game metadata, diffs against the currently published WordPress schedule by
+  a per-game content hash, and upserts only new/changed future games.
+  Completed matches are never overwritten; games missing from a republish are
+  only ever marked cancelled (never deleted), and only with
+  `--force-cancel --execute`. Writes a JSON audit summary of the diff.
+- Defined the `MATCH:<game_key>` QR payload prefix (`config.QR_PAYLOAD_PREFIX`)
+  for the event-day match-QR scoresheets that Issue #211 will generate. Badge
+  QR codes remain an unprefixed ChMeetings ID for now (see #77) — adopting the
+  matching `CHM:` prefix so scanners can tell person and match QRs apart is
+  left for a follow-up issue coordinated with the badge pipeline (#184-#188),
+  not done here.
+- Per RFC §9.5, Track & Field and Tug-of-War need no special schema handling:
+  each event is an ordinary `sf_schedules` row with its own `TF-`/`TOW-`
+  `game_key`, entered via `publish-schedule` as a fixed-time entry rather than
+  solver output — `Issue 7` in the RFC's implementation plan.
+
 ### Badge consent warning - refs [#199](https://github.com/i12know/vaysf/issues/199)
 
 - Turned missing ChMeetings Profile Box 2 consent into a red athlete-name card

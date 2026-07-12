@@ -221,6 +221,168 @@ def test_parse_args_upload_person_photo_url_dry_run(monkeypatch):
     assert args.dry_run is True
 
 
+def test_parse_args_publish_schedule_requires_mode(monkeypatch, capsys):
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "publish-schedule"])
+    with pytest.raises(SystemExit) as exc:
+        main.parse_args()
+    assert exc.value.code == 2
+
+
+def test_parse_args_publish_schedule_rejects_both_modes(monkeypatch, capsys):
+    monkeypatch.setattr(
+        main.sys, "argv", ["main.py", "publish-schedule", "--dry-run", "--execute"]
+    )
+    with pytest.raises(SystemExit) as exc:
+        main.parse_args()
+    assert exc.value.code == 2
+
+
+def test_parse_args_publish_schedule_dry_run_defaults(monkeypatch):
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "publish-schedule", "--dry-run"])
+    args = main.parse_args()
+    assert args.command == "publish-schedule"
+    assert args.dry_run is True
+    assert args.execute is False
+    assert args.force_cancel is False
+    assert args.input is None
+    assert args.schedule_output is None
+    assert args.output is None
+
+
+def test_parse_args_publish_schedule_execute_force_cancel(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "publish-schedule",
+            "--execute",
+            "--force-cancel",
+            "--input",
+            "schedule_input.json",
+            "--schedule-output",
+            "schedule_output.json",
+            "--output",
+            "audit.json",
+        ],
+    )
+    args = main.parse_args()
+    assert args.execute is True
+    assert args.force_cancel is True
+    assert args.input == "schedule_input.json"
+    assert args.schedule_output == "schedule_output.json"
+    assert args.output == "audit.json"
+
+
+def test_main_publish_schedule_force_cancel_without_execute_exits_1(monkeypatch):
+    # --force-cancel is independent of the --dry-run/--execute mutex, so
+    # "--force-cancel --dry-run" parses fine at the argparse level; main()
+    # itself enforces "force-cancel requires --execute" before touching
+    # WordPress at all (no connector needed for this test).
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        ["main.py", "publish-schedule", "--force-cancel", "--dry-run"],
+    )
+    _run_main_expect_exit(1)
+
+
+class _FakeWordPressConnectorForPublish:
+    """Stand-in for WordPressConnector used by publish-schedule dispatch tests."""
+
+    def __init__(self):
+        self.get_schedules_calls = 0
+        self.upsert_calls = []
+
+    def get_schedules(self, params=None):
+        self.get_schedules_calls += 1
+        return []
+
+    def upsert_schedules(self, games, schedule_version, force_cancel=False):
+        self.upsert_calls.append(
+            {"games": games, "schedule_version": schedule_version, "force_cancel": force_cancel}
+        )
+        return {
+            "success": True,
+            "schedule_version": schedule_version,
+            "created_count": len(games),
+            "updated_count": 0,
+            "skipped_count": 0,
+            "results": [],
+        }
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
+def _write_publish_schedule_fixtures(tmp_path):
+    schedule_input = _minimal_schedule_input()
+    schedule_input_path = tmp_path / "schedule_input.json"
+    schedule_input_path.write_text(json.dumps(schedule_input), encoding="utf-8")
+
+    schedule_output = {
+        "solved_at": "2026-07-11T00:00:00",
+        "status": "OPTIMAL",
+        "assignments": [
+            {"game_id": "BBM-01", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-08:00"},
+            {"game_id": "BBM-02", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-09:00"},
+        ],
+        "unscheduled": [],
+    }
+    schedule_output_path = tmp_path / "schedule_output.json"
+    schedule_output_path.write_text(json.dumps(schedule_output), encoding="utf-8")
+    return schedule_input_path, schedule_output_path
+
+
+def test_main_publish_schedule_dry_run_never_upserts(monkeypatch, tmp_path):
+    schedule_input_path, schedule_output_path = _write_publish_schedule_fixtures(tmp_path)
+    fake_connector = _FakeWordPressConnectorForPublish()
+    monkeypatch.setattr(main, "WordPressConnector", lambda: fake_connector)
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "publish-schedule",
+            "--dry-run",
+            "--input",
+            str(schedule_input_path),
+            "--schedule-output",
+            str(schedule_output_path),
+        ],
+    )
+    _run_main_expect_exit(0)
+    assert fake_connector.get_schedules_calls == 1
+    assert fake_connector.upsert_calls == []
+
+
+def test_main_publish_schedule_execute_upserts_once(monkeypatch, tmp_path):
+    schedule_input_path, schedule_output_path = _write_publish_schedule_fixtures(tmp_path)
+    fake_connector = _FakeWordPressConnectorForPublish()
+    monkeypatch.setattr(main, "WordPressConnector", lambda: fake_connector)
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "publish-schedule",
+            "--execute",
+            "--input",
+            str(schedule_input_path),
+            "--schedule-output",
+            str(schedule_output_path),
+        ],
+    )
+    _run_main_expect_exit(0)
+    assert fake_connector.get_schedules_calls == 1
+    assert len(fake_connector.upsert_calls) == 1
+    upserted_keys = {game["game_key"] for game in fake_connector.upsert_calls[0]["games"]}
+    assert upserted_keys == {"BBM-01", "BBM-02"}
+
+
 def test_main_build_schedule_workbook_writes_xlsx(monkeypatch, tmp_path):
     data_dir = tmp_path / "data"
     export_dir = tmp_path / "export"

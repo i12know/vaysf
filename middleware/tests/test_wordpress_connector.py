@@ -158,6 +158,107 @@ def test_get_approvals_coerces_bool_params(wp_connector, mocker):
     )
 
 
+def test_get_schedules_calls_schedules_endpoint(wp_connector, mocker):
+    """Issue #203: get_schedules hits GET /schedules with the given params."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Pure mock test — no live variant needed")
+
+    captured = {}
+
+    def capturing_get(url, **kwargs):
+        captured["url"] = url
+        captured["params"] = kwargs.get("params")
+        resp = mocker.Mock()
+        resp.status_code = 200
+        resp.raise_for_status = mocker.Mock()
+        resp.json.return_value = [{"game_key": "BBM-01", "game_status": "scheduled"}]
+        return resp
+
+    mocker.patch.object(wp_connector.session, "get", side_effect=capturing_get)
+
+    result = wp_connector.get_schedules(params={"game_status": "scheduled"})
+
+    assert captured["url"] == f"{wp_connector.custom_api_url}/schedules"
+    assert captured["params"] == {"game_status": "scheduled"}
+    assert result == [{"game_key": "BBM-01", "game_status": "scheduled"}]
+    assert wp_connector.last_get_schedules_status == "ok"
+
+
+def test_get_schedules_returns_none_on_request_exception(wp_connector, mocker):
+    """Schedule publication must fail closed when WordPress schedule reads fail."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Pure mock test - no live variant needed")
+
+    mocker.patch.object(
+        wp_connector.session,
+        "get",
+        side_effect=requests.HTTPError("not found"),
+    )
+
+    result = wp_connector.get_schedules()
+
+    assert result is None
+    assert wp_connector.last_get_schedules_status == "failed"
+
+
+def test_upsert_schedules_posts_expected_payload(wp_connector, mocker):
+    """Issue #203: upsert_schedules POSTs games/schedule_version/force_cancel
+    to /schedules/upsert and returns the parsed JSON response."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Pure mock test — no live variant needed")
+
+    captured = {}
+
+    def capturing_post(url, **kwargs):
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        resp = mocker.Mock()
+        resp.status_code = 200
+        resp.raise_for_status = mocker.Mock()
+        resp.json.return_value = {
+            "success": True,
+            "schedule_version": 3,
+            "created_count": 1,
+            "updated_count": 0,
+            "skipped_count": 0,
+            "results": [{"game_key": "BBM-01", "action": "created"}],
+        }
+        return resp
+
+    mocker.patch.object(wp_connector.session, "post", side_effect=capturing_post)
+
+    games = [{"game_key": "BBM-01", "event": "Basketball - Men Team"}]
+    result = wp_connector.upsert_schedules(games=games, schedule_version=3, force_cancel=False)
+
+    assert captured["url"] == f"{wp_connector.custom_api_url}/schedules/upsert"
+    assert captured["json"] == {
+        "games": games,
+        "schedule_version": 3,
+        "force_cancel": False,
+    }
+    assert result["success"] is True
+    assert result["created_count"] == 1
+
+
+def test_upsert_schedules_returns_none_on_request_exception(wp_connector, mocker):
+    """A failed upsert request returns None rather than raising, matching the
+    error-handling convention of create_church/update_church."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Pure mock test — no live variant needed")
+
+    mocker.patch.object(
+        wp_connector.session, "post", side_effect=requests.ConnectionError("boom")
+    )
+
+    result = wp_connector.upsert_schedules(games=[], schedule_version=1)
+
+    assert result is None
+
+
 def test_get_approvals_records_failed_read_status(wp_connector, mocker):
     mocker.patch.object(
         wp_connector.session,
