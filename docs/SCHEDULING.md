@@ -6,32 +6,42 @@ and Claude sessions do not need to reverse-engineer the design from code.
 
 ---
 
-## Strategic vs Tactical: Layer 1 and Layer 2
+## Strategic, Tactical, and Event Operations
 
-VAY Sports Fest scheduling spans two layers, divided by the moment the venue
-contract is signed.
+VAY Sports Fest scheduling now spans three practical layers. The first two are
+about sports capacity and game placement; the third is the integrated event
+plan that makes a mathematically legal game schedule usable for the whole
+festival.
 
-**Layer 1 — strategic (pre-booking).** Before any gym is contracted, the
-question is *estimation*: what is the minimum venue capacity we need to book?
-The output informs the venue contract negotiation. This layer is **not yet
-built** — `SCHEDULE_SOLVER_GYM_COURTS` and `SCHEDULE_SKETCH_N_COURTS` in
-`config.py` are crude scenario stand-ins for it, and the `Venue-Estimator` tab
-covers part of the demand estimate. A dedicated gym-capacity estimator is
-future work.
+**Layer 1 - strategic venue estimation (pre-booking).** Before any gym is
+contracted, the question is *estimation*: what is the minimum venue capacity we
+need to book? The output informs venue search and contract negotiation while
+registration is still changing. This layer exists today as a mix of historical
+scenario sketches, `SCHEDULE_SOLVER_GYM_COURTS` / `SCHEDULE_SKETCH_N_COURTS`
+stand-ins, and the `Venue-Estimator` tab. It is useful, but it is not yet a
+complete dedicated venue-booking optimizer.
 
-**Layer 2 — tactical (post-booking).** The venue contract is signed; the
-question becomes *maximization*: how do we get the most out of the courts and
-hours already paid for? Layer 2 reads the real booked venue from
+**Layer 2 - tactical sport scheduling (post-booking).** The venue contract is
+signed; the question becomes *maximization*: how do we get the most out of the
+courts and hours already paid for? Layer 2 reads the real booked venue from
 `venue_input.xlsx` and runs in two stages:
 
-- **Stage A — gym mode allocation.** Each gym can be configured in one of
+- **Stage A - gym mode allocation.** Each gym can be configured in one of
   several mutually-exclusive modes per time block (e.g. 1 basketball court
-  *or* 2 volleyball courts). Stage A decides each gym's mode per time range —
+  *or* 2 volleyball courts). Stage A decides each gym's mode per time range -
   greedily, most-populous-sport-first. Inputs: the `Gym-Modes` and
   `Venue-Input` tabs plus per-sport demand. See Issue #102.
-- **Stage B — per-sport game scheduling.** The CP-SAT solver (`scheduler.py`)
+- **Stage B - per-sport game scheduling.** The CP-SAT solver (`scheduler.py`)
   packs each sport's games into the courts Stage A allocated, one sport at a
   time.
+
+**Layer 3 - integrated event operations (human master schedule).** The human
+master schedule is not merely a prettier game report. It coordinates games
+with ceremonies, worship services, setup/teardown, meals, room closures,
+off-site blocks, community activities, and sport-director-managed blocks. A
+court can be physically available in `venue_input.xlsx` and still be
+operationally unavailable because the event plan reserves it, pauses the whole
+festival, or requires the same staff and participants elsewhere.
 
 The four-step pipeline below is the Layer-2 runtime path.  When
 `venue_input.xlsx` is present with a `Gym-Modes` tab, `export-church-teams`
@@ -39,9 +49,166 @@ runs the Stage-A allocator and writes real Layer-2 gym resources into
 `schedule_input.json`.  When the file is absent, the pipeline falls back to
 the `SCHEDULE_SOLVER_GYM_COURTS` estimate (Issues #102 and #103, done).
 
+The 2026 workbooks add the Layer-3 overlay: the solver may fill unresolved
+legal space, but it should not silently move or discard human-authored event
+operations blocks.
+
+---
+
+## 2026 Scheduling Evolution / Decision Timeline
+
+This section preserves the season history so a future contributor does not
+have to reconstruct the scheduling model from old issues and chat context.
+
+| Stage | Approx. timing | What changed | Authority at that stage |
+|-------|----------------|--------------|-------------------------|
+| Venue demand estimate | Pre-booking | Issue #83 added quick court-slot / court-hour estimates while registration was still moving and the usual venue was unavailable. | Estimate from live roster demand |
+| Multi-court sketches | Pre-booking | Issue #85 added 3/4/5-court sketches to test whether likely demand could fit possible facilities. | Planning scenarios, not final schedule |
+| Machine schedule contract | Early build-out | Issues #87, #90, #93, and #94 introduced `schedule_input.json`, the OR-Tools CP-SAT proof of concept, solver output, and Excel rendering. | Generated contract and solver output |
+| Booked-venue fitting | Post-booking | Issues #102 and #103 moved the system from rough court counts to real booked venue rows, gym modes, and resource availability. | `venue_input.xlsx` plus generated resources |
+| Iterative operator loop | Post-booking | Issues #139 and #140 made scheduling an adjustment cycle: demand, supply, gym modes, pins, conflicts, diagnostics, and quality. | Diagnostics plus operator changes |
+| Human pool draw / matchups | June 2026 | Issues #190 and #191 added `import-team-matchups`, so meeting-approved BB/MVB/WVB/SOC/BC matchups can replace generated pairings. | Approved matchup workbook/sidecar |
+| Master Schedule boundaries | July 2026 | Issue #196 added `import-master-schedule` so the visual master schedule can pin known games and stage blocks to court/time allocations. | Human master schedule for fixed slots and blocks |
+| Team-code-filled visual schedule | Future / Issue #214 | Issue #214 captures the next distinction: a visual workbook may specify not only where a slot is, but which teams occupy it. | Not implemented yet; must audit before overwrite |
+| Current 2026 model | Current | The four reviewed workbooks show Sports Fest as a whole-event operating plan, not only a game scheduler. | Live registrations + human matchups + venue input + master schedule + solver for unresolved space |
+
+---
+
+## 2026 Source Of Truth And Precedence
+
+When two artifacts disagree, do not guess. Prefer the higher-precedence source
+below, keep provenance, and surface the conflict in an audit or issue.
+
+| Concern | Authoritative source | Notes |
+|---|---|---|
+| Participant identity / registration | ChMeetings + WordPress | Live source data for who registered and approval state. |
+| Team eligibility / roster completeness | Generated validation and roster exports | Changes while registration remains open; fix upstream data rather than editing generated tabs. |
+| Venue/resource physical availability | `venue_input.xlsx` | Booked courts, fields, rooms, dates, time windows, and physical gym mode options. |
+| Operational availability | Human Master Schedule | Ceremonies, services, meals, setup, closures, and sport envelopes further restrict physical availability. |
+| Pool draw / random seeding | Human scheduler artifact when supplied | The generated `Pool-Assignment` workflow is still available, but 2026 imported matchups supersede it for covered sports. |
+| Pool-play matchup identity | Latest approved matchup source files | `manual_team_matchups.json` is the machine-readable sidecar for imported BB/MVB/WVB/SOC/BC matchups. |
+| Game-to-slot override | Imported Master Schedule / `manual_schedule_overrides.json` | Pins fixed games/stages/blocks to court/time; should not replace matchup identity unless an explicit importer such as #214 says so. |
+| Detailed sport workbook inside a master block | Sport-specific workbook | Badminton, Table Tennis, and Soccer workbooks elaborate blocks or references in the Master Schedule. |
+| Machine scheduling contract | `schedule_input.json` | Merged current inputs, generated games, resources, conflicts, imported matchups, and fixed slots. |
+| Solver placement | `schedule_output.json` | Legal placement for unresolved games only; it is not allowed to override protected human/event blocks. |
+| Final published schedule | Generated workbook / WordPress publication flow | Publish only after diagnostics show a complete and reviewed schedule. |
+
+Conflict behavior:
+
+- A live registration/roster conflict is fixed in ChMeetings or WordPress, then
+  regenerated.
+- A matchup conflict is resolved against the latest human-approved matchup
+  artifact; generated pool pairings are fallback for uncovered sports.
+- A physical availability conflict is resolved in `venue_input.xlsx`.
+- An operational block conflict is resolved against the Master Schedule or by
+  leadership changing the event plan.
+- A detailed sport workbook that falls outside its Master Schedule envelope is
+  a discrepancy to audit, not a silent extension of venue availability.
+
+---
+
+## Sports Scheduling Vs Whole-Event Scheduling
+
+The 2026 master schedule mixes game cells with event operations. Importers and
+humans should classify cells before deciding what the solver may change.
+
+| Cell class | Meaning | Solver treatment |
+|---|---|---|
+| Resolved matchup | Known teams, court/room, and time. Example: BB/MVB/WVB/BC first-weekend pool rows in the latest Master Schedule. | Fixed unless a later audited override explicitly changes it. |
+| Bye/reserved slot | A counted slot that intentionally has no real matchup. Example: Basketball game 20 in the human schedule. | Reserve or ignore as a non-game according to importer rules; do not report as missing game by default. |
+| Stage reservation | Known sport/stage and time, participants determined later. Example: `BB QF`, `MVB SF`, `WVB FINAL`. | Fixed stage envelope; participants come from bracket results later. |
+| Broad activity envelope | Multi-hour block managed by a sport coordinator. Example: Badminton playoffs / 3rd / final on three courts. | Reserve the block; detailed games are handled by the sport workbook/coordinator. |
+| Operational blackout | Setup, closed, meal, service, ceremony, community-game, or AV block. | Hard resource/global constraint unless leadership explicitly changes it. |
+| External-reference block | Master Schedule points to a separate workbook. Example: Soccer, Table Tennis, Tennis, Pickleball. | Detailed workbook must fit inside or be reconciled with the envelope/reference. |
+
+The human scheduler clarified these 2026 rules:
+
+- BB/MVB/WVB numbered cells refer to required time slots or match counts based
+  on the number of teams and games per team.
+- Basketball game 20 is intentional as the bye slot.
+- The WVB `s` typo in cell O12 should be read as game 7.
+- Badminton playoff/final blocks are reserved envelopes; Andrew's Badminton
+  schedule handles individual 30-minute games.
+- First priority is avoiding conflicts between sports. Avoiding back-to-back
+  games within the same sport matters more than avoiding back-to-back games
+  across different sports.
+- Special church requests are feasible only when known before scheduling; late
+  changes can ripple through the entire event.
+- Finals, ceremonies, and grey event blocks become hard once time slots are
+  allocated.
+- BC three-team rows are intended matches in the listed order, with limited
+  wiggle room only to improve spread across the three pre-final days.
+- Setup, closed, service, ceremony, and community-game blocks are hard
+  constraints. Dinner is usually treated as a hard event pause but may flex for
+  facility availability.
+- The Sunday July 26 Bible Challenge Final is intended to run longer than a
+  normal 60-minute slot, approximately 2:30-4:00 PM.
+
+---
+
+## 2026 Human-Scheduler Workbook Inventory
+
+The reviewed XLSX files are static, presentation-style workbooks converted
+from PDF. They preserve visible content and layout but do not expose formulas
+or normalized tables, so importers must parse known cell regions and preserve
+source filename, sheet, cell/range, and raw value.
+
+For automation, treat the XLSX as the machine-readable source and the paired
+PDF as a human verification artifact. If an XLSX/PDF pair visibly disagrees,
+stop and audit the source rather than choosing one silently.
+
+| Workbook | Role | Authoritative for | Notes |
+|---|---|---|---|
+| `2026 Main Schedule draft 11.xlsx` | Event-wide Master Schedule | BB/MVB/WVB/BC first-weekend matchups, court/time boundaries, later-stage reservations, ceremonies, meals, setup, closures, and cross-event flow | Supersedes older visual master drafts for operational review. The current importer originally targeted `VAY2026_Main_Schedule_draft_4.xlsx`; pass `--file` when testing another draft. |
+| `2026 VAY Badminton Schedule_draft_v1_10Jul2026.xlsx` | Badminton detailed schedule | Friday July 24 preliminary matchups, three-court timing, roster reference | Saturday playoff block remains an envelope in the Master Schedule; individual game schedule is coordinated by Badminton leadership. |
+| `COED SOCCER SCHEDULE.xlsx` | Soccer detailed schedule | Soccer groups, six pool matches, referee assignments, advancement bracket | G7-G12 advancement bracket times remain TBD in this workbook. |
+| `Schedule_Roster - Table Tennis (PingPong) 2026.xlsx` | Table Tennis detailed schedule and roster | Friday July 24 schedule, stage placeholders, rules, doubles rosters | Under-35 roster/schedule discrepancy remains: roster has `SBC`, schedule has `FVC`; resolve before treating that portion as authoritative. |
+
+The Master Schedule is the top-level envelope. Detailed sport schedules should
+fit inside the Master Schedule's reserved venue/date/time blocks or produce a
+discrepancy for human review.
+
 ---
 
 ## Moving Parts Map
+
+### Current 2026 merged input flow
+
+```text
+Registration / rosters
+        |
+        v
+Venue demand estimate
+        |
+        v
+Booked physical availability (venue_input.xlsx)
+        |
+        +-----------------------------+
+        |                             |
+        v                             v
+Human pool matchups              Whole-event Master Schedule
+- BB/MVB/WVB/SOC/BC              - ceremonies / services
+- manual_team_matchups.json      - meals / setup / closures
+                                  - court/time envelopes
+Detailed sport schedules         - fixed game/stage slots
+- Badminton
+- Soccer
+- Table Tennis
+- future Tennis/Pickleball
+        |                         |
+        +------------+------------+
+                     v
+          merged schedule_input.json contract
+                     |
+                     v
+          solver fills only unresolved legal space
+                     |
+                     v
+           audit against event-wide plan
+                     |
+                     v
+          final workbook / WordPress publication
+```
 
 ### Data flow by layer
 
@@ -116,6 +283,11 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 | File | Location | Role | Layer |
 |------|----------|------|-------|
 | `venue_input.xlsx` | `middleware/data/` (gitignored) | Booked venue: courts, times, gym modes, playoff slots | Layer 2 input |
+| `2026-VAY-Lottery-Drawing_Team-Assignment(ALL-TEAM-SPORTS)_template.xlsx` | `middleware/data/` | 2026 approved BB/MVB/WVB/SOC/BC matchup import source | Layer 2/3 human input |
+| `2026 Main Schedule draft 11.xlsx` | `middleware/data/` | Latest reviewed event-wide Master Schedule and operational envelope | Layer 3 human input |
+| `2026 VAY Badminton Schedule_draft_v1_10Jul2026.xlsx` | `middleware/data/` | Badminton detailed schedule inside Master Schedule blocks | Layer 3 sport-detail input |
+| `COED SOCCER SCHEDULE.xlsx` | `middleware/data/` | Soccer detailed schedule and referee/bracket reference | Layer 3 sport-detail input |
+| `Schedule_Roster - Table Tennis (PingPong) 2026.xlsx` | `middleware/data/` | Table Tennis detailed schedule, rules, and roster reference | Layer 3 sport-detail input |
 | `SportsFest_2026_Venue_Input_Template.xlsx` | `middleware/data/` (committed) | Operator template for `venue_input.xlsx` | — |
 
 ### Generated artifacts
@@ -937,27 +1109,36 @@ reload the same seed inputs. A later `export-church-teams` run in that same
 folder reads the sidecar back into `schedule_input.json`, so Layer 2 scheduling
 and the conflict audit use the same pool draw you reviewed in Excel.
 
-### 2026 manual team-sport matchup workbook
+### 2026 manual team-sport matchup workbooks
 
-For the 2026 event, team-sport pool matchups may come from a meeting-approved
-manual workbook instead of the generated pool-pairing templates. The
-`import-team-matchups` command validates the workbook and writes
-`manual_team_matchups.json`; `export-church-teams` consumes that sidecar when
-regenerating `schedule_input.json`.
+For the 2026 event, team-sport pool matchups may come from human-approved
+manual workbooks instead of the generated pool-pairing templates. The
+implemented importer is `import-team-matchups`: it validates the approved
+workbook shape and writes `manual_team_matchups.json`; `export-church-teams`
+consumes that sidecar when regenerating `schedule_input.json`.
 
-The workbook currently lives at:
+The earlier all-team-sports workbook path is:
 
 ```text
 middleware/data/2026-VAY-Lottery-Drawing_Team-Assignment(ALL-TEAM-SPORTS)_template.xlsx
 ```
 
-The current imported worksheets are `BB_round2`, `MVB`, `WVB`, `SOC`, and
-`BC`. `SOC` uses the same two-team matchup layout as the gym sports. `BC`
+The imported worksheets are `BB_round2`, `MVB`, `WVB`, `SOC`, and `BC`. `SOC`
+uses the same two-team matchup layout as the gym sports. `BC`
 uses three-team rows and imports them as `BC-RR-*` round-robin games. Pool
 roster / slot maps are optional for all manual-imported sports when the matchup
 list has the required slot numbers and team codes; imported games keep
 `pool_id` blank when no pool map is provided. BC is scheduled as one global
 Jeopardy queue.
+
+The latest human-scheduler delivery adds separate static workbooks for the
+event-wide Master Schedule, Badminton, Soccer, and Table Tennis. The Master
+Schedule Draft 11 includes BB/MVB/WVB/BC pool-play matchup identity as well as
+court/time boundaries; the sport-specific workbooks elaborate reserved or
+referenced blocks. Those files should be inventoried and audited as
+human-authored scheduling inputs before a new importer treats them as
+authoritative. Issue #214 is the implementation placeholder for reading
+team-code-filled visual schedule cells as explicit game assignments.
 
 When this import mode is enabled for an event, the manual workbook is the
 source of truth for that event's pool games. `Pool-Assignment` still provides
@@ -968,16 +1149,39 @@ this does not require generic `COURT_ESTIMATE_POOL_GAMES_* = 4` generation
 support. Imported BC pool games still create the normal three semi-final games
 and final placeholder with precedence after the imported round-robin queue.
 
+Important 2026 interpretation rules from the human scheduler:
+
+- Basketball game 20 is the intentional bye slot, not a missing real game.
+- The WVB `s` typo in cell O12 should be interpreted as game 7.
+- Bible Challenge three-team rows are real intended matchups, usually kept in
+  the order supplied by the BC coordinator.
+- Setup, closed, service, ceremony, and community-game blocks are hard
+  constraints; dinner is normally treated as a hard event-wide pause but may
+  flex if facility availability requires it.
+- The Sunday July 26 BC Final should reserve a longer 2:30-4:00 PM window.
+
+
 ### 2026 visual main schedule workbook
 
-The 2026 main schedule workbook is a visual, operator-authored allocation plan:
-it captures where and when already-known games should be played. It is not a
-roster source and it does not create team pairings.
+The 2026 main schedule workbook is a visual, operator-authored event plan. It
+is both an operational envelope (ceremonies, services, meals, setup, closures,
+off-site blocks, and court/room reservations) and, in the latest reviewed
+draft, a matchup/time source for BB/MVB/WVB/BC pool play. The current
+`import-master-schedule` command was built for game-to-slot override import:
+it pins games/stage blocks to resources and times, but it should not be used as
+a silent replacement for matchup identity. Reading team-code-filled visual
+cells as authoritative matchups belongs to Issue #214.
 
-The workbook currently lives at:
+The original imported workbook path was:
 
 ```text
 middleware/data/VAY2026_Main_Schedule_draft_4.xlsx
+```
+
+The latest reviewed human-scheduler workbook is:
+
+```text
+middleware/data/2026 Main Schedule draft 11.xlsx
 ```
 
 Import it with:
