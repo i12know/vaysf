@@ -17,6 +17,10 @@
   only WordPress write path.
 - Skip explicit `BYE` rows symmetrically in Soccer, Badminton, and Table
   Tennis imports so byes never become phantom WordPress score-entry games.
+  Skipped Badminton and Table Tennis byes are now also recorded in the audit
+  `placeholders` list with `classification=bye`, matching Soccer, so a
+  dry-run's placeholder count reflects every skipped bye across all three
+  sports instead of only Soccer's.
 - Documented the dry-run-first operator workflow and approved-game publication
   path in `docs/SCHEDULE-HOW-TO.md` and `docs/SCHEDULING.md`.
 

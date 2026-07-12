@@ -223,7 +223,16 @@ def test_bye_rows_are_not_imported_as_real_games(tmp_path):
     assert "BYE" not in labels
     keys = {game["game_key"] for game in payload["games"]}
     assert not any(key.startswith(("BAD-", "SOC-", "TT-")) for key in keys)
-    assert any(
-        placeholder.get("classification") == "bye"
-        for placeholder in payload["placeholders"]
-    )
+
+    # Every sport must record its skipped bye row for audit, not just soccer
+    # (issue: badminton/table-tennis byes used to vanish with no trace).
+    bye_placeholders = [
+        placeholder for placeholder in payload["placeholders"]
+        if placeholder.get("classification") == "bye"
+    ]
+    bye_workbooks = {placeholder["source_workbook"] for placeholder in bye_placeholders}
+    assert str(badminton) in bye_workbooks
+    assert str(soccer) in bye_workbooks
+    assert str(table_tennis) in bye_workbooks
+    # Two bye rows were written for table tennis (left-side and right-side bye).
+    assert sum(1 for wb in bye_placeholders if wb["source_workbook"] == str(table_tennis)) == 2

@@ -473,11 +473,12 @@ def _parse_badminton(
     *,
     resources: Sequence[Mapping[str, Any]],
     warnings: list[str],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     wb = load_workbook(path, data_only=True)
     ws = wb.worksheets[0]
     team_categories = _badminton_team_category_map(path)
     records: list[dict[str, Any]] = []
+    placeholders: list[dict[str, Any]] = []
     for row in range(4, ws.max_row + 1):
         start_time = _time_label(ws.cell(row=row, column=1).value)
         if not start_time:
@@ -491,6 +492,13 @@ def _parse_badminton(
             if not match_no or middle != "v" or not team_a or not team_b:
                 continue
             if _is_bye(team_a) or _is_bye(team_b):
+                placeholders.append({
+                    "source_workbook": str(path),
+                    "source_sheet": ws.title,
+                    "source_cell": _cell_range(ws.title, row, start_col, start_col + 3),
+                    "raw_source_text": f"{match_no}: {team_a} v {team_b}",
+                    "classification": "bye",
+                })
                 continue
             category = team_categories.get(team_a) or team_categories.get(team_b)
             if not category:
@@ -530,7 +538,7 @@ def _parse_badminton(
                 raw_source_text=f"{match_no}: {team_a} v {team_b}",
                 x_extra={"court": lane},
             ))
-    return records
+    return records, placeholders
 
 
 def _parse_soccer(
@@ -634,10 +642,11 @@ def _parse_table_tennis(
     warnings: list[str],
     errors: list[str],
     waive_discrepancy: bool,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     wb = load_workbook(path, data_only=True)
     ws = wb.active
     records: list[dict[str, Any]] = []
+    placeholders: list[dict[str, Any]] = []
     counters: Counter[str] = Counter()
     roster_u35_codes = {
         _team_code(value).replace("(U35) ", "")
@@ -661,6 +670,13 @@ def _parse_table_tennis(
             team_a_label = _strip_table_tennis_marker(left)
             team_b_label = _strip_table_tennis_marker(right)
             if _is_bye(team_a_label) or _is_bye(team_b_label):
+                placeholders.append({
+                    "source_workbook": str(path),
+                    "source_sheet": ws.title,
+                    "source_cell": _cell_ref(ws.title, row, column),
+                    "raw_source_text": raw,
+                    "classification": "bye",
+                })
                 continue
             event, sub_event, prefix = _table_tennis_category(raw, column)
             if prefix == "TT-U35-D":
@@ -706,7 +722,7 @@ def _parse_table_tennis(
         )
     elif "SBC" in missing_from_schedule:
         warnings.append("Table Tennis U35 SBC roster/schedule discrepancy was explicitly waived.")
-    return records
+    return records, placeholders
 
 
 def _validate_records(records: Sequence[Mapping[str, Any]], errors: list[str], warnings: list[str]) -> None:
@@ -860,19 +876,25 @@ def build_approved_games_payload(
         )
         records.extend(main_records)
         placeholders.extend(main_placeholders)
-        records.extend(_parse_badminton(badminton_path, resources=resources, warnings=warnings))
+        badminton_records, badminton_placeholders = _parse_badminton(
+            badminton_path, resources=resources, warnings=warnings,
+        )
+        records.extend(badminton_records)
+        placeholders.extend(badminton_placeholders)
         soccer_records, soccer_placeholders = _parse_soccer(
             soccer_path, resources=resources, warnings=warnings,
         )
         records.extend(soccer_records)
         placeholders.extend(soccer_placeholders)
-        records.extend(_parse_table_tennis(
+        table_tennis_records, table_tennis_placeholders = _parse_table_tennis(
             table_tennis_path,
             resources=resources,
             warnings=warnings,
             errors=errors,
             waive_discrepancy=waive_table_tennis_discrepancy,
-        ))
+        )
+        records.extend(table_tennis_records)
+        placeholders.extend(table_tennis_placeholders)
         _validate_records(records, errors, warnings)
 
     by_event = Counter(str(record.get("event") or "") for record in records)
