@@ -956,22 +956,25 @@ class ParticipantSyncer:
             existing_wp_participant=participant_in_wp,
         )
         participant_payload["approval_status"] = current_wp_status
-        validation_issues_list = [] # Renamed to avoid conflict with 'issues' from validate_participant
-        
+        is_valid, base_validation_issues = self.validate_participant(participant_payload)
+        validation_issues_list = (
+            self_heal_issues
+            + cutoff_issues
+            + base_validation_issues
+            + drift_issues
+        )
+        is_valid = not any(
+            issue.get("severity") == VALIDATION_SEVERITY["ERROR"]
+            for issue in validation_issues_list
+        )
+
         if not final_status_determined:
             if chm_id == target_chm_id_for_debug:
                 logger.debug(
                     f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Entering validation/checklist logic. "
                     f"participant_payload['approval_status'] before: {participant_payload.get('approval_status')}"
                 )
-            
-            is_valid, validation_issues_list = self.validate_participant(participant_payload)
-            validation_issues_list = self_heal_issues + cutoff_issues + validation_issues_list + drift_issues
-            is_valid = not any(
-                issue.get("severity") == VALIDATION_SEVERITY["ERROR"]
-                for issue in validation_issues_list
-            )
-            
+
             if is_valid:
                 completion_checklist = participant_payload.get("completion_checklist", "")
                 required_items = [
@@ -994,7 +997,12 @@ class ParticipantSyncer:
                     f"Issues: {validation_issues_list}"
                 )
         else:
-            validation_issues_list = self_heal_issues + cutoff_issues + drift_issues
+            if chm_id == target_chm_id_for_debug:
+                logger.debug(
+                    f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Approval status is locked; "
+                    f"preserving '{participant_payload.get('approval_status')}' while syncing "
+                    f"current validation issues: {validation_issues_list}"
+                )
 
         if chm_id == target_chm_id_for_debug:
             logger.debug(

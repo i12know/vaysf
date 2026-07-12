@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Church export validation issue freshness - refs [#201](https://github.com/i12know/vaysf/issues/201)
+
+- Kept pastor-approved participant status locked during participant sync while
+  still recomputing and syncing current validation issues from the live
+  ChMeetings profile, so approved minors missing Box 2 consent surface in the
+  Church Status `Validation-Issues` tab.
+- Verified the hot case with Adam Lien (`chmeetings_id=3623168`): targeted sync
+  created a `missing_consent` ERROR for WP participant `199`, and an RPC scratch
+  export included that row while preserving `approval_status=approved`.
+
 ### Publish-schedule post-merge hardening - refs [#203](https://github.com/i12know/vaysf/issues/203)
 
 - Fixed a `main.py` Python scoping regression from PR #213 that could crash
