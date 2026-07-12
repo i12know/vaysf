@@ -205,6 +205,7 @@ def run_publish_schedule(
     wp_connector: Any,
     dry_run: bool,
     force_cancel: bool = False,
+    allow_partial: bool = False,
     audit_output_path: Optional[Path] = None,
 ) -> int:
     """Load, contract-validate, diff, and (if --execute) upsert a schedule.
@@ -245,8 +246,33 @@ def run_publish_schedule(
             logger.error(f"  - {violation}")
         return 1
 
+    output_status = str(schedule_output.get("status") or "")
+    unscheduled = schedule_output.get("unscheduled") or []
+    incomplete = (
+        output_status not in {"OPTIMAL", "FEASIBLE"}
+        or bool(unscheduled)
+    )
+    if incomplete and not allow_partial:
+        logger.error(
+            "publish-schedule: refusing to publish incomplete schedule_output.json "
+            f"(status={output_status!r}, unscheduled={len(unscheduled)}). "
+            "Rerun after a complete solve, or pass --allow-partial for an "
+            "intentional emergency publish."
+        )
+        return 1
+
     merged_games = merge_schedule(schedule_input, schedule_output)
-    published_rows = wp_connector.get_schedules()
+    try:
+        published_rows = wp_connector.get_schedules()
+    except Exception as exc:
+        logger.error(f"publish-schedule: failed to read WordPress schedule: {exc}")
+        return 1
+    if published_rows is None:
+        logger.error(
+            "publish-schedule: could not read existing WordPress schedule; "
+            "refusing to diff against an unknown published state."
+        )
+        return 1
     existing_versions = [
         int(row.get("schedule_version") or 0) for row in published_rows
     ]
@@ -261,6 +287,7 @@ def run_publish_schedule(
             "schedule_version": schedule_version,
             "dry_run": dry_run,
             "force_cancel": force_cancel,
+            "allow_partial": allow_partial,
             "diff": diff,
         }
         audit_output_path.parent.mkdir(parents=True, exist_ok=True)

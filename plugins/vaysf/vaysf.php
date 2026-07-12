@@ -692,6 +692,32 @@ class VAYSF_Integration {
                 error_log("Added {$column} column to sf_schedules table");
             }
         }
+
+        // Existing pre-#203 schedule rows, if any, were created before game_key
+        // existed. Give blank or duplicate legacy rows stable placeholder keys
+        // before adding the unique index so migration cannot fail on repeated ''.
+        $schedule_key_rows = $wpdb->get_results(
+            "SELECT schedule_id, game_key FROM {$table_schedules} ORDER BY schedule_id",
+            ARRAY_A
+        );
+        $seen_game_keys = array();
+        foreach ($schedule_key_rows as $row) {
+            $schedule_id = absint($row['schedule_id']);
+            $game_key = isset($row['game_key']) ? trim((string) $row['game_key']) : '';
+            if ($game_key === '' || isset($seen_game_keys[$game_key])) {
+                $game_key = 'legacy-' . $schedule_id;
+                $wpdb->update(
+                    $table_schedules,
+                    array('game_key' => $game_key),
+                    array('schedule_id' => $schedule_id),
+                    array('%s'),
+                    array('%d')
+                );
+                error_log("Assigned legacy game_key {$game_key} to sf_schedules row {$schedule_id}");
+            }
+            $seen_game_keys[$game_key] = true;
+        }
+
         // game_key must be unique once populated; add the index separately since dbDelta
         // cannot reliably add a UNIQUE KEY to an existing table via ALTER.
         $check_index = $wpdb->get_results("SHOW INDEX FROM {$table_schedules} WHERE Key_name = 'game_key'");

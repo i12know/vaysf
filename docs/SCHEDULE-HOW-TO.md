@@ -74,6 +74,32 @@ and has no physical gym overlap warnings, gym-mode shortfalls are shown as
 informational capacity notes. They mean the rough venue estimate is tight or
 conservative, not that a game failed to schedule.
 
+## Publishing To WordPress
+
+`publish-schedule` is intentionally stricter than workbook rendering. It will
+refuse to publish a `PARTIAL`, `INFEASIBLE`, `UNKNOWN`, or otherwise unscheduled
+`schedule_output.json` by default, because WordPress is the event-day score
+entry surface and should not silently receive an incomplete official schedule.
+
+Use the normal flow only after diagnostics show the solve is complete:
+
+```text
+python main.py publish-schedule --dry-run
+python main.py publish-schedule --execute
+```
+
+If leadership explicitly approves publishing an incomplete schedule during an
+emergency, use `--allow-partial` so the audit trail records that decision:
+
+```text
+python main.py publish-schedule --dry-run --allow-partial
+python main.py publish-schedule --execute --allow-partial
+```
+
+The command also fails closed if WordPress cannot return the existing published
+schedule. A missing endpoint, auth failure, or server error must be fixed before
+publishing so the diff is computed against a known state.
+
 ---
 
 ## Tab Status Map

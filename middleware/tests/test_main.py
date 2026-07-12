@@ -340,9 +340,7 @@ def _write_publish_schedule_fixtures(tmp_path):
 def test_main_publish_schedule_dry_run_never_upserts(monkeypatch, tmp_path):
     schedule_input_path, schedule_output_path = _write_publish_schedule_fixtures(tmp_path)
     fake_connector = _FakeWordPressConnectorForPublish()
-    monkeypatch.setattr(
-        "wordpress.frontend_connector.WordPressConnector", lambda: fake_connector
-    )
+    monkeypatch.setattr(main, "WordPressConnector", lambda: fake_connector)
     monkeypatch.setattr(
         main.sys,
         "argv",
@@ -364,9 +362,7 @@ def test_main_publish_schedule_dry_run_never_upserts(monkeypatch, tmp_path):
 def test_main_publish_schedule_execute_upserts_once(monkeypatch, tmp_path):
     schedule_input_path, schedule_output_path = _write_publish_schedule_fixtures(tmp_path)
     fake_connector = _FakeWordPressConnectorForPublish()
-    monkeypatch.setattr(
-        "wordpress.frontend_connector.WordPressConnector", lambda: fake_connector
-    )
+    monkeypatch.setattr(main, "WordPressConnector", lambda: fake_connector)
     monkeypatch.setattr(
         main.sys,
         "argv",

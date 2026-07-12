@@ -340,6 +340,12 @@ def parse_args() -> argparse.Namespace:
         help="Also mark future games missing from the new schedule as cancelled (requires --execute)",
     )
     publish_schedule_parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Allow publishing a PARTIAL/unscheduled schedule_output.json. "
+             "Default is to block incomplete schedules.",
+    )
+    publish_schedule_parser.add_argument(
         "--output",
         default=None,
         help="Optional path for the publish audit summary JSON",
@@ -1332,7 +1338,6 @@ def main() -> None:
             success = True
     elif args.command == "publish-schedule":
         from schedule_publisher import run_publish_schedule
-        from wordpress.frontend_connector import WordPressConnector
         input_path = Path(args.input) if args.input else _default_schedule_json_path("schedule_input.json")
         schedule_output_path = Path(args.schedule_output) if args.schedule_output else _default_schedule_json_path("schedule_output.json")
         if args.force_cancel and not args.execute:
@@ -1345,6 +1350,7 @@ def main() -> None:
                 wp_connector=wp_conn,
                 dry_run=args.dry_run,
                 force_cancel=args.force_cancel,
+                allow_partial=args.allow_partial,
                 audit_output_path=Path(args.output) if args.output else None,
             )
         sys.exit(exit_code)

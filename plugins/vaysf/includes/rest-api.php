@@ -3041,7 +3041,7 @@ public function update_approval($request) {
         }
 
         return rest_ensure_response(array(
-            'success' => true,
+            'success' => ($skipped_count === 0),
             'schedule_version' => $schedule_version,
             'created_count' => $created_count,
             'updated_count' => $updated_count,
