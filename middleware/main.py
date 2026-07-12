@@ -459,6 +459,58 @@ def parse_args() -> argparse.Namespace:
         help="Output sidecar path (default: EXPORT_DIR/manual_schedule_overrides.json)",
     )
 
+    import_match_overrides_parser = subparsers.add_parser(
+        "import-match-schedule-overrides",
+        help=(
+            "Import Loc's authoritative BB/MVB/WVB team-code matchups from the "
+            "visual main schedule workbook"
+        ),
+    )
+    import_match_overrides_parser.add_argument(
+        "--workbook",
+        "--file",
+        dest="workbook",
+        default=None,
+        help=(
+            "Path to the visual match schedule workbook; --file is an alias "
+            "(default: data/2026 Main Schedule draft 11.xlsx)"
+        ),
+    )
+    import_match_overrides_parser.add_argument(
+        "--events",
+        default=None,
+        help="Comma-separated event codes to import (default: BB,MVB,WVB)",
+    )
+    import_match_overrides_parser.add_argument(
+        "--input-xlsx",
+        default=None,
+        help="Optional Church_Team_Status_ALL workbook for roster-vs-matchup validation",
+    )
+    import_match_overrides_parser.add_argument(
+        "--schedule-input",
+        default=None,
+        help=(
+            "Optional schedule_input.json used to cross-reference generated pool "
+            "games (default: EXPORT_DIR/schedule_input.json)"
+        ),
+    )
+    import_match_overrides_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output sidecar/audit path (default: EXPORT_DIR/match_schedule_overrides.json)",
+    )
+    dry_run_group = import_match_overrides_parser.add_mutually_exclusive_group(required=True)
+    dry_run_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Parse and validate only; write the audit JSON but never the sidecar",
+    )
+    dry_run_group.add_argument(
+        "--execute",
+        action="store_true",
+        help="Write the match_schedule_overrides.json sidecar when validation is clean",
+    )
+
     # Generate-venue-template command
     venue_template_parser = subparsers.add_parser(
         "generate-venue-template",
@@ -1557,6 +1609,117 @@ def main() -> None:
                         "Manual schedule override sidecar written to: "
                         f"{output_path.resolve()}"
                     )
+                    success = True
+    elif args.command == "import-match-schedule-overrides":
+        from schedule_workbook import ScheduleWorkbookBuilder
+        from scheduling import match_schedule_overrides
+
+        workbook_path = (
+            Path(args.workbook)
+            if args.workbook
+            else match_schedule_overrides.default_workbook_path(DATA_DIR)
+        )
+        events = (
+            [code.strip().upper() for code in args.events.split(",") if code.strip()]
+            if args.events
+            else list(match_schedule_overrides.DEFAULT_EVENT_CODES)
+        )
+        default_audit_path = Path(EXPORT_DIR) / "match_schedule_overrides.audit.json"
+        output_path = (
+            Path(args.output)
+            if args.output
+            else (
+                default_audit_path
+                if args.dry_run
+                else match_schedule_overrides.default_sidecar_path(Path(EXPORT_DIR))
+            )
+        )
+        schedule_input_path = (
+            Path(args.schedule_input)
+            if args.schedule_input
+            else _default_schedule_json_path("schedule_input.json")
+        )
+
+        if not workbook_path.exists():
+            logger.error(f"import-match-schedule-overrides: workbook not found at {workbook_path}")
+            success = False
+        else:
+            context_xlsx = Path(args.input_xlsx) if args.input_xlsx else None
+            if context_xlsx is None:
+                context_xlsx = _find_latest_all_workbook(output_path.parent)
+                if context_xlsx is None and Path(EXPORT_DIR) != output_path.parent:
+                    context_xlsx = _find_latest_all_workbook(Path(EXPORT_DIR))
+            roster_rows = None
+            if context_xlsx:
+                logger.info(f"import-match-schedule-overrides: using roster context workbook {context_xlsx}")
+                builder = ScheduleWorkbookBuilder()
+                roster_rows, _validation_rows = builder.read_roster_validation_rows(context_xlsx)
+            else:
+                logger.warning(
+                    "import-match-schedule-overrides: no Church_Team_Status_ALL workbook found; "
+                    "team-code validation against the roster will be skipped."
+                )
+
+            games = resources = None
+            if schedule_input_path.exists():
+                try:
+                    schedule_input = json.loads(schedule_input_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as exc:
+                    logger.error(
+                        f"import-match-schedule-overrides: schedule_input.json is not valid JSON "
+                        f"at {schedule_input_path}: {exc}"
+                    )
+                    success = False
+                else:
+                    games = schedule_input.get("games", []) or []
+                    resources = schedule_input.get("resources", []) or []
+                    logger.info(
+                        "import-match-schedule-overrides: cross-referencing against "
+                        f"{schedule_input_path} ({len(games)} game(s), {len(resources)} resource(s))"
+                    )
+                    success = True
+            else:
+                logger.warning(
+                    "import-match-schedule-overrides: no schedule_input.json found at "
+                    f"{schedule_input_path}; pairings will be created from the visual schedule "
+                    "without cross-referencing generated pool games."
+                )
+                success = True
+
+            if success:
+                payload = match_schedule_overrides.build_match_schedule_overrides_payload(
+                    workbook_path,
+                    events=events,
+                    roster_rows=roster_rows,
+                    games=games,
+                    resources=resources,
+                )
+                for line in match_schedule_overrides.summarize_payload_for_log(payload):
+                    logger.info(line)
+                diagnostics = payload.get("diagnostics", {}) or {}
+                for warning in diagnostics.get("unmapped_cells", []) or []:
+                    logger.warning(f"match schedule overrides: {warning}")
+                validation = payload.get("validation", {}) or {}
+                for warning in validation.get("warnings", []) or []:
+                    logger.warning(f"match schedule overrides validation: {warning}")
+                errors = list(diagnostics.get("errors", []) or [])
+                errors.extend(validation.get("errors", []) or [])
+                if errors:
+                    logger.error(
+                        f"match schedule overrides import found {len(errors)} error(s):"
+                    )
+                    for error in errors:
+                        logger.error(f"  - {error}")
+
+                if args.dry_run:
+                    match_schedule_overrides.write_match_schedule_overrides_sidecar(payload, output_path)
+                    logger.info(f"Match schedule overrides audit written to: {output_path.resolve()}")
+                    success = not errors
+                elif errors:
+                    success = False
+                else:
+                    match_schedule_overrides.write_match_schedule_overrides_sidecar(payload, output_path)
+                    logger.info(f"Match schedule overrides sidecar written to: {output_path.resolve()}")
                     success = True
     elif args.command == "generate-venue-template":
         out = Path(args.output) if args.output else None

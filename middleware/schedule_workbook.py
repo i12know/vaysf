@@ -61,6 +61,7 @@ from scheduling import xlsx_utils, venue_loader, output_report
 from scheduling import planning_tabs
 from scheduling import manual_matchups
 from scheduling import master_schedule
+from scheduling import match_schedule_overrides
 
 
 class ScheduleWorkbookBuilder:
@@ -3794,6 +3795,7 @@ class ScheduleWorkbookBuilder:
         pool_assignment_path: Optional[Path] = None,
         manual_matchup_path: Optional[Path] = None,
         manual_schedule_path: Optional[Path] = None,
+        match_schedule_overrides_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Assemble the full schedule_input package consumed by OR-Tools.
 
@@ -4228,6 +4230,34 @@ class ScheduleWorkbookBuilder:
                     "manual_schedule_overrides.json contains conflicting fixed assignments"
                 )
 
+        match_schedule_overrides_payload = match_schedule_overrides.load_match_schedule_overrides_sidecar(
+            match_schedule_overrides_path
+        )
+        match_schedule_overrides_summary: Dict[str, Any] = {}
+        if match_schedule_overrides_payload:
+            all_games, playoff_slots, match_schedule_overrides_summary = (
+                match_schedule_overrides.merge_match_schedule_overrides_into_schedule_input(
+                    all_games,
+                    playoff_slots,
+                    match_schedule_overrides_payload,
+                    all_resources,
+                )
+            )
+            logger.info(
+                "Match schedule overrides: "
+                f"{match_schedule_overrides_summary.get('fixed_count', 0)} pinned assignment(s), "
+                f"{match_schedule_overrides_summary.get('created_game_count', 0)} newly-created game(s)"
+            )
+            for warning in match_schedule_overrides_summary.get("warnings", []) or []:
+                logger.warning(f"match schedule override: {warning}")
+            errors = match_schedule_overrides_summary.get("errors", []) or []
+            if errors:
+                for error in errors:
+                    logger.error(f"match schedule override: {error}")
+                raise ValueError(
+                    "match_schedule_overrides.json contains conflicting assignments"
+                )
+
         if bc_games and not any(
             str(resource.get("resource_type") or "").strip() == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE
             for resource in all_resources
@@ -4323,6 +4353,8 @@ class ScheduleWorkbookBuilder:
             schedule_input["manual_matchups"] = manual_matchup_summary
         if manual_schedule_summary:
             schedule_input["manual_schedule_overrides"] = manual_schedule_summary
+        if match_schedule_overrides_summary:
+            schedule_input["match_schedule_overrides"] = match_schedule_overrides_summary
         return schedule_input
 
 
@@ -4800,6 +4832,7 @@ class ScheduleWorkbookBuilder:
         pool_assignment_path: Optional[Path] = None,
         manual_matchup_path: Optional[Path] = None,
         manual_schedule_path: Optional[Path] = None,
+        match_schedule_overrides_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Build schedule_input dict and write it as JSON. Returns the dict.
         Always called by export-church-teams, regardless of whether venue_input.xlsx
@@ -4812,6 +4845,7 @@ class ScheduleWorkbookBuilder:
             pool_assignment_path=pool_assignment_path,
             manual_matchup_path=manual_matchup_path,
             manual_schedule_path=manual_schedule_path,
+            match_schedule_overrides_path=match_schedule_overrides_path,
         )
         json_path.write_text(json.dumps(schedule_input, indent=2, default=str), encoding="utf-8")
         logger.info(

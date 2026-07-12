@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Visual match schedule team-code overrides (BB/MVB/WVB) - closes [#214](https://github.com/i12know/vaysf/issues/214)
+
+- Added `import-match-schedule-overrides` to parse the visual match schedule
+  workbook Loc (the human Sports Fest scheduler) fills in with real team
+  codes for Basketball/MVB/WVB pool games, validate them against the roster,
+  and write a `match_schedule_overrides.json` sidecar with a required
+  `--dry-run`/`--execute` mode pair and full sheet/cell provenance.
+- Built a dedicated parser (`scheduling/match_schedule_overrides.py`) rather
+  than extending `import-master-schedule`'s: the real workbook uses a
+  `TeamCode | "v" | TeamCode` three-cell layout instead of numbered-game
+  cells, and its own `LEGEND` row swatches don't reliably match the actual
+  game-cell fill colors. Sport is resolved by nearest-color match against
+  `schedule_styles.SPORT_STYLES`, the same canonical palette already used to
+  render every other schedule export.
+- Wired `export-church-teams` / `ScheduleWorkbookBuilder` to merge the
+  sidecar into `schedule_input.json`: a team pairing matching an existing
+  generated pool game gets its time/court pinned via the existing fixed-slot
+  mechanism; a pairing with no existing match is created from the visual
+  schedule (logged, with provenance, not applied silently) since Loc's sheet
+  is the authoritative source for who plays whom.
+- Documented the operator workflow in `docs/SCHEDULE-HOW-TO.md` (Step 4C) and
+  `docs/SCHEDULING.md`.
+
 ### Church export validation issue freshness - refs [#201](https://github.com/i12know/vaysf/issues/201)
 
 - Kept pastor-approved participant status locked during participant sync while

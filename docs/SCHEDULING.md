@@ -1000,6 +1000,56 @@ the current resource model, or a visual lane that does not exist in
 `schedule_input.json`. Duplicate fixed-game or duplicate fixed-slot conflicts
 are treated as hard errors because they would make the override ambiguous.
 
+### 2026 visual match schedule team-code overrides (BB/MVB/WVB)
+
+`import-master-schedule` above pins an already-known game to a time/court. A
+second, related workbook — the one Loc (the human Sports Fest scheduler) fills
+in by hand — instead specifies *which teams are playing* in each BB/MVB/WVB
+slot on the same visual grid, and that pairing is treated as authoritative.
+`import-match-schedule-overrides` parses that workbook, validates the team
+codes, and writes `match_schedule_overrides.json`; `export-church-teams`
+consumes the sidecar and merges it into `schedule_input.json` alongside the
+other manual imports.
+
+The workbook currently lives at:
+
+```text
+middleware/data/2026 Main Schedule draft 11.xlsx
+```
+
+Import it with:
+
+```bash
+python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --dry-run
+python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --execute
+```
+
+This is a **different workbook family** from `import-master-schedule`'s, not a
+drop-in variant of it, for two reasons confirmed against the real export:
+
+- Each BB/MVB/WVB game is three adjacent cells — `TeamCode | "v" | TeamCode`
+  — sharing one fill color, rather than a single numbered-game cell. Bible
+  Challenge keeps its existing three-team-code layout.
+- The workbook's own `LEGEND` row swatches do not reliably match the actual
+  game-cell fill colors (verified: the legend's Men's/Women's volleyball
+  swatches are each closer to the *other* sport's real cell color than to
+  their own). Sport is instead resolved by nearest-color match against
+  `schedule_styles.SPORT_STYLES` — the same canonical per-sport palette
+  already used to render every other schedule export — which correctly
+  separates every real color in the draft with a wide margin.
+
+Each row is validated against the current roster (unknown team code, or a
+code registered for a different event, is a hard error naming the actual
+event it belongs to) and against `schedule_input.json` when available: a
+pairing that matches an existing generated pool game gets its time/court
+pinned via the same fixed-slot mechanism `import-master-schedule` uses; a
+pairing with no existing match is created from the visual schedule (logged as
+a warning, not silently) since Loc's sheet is the authoritative source for
+who plays whom. A team double-booked at the same slot *within the same
+event* is a hard error; the same church code appearing in both an MVB and a
+WVB slot at the same time is not, since those are different rosters of
+players.
+
 ### Changing `Target Pool Games/Team`
 
 For the core gym team sports (`Basketball - Men Team`, `Volleyball - Men Team`,
@@ -1069,6 +1119,7 @@ So the practical rerun loops are:
 | `Pool-Assignment` | `assign-pools`, then `export-church-teams`, then `build-schedule-workbook` |
 | `Playoff-Slots` only | `export-church-teams`, then `produce-schedule` (or `run-schedule.bat` if you want a full rerun) |
 | 2026 manual main schedule workbook | `import-master-schedule`, then `export-church-teams`, then `build-schedule-workbook`, then `run-schedule.bat` |
+| 2026 visual match schedule team codes (BB/MVB/WVB) | `import-match-schedule-overrides --execute`, then `export-church-teams`, then `build-schedule-workbook`, then `run-schedule.bat` |
 
 The step-by-step operator walkthrough for these loops lives in
 `docs/SCHEDULE-HOW-TO.md`.
