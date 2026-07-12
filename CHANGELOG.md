@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Approved preliminary games for WordPress score entry - closes [#217](https://github.com/i12know/vaysf/issues/217)
+
+- Added `import-approved-games --dry-run|--execute` to parse the four approved
+  2026 preliminary-game workbooks, preserve source workbook/sheet/cell
+  provenance, generate stable `game_key` records, and block execution on
+  duplicate keys, duplicate resource slots, unresolved resources, or the known
+  Table Tennis U35 `SBC` roster/schedule discrepancy unless explicitly waived.
+- Wrote `scheduling/approved_games.py` to normalize Main Schedule
+  BB/MVB/WVB/BC games, Badminton category matches, Soccer G1-G6, and Table
+  Tennis preliminary games into `approved_schedule_games.json`.
+- Emit `approved_schedule_input.json` and `approved_schedule_output.json` on
+  clean execute so the existing guarded `publish-schedule` command remains the
+  only WordPress write path.
+- Documented the dry-run-first operator workflow and approved-game publication
+  path in `docs/SCHEDULE-HOW-TO.md` and `docs/SCHEDULING.md`.
+
 ### Visual match schedule team-code overrides (BB/MVB/WVB) - closes [#214](https://github.com/i12know/vaysf/issues/214)
 
 - Added `import-match-schedule-overrides` to parse the visual match schedule

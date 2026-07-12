@@ -1,0 +1,190 @@
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill
+
+from config import (
+    POD_RESOURCE_TYPE_BADMINTON,
+    POD_RESOURCE_TYPE_TABLE_TENNIS,
+    SPORT_TYPE,
+    TEAM_RESOURCE_TYPE_SOCCER,
+)
+from schedule_contracts import (
+    validate_output_against_input,
+    validate_schedule_input,
+    validate_schedule_output,
+)
+from schedule_styles import SPORT_STYLES
+from scheduling import approved_games
+
+
+def _solid(color: str) -> PatternFill:
+    return PatternFill(fill_type="solid", fgColor=color)
+
+
+def _write_main_schedule(path):
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "SAT 7/18"
+    ws.merge_cells("B1:D1")
+    ws["B1"] = "Main Gym BB1"
+    ws["A2"] = "1:00 PM"
+    for coord, value in (("B2", "ANH"), ("C2", "v"), ("D2", "GAC")):
+        ws[coord] = value
+        ws[coord].fill = _solid(SPORT_STYLES[SPORT_TYPE["BASKETBALL"]].fill_color)
+    wb.save(path)
+
+
+def _write_badminton(path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["2026 VAY Badminton Preliminary Schedule"])
+    ws.append(["Time", "#", "Court 1", None, None])
+    ws.append(["5:00 PM", "", "Opening and Check-Ins"])
+    ws.append(["5:20 PM", 1, "GLA", "v", "ANH"])
+    ws2 = wb.create_sheet("Sheet2")
+    ws2.append(["", "BADMINTON - MEN'S DOUBLES", None, None])
+    ws2.append(["No.", "Full Name", "Gender", "Team"])
+    ws2.append([1, "Player One", "Male", "GLA"])
+    ws2.append([2, "Player Two", "Male", "ANH"])
+    wb.save(path)
+
+
+def _write_soccer(path):
+    wb = Workbook()
+    ws = wb.active
+    for _ in range(10):
+        ws.append([])
+    ws.append(["SAT 7/18", "1:00 PM", "G1", "ANH", "v", "GAC", "RPC"])
+    wb.save(path)
+
+
+def _write_table_tennis(path, include_sbc=True):
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["", "VAY SPORTS FEST 2026 - TABLE TENNIS SCHEDULE"])
+    ws.append(["Fri 7/24", "Table 1", "Table 2", "Table 3", "Table 4"])
+    ws.append(["17:00", "Nhan Micah (ORN) - Phan Dora (WSD)"])
+    ws.append([])
+    ws.append(["TEAM", "ATHLETES"])
+    if include_sbc:
+        ws.append(["(U35) SBC", "Player A & Player B"])
+    wb.save(path)
+
+
+def _schedule_input():
+    return {
+        "games": [
+            {
+                "game_id": "BBM-01",
+                "event": SPORT_TYPE["BASKETBALL"],
+                "stage": "Pool",
+                "pool_id": "A",
+                "round": 1,
+                "team_a_id": "BBM::ANH",
+                "team_b_id": "BBM::GAC",
+                "team_a_label": "ANH",
+                "team_b_label": "GAC",
+                "duration_minutes": 60,
+                "resource_type": "Basketball Court",
+            }
+        ],
+        "resources": [
+            {
+                "resource_id": "BB-Sat-1-1",
+                "resource_type": "Basketball Court",
+                "label": "Court-1",
+                "day": "Sat-1",
+                "open_time": "13:00",
+                "close_time": "14:00",
+                "slot_minutes": 60,
+            },
+            {
+                "resource_id": "BAD-Fri-1-1",
+                "resource_type": POD_RESOURCE_TYPE_BADMINTON,
+                "label": "Court-1",
+                "day": "Fri-1",
+                "open_time": "17:00",
+                "close_time": "18:00",
+                "slot_minutes": 60,
+            },
+            {
+                "resource_id": "SOC-Sat-1-1",
+                "resource_type": TEAM_RESOURCE_TYPE_SOCCER,
+                "label": "Court-1",
+                "day": "Sat-1",
+                "open_time": "13:00",
+                "close_time": "14:00",
+                "slot_minutes": 60,
+            },
+            {
+                "resource_id": "TT-Fri-1-1",
+                "resource_type": POD_RESOURCE_TYPE_TABLE_TENNIS,
+                "label": "Table-1",
+                "day": "Fri-1",
+                "open_time": "17:00",
+                "close_time": "18:00",
+                "slot_minutes": 20,
+            },
+        ],
+    }
+
+
+def test_approved_games_payload_builds_publishable_artifacts(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(table_tennis, include_sbc=False)
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+    )
+
+    assert payload["validation"]["errors"] == []
+    keys = {game["game_key"] for game in payload["games"]}
+    assert {"BBM-01", "BAD-MD-01", "SOC-G1", "TT-W-S-01"} <= keys
+
+    publish_input = payload["publish_artifacts"]["schedule_input"]
+    publish_output = payload["publish_artifacts"]["schedule_output"]
+    assert validate_schedule_input(publish_input) == []
+    assert validate_schedule_output(publish_output) == []
+    assert validate_output_against_input(publish_output, publish_input) == []
+
+
+def test_table_tennis_sbc_discrepancy_blocks_execute_without_waiver(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(table_tennis, include_sbc=True)
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+    )
+
+    assert any("SBC" in error for error in payload["validation"]["errors"])
+
+    waived = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+        waive_table_tennis_discrepancy=True,
+    )
+    assert waived["validation"]["errors"] == []
+    assert any("waived" in warning for warning in waived["validation"]["warnings"])
