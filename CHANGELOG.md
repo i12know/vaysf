@@ -15,6 +15,8 @@
 - Emit `approved_schedule_input.json` and `approved_schedule_output.json` on
   clean execute so the existing guarded `publish-schedule` command remains the
   only WordPress write path.
+- Skip explicit `BYE` rows symmetrically in Soccer, Badminton, and Table
+  Tennis imports so byes never become phantom WordPress score-entry games.
 - Documented the dry-run-first operator workflow and approved-game publication
   path in `docs/SCHEDULE-HOW-TO.md` and `docs/SCHEDULING.md`.
 

@@ -105,6 +105,10 @@ def _team_code(value: Any) -> str:
     return _clean_text(value).upper()
 
 
+def _is_bye(value: Any) -> bool:
+    return _clean_text(value).casefold() == "bye"
+
+
 def _cell_ref(sheet: str, row: int, col: int) -> str:
     return f"{sheet}!{get_column_letter(col)}{row}"
 
@@ -486,6 +490,8 @@ def _parse_badminton(
             team_b = _team_code(ws.cell(row=row, column=start_col + 3).value)
             if not match_no or middle != "v" or not team_a or not team_b:
                 continue
+            if _is_bye(team_a) or _is_bye(team_b):
+                continue
             category = team_categories.get(team_a) or team_categories.get(team_b)
             if not category:
                 warnings.append(f"{_cell_range(ws.title, row, start_col, start_col + 3)}: no Sheet2 category found for {team_a} vs {team_b}")
@@ -547,6 +553,16 @@ def _parse_soccer(
         raw = " ".join(part for part in (game_no, team_a, "v", team_b) if part)
         source_cell = _cell_range(ws.title, row, 1, 7)
         game_key = f"SOC-{game_no.split()[0].upper()}"
+        if _is_bye(team_a) or _is_bye(team_b):
+            placeholders.append({
+                "game_key": game_key,
+                "source_workbook": str(path),
+                "source_sheet": ws.title,
+                "source_cell": source_cell,
+                "raw_source_text": raw,
+                "classification": "bye",
+            })
+            continue
         day = _date_to_day(ws.cell(row=row, column=1).value)
         start_time = _time_label(ws.cell(row=row, column=2).value)
         exact_teams = bool(_TEAM_CODE_RE.match(team_a.upper()) and _TEAM_CODE_RE.match(team_b.upper()))
@@ -642,11 +658,11 @@ def _parse_table_tennis(
             if re.search(r"\b(?:SF|FINAL|3RD)\b", raw, re.I):
                 continue
             left, right = [part.strip() for part in raw.split(" - ", 1)]
-            if right.upper() == "BYE":
-                continue
-            event, sub_event, prefix = _table_tennis_category(raw, column)
             team_a_label = _strip_table_tennis_marker(left)
             team_b_label = _strip_table_tennis_marker(right)
+            if _is_bye(team_a_label) or _is_bye(team_b_label):
+                continue
+            event, sub_event, prefix = _table_tennis_category(raw, column)
             if prefix == "TT-U35-D":
                 schedule_u35_codes.update({
                     _team_code(team_a_label),

@@ -33,14 +33,14 @@ def _write_main_schedule(path):
     wb.save(path)
 
 
-def _write_badminton(path):
+def _write_badminton(path, team_a="GLA", team_b="ANH"):
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     ws.append(["2026 VAY Badminton Preliminary Schedule"])
     ws.append(["Time", "#", "Court 1", None, None])
     ws.append(["5:00 PM", "", "Opening and Check-Ins"])
-    ws.append(["5:20 PM", 1, "GLA", "v", "ANH"])
+    ws.append(["5:20 PM", 1, team_a, "v", team_b])
     ws2 = wb.create_sheet("Sheet2")
     ws2.append(["", "BADMINTON - MEN'S DOUBLES", None, None])
     ws2.append(["No.", "Full Name", "Gender", "Team"])
@@ -49,21 +49,23 @@ def _write_badminton(path):
     wb.save(path)
 
 
-def _write_soccer(path):
+def _write_soccer(path, team_a="ANH", team_b="GAC"):
     wb = Workbook()
     ws = wb.active
     for _ in range(10):
         ws.append([])
-    ws.append(["SAT 7/18", "1:00 PM", "G1", "ANH", "v", "GAC", "RPC"])
+    ws.append(["SAT 7/18", "1:00 PM", "G1", team_a, "v", team_b, "RPC"])
     wb.save(path)
 
 
-def _write_table_tennis(path, include_sbc=True):
+def _write_table_tennis(path, include_sbc=True, matches=None):
     wb = Workbook()
     ws = wb.active
     ws.append(["", "VAY SPORTS FEST 2026 - TABLE TENNIS SCHEDULE"])
     ws.append(["Fri 7/24", "Table 1", "Table 2", "Table 3", "Table 4"])
-    ws.append(["17:00", "Nhan Micah (ORN) - Phan Dora (WSD)"])
+    matches = matches or ["Nhan Micah (ORN) - Phan Dora (WSD)"]
+    for index, match in enumerate(matches):
+        ws.append([f"17:{index * 20:02d}", match])
     ws.append([])
     ws.append(["TEAM", "ATHLETES"])
     if include_sbc:
@@ -188,3 +190,40 @@ def test_table_tennis_sbc_discrepancy_blocks_execute_without_waiver(tmp_path):
     )
     assert waived["validation"]["errors"] == []
     assert any("waived" in warning for warning in waived["validation"]["warnings"])
+
+
+def test_bye_rows_are_not_imported_as_real_games(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton, team_b="BYE")
+    _write_soccer(soccer, team_b="BYE")
+    _write_table_tennis(
+        table_tennis,
+        include_sbc=False,
+        matches=["Bye - Phan Dora (WSD)", "Nhan Micah (ORN) - Bye"],
+    )
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+    )
+
+    assert payload["validation"]["errors"] == []
+    labels = {
+        label
+        for game in payload["games"]
+        for label in (game.get("team_a_label"), game.get("team_b_label"))
+    }
+    assert "BYE" not in labels
+    keys = {game["game_key"] for game in payload["games"]}
+    assert not any(key.startswith(("BAD-", "SOC-", "TT-")) for key in keys)
+    assert any(
+        placeholder.get("classification") == "bye"
+        for placeholder in payload["placeholders"]
+    )
