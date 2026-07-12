@@ -460,6 +460,43 @@ class WordPressConnector:
             logger.error(f"Failed to delete roster {roster_id}: {str(e)}")
             return False
     
+    @retry(**_WP_READ_RETRY)
+    def get_schedules(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Get the currently published schedule from WordPress (sf_schedules)."""
+        try:
+            response = self.session.get(f"{self.custom_api_url}/schedules", params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to get schedules: {str(e)}")
+            if _is_retryable_wp_read_exception(e):
+                raise  # Let retry handle transient failures.
+            return []
+
+    def upsert_schedules(
+        self,
+        games: List[Dict[str, Any]],
+        schedule_version: int,
+        force_cancel: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Bulk create/update sf_schedules rows by stable game_key (Issue #203).
+
+        Not retried: a blind retry of a partially-applied bulk write isn't safe
+        without stronger idempotency guarantees than this endpoint offers.
+        """
+        try:
+            payload = {
+                "games": games,
+                "schedule_version": schedule_version,
+                "force_cancel": force_cancel,
+            }
+            response = self.session.post(f"{self.custom_api_url}/schedules/upsert", json=payload)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Failed to upsert schedules: {str(e)}")
+            return None
+
     def create_approval(self, approval_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create an approval record in WordPress."""
         try:

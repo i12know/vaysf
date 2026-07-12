@@ -308,6 +308,43 @@ def parse_args() -> argparse.Namespace:
         help="Output path for xlsx (default: EXPORT_DIR/VAYSF_Schedule_YYYY-MM-DD.xlsx)",
     )
 
+    # Publish-schedule command
+    publish_schedule_parser = subparsers.add_parser(
+        "publish-schedule",
+        help="Diff schedule_output.json against the published WordPress schedule and upsert by game_key",
+    )
+    publish_schedule_parser.add_argument(
+        "--input",
+        default=None,
+        help="Path to schedule_input.json (default: EXPORT_DIR/schedule_input.json, else DATA_DIR)",
+    )
+    publish_schedule_parser.add_argument(
+        "--schedule-output",
+        default=None,
+        help="Path to schedule_output.json (default: EXPORT_DIR/schedule_output.json, else DATA_DIR)",
+    )
+    publish_mode = publish_schedule_parser.add_mutually_exclusive_group(required=True)
+    publish_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview new/changed/cancelled/unchanged/completed-conflict games; no WordPress writes",
+    )
+    publish_mode.add_argument(
+        "--execute",
+        action="store_true",
+        help="Upsert new and changed future games to WordPress by stable game_key",
+    )
+    publish_schedule_parser.add_argument(
+        "--force-cancel",
+        action="store_true",
+        help="Also mark future games missing from the new schedule as cancelled (requires --execute)",
+    )
+    publish_schedule_parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional path for the publish audit summary JSON",
+    )
+
     # Build-schedule-workbook command
     build_workbook_parser = subparsers.add_parser(
         "build-schedule-workbook",
@@ -1293,6 +1330,24 @@ def main() -> None:
             )
             logger.info(f"Schedule Excel written to: {out_path.resolve()}")
             success = True
+    elif args.command == "publish-schedule":
+        from schedule_publisher import run_publish_schedule
+        from wordpress.frontend_connector import WordPressConnector
+        input_path = Path(args.input) if args.input else _default_schedule_json_path("schedule_input.json")
+        schedule_output_path = Path(args.schedule_output) if args.schedule_output else _default_schedule_json_path("schedule_output.json")
+        if args.force_cancel and not args.execute:
+            logger.error("publish-schedule: --force-cancel requires --execute")
+            sys.exit(1)
+        with WordPressConnector() as wp_conn:
+            exit_code = run_publish_schedule(
+                schedule_input_path=input_path,
+                schedule_output_path=schedule_output_path,
+                wp_connector=wp_conn,
+                dry_run=args.dry_run,
+                force_cancel=args.force_cancel,
+                audit_output_path=Path(args.output) if args.output else None,
+            )
+        sys.exit(exit_code)
     elif args.command == "build-schedule-workbook":
         from schedule_workbook import ScheduleWorkbookBuilder
         si_path = _resolve_build_schedule_input_path(

@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.15
+ * Version: 1.0.16
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,12 +18,13 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.15';
+    const VERSION = '1.0.16';
 
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.4';  // Incremented due to schema change (insurance upload columns)
+    const DB_VERSION = '1.0.5';  // Issue #203 — event-day results schema (sf_schedules/sf_results
+                                  // redesign + new sf_result_revisions/sf_result_files tables)
     
     /**
      * Database version option name
@@ -484,44 +485,113 @@ class VAYSF_Integration {
         ) $charset_collate;";
         dbDelta($sql_competitions);
         
-        // Schedules table
+        // Schedules table (redesigned for Issue #203 — string game_key scheduling model,
+        // replaces the numeric team_a_id/team_b_id FK shape; table was confirmed unused
+        // in production so no data-preserving migration is needed)
         $table_schedules = $wpdb->prefix . self::TABLE_PREFIX . 'schedules';
         $sql_schedules = "CREATE TABLE $table_schedules (
             schedule_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-            competition_id BIGINT(20) UNSIGNED NOT NULL,
-            round_name VARCHAR(50) NOT NULL,
-            match_number INT UNSIGNED NOT NULL,
-            team_a_id BIGINT(20) UNSIGNED DEFAULT NULL,
-            team_b_id BIGINT(20) UNSIGNED DEFAULT NULL,
+            competition_id BIGINT(20) UNSIGNED DEFAULT NULL,
+            game_key VARCHAR(64) NOT NULL,
+            schedule_version INT UNSIGNED NOT NULL DEFAULT 0,
+            event VARCHAR(100) DEFAULT NULL,
+            stage VARCHAR(50) DEFAULT NULL,
+            pool_id VARCHAR(20) DEFAULT NULL,
+            round_number INT UNSIGNED DEFAULT NULL,
+            sub_event VARCHAR(50) DEFAULT NULL,
+            team_a_key VARCHAR(64) DEFAULT NULL,
+            team_a_label VARCHAR(255) DEFAULT NULL,
+            team_b_key VARCHAR(64) DEFAULT NULL,
+            team_b_label VARCHAR(255) DEFAULT NULL,
+            team_c_key VARCHAR(64) DEFAULT NULL,
+            team_c_label VARCHAR(255) DEFAULT NULL,
+            team_ids_json TEXT DEFAULT NULL,
+            resource_id VARCHAR(64) DEFAULT NULL,
+            scheduled_slot VARCHAR(32) DEFAULT NULL,
             scheduled_time DATETIME DEFAULT NULL,
             scheduled_location VARCHAR(255) DEFAULT NULL,
+            game_status VARCHAR(20) NOT NULL DEFAULT 'scheduled',
+            source_hash CHAR(64) DEFAULT NULL,
+            published_at DATETIME DEFAULT NULL,
             synced_to_chmeetings TINYINT(1) DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY  (schedule_id),
+            UNIQUE KEY game_key (game_key),
             KEY competition_id (competition_id),
+            KEY schedule_version (schedule_version),
+            KEY game_status (game_status),
+            KEY event (event),
             KEY scheduled_time (scheduled_time)
         ) $charset_collate;";
         dbDelta($sql_schedules);
-        
-        // Results table
+
+        // Results table (redesigned for Issue #203 — one current result per schedule row;
+        // revision history moves to sf_result_revisions below)
         $table_results = $wpdb->prefix . self::TABLE_PREFIX . 'results';
         $sql_results = "CREATE TABLE $table_results (
             result_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             schedule_id BIGINT(20) UNSIGNED NOT NULL,
-            score_team_a VARCHAR(50) DEFAULT NULL,
-            score_team_b VARCHAR(50) DEFAULT NULL,
-            winner_id BIGINT(20) UNSIGNED DEFAULT NULL,
-            result_status VARCHAR(50) DEFAULT 'pending',
+            score_json TEXT DEFAULT NULL,
+            winner_keys_json TEXT DEFAULT NULL,
+            submitted_by_user_id BIGINT(20) UNSIGNED DEFAULT NULL,
+            certified_at DATETIME DEFAULT NULL,
+            verified_by_user_id BIGINT(20) UNSIGNED DEFAULT NULL,
+            verified_at DATETIME DEFAULT NULL,
+            current_revision INT UNSIGNED NOT NULL DEFAULT 0,
+            correction_reason TEXT DEFAULT NULL,
+            public_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            scan_status VARCHAR(20) NOT NULL DEFAULT 'pending',
             notes TEXT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY  (result_id),
             UNIQUE KEY schedule_id (schedule_id),
-            KEY result_status (result_status)
+            KEY public_status (public_status),
+            KEY scan_status (scan_status)
         ) $charset_collate;";
         dbDelta($sql_results);
-        
+
+        // Result revisions table — append-only submission/correction history (Issue #203)
+        $table_result_revisions = $wpdb->prefix . self::TABLE_PREFIX . 'result_revisions';
+        $sql_result_revisions = "CREATE TABLE $table_result_revisions (
+            revision_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            result_id BIGINT(20) UNSIGNED NOT NULL,
+            revision_number INT UNSIGNED NOT NULL,
+            score_json TEXT DEFAULT NULL,
+            winner_keys_json TEXT DEFAULT NULL,
+            notes TEXT DEFAULT NULL,
+            correction_reason TEXT DEFAULT NULL,
+            submitted_by_user_id BIGINT(20) UNSIGNED NOT NULL,
+            submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            verification_state VARCHAR(20) NOT NULL DEFAULT 'unverified',
+            source_ip VARCHAR(45) DEFAULT NULL,
+            request_metadata TEXT DEFAULT NULL,
+            PRIMARY KEY  (revision_id),
+            UNIQUE KEY result_revision (result_id, revision_number),
+            KEY submitted_by_user_id (submitted_by_user_id),
+            KEY verification_state (verification_state)
+        ) $charset_collate;";
+        dbDelta($sql_result_revisions);
+
+        // Result files table — protected scoresheet attachments, one row per file (Issue #203)
+        $table_result_files = $wpdb->prefix . self::TABLE_PREFIX . 'result_files';
+        $sql_result_files = "CREATE TABLE $table_result_files (
+            file_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            result_revision_id BIGINT(20) UNSIGNED NOT NULL,
+            file_path VARCHAR(500) NOT NULL,
+            original_filename VARCHAR(255) NOT NULL,
+            mime_type VARCHAR(100) NOT NULL,
+            byte_size BIGINT(20) UNSIGNED NOT NULL,
+            sha256_hash CHAR(64) NOT NULL,
+            uploaded_by_user_id BIGINT(20) UNSIGNED NOT NULL,
+            uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY  (file_id),
+            KEY result_revision_id (result_revision_id),
+            KEY sha256_hash (sha256_hash)
+        ) $charset_collate;";
+        dbDelta($sql_result_files);
+
         // Sync Log table
         $table_sync_log = $wpdb->prefix . self::TABLE_PREFIX . 'sync_log';
         $sql_sync_log = "CREATE TABLE $table_sync_log (
@@ -588,6 +658,66 @@ class VAYSF_Integration {
             if (empty($check_column)) {
                 $wpdb->query("ALTER TABLE {$table_churches} {$alter}");
                 error_log("Added {$column} column to sf_churches table");
+            }
+        }
+
+        // Event-day results schema columns on sf_schedules (Issue #203).
+        // dbDelta above adds these for fresh installs; ALTER covers upgrades from
+        // the pre-#203 numeric team_a_id/team_b_id schema where they did not exist.
+        $schedules_columns = array(
+            'game_key'         => "ADD COLUMN game_key VARCHAR(64) NOT NULL DEFAULT '' AFTER competition_id",
+            'schedule_version' => "ADD COLUMN schedule_version INT UNSIGNED NOT NULL DEFAULT 0 AFTER game_key",
+            'event'            => "ADD COLUMN event VARCHAR(100) DEFAULT NULL AFTER schedule_version",
+            'stage'            => "ADD COLUMN stage VARCHAR(50) DEFAULT NULL AFTER event",
+            'pool_id'          => "ADD COLUMN pool_id VARCHAR(20) DEFAULT NULL AFTER stage",
+            'round_number'     => "ADD COLUMN round_number INT UNSIGNED DEFAULT NULL AFTER pool_id",
+            'sub_event'        => "ADD COLUMN sub_event VARCHAR(50) DEFAULT NULL AFTER round_number",
+            'team_a_key'       => "ADD COLUMN team_a_key VARCHAR(64) DEFAULT NULL AFTER sub_event",
+            'team_a_label'     => "ADD COLUMN team_a_label VARCHAR(255) DEFAULT NULL AFTER team_a_key",
+            'team_b_key'       => "ADD COLUMN team_b_key VARCHAR(64) DEFAULT NULL AFTER team_a_label",
+            'team_b_label'     => "ADD COLUMN team_b_label VARCHAR(255) DEFAULT NULL AFTER team_b_key",
+            'team_c_key'       => "ADD COLUMN team_c_key VARCHAR(64) DEFAULT NULL AFTER team_b_label",
+            'team_c_label'     => "ADD COLUMN team_c_label VARCHAR(255) DEFAULT NULL AFTER team_c_key",
+            'team_ids_json'    => "ADD COLUMN team_ids_json TEXT DEFAULT NULL AFTER team_c_label",
+            'resource_id'      => "ADD COLUMN resource_id VARCHAR(64) DEFAULT NULL AFTER team_ids_json",
+            'scheduled_slot'   => "ADD COLUMN scheduled_slot VARCHAR(32) DEFAULT NULL AFTER resource_id",
+            'game_status'      => "ADD COLUMN game_status VARCHAR(20) NOT NULL DEFAULT 'scheduled' AFTER scheduled_location",
+            'source_hash'      => "ADD COLUMN source_hash CHAR(64) DEFAULT NULL AFTER game_status",
+            'published_at'     => "ADD COLUMN published_at DATETIME DEFAULT NULL AFTER source_hash",
+        );
+        foreach ($schedules_columns as $column => $alter) {
+            $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_schedules} LIKE '{$column}'");
+            if (empty($check_column)) {
+                $wpdb->query("ALTER TABLE {$table_schedules} {$alter}");
+                error_log("Added {$column} column to sf_schedules table");
+            }
+        }
+        // game_key must be unique once populated; add the index separately since dbDelta
+        // cannot reliably add a UNIQUE KEY to an existing table via ALTER.
+        $check_index = $wpdb->get_results("SHOW INDEX FROM {$table_schedules} WHERE Key_name = 'game_key'");
+        if (empty($check_index)) {
+            $wpdb->query("ALTER TABLE {$table_schedules} ADD UNIQUE KEY game_key (game_key)");
+            error_log('Added game_key unique index to sf_schedules table');
+        }
+
+        // Event-day results schema columns on sf_results (Issue #203).
+        $results_columns = array(
+            'score_json'            => "ADD COLUMN score_json TEXT DEFAULT NULL AFTER schedule_id",
+            'winner_keys_json'      => "ADD COLUMN winner_keys_json TEXT DEFAULT NULL AFTER score_json",
+            'submitted_by_user_id'  => "ADD COLUMN submitted_by_user_id BIGINT(20) UNSIGNED DEFAULT NULL AFTER winner_keys_json",
+            'certified_at'          => "ADD COLUMN certified_at DATETIME DEFAULT NULL AFTER submitted_by_user_id",
+            'verified_by_user_id'   => "ADD COLUMN verified_by_user_id BIGINT(20) UNSIGNED DEFAULT NULL AFTER certified_at",
+            'verified_at'           => "ADD COLUMN verified_at DATETIME DEFAULT NULL AFTER verified_by_user_id",
+            'current_revision'      => "ADD COLUMN current_revision INT UNSIGNED NOT NULL DEFAULT 0 AFTER verified_at",
+            'correction_reason'     => "ADD COLUMN correction_reason TEXT DEFAULT NULL AFTER current_revision",
+            'public_status'         => "ADD COLUMN public_status VARCHAR(20) NOT NULL DEFAULT 'pending' AFTER correction_reason",
+            'scan_status'           => "ADD COLUMN scan_status VARCHAR(20) NOT NULL DEFAULT 'pending' AFTER public_status",
+        );
+        foreach ($results_columns as $column => $alter) {
+            $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_results} LIKE '{$column}'");
+            if (empty($check_column)) {
+                $wpdb->query("ALTER TABLE {$table_results} {$alter}");
+                error_log("Added {$column} column to sf_results table");
             }
         }
 
