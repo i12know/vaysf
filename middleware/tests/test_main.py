@@ -4,6 +4,7 @@ import json
 
 import pytest
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import PatternFill
 
 import main
 from schedule_workbook import ScheduleWorkbookBuilder
@@ -175,6 +176,37 @@ def test_parse_args_import_master_schedule_file_alias(monkeypatch):
     assert args.workbook == "VAY2026_Main_Schedule_draft_4.xlsx"
     assert args.schedule_input == "schedule_input.json"
     assert args.output is None
+
+
+def test_parse_args_import_match_schedule_overrides_dry_run(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "import-match-schedule-overrides",
+            "--file",
+            "2026 Main Schedule draft 11.xlsx",
+            "--events",
+            "BB,MVB,WVB",
+            "--dry-run",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "import-match-schedule-overrides"
+    assert args.workbook == "2026 Main Schedule draft 11.xlsx"
+    assert args.events == "BB,MVB,WVB"
+    assert args.dry_run is True
+    assert args.execute is False
+
+
+def test_parse_args_import_match_schedule_overrides_requires_mode(monkeypatch, capsys):
+    monkeypatch.setattr(
+        main.sys, "argv", ["main.py", "import-match-schedule-overrides"]
+    )
+    with pytest.raises(SystemExit) as exc:
+        main.parse_args()
+    assert exc.value.code == 2
 
 
 def test_parse_args_upload_person_photo_execute(monkeypatch):
@@ -915,3 +947,95 @@ def test_schedule_pipeline_export_solve_produce_local(mocker, monkeypatch, tmp_p
     schedule_output = json.loads(schedule_output_path.read_text(encoding="utf-8"))
     assert schedule_output["status"] == "OPTIMAL"
     assert len(schedule_output["assignments"]) == 2
+
+
+def _write_match_schedule_overrides_workbook(path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    bb_fill = PatternFill("solid", fgColor="F8CBAD")
+    mvb_fill = PatternFill("solid", fgColor="9BC2E6")
+
+    ws.cell(row=1, column=1, value="SAT 7/18")
+    ws.cell(row=1, column=2, value="Main Gym BB1")
+    ws.merge_cells(start_row=1, start_column=2, end_row=1, end_column=4)
+    ws.cell(row=1, column=5, value="Prac. Gym VB1")
+    ws.merge_cells(start_row=1, start_column=5, end_row=1, end_column=7)
+
+    ws.cell(row=2, column=1, value="12:00 PM")
+    for col, (value, fill) in {
+        2: ("WAG", bb_fill), 3: ("v", bb_fill), 4: ("FVC", bb_fill),
+        5: ("GLA", mvb_fill), 6: ("v", mvb_fill), 7: ("PCC", mvb_fill),
+    }.items():
+        cell = ws.cell(row=2, column=col, value=value)
+        cell.fill = fill
+
+    wb.save(path)
+
+
+def test_main_import_match_schedule_overrides_dry_run_writes_audit(monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    export_dir = tmp_path / "export"
+    data_dir.mkdir()
+    export_dir.mkdir()
+    monkeypatch.setattr(main, "DATA_DIR", data_dir)
+    monkeypatch.setattr(main, "EXPORT_DIR", export_dir)
+
+    workbook_path = data_dir / "2026 Main Schedule draft 11.xlsx"
+    _write_match_schedule_overrides_workbook(workbook_path)
+
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="import-match-schedule-overrides",
+            workbook=str(workbook_path),
+            events=None,
+            input_xlsx=None,
+            schedule_input=None,
+            output=None,
+            dry_run=True,
+            execute=False,
+        ),
+    )
+    _run_main_expect_exit(0)
+
+    audit_path = export_dir / "match_schedule_overrides.audit.json"
+    assert audit_path.exists()
+    payload = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert payload["validation"]["errors"] == []
+    assert payload["validation"]["created_game_count"] == 2
+    assert not (export_dir / "match_schedule_overrides.json").exists()
+
+
+def test_main_import_match_schedule_overrides_execute_writes_sidecar(monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    export_dir = tmp_path / "export"
+    data_dir.mkdir()
+    export_dir.mkdir()
+    monkeypatch.setattr(main, "DATA_DIR", data_dir)
+    monkeypatch.setattr(main, "EXPORT_DIR", export_dir)
+
+    workbook_path = data_dir / "2026 Main Schedule draft 11.xlsx"
+    _write_match_schedule_overrides_workbook(workbook_path)
+
+    monkeypatch.setattr(
+        main,
+        "parse_args",
+        lambda: argparse.Namespace(
+            command="import-match-schedule-overrides",
+            workbook=str(workbook_path),
+            events=None,
+            input_xlsx=None,
+            schedule_input=None,
+            output=None,
+            dry_run=False,
+            execute=True,
+        ),
+    )
+    _run_main_expect_exit(0)
+
+    sidecar_path = export_dir / "match_schedule_overrides.json"
+    assert sidecar_path.exists()
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert payload["validation"]["created_game_count"] == 2

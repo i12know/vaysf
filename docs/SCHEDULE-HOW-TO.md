@@ -637,6 +637,74 @@ Known 2026 interpretation notes:
 
 ---
 
+## Step 4C - 2026 Visual Match Schedule Team-Code Overrides (BB/MVB/WVB)
+
+A second, related workbook — the one Loc (the human Sports Fest scheduler)
+fills in by hand with the real team codes for every Basketball, Men's
+Volleyball, and Women's Volleyball slot — is a different source from Step 4B's
+workbook, even though it looks like the same visual grid. Step 4B pins an
+already-known game to a time/court; this step specifies *which teams are
+playing* in each slot, and that pairing is authoritative.
+
+The workbook currently lives in:
+
+```text
+middleware/data/2026 Main Schedule draft 11.xlsx
+```
+
+Always start with a dry run so you can review the audit before anything is
+written:
+
+```bash
+python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --dry-run
+```
+
+The dry run writes `match_schedule_overrides.audit.json` to the normal export
+folder and never touches `match_schedule_overrides.json` or
+`schedule_input.json`. Once the audit is clean (or the remaining errors are
+understood), commit it:
+
+```bash
+python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --execute
+```
+
+`--execute` only writes `match_schedule_overrides.json` when validation has
+zero errors — a run with errors makes no changes.
+
+What changes in this mode:
+
+- team codes are validated against the current roster; an unknown code, or a
+  code registered for a different event, is a hard error naming the sheet
+  cell and the actual event the code belongs to
+- a pairing that matches an already-generated pool game gets its time/court
+  pinned, using the same fixed-slot mechanism as Step 4B
+- a pairing with no existing match is created from the visual schedule (this
+  is logged as a warning, with full provenance, not applied silently)
+- a team double-booked at the same slot within the same event is a hard
+  error; the same church code appearing in both an MVB slot and a WVB slot at
+  the same time is not flagged, since those are different rosters of players
+- `manual_team_matchups.json` and `manual_schedule_overrides.json` are
+  unaffected — this is a third, independent sidecar
+
+Recommended 2026 override loop:
+
+```bash
+python main.py import-team-matchups --file "data/2026-VAY-Lottery-Drawing_Team-Assignment(ALL-TEAM-SPORTS)_template.xlsx"
+python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --dry-run
+python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --execute
+python main.py export-church-teams
+python main.py build-schedule-workbook
+python main.py diagnose-schedule
+run-schedule.bat
+```
+
+If the audit reports a "no matching generated pool game" warning for a
+pairing you expected to already exist, run `import-team-matchups` (or
+`assign-pools`) first and re-import — that usually means the pool draw
+hasn't been imported yet, not that the visual schedule is wrong.
+
+---
+
 ## Step 5 - Fill `Playoff-Slots`
 
 After `build-schedule-workbook`, open `Schedule_Workbook_*.xlsx` and use
@@ -763,8 +831,8 @@ This is the most important operator table.
 | `Venue-Input` or `Gym-Modes` | `export-church-teams`, then `build-schedule-workbook` |
 | `Pool-Assignment` seeds / slots | `assign-pools`, then `export-church-teams`, then `build-schedule-workbook` |
 | 2026 manual team-sport matchup workbook | `import-team-matchups`, then `export-church-teams`, `build-schedule-workbook`, `diagnose-schedule`, and `run-schedule.bat` |
-| 2026 Master Schedule workbook | `import-master-schedule`, then `export-church-teams`, `build-schedule-workbook`, `diagnose-schedule`, and `run-schedule.bat` |
-| Badminton / Soccer / Table Tennis detailed workbook | Audit against the Master Schedule envelope; importer work is separate unless a command exists for that sport |
+| 2026 main schedule workbook | `import-master-schedule`, then `export-church-teams`, `build-schedule-workbook`, `diagnose-schedule`, and `run-schedule.bat` |
+| 2026 visual match schedule team codes (BB/MVB/WVB) | `import-match-schedule-overrides --dry-run`, review, then `--execute`, then `export-church-teams`, `build-schedule-workbook`, `diagnose-schedule`, and `run-schedule.bat` |
 | `Playoff-Slots` only | `export-church-teams`, then `run-schedule.bat` |
 | Want to inspect IDs before solving | `build-schedule-workbook` |
 | Roster / registrations changed upstream | `export-church-teams`, then `build-schedule-workbook`, then `run-schedule.bat` |
