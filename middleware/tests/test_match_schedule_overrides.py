@@ -298,3 +298,90 @@ def test_merge_reports_existing_fixed_slot_conflict():
 
     assert any("conflicts with existing fixed assignment BBM-02" in error for error in summary["errors"])
     assert {slot["game_id"] for slot in merged_slots} == {"BBM-02"}
+
+
+def test_merge_supersedes_numbered_master_pool_pin_for_team_code_schedule():
+    payload = {
+        "events": ["BB"],
+        "source_workbook": "unit.xlsx",
+        "rows": [{
+            "kind": "two_team_game",
+            "sport": "Basketball",
+            "event": SPORT_TYPE["BASKETBALL"],
+            "resource_type": GYM_RESOURCE_TYPE_BASKETBALL,
+            "team_a": "WAG",
+            "team_b": "FVC",
+            "day": "Sat-1",
+            "slot": "Sat-1-12:00",
+            "visual_venue": "Main Gym BB1",
+            "source_cell": "B2:D2",
+            "source_sheet": "Sheet1",
+            "raw_value": "WAG / v / FVC",
+        }],
+    }
+    games = [
+        {
+            "game_id": "BBM-01",
+            "event": SPORT_TYPE["BASKETBALL"],
+            "stage": "Pool",
+            "team_a_label": "WAG",
+            "team_b_label": "FVC",
+            "duration_minutes": 60,
+        },
+        {
+            "game_id": "BBM-02",
+            "event": SPORT_TYPE["BASKETBALL"],
+            "stage": "Pool",
+            "team_a_label": "SDC",
+            "team_b_label": "MWC",
+            "duration_minutes": 60,
+        },
+    ]
+    existing_slots = [
+        {
+            "game_id": "BBM-01",
+            "event": SPORT_TYPE["BASKETBALL"],
+            "stage": "Pool",
+            "resource_id": "BB-2",
+            "slot": "Sat-1-13:00",
+            "x_master_schedule_cell": "E3",
+        },
+        {
+            "game_id": "BBM-02",
+            "event": SPORT_TYPE["BASKETBALL"],
+            "stage": "Pool",
+            "resource_id": "BB-1",
+            "slot": "Sat-1-12:00",
+            "x_master_schedule_cell": "B2",
+        },
+    ]
+    resources = [
+        {
+            "resource_id": "BB-1",
+            "resource_type": GYM_RESOURCE_TYPE_BASKETBALL,
+            "label": "Court-1",
+            "day": "Sat-1",
+            "open_time": "12:00",
+            "close_time": "13:00",
+            "slot_minutes": 60,
+        },
+        {
+            "resource_id": "BB-2",
+            "resource_type": GYM_RESOURCE_TYPE_BASKETBALL,
+            "label": "Court-2",
+            "day": "Sat-1",
+            "open_time": "13:00",
+            "close_time": "14:00",
+            "slot_minutes": 60,
+        },
+    ]
+
+    _merged_games, merged_slots, summary = mso.merge_match_schedule_overrides_into_schedule_input(
+        games, existing_slots, payload, resources,
+    )
+
+    assert summary["errors"] == []
+    assert any("superseded numbered master-schedule pool pin BBM-02" in warning for warning in summary["warnings"])
+    assert {slot["game_id"] for slot in merged_slots} == {"BBM-01"}
+    assert merged_slots[0]["resource_id"] == "BB-1"
+    assert merged_slots[0]["slot"] == "Sat-1-12:00"

@@ -22,8 +22,15 @@
   mechanism; a pairing with no existing match is created from the visual
   schedule (logged, with provenance, not applied silently) since Loc's sheet
   is the authoritative source for who plays whom.
+- Let team-code match schedule overrides supersede older numbered
+  `import-master-schedule` pool pins for the same BB/MVB/WVB visual cells,
+  while keeping hard conflicts for every other fixed-slot source.
+- Prefixed team labels on match-schedule fixed-slot provenance so
+  `schedule_input.json` and `schedule_output.json` stay inside the documented
+  contract schema.
 - Documented the operator workflow in `docs/SCHEDULE-HOW-TO.md` (Step 4C) and
   `docs/SCHEDULING.md`.
+
 ### 2026 scheduling source-of-truth documentation - refs [#215](https://github.com/i12know/vaysf/issues/215)
 
 - Consolidated the 2026 scheduling history from venue estimation through

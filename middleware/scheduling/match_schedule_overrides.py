@@ -451,8 +451,8 @@ def resolve_match_schedule_overrides(
             "event": event,
             "resource_id": resource_id,
             "slot": row["slot"],
-            "team_a_label": team_a,
-            "team_b_label": team_b,
+            "x_match_schedule_team_a_label": team_a,
+            "x_match_schedule_team_b_label": team_b,
             "x_match_schedule_source": payload.get("source_workbook", ""),
             "x_match_schedule_sheet": row.get("source_sheet", ""),
             "x_match_schedule_cell": cell,
@@ -532,6 +532,36 @@ def summarize_payload_for_log(payload: Mapping[str, Any]) -> List[str]:
     return lines
 
 
+def _fixed_slot_key(slot: Mapping[str, Any]) -> Tuple[str, str]:
+    return (_clean_text(slot.get("resource_id")), _clean_text(slot.get("slot")))
+
+
+def _is_supersedable_master_pool_pin(slot: Mapping[str, Any]) -> bool:
+    """Return True for older visual master-schedule pool pins this import replaces.
+
+    The numbered master schedule and the team-code visual schedule describe the
+    same BB/MVB/WVB pool cells.  When both sidecars exist, the team-code sidecar
+    is the more authoritative source because it names the actual pairing in the
+    cell; keep hard conflicts for every other fixed-slot source.
+    """
+    event = _clean_text(slot.get("event"))
+    stage = _clean_text(slot.get("stage"))
+    has_master_source = any(
+        _clean_text(slot.get(key))
+        for key in ("x_master_schedule_source", "x_master_schedule_cell", "x_master_schedule_raw")
+    )
+    return (
+        has_master_source
+        and stage.casefold() == "pool"
+        and event
+        in {
+            master_schedule._EVENT_BY_SPORT["Basketball"],
+            master_schedule._EVENT_BY_SPORT["MVB"],
+            master_schedule._EVENT_BY_SPORT["WVB"],
+        }
+    )
+
+
 def merge_match_schedule_overrides_into_schedule_input(
     games: Sequence[Mapping[str, Any]],
     playoff_slots: Sequence[Mapping[str, Any]],
@@ -568,7 +598,7 @@ def merge_match_schedule_overrides_into_schedule_input(
         if _clean_text(slot.get("game_id"))
     }
     occupied_slots: Dict[Tuple[str, str], str] = {
-        (_clean_text(slot.get("resource_id")), _clean_text(slot.get("slot"))): _clean_text(slot.get("game_id"))
+        _fixed_slot_key(slot): _clean_text(slot.get("game_id"))
         for slot in playoff_slots
         if _clean_text(slot.get("resource_id"))
         and _clean_text(slot.get("slot"))
@@ -576,13 +606,37 @@ def merge_match_schedule_overrides_into_schedule_input(
     }
     for slot_row in validation["resolved_slots"]:
         game_id = _clean_text(slot_row.get("game_id"))
-        slot_key = (_clean_text(slot_row.get("resource_id")), _clean_text(slot_row.get("slot")))
+        previous_game_pin = merged_by_game.get(game_id)
+        if previous_game_pin:
+            previous_slot_key = _fixed_slot_key(previous_game_pin)
+            if occupied_slots.get(previous_slot_key) == game_id:
+                occupied_slots.pop(previous_slot_key, None)
+
+        slot_key = _fixed_slot_key(slot_row)
         existing_game_id = occupied_slots.get(slot_key)
         if existing_game_id and existing_game_id != game_id:
+            existing_slot = merged_by_game.get(existing_game_id, {})
+            if _is_supersedable_master_pool_pin(existing_slot):
+                merged_by_game.pop(existing_game_id, None)
+                occupied_slots.pop(slot_key, None)
+                validation["warnings"].append(
+                    f"{slot_row.get('x_match_schedule_cell', '<unknown>')}: "
+                    f"team-code match schedule override for game {game_id} superseded "
+                    f"numbered master-schedule pool pin {existing_game_id} at "
+                    f"{slot_key[0]} {slot_key[1]}"
+                )
+            else:
+                validation["errors"].append(
+                    f"{slot_row.get('x_match_schedule_cell', '<unknown>')}: "
+                    f"match schedule override for game {game_id} conflicts with existing fixed "
+                    f"assignment {existing_game_id} at {slot_key[0]} {slot_key[1]}"
+                )
+                continue
+        if occupied_slots.get(slot_key) and occupied_slots[slot_key] != game_id:
             validation["errors"].append(
                 f"{slot_row.get('x_match_schedule_cell', '<unknown>')}: "
                 f"match schedule override for game {game_id} conflicts with existing fixed "
-                f"assignment {existing_game_id} at {slot_key[0]} {slot_key[1]}"
+                f"assignment {occupied_slots[slot_key]} at {slot_key[0]} {slot_key[1]}"
             )
             continue
         merged_by_game[game_id] = slot_row
