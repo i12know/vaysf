@@ -57,6 +57,7 @@ class WordPressConnector:
         self.last_get_approvals_status = "unknown"
         self.last_get_validation_issues_status = "unknown"
         self.last_update_validation_issue_status = "unknown"
+        self.last_get_schedules_status = "unknown"
     
         # Create a session to maintain cookies
         self.session = requests.Session()
@@ -461,17 +462,23 @@ class WordPressConnector:
             return False
     
     @retry(**_WP_READ_RETRY)
-    def get_schedules(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def get_schedules(self, params: Optional[Dict[str, Any]] = None) -> Optional[List[Dict[str, Any]]]:
         """Get the currently published schedule from WordPress (sf_schedules)."""
         try:
             response = self.session.get(f"{self.custom_api_url}/schedules", params=params)
             response.raise_for_status()
+            self.last_get_schedules_status = "ok"
             return response.json()
         except requests.RequestException as e:
+            self.last_get_schedules_status = "failed"
             logger.error(f"Failed to get schedules: {str(e)}")
             if _is_retryable_wp_read_exception(e):
                 raise  # Let retry handle transient failures.
-            return []
+            return None
+        except ValueError as e:
+            self.last_get_schedules_status = "failed"
+            logger.error(f"Failed to parse schedules response: {str(e)}")
+            return None
 
     def upsert_schedules(
         self,

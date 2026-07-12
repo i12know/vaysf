@@ -182,6 +182,25 @@ def test_get_schedules_calls_schedules_endpoint(wp_connector, mocker):
     assert captured["url"] == f"{wp_connector.custom_api_url}/schedules"
     assert captured["params"] == {"game_status": "scheduled"}
     assert result == [{"game_key": "BBM-01", "game_status": "scheduled"}]
+    assert wp_connector.last_get_schedules_status == "ok"
+
+
+def test_get_schedules_returns_none_on_request_exception(wp_connector, mocker):
+    """Schedule publication must fail closed when WordPress schedule reads fail."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Pure mock test - no live variant needed")
+
+    mocker.patch.object(
+        wp_connector.session,
+        "get",
+        side_effect=requests.HTTPError("not found"),
+    )
+
+    result = wp_connector.get_schedules()
+
+    assert result is None
+    assert wp_connector.last_get_schedules_status == "failed"
 
 
 def test_upsert_schedules_posts_expected_payload(wp_connector, mocker):

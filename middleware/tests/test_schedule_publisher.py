@@ -244,9 +244,12 @@ def test_protected_and_cancellable_status_sets_are_disjoint():
 # run_publish_schedule
 # ---------------------------------------------------------------------------
 
+_UNSET = object()
+
+
 class _FakeConnector:
-    def __init__(self, published_rows=None, upsert_response=None):
-        self.published_rows = published_rows or []
+    def __init__(self, published_rows=_UNSET, upsert_response=None):
+        self.published_rows = [] if published_rows is _UNSET else published_rows
         self.upsert_response = upsert_response
         self.get_schedules_calls = 0
         self.upsert_calls = []
@@ -402,3 +405,72 @@ def test_run_publish_schedule_invalid_contract_returns_1(tmp_path):
 
     assert exit_code == 1
     assert connector.get_schedules_calls == 0
+
+
+def test_run_publish_schedule_blocks_partial_by_default(tmp_path):
+    input_path, output_path = _write_fixtures(tmp_path)
+    output = _schedule_output_2team_3team()
+    output["status"] = "PARTIAL"
+    output["unscheduled"] = ["BC-01"]
+    output_path.write_text(json.dumps(output), encoding="utf-8")
+    connector = _FakeConnector()
+
+    exit_code = run_publish_schedule(
+        schedule_input_path=input_path,
+        schedule_output_path=output_path,
+        wp_connector=connector,
+        dry_run=True,
+    )
+
+    assert exit_code == 1
+    assert connector.get_schedules_calls == 0
+
+
+def test_run_publish_schedule_allow_partial_still_diffs(tmp_path):
+    input_path, output_path = _write_fixtures(tmp_path)
+    output = _schedule_output_2team_3team()
+    output["status"] = "PARTIAL"
+    output["unscheduled"] = ["BC-01"]
+    output_path.write_text(json.dumps(output), encoding="utf-8")
+    connector = _FakeConnector()
+
+    exit_code = run_publish_schedule(
+        schedule_input_path=input_path,
+        schedule_output_path=output_path,
+        wp_connector=connector,
+        dry_run=True,
+        allow_partial=True,
+    )
+
+    assert exit_code == 0
+    assert connector.get_schedules_calls == 1
+
+
+def test_run_publish_schedule_refuses_unknown_wordpress_state(tmp_path):
+    input_path, output_path = _write_fixtures(tmp_path)
+    connector = _FakeConnector(published_rows=None)
+
+    exit_code = run_publish_schedule(
+        schedule_input_path=input_path,
+        schedule_output_path=output_path,
+        wp_connector=connector,
+        dry_run=True,
+    )
+
+    assert exit_code == 1
+    assert connector.upsert_calls == []
+
+
+def test_run_publish_schedule_failed_upsert_returns_1(tmp_path):
+    input_path, output_path = _write_fixtures(tmp_path)
+    connector = _FakeConnector(upsert_response={"success": False, "skipped_count": 1})
+
+    exit_code = run_publish_schedule(
+        schedule_input_path=input_path,
+        schedule_output_path=output_path,
+        wp_connector=connector,
+        dry_run=False,
+    )
+
+    assert exit_code == 1
+    assert len(connector.upsert_calls) == 1

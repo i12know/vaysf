@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Publish-schedule post-merge hardening - refs [#203](https://github.com/i12know/vaysf/issues/203)
+
+- Fixed a `main.py` Python scoping regression from PR #213 that could crash
+  later commands such as `check-consent` after adding `publish-schedule`.
+- Made `publish-schedule` fail closed when WordPress schedules cannot be read,
+  instead of treating a failed read as an empty published schedule.
+- Blocked publishing `PARTIAL` or otherwise unscheduled `schedule_output.json`
+  by default; added explicit `--allow-partial` for emergency operator-approved
+  publishes.
+- Made WordPress schedule upsert responses report `success=false` when any row
+  is skipped or fails, and hardened the `sf_schedules.game_key` migration for
+  legacy rows before adding the unique index.
+
 ### Event-day results schema + publish-schedule command - closes [#203](https://github.com/i12know/vaysf/issues/203)
 
 - Redesigned `sf_schedules`/`sf_results` around the string `game_key`
