@@ -632,13 +632,6 @@ def merge_match_schedule_overrides_into_schedule_input(
                     f"assignment {existing_game_id} at {slot_key[0]} {slot_key[1]}"
                 )
                 continue
-        if occupied_slots.get(slot_key) and occupied_slots[slot_key] != game_id:
-            validation["errors"].append(
-                f"{slot_row.get('x_match_schedule_cell', '<unknown>')}: "
-                f"match schedule override for game {game_id} conflicts with existing fixed "
-                f"assignment {occupied_slots[slot_key]} at {slot_key[0]} {slot_key[1]}"
-            )
-            continue
         merged_by_game[game_id] = slot_row
         if slot_key[0] and slot_key[1]:
             occupied_slots[slot_key] = game_id
