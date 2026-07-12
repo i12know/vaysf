@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### 2026 scheduling source-of-truth documentation - refs [#215](https://github.com/i12know/vaysf/issues/215)
+
+- Consolidated the 2026 scheduling history from venue estimation through
+  human matchups, Master Schedule boundaries, detailed sport workbooks, solver
+  output, and WordPress publication.
+- Documented the current source hierarchy and precedence rules for live roster
+  data, `venue_input.xlsx`, imported matchup sidecars, Master Schedule blocks,
+  detailed sport workbooks, `schedule_input.json`, and solver output.
+- Added human-scheduler clarifications for BB game 20 as a bye, the WVB O12
+  typo, Badminton reserved blocks, Bible Challenge match order/final duration,
+  and hard setup/service/ceremony/closure constraints.
+
 ### Church export validation issue freshness - refs [#201](https://github.com/i12know/vaysf/issues/201)
 
 - Kept pastor-approved participant status locked during participant sync while
