@@ -21,6 +21,27 @@
   `placeholders` list with `classification=bye`, matching Soccer, so a
   dry-run's placeholder count reflects every skipped bye across all three
   sports instead of only Soccer's.
+- Added `--input-xlsx` roster context support to `import-approved-games` so the
+  Table Tennis source workbook is dry-run checked against the latest
+  `Church_Team_Status_ALL` export: source team codes must exist in registered
+  Table Tennis roster rows, and named athletes must match the event/category
+  they are scheduled for before execution is allowed.
+- Added Table Tennis preliminary row-count balance validation so uneven
+  category schedules, such as one athlete receiving too few appearances while
+  another receives an extra bye row, are reported during dry run.
+- Review fixes to the roster-vs-source validation:
+  - `_table_tennis_side_parts()`'s `Name (CODE)` parser now accepts a
+    lower/mixed-case church code (e.g. `Nhan Micah (orn)`), not just
+    uppercase. It previously fell through to treating the whole
+    `"Name (code)"` string as a single athlete label whenever the code
+    wasn't already uppercase, which would have raised a spurious
+    "not present in the current roster" error for a hand-typed cell.
+  - `_format_class()` now delegates to the existing
+    `ScheduleWorkbookBuilder._pod_format_class()` instead of re-implementing
+    the same "single"/"double" substring check a second time.
+- Downgraded unique same-church/same-category Table Tennis athlete name typos
+  to dry-run warnings instead of hard errors, preserving an audit trail while
+  allowing source sheets like `Justin Pham` vs `Justtin Pham` to proceed.
 - Documented the dry-run-first operator workflow and approved-game publication
   path in `docs/SCHEDULE-HOW-TO.md` and `docs/SCHEDULING.md`.
 

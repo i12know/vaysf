@@ -58,19 +58,44 @@ def _write_soccer(path, team_a="ANH", team_b="GAC"):
     wb.save(path)
 
 
-def _write_table_tennis(path, include_sbc=True, matches=None):
+def _write_table_tennis(path, include_sbc=True, matches=None, roster_entries=None):
     wb = Workbook()
     ws = wb.active
     ws.append(["", "VAY SPORTS FEST 2026 - TABLE TENNIS SCHEDULE"])
     ws.append(["Fri 7/24", "Table 1", "Table 2", "Table 3", "Table 4"])
     matches = matches or ["Nhan Micah (ORN) - Phan Dora (WSD)"]
     for index, match in enumerate(matches):
-        ws.append([f"17:{index * 20:02d}", match])
+        minutes = index * 15
+        ws.append([f"{17 + minutes // 60:02d}:{minutes % 60:02d}", match])
     ws.append([])
     ws.append(["TEAM", "ATHLETES"])
+    for team, athletes in roster_entries or []:
+        ws.append([team, athletes])
     if include_sbc:
         ws.append(["(U35) SBC", "Player A & Player B"])
     wb.save(path)
+
+
+def _tt_roster_row(
+    church,
+    first,
+    last,
+    *,
+    event=None,
+    gender="Women",
+    sport_format="Singles",
+    team_order=None,
+):
+    return {
+        "Church Team": church,
+        "sport_type": event or SPORT_TYPE["TABLE_TENNIS"],
+        "sport_gender": gender,
+        "sport_format": sport_format,
+        "team_order": team_order,
+        "Participant ID (WP)": f"{church}-{first}-{last}",
+        "First Name": first,
+        "Last Name": last,
+    }
 
 
 def _schedule_input():
@@ -236,3 +261,190 @@ def test_bye_rows_are_not_imported_as_real_games(tmp_path):
     assert str(table_tennis) in bye_workbooks
     # Two bye rows were written for table tennis (left-side and right-side bye).
     assert sum(1 for wb in bye_placeholders if wb["source_workbook"] == str(table_tennis)) == 2
+
+
+def test_table_tennis_source_validation_flags_unregistered_team(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(table_tennis, include_sbc=True)
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+        roster_rows=[
+            _tt_roster_row("ORN", "Micah", "Nhan"),
+            _tt_roster_row("WSD", "Dora", "Phan"),
+        ],
+    )
+
+    errors = payload["validation"]["errors"]
+    assert any("source team SBC" in error for error in errors)
+
+
+def test_table_tennis_source_validation_flags_unregistered_athlete(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(
+        table_tennis,
+        include_sbc=False,
+        matches=["(U35) GAC-1 - BYE"],
+        roster_entries=[("(U35) GAC-1", "Joshua Dang & Noah Vo")],
+    )
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+        roster_rows=[
+            _tt_roster_row(
+                "GAC",
+                "Joshua",
+                "Dang",
+                gender="Mixed",
+                sport_format="Mixed Double",
+                team_order=1,
+            ),
+        ],
+    )
+
+    errors = payload["validation"]["errors"]
+    assert any("Noah Vo" in error and "not registered" in error for error in errors)
+
+
+def test_table_tennis_source_validation_warns_for_unique_name_typo(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(
+        table_tennis,
+        include_sbc=False,
+        matches=["(U35) GAC-2 - BYE"],
+        roster_entries=[("(U35) GAC-2", "Phillip Tran & Justin Pham")],
+    )
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+        roster_rows=[
+            _tt_roster_row(
+                "GAC",
+                "Phillip",
+                "Tran",
+                gender="Mixed",
+                sport_format="Mixed Double",
+            ),
+            _tt_roster_row(
+                "GAC",
+                "Justtin",
+                "Pham",
+                gender="Mixed",
+                sport_format="Mixed Double",
+            ),
+        ],
+    )
+
+    assert payload["validation"]["errors"] == []
+    warnings = payload["validation"]["warnings"]
+    assert any("Justin Pham" in warning and "Justtin Pham" in warning for warning in warnings)
+
+
+def test_table_tennis_prelim_balance_flags_low_and_high_appearances(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(
+        table_tennis,
+        include_sbc=False,
+        matches=[
+            "Nhan Micah (ORN) - Phan Dora (WSD)",
+            "Phan Dora (WSD) - To Jacklyn (WSD)",
+            "To Jacklyn (WSD) - Ly Jennifer (RPC)",
+            "Ly Jennifer (RPC) - Nguyen Christina (WSD)",
+            "Nguyen Christina (WSD) - Nhan Micah (ORN)",
+            "Nhan Micah (ORN) - To Jacklyn (WSD)",
+            "Phan Dora (WSD) - Ly Jennifer (RPC)",
+            "To Jacklyn (WSD) - Bye",
+        ],
+    )
+    schedule_input = _schedule_input()
+    schedule_input["resources"][-1]["close_time"] = "20:00"
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=schedule_input,
+    )
+
+    errors = payload["validation"]["errors"]
+    balance_error = next(
+        error for error in errors
+        if "Women's Singles preliminary row counts are unbalanced" in error
+    )
+    assert "Nguyen Christina=2" in balance_error
+    assert "To Jacklyn=4" in balance_error
+
+
+def test_table_tennis_side_parts_accepts_lowercase_team_code():
+    # A hand-typed workbook cell can write the church code in any case; the
+    # extracted team code should still normalize to uppercase either way.
+    for text in ("Nhan Micah (ORN)", "Nhan Micah (orn)", "Nhan Micah (Orn)"):
+        label, team_code = approved_games._table_tennis_side_parts(text)
+        assert label == "Nhan Micah"
+        assert team_code == "ORN"
+
+
+def test_table_tennis_source_validation_matches_lowercase_church_code(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(
+        table_tennis,
+        include_sbc=False,
+        matches=["Nhan Micah (orn) - Phan Dora (WSD)"],
+    )
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+        roster_rows=[
+            _tt_roster_row("ORN", "Micah", "Nhan"),
+            _tt_roster_row("WSD", "Dora", "Phan"),
+        ],
+    )
+
+    assert payload["validation"]["errors"] == []

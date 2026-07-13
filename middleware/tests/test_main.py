@@ -226,6 +226,8 @@ def test_parse_args_import_approved_games_execute(monkeypatch):
             "tt.xlsx",
             "--schedule-input",
             "schedule_input.json",
+            "--input-xlsx",
+            "Church_Team_Status_ALL.xlsx",
             "--execute",
         ],
     )
@@ -236,6 +238,7 @@ def test_parse_args_import_approved_games_execute(monkeypatch):
     assert args.soccer == "soccer.xlsx"
     assert args.table_tennis == "tt.xlsx"
     assert args.schedule_input == "schedule_input.json"
+    assert args.input_xlsx == "Church_Team_Status_ALL.xlsx"
     assert args.execute is True
     assert args.dry_run is False
 
