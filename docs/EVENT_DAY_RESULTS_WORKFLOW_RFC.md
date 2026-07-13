@@ -213,6 +213,8 @@ After event-day scoring begins, removed future games should be marked cancelled 
 
 The plugin already defines `sf_competitions`, `sf_schedules`, and `sf_results`, but the schema predates the current string-based scheduling model. The existing tables may be upgraded rather than replaced.
 
+**Resolved (2026-07-13, Issue #230):** `sf_competitions` was removed rather than upgraded. It was never populated by any code path, and the new schema carries `event`/`stage`/`sub_event` directly on each `sf_schedules` row instead of normalizing through a separate taxonomy table — the same information `sf_competitions` existed to hold, denormalized per-row. `sf_schedules.competition_id` was removed with it. `sf_schedules` and `sf_results` were upgraded in place as originally planned.
+
 ## 8.1 Proposed `sf_schedules` additions
 
 - `game_key` - unique scheduler `game_id`;

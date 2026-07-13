@@ -23,8 +23,11 @@ class VAYSF_Integration {
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.5';  // Issue #203 — event-day results schema (sf_schedules/sf_results
+    const DB_VERSION = '1.0.6';  // Issue #203 — event-day results schema (sf_schedules/sf_results
                                   // redesign + new sf_result_revisions/sf_result_files tables)
+                                  // Issue #230 — removed the superseded sf_competitions table and
+                                  // sf_schedules.competition_id (never populated, never referenced
+                                  // outside schema definitions; replaced by event/sub_event columns)
     
     /**
      * Database version option name
@@ -471,27 +474,15 @@ class VAYSF_Integration {
 		) $charset_collate;";
 		dbDelta($sql_validation_issues);
                 
-        // Competitions table
-        $table_competitions = $wpdb->prefix . self::TABLE_PREFIX . 'competitions';
-        $sql_competitions = "CREATE TABLE $table_competitions (
-            competition_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-            sport_type VARCHAR(50) NOT NULL,
-            category VARCHAR(50) NOT NULL,
-            format VARCHAR(50) NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY  (competition_id),
-            UNIQUE KEY sport_category_format (sport_type, category, format)
-        ) $charset_collate;";
-        dbDelta($sql_competitions);
-        
         // Schedules table (redesigned for Issue #203 — string game_key scheduling model,
         // replaces the numeric team_a_id/team_b_id FK shape; table was confirmed unused
-        // in production so no data-preserving migration is needed)
+        // in production so no data-preserving migration is needed).
+        // The pre-#203 sf_competitions taxonomy table and its competition_id FK on this
+        // table were removed in Issue #230 — the new schema carries event/stage/sub_event
+        // directly on each row instead, and sf_competitions was never populated.
         $table_schedules = $wpdb->prefix . self::TABLE_PREFIX . 'schedules';
         $sql_schedules = "CREATE TABLE $table_schedules (
             schedule_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-            competition_id BIGINT(20) UNSIGNED DEFAULT NULL,
             game_key VARCHAR(64) NOT NULL,
             schedule_version INT UNSIGNED NOT NULL DEFAULT 0,
             event VARCHAR(100) DEFAULT NULL,
@@ -518,7 +509,6 @@ class VAYSF_Integration {
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY  (schedule_id),
             UNIQUE KEY game_key (game_key),
-            KEY competition_id (competition_id),
             KEY schedule_version (schedule_version),
             KEY game_status (game_status),
             KEY event (event),
@@ -665,7 +655,7 @@ class VAYSF_Integration {
         // dbDelta above adds these for fresh installs; ALTER covers upgrades from
         // the pre-#203 numeric team_a_id/team_b_id schema where they did not exist.
         $schedules_columns = array(
-            'game_key'         => "ADD COLUMN game_key VARCHAR(64) NOT NULL DEFAULT '' AFTER competition_id",
+            'game_key'         => "ADD COLUMN game_key VARCHAR(64) NOT NULL DEFAULT '' AFTER schedule_id",
             'schedule_version' => "ADD COLUMN schedule_version INT UNSIGNED NOT NULL DEFAULT 0 AFTER game_key",
             'event'            => "ADD COLUMN event VARCHAR(100) DEFAULT NULL AFTER schedule_version",
             'stage'            => "ADD COLUMN stage VARCHAR(50) DEFAULT NULL AFTER event",

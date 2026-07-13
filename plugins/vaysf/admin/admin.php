@@ -97,15 +97,6 @@ class VAYSF_Admin {
         
         add_submenu_page(
             'vaysf',
-            'Competitions',
-            'Competitions',
-            'sf2025_read',
-            'vaysf-competitions',
-            array($this, 'display_competitions_page')
-        );
-        
-        add_submenu_page(
-            'vaysf',
             'Settings',
             'Settings',
             'sf2025_admin',
