@@ -555,6 +555,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     approved_games_parser.add_argument(
+        "--input-xlsx",
+        default=None,
+        help=(
+            "Optional Church_Team_Status_ALL workbook for Table Tennis source-vs-roster "
+            "validation; defaults to the newest workbook beside --output/EXPORT_DIR."
+        ),
+    )
+    approved_games_parser.add_argument(
         "--output",
         default=None,
         help="Sidecar/audit path (default: EXPORT_DIR/approved_schedule_games*.json)",
@@ -1797,6 +1805,7 @@ def main() -> None:
                     logger.info(f"Match schedule overrides sidecar written to: {output_path.resolve()}")
                     success = True
     elif args.command == "import-approved-games":
+        from schedule_workbook import ScheduleWorkbookBuilder
         from schedule_contracts import (
             ScheduleContractError,
             validate_output_against_input,
@@ -1849,6 +1858,22 @@ def main() -> None:
             if args.publish_output
             else approved_games.default_publish_output_path(Path(EXPORT_DIR))
         )
+        context_xlsx = Path(args.input_xlsx) if args.input_xlsx else None
+        if context_xlsx is None:
+            context_xlsx = _find_latest_all_workbook(output_path.parent)
+            if context_xlsx is None and Path(EXPORT_DIR) != output_path.parent:
+                context_xlsx = _find_latest_all_workbook(Path(EXPORT_DIR))
+
+        roster_rows = None
+        if context_xlsx:
+            logger.info(f"import-approved-games: using roster context workbook {context_xlsx}")
+            builder = ScheduleWorkbookBuilder()
+            roster_rows, _validation_rows = builder.read_roster_validation_rows(context_xlsx)
+        else:
+            logger.warning(
+                "import-approved-games: no Church_Team_Status_ALL workbook found; "
+                "Table Tennis source-vs-roster validation will be skipped."
+            )
 
         try:
             schedule_input = json.loads(schedule_input_path.read_text(encoding="utf-8"))
@@ -1874,6 +1899,8 @@ def main() -> None:
                 table_tennis_path=table_tennis_path,
                 venue_input_path=Path(args.venue_input) if args.venue_input else None,
                 schedule_input=schedule_input,
+                roster_rows=roster_rows,
+                roster_context_path=context_xlsx,
                 waive_table_tennis_discrepancy=args.waive_table_tennis_discrepancy,
             )
             for line in approved_games.summarize_payload_for_log(payload):

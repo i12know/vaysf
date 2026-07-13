@@ -21,6 +21,11 @@
   `placeholders` list with `classification=bye`, matching Soccer, so a
   dry-run's placeholder count reflects every skipped bye across all three
   sports instead of only Soccer's.
+- Added `--input-xlsx` roster context support to `import-approved-games` so the
+  Table Tennis source workbook is dry-run checked against the latest
+  `Church_Team_Status_ALL` export: source team codes must exist in registered
+  Table Tennis roster rows, and named athletes must match the event/category
+  they are scheduled for before execution is allowed.
 - Documented the dry-run-first operator workflow and approved-game publication
   path in `docs/SCHEDULE-HOW-TO.md` and `docs/SCHEDULING.md`.
 

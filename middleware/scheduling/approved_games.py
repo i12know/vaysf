@@ -29,6 +29,7 @@ from config import (
 )
 from scheduling import master_schedule
 from scheduling import match_schedule_overrides
+from validation.name_matcher import likely_name_match
 
 APPROVED_GAMES_SIDECAR_FILENAME = "approved_schedule_games.json"
 APPROVED_GAMES_AUDIT_FILENAME = "approved_schedule_games.audit.json"
@@ -107,6 +108,15 @@ def _team_code(value: Any) -> str:
 
 def _is_bye(value: Any) -> bool:
     return _clean_text(value).casefold() == "bye"
+
+
+def _format_class(value: Any) -> str:
+    text = _clean_text(value).casefold()
+    if "double" in text:
+        return "doubles"
+    if "single" in text:
+        return "singles"
+    return text
 
 
 def _cell_ref(sheet: str, row: int, col: int) -> str:
@@ -635,10 +645,227 @@ def _strip_table_tennis_marker(text: str) -> str:
     return re.sub(r"^\((?:U35|35\+)\)\s*", "", text.strip(), flags=re.I)
 
 
+def _table_tennis_marker_event(text: str) -> Optional[str]:
+    upper = _clean_text(text).upper()
+    if upper.startswith("(35+)"):
+        return SPORT_TYPE["TABLE_TENNIS_35"]
+    if upper.startswith("(U35)"):
+        return SPORT_TYPE["TABLE_TENNIS"]
+    return None
+
+
+def _table_tennis_side_parts(text: str) -> tuple[str, Optional[str]]:
+    cleaned = _strip_table_tennis_marker(_clean_text(text))
+    match = re.match(r"^(.*?)\s*\(([A-Z0-9-]{2,8})\)\s*$", cleaned)
+    if match:
+        return match.group(1).strip(), _team_code(match.group(2))
+    return cleaned.strip(), None
+
+
+def _split_table_tennis_athletes(value: Any) -> list[str]:
+    text = _clean_text(value)
+    if not text:
+        return []
+    parts = re.split(r"\s*(?:&|/|\band\b)\s*", text, flags=re.I)
+    return [part.strip() for part in parts if part and part.strip()]
+
+
+def _table_tennis_roster_section(ws) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for row in range(1, ws.max_row + 1):
+        team_cell = _clean_text(ws.cell(row=row, column=1).value)
+        event = _table_tennis_marker_event(team_cell)
+        if not event:
+            continue
+        team_code = _team_code(_strip_table_tennis_marker(team_cell))
+        if not team_code:
+            continue
+        entries.append({
+            "event": event,
+            "team_code": team_code,
+            "athletes": _split_table_tennis_athletes(ws.cell(row=row, column=2).value),
+            "source_cell": _cell_range(ws.title, row, 1, 2),
+        })
+    return entries
+
+
+def _table_tennis_roster_index(
+    roster_rows: Optional[Sequence[Mapping[str, Any]]],
+) -> dict[tuple[str, str], list[Mapping[str, Any]]]:
+    index: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for row in roster_rows or []:
+        event = _clean_text(row.get("sport_type"))
+        if event not in {SPORT_TYPE["TABLE_TENNIS"], SPORT_TYPE["TABLE_TENNIS_35"]}:
+            continue
+        church = _team_code(row.get("Church Team"))
+        if not church:
+            continue
+        index.setdefault((event, church), []).append(row)
+        team_order = _team_code(row.get("team_order"))
+        if team_order:
+            index.setdefault((event, f"{church}-{team_order}"), []).append(row)
+    return index
+
+
+def _table_tennis_roster_candidates(
+    roster_index: Mapping[tuple[str, str], list[Mapping[str, Any]]],
+    event: str,
+    team_code: str,
+) -> list[Mapping[str, Any]]:
+    exact = roster_index.get((event, team_code), [])
+    if exact:
+        return exact
+    base_team = re.sub(r"-\d+$", "", team_code)
+    if base_team != team_code:
+        return roster_index.get((event, base_team), [])
+    return []
+
+
+def _row_full_name(row: Mapping[str, Any]) -> str:
+    return " ".join(
+        part for part in (
+            _clean_text(row.get("First Name")),
+            _clean_text(row.get("Last Name")),
+        ) if part
+    )
+
+
+def _find_table_tennis_roster_athlete(
+    candidates: Sequence[Mapping[str, Any]],
+    athlete_name: str,
+    *,
+    format_class: Optional[str] = None,
+    gender: Optional[str] = None,
+) -> Optional[Mapping[str, Any]]:
+    for row in candidates:
+        if format_class and _format_class(row.get("sport_format")) != format_class:
+            continue
+        if gender:
+            row_gender = _clean_text(row.get("sport_gender")).casefold()
+            if row_gender and row_gender != gender.casefold():
+                continue
+        if likely_name_match(athlete_name, _row_full_name(row)):
+            return row
+    return None
+
+
+def _validate_table_tennis_source_against_roster(
+    *,
+    ws,
+    roster_rows: Optional[Sequence[Mapping[str, Any]]],
+    warnings: list[str],
+    errors: list[str],
+) -> None:
+    if roster_rows is None:
+        warnings.append(
+            "Table Tennis source validation skipped: no Church_Team_Status_ALL roster context supplied."
+        )
+        return
+    if not roster_rows:
+        warnings.append(
+            "Table Tennis source validation skipped: roster context was empty."
+        )
+        return
+
+    roster_index = _table_tennis_roster_index(roster_rows)
+    roster_entries = _table_tennis_roster_section(ws)
+    source_team_keys = {(entry["event"], entry["team_code"]) for entry in roster_entries}
+    seen_source_roster_mismatches: set[tuple[str, str, str]] = set()
+
+    for entry in roster_entries:
+        candidates = _table_tennis_roster_candidates(
+            roster_index,
+            entry["event"],
+            entry["team_code"],
+        )
+        if not candidates:
+            errors.append(
+                f"{entry['source_cell']}: Table Tennis source team {entry['team_code']} "
+                f"is not present in the current roster for {entry['event']}."
+            )
+            continue
+        for athlete in entry["athletes"]:
+            if not _find_table_tennis_roster_athlete(
+                candidates,
+                athlete,
+                format_class="doubles",
+            ):
+                errors.append(
+                    f"{entry['source_cell']}: athlete {athlete!r} is not registered "
+                    f"for {entry['event']} doubles under {entry['team_code']}."
+                )
+
+    for row in range(3, ws.max_row + 1):
+        if not _time_label(ws.cell(row=row, column=1).value):
+            continue
+        for column in range(2, 6):
+            raw = _clean_text(ws.cell(row=row, column=column).value)
+            if not raw or " - " not in raw:
+                continue
+            if re.search(r"\b(?:SF|FINAL|3RD)\b", raw, re.I):
+                continue
+            left, right = [part.strip() for part in raw.split(" - ", 1)]
+            event, sub_event, _prefix = _table_tennis_category(raw, column)
+            format_class = "doubles" if "Doubles" in sub_event else "singles"
+            gender = None
+            if sub_event.startswith("Women's"):
+                gender = "Women"
+            elif sub_event.startswith("Men's"):
+                gender = "Men"
+            for side in (left, right):
+                label, team_code = _table_tennis_side_parts(side)
+                if _is_bye(label) or _is_bye(team_code):
+                    continue
+                source_cell = _cell_ref(ws.title, row, column)
+                if not team_code:
+                    team_code = _team_code(label)
+                    mismatch_key = (source_cell, event, team_code)
+                    if (event, team_code) not in source_team_keys and mismatch_key not in seen_source_roster_mismatches:
+                        seen_source_roster_mismatches.add(mismatch_key)
+                        errors.append(
+                            f"{source_cell}: Table Tennis schedule team {team_code} "
+                            f"is not listed in the source roster section for {event}."
+                        )
+                    candidates = _table_tennis_roster_candidates(
+                        roster_index,
+                        event,
+                        team_code,
+                    )
+                    if not candidates:
+                        errors.append(
+                            f"{source_cell}: Table Tennis source team {team_code} "
+                            f"is not present in the current roster for {event}."
+                        )
+                    continue
+                candidates = _table_tennis_roster_candidates(
+                    roster_index,
+                    event,
+                    team_code,
+                )
+                if not candidates:
+                    errors.append(
+                        f"{source_cell}: Table Tennis source team {team_code} "
+                        f"is not present in the current roster for {event}."
+                    )
+                    continue
+                if not _find_table_tennis_roster_athlete(
+                    candidates,
+                    label,
+                    format_class=format_class,
+                    gender=gender,
+                ):
+                    errors.append(
+                        f"{source_cell}: athlete {label!r} is not registered for "
+                        f"{event} {sub_event} under {team_code}."
+                    )
+
+
+
 def _parse_table_tennis(
     path: Path,
     *,
     resources: Sequence[Mapping[str, Any]],
+    roster_rows: Optional[Sequence[Mapping[str, Any]]],
     warnings: list[str],
     errors: list[str],
     waive_discrepancy: bool,
@@ -654,6 +881,12 @@ def _parse_table_tennis(
         if _clean_text(value).upper().startswith("(U35)")
     }
     schedule_u35_codes: set[str] = set()
+    _validate_table_tennis_source_against_roster(
+        ws=ws,
+        roster_rows=roster_rows,
+        warnings=warnings,
+        errors=errors,
+    )
 
     for row in range(3, ws.max_row + 1):
         start_time = _time_label(ws.cell(row=row, column=1).value)
@@ -855,6 +1088,8 @@ def build_approved_games_payload(
     soccer_path: Path,
     table_tennis_path: Path,
     schedule_input: Mapping[str, Any],
+    roster_rows: Optional[Sequence[Mapping[str, Any]]] = None,
+    roster_context_path: Optional[Path] = None,
     venue_input_path: Optional[Path] = None,
     waive_table_tennis_discrepancy: bool = False,
 ) -> dict[str, Any]:
@@ -889,6 +1124,7 @@ def build_approved_games_payload(
         table_tennis_records, table_tennis_placeholders = _parse_table_tennis(
             table_tennis_path,
             resources=resources,
+            roster_rows=roster_rows,
             warnings=warnings,
             errors=errors,
             waive_discrepancy=waive_table_tennis_discrepancy,
@@ -913,6 +1149,7 @@ def build_approved_games_payload(
             "badminton": str(badminton_path),
             "soccer": str(soccer_path),
             "table_tennis": str(table_tennis_path),
+            "roster_context": str(roster_context_path) if roster_context_path else None,
             "venue_input": str(venue_input_path) if venue_input_path else None,
         },
         "games": records,
