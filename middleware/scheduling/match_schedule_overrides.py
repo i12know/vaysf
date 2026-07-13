@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import xml.etree.ElementTree as ET
 from collections import Counter
 from datetime import datetime
 from datetime import time as _dt_time
@@ -55,6 +56,20 @@ _CANONICAL_RGB_BY_SPORT = {
     if event_name in SPORT_STYLES
 }
 _COLOR_MATCH_DISTANCE_THRESHOLD = 15000
+_THEME_INDEX_NAMES = (
+    "lt1",
+    "dk1",
+    "lt2",
+    "dk2",
+    "accent1",
+    "accent2",
+    "accent3",
+    "accent4",
+    "accent5",
+    "accent6",
+    "hlink",
+    "folHlink",
+)
 
 _CONTROL_WORDS = master_schedule._CONTROL_WORDS | {
     "SET UP - TAPE LINES",
@@ -67,6 +82,7 @@ _CONTROL_WORDS = master_schedule._CONTROL_WORDS | {
     "BASKETBALL 3RD",
     "BASKETBALL FINAL",
 }
+_NORMAL_CONTROL_WORDS = {" ".join(word.upper().split()) for word in _CONTROL_WORDS}
 
 _TEAM_CODE_RE = re.compile(r"^[A-Z0-9]{2,5}$")
 
@@ -98,7 +114,17 @@ def _time_label(value: Any) -> Optional[str]:
     if isinstance(value, datetime):
         value = value.time()
     if isinstance(value, _dt_time):
-        return f"{value.hour:02d}:{value.minute:02d}"
+        minutes = int(
+            round(
+                value.hour * 60
+                + value.minute
+                + (value.second / 60.0)
+                + (value.microsecond / 60_000_000.0)
+            )
+        )
+        hour = (minutes // 60) % 24
+        minute = minutes % 60
+        return f"{hour:02d}:{minute:02d}"
     text = _clean_text(value)
     if not text or text.casefold() == "legend":
         return None
@@ -114,14 +140,18 @@ def _time_label(value: Any) -> Optional[str]:
 
 
 def _is_control_text(value: Any) -> bool:
-    text = _clean_text(value).upper()
+    text = " ".join(_clean_text(value).upper().split())
     if not text:
         return True
-    if text in _CONTROL_WORDS:
+    if text in _NORMAL_CONTROL_WORDS:
         return True
-    if re.fullmatch(r"(BB|MVB|WVB|BC)\s+(QF|SF|FINAL|3RD)", text):
+    if re.fullmatch(r"(BB|MVB|WVB|BC)\s+(QF|SF|FINAL|3RD)(?:\s+\d+)?", text):
         return True
-    if re.search(r"CEREMONY|SERVICE|SET\s*UP", text):
+    if "BIBLE CHALLENGE FINAL" in text:
+        return True
+    if "PLAYOFF" in text and ("FINAL" in text or "3RD" in text):
+        return True
+    if re.search(r"CEREMONY|SERVICE|SCRIPTURE|SET\s*UP", text):
         return True
     return False
 
@@ -131,9 +161,75 @@ def _rgb_of(cell) -> Optional[str]:
     if not fill or fill.fill_type != "solid":
         return None
     color = fill.fgColor
-    if color.type != "rgb" or not isinstance(color.rgb, str) or len(color.rgb) < 6:
+    if color.type == "rgb" and isinstance(color.rgb, str) and len(color.rgb) >= 6:
+        return color.rgb[-6:].upper()
+    if color.type == "theme":
+        workbook = getattr(cell.parent, "parent", None)
+        theme_rgb = _theme_rgb_by_index(workbook).get(_color_theme_index(color))
+        if theme_rgb:
+            return _apply_tint(theme_rgb, _color_tint(color))
+    return None
+
+
+def _color_theme_index(color) -> Optional[int]:
+    try:
+        return int(color.theme)
+    except (TypeError, ValueError):
         return None
-    return color.rgb[-6:].upper()
+
+
+def _color_tint(color) -> float:
+    try:
+        return float(color.tint or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _theme_rgb_by_index(workbook) -> Dict[int, str]:
+    theme_xml = getattr(workbook, "loaded_theme", None)
+    if not theme_xml:
+        return {}
+    try:
+        root = ET.fromstring(theme_xml)
+    except ET.ParseError:
+        return {}
+
+    ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+    scheme = root.find(".//a:clrScheme", ns)
+    if scheme is None:
+        return {}
+
+    rgb_by_name: Dict[str, str] = {}
+    for child in list(scheme):
+        name = child.tag.rsplit("}", 1)[-1]
+        srgb = child.find("a:srgbClr", ns)
+        system = child.find("a:sysClr", ns)
+        value = None
+        if srgb is not None:
+            value = srgb.get("val")
+        elif system is not None:
+            value = system.get("lastClr")
+        if value and len(value) >= 6:
+            rgb_by_name[name] = value[-6:].upper()
+
+    return {
+        index: rgb_by_name[name]
+        for index, name in enumerate(_THEME_INDEX_NAMES)
+        if name in rgb_by_name
+    }
+
+
+def _apply_tint(rgb: str, tint: float) -> str:
+    """Apply Excel's theme tint transform to an RRGGBB color."""
+    channels = [int(rgb[i : i + 2], 16) for i in (0, 2, 4)]
+    transformed = []
+    for channel in channels:
+        if tint < 0:
+            value = channel * (1.0 + tint)
+        else:
+            value = channel * (1.0 - tint) + (255 * tint)
+        transformed.append(max(0, min(255, int(round(value)))))
+    return "".join(f"{channel:02X}" for channel in transformed)
 
 
 def _rgb_distance(a: str, b: str) -> int:
@@ -194,7 +290,7 @@ def _classify_block(
     nonempty = [value for value in values if value]
     if not nonempty:
         return None
-    if len(nonempty) == 1 and _is_control_text(nonempty[0]):
+    if all(_is_control_text(value) for value in nonempty):
         return None
 
     cell_range = (

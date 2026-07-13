@@ -1,5 +1,7 @@
+from datetime import time
+
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill
+from openpyxl.styles import Color, PatternFill
 
 from config import (
     GYM_RESOURCE_TYPE_BASKETBALL,
@@ -16,6 +18,8 @@ _BB_FILL = PatternFill("solid", fgColor="F8CBAD")
 _MVB_FILL = PatternFill("solid", fgColor="9BC2E6")
 _WVB_FILL = PatternFill("solid", fgColor="FFCCFF")
 _BC_FILL = PatternFill("solid", fgColor="92D050")
+_BB_THEME_FILL = PatternFill("solid", fgColor=Color(theme=5, tint=0.5999938962981048))
+_MVB_THEME_FILL = PatternFill("solid", fgColor=Color(theme=8, tint=0.3999755851924192))
 
 
 def _venue_row(ws, row: int, day_label: str, venues: list):
@@ -119,6 +123,59 @@ def test_parser_classifies_real_world_fill_colors(tmp_path):
     assert two_team["B2:D2"]["team_b"] == "FVC"
     assert bc[0]["teams"] == ["AAA", "BBB", "CCC"]
     assert bye[0]["team_a"] == "WAG" and bye[0]["team_b"] is None
+
+
+def test_parser_classifies_theme_fill_colors_from_draft_12_layout(tmp_path, monkeypatch):
+    monkeypatch.setattr(mso, "_theme_rgb_by_index", lambda workbook: {5: "ED7D31", 8: "5B9BD5"})
+
+    workbook = tmp_path / "draft12-theme.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "2026_Draft (12)"
+    _venue_row(
+        ws, 1, "SAT 7/18",
+        [(2, "Main Gym BB1"), (10, "Prac. Gym VB1")],
+    )
+    ws.cell(row=2, column=1, value=time(13, 59, 59, 999000))
+    for col, value in ((2, "WAG"), (3, "v"), (4, "FVC")):
+        cell = ws.cell(row=2, column=col, value=value)
+        cell.fill = _BB_THEME_FILL
+    for col, value in ((10, "SDC"), (11, "v"), (12, "MWC")):
+        cell = ws.cell(row=2, column=col, value=value)
+        cell.fill = _MVB_THEME_FILL
+    wb.save(workbook)
+
+    payload = mso.parse_match_schedule_overrides_workbook(workbook)
+    two_team = {row["source_cell"]: row for row in payload["rows"] if row["kind"] == "two_team_game"}
+
+    assert payload["diagnostics"]["errors"] == []
+    assert two_team["B2:D2"]["sport"] == "Basketball"
+    assert two_team["J2:L2"]["sport"] == "MVB"
+    assert two_team["B2:D2"]["slot"] == "Sat-1-14:00"
+    assert two_team["J2:L2"]["slot"] == "Sat-1-14:00"
+
+
+def test_parser_ignores_repeated_wide_control_blocks(tmp_path):
+    workbook = tmp_path / "wide-controls.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "2026_Draft (12)"
+    ws.cell(row=1, column=1, value="SAT 7/25")
+    ws.cell(row=1, column=2, value="Main Gym BB1 / BB2")
+    ws.merge_cells(start_row=1, start_column=2, end_row=1, end_column=8)
+    ws.cell(row=2, column=1, value="9:00 AM")
+    ws.cell(row=2, column=2, value="BB QF")
+    ws.cell(row=2, column=6, value="BB QF")
+    ws.cell(row=3, column=1, value="2:00 PM")
+    ws.cell(row=3, column=2, value="BADMINTON\nPLAYOFF / 3RD / FINAL\n[3 COURTS]")
+    wb.save(workbook)
+
+    payload = mso.parse_match_schedule_overrides_workbook(workbook)
+
+    assert payload["rows"] == []
+    assert payload["diagnostics"]["block_count"] == 0
+    assert payload["diagnostics"]["warnings"] == []
+    assert payload["diagnostics"]["unmapped_cells"] == []
 
 
 def test_unknown_team_code_is_reported_with_cell_and_event(tmp_path):
