@@ -15,6 +15,13 @@
   `sf_results.current_revision` in a single transaction.
 - Bumped plugin header/version to `1.0.17` and rebuilt `plugins/vaysf.zip`;
   database version remains `1.0.6` because #229 adds admin UI only.
+- Review fix: the initially-committed `plugins/vaysf.zip` had CRLF line
+  endings injected into all nine packaged files (not just the two edited by
+  this PR), including inside the `dbDelta()`-parsed `CREATE TABLE` string
+  literals in `vaysf.php`. The git-tracked source files were unaffected
+  (still pure LF) — this was purely a zip-build artifact. Rebuilt with clean
+  LF content, verified byte-for-byte against the tracked source, and
+  confirmed `php -l` passes on the extracted copies.
 
 ### Remove dead Competitions tab and superseded sf_competitions schema - closes [#230](https://github.com/i12know/vaysf/issues/230)
 
