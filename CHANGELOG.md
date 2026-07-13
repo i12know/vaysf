@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Event-day schedule/results admin screens - closes [#229](https://github.com/i12know/vaysf/issues/229)
+
+- Added wp-admin `Schedules` and `Results` submenu pages for back-office
+  inspection and correction of event-day schedule/result data.
+- `Schedules` now supports filtered list views plus create/edit/cancel forms
+  for `sf_schedules`, with protected-status and cancellation confirmations and
+  source-hash recomputation matching the middleware publish diff fields.
+- `Results` now supports joined result listing, current-result creation and
+  correction, verify/certify actions, and read-only per-result revision
+  history. Corrections append a new `sf_result_revisions` row and advance
+  `sf_results.current_revision` in a single transaction.
+- Bumped plugin header/version to `1.0.17` and rebuilt `plugins/vaysf.zip`;
+  database version remains `1.0.6` because #229 adds admin UI only.
+
 ### Remove dead Competitions tab and superseded sf_competitions schema - closes [#230](https://github.com/i12know/vaysf/issues/230)
 
 - Removed the wp-admin "Competitions" submenu. Its callback,
