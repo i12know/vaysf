@@ -26,6 +26,9 @@
   `Church_Team_Status_ALL` export: source team codes must exist in registered
   Table Tennis roster rows, and named athletes must match the event/category
   they are scheduled for before execution is allowed.
+- Added Table Tennis preliminary row-count balance validation so uneven
+  category schedules, such as one athlete receiving too few appearances while
+  another receives an extra bye row, are reported during dry run.
 - Documented the dry-run-first operator workflow and approved-game publication
   path in `docs/SCHEDULE-HOW-TO.md` and `docs/SCHEDULING.md`.
 

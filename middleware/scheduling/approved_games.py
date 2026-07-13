@@ -860,6 +860,56 @@ def _validate_table_tennis_source_against_roster(
                     )
 
 
+def _table_tennis_count_label(raw_side: str, sub_event: str) -> str:
+    label, team_code = _table_tennis_side_parts(raw_side)
+    if _is_bye(label) or _is_bye(team_code):
+        return ""
+    if "Doubles" in sub_event:
+        return _team_code(team_code or label)
+    return label
+
+
+def _validate_table_tennis_prelim_balance(ws, errors: list[str]) -> None:
+    by_sub_event: dict[str, dict[str, list[str]]] = {}
+
+    for row in range(3, ws.max_row + 1):
+        if not _time_label(ws.cell(row=row, column=1).value):
+            continue
+        for column in range(2, 6):
+            raw = _clean_text(ws.cell(row=row, column=column).value)
+            if not raw or " - " not in raw:
+                continue
+            if re.search(r"\b(?:SF|FINAL|3RD)\b", raw, re.I):
+                continue
+            left, right = [part.strip() for part in raw.split(" - ", 1)]
+            _event, sub_event, _prefix = _table_tennis_category(raw, column)
+            source_cell = _cell_ref(ws.title, row, column)
+            for side in (left, right):
+                label = _table_tennis_count_label(side, sub_event)
+                if not label:
+                    continue
+                by_sub_event.setdefault(sub_event, {}).setdefault(label, []).append(source_cell)
+
+    for sub_event, appearances in sorted(by_sub_event.items()):
+        if len(appearances) < 3:
+            continue
+        count_frequency = Counter(len(cells) for cells in appearances.values())
+        if len(count_frequency) <= 1:
+            continue
+        expected_count, _frequency = count_frequency.most_common(1)[0]
+        outliers = [
+            f"{label}={len(cells)} ({', '.join(cells)})"
+            for label, cells in sorted(appearances.items())
+            if len(cells) != expected_count
+        ]
+        if outliers:
+            errors.append(
+                f"Table Tennis {sub_event} preliminary row counts are unbalanced; "
+                f"expected {expected_count} appearance(s) based on the category majority, "
+                f"but found: {'; '.join(outliers)}."
+            )
+
+
 
 def _parse_table_tennis(
     path: Path,
@@ -887,6 +937,7 @@ def _parse_table_tennis(
         warnings=warnings,
         errors=errors,
     )
+    _validate_table_tennis_prelim_balance(ws, errors)
 
     for row in range(3, ws.max_row + 1):
         start_time = _time_label(ws.cell(row=row, column=1).value)

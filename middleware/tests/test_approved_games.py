@@ -65,7 +65,8 @@ def _write_table_tennis(path, include_sbc=True, matches=None, roster_entries=Non
     ws.append(["Fri 7/24", "Table 1", "Table 2", "Table 3", "Table 4"])
     matches = matches or ["Nhan Micah (ORN) - Phan Dora (WSD)"]
     for index, match in enumerate(matches):
-        ws.append([f"17:{index * 20:02d}", match])
+        minutes = index * 15
+        ws.append([f"{17 + minutes // 60:02d}:{minutes % 60:02d}", match])
     ws.append([])
     ws.append(["TEAM", "ATHLETES"])
     for team, athletes in roster_entries or []:
@@ -323,3 +324,45 @@ def test_table_tennis_source_validation_flags_unregistered_athlete(tmp_path):
 
     errors = payload["validation"]["errors"]
     assert any("Noah Vo" in error and "not registered" in error for error in errors)
+
+
+def test_table_tennis_prelim_balance_flags_low_and_high_appearances(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(
+        table_tennis,
+        include_sbc=False,
+        matches=[
+            "Nhan Micah (ORN) - Phan Dora (WSD)",
+            "Phan Dora (WSD) - To Jacklyn (WSD)",
+            "To Jacklyn (WSD) - Ly Jennifer (RPC)",
+            "Ly Jennifer (RPC) - Nguyen Christina (WSD)",
+            "Nguyen Christina (WSD) - Nhan Micah (ORN)",
+            "Nhan Micah (ORN) - To Jacklyn (WSD)",
+            "Phan Dora (WSD) - Ly Jennifer (RPC)",
+            "To Jacklyn (WSD) - Bye",
+        ],
+    )
+    schedule_input = _schedule_input()
+    schedule_input["resources"][-1]["close_time"] = "20:00"
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=schedule_input,
+    )
+
+    errors = payload["validation"]["errors"]
+    balance_error = next(
+        error for error in errors
+        if "Women's Singles preliminary row counts are unbalanced" in error
+    )
+    assert "Nguyen Christina=2" in balance_error
+    assert "To Jacklyn=4" in balance_error
