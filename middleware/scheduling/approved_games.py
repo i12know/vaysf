@@ -42,6 +42,8 @@ DEFAULT_MAIN_SCHEDULE_FILENAME = "2026 Main Schedule draft 11.xlsx"
 DEFAULT_BADMINTON_FILENAME = "2026 VAY Badminton Schedule_draft_v1_10Jul2026.xlsx"
 DEFAULT_SOCCER_FILENAME = "COED SOCCER SCHEDULE.xlsx"
 DEFAULT_TABLE_TENNIS_FILENAME = "Schedule_Roster - Table Tennis (PingPong) 2026.xlsx"
+TABLE_TENNIS_REQUIRED_DAY = "Fri-1"
+TABLE_TENNIS_REQUIRED_VENUE_FRAGMENT = "orange"
 
 _TEAM_CODE_RE = re.compile(r"^[A-Z0-9]{2,5}(?:-\d+)?$")
 _DATE_TO_DAY = {
@@ -150,6 +152,8 @@ def _time_label(value: Any) -> Optional[str]:
 
 
 def _date_to_day(value: Any) -> Optional[str]:
+    if isinstance(value, datetime):
+        value = f"{value.month}/{value.day}"
     text = _clean_text(value).upper()
     match = re.search(r"(\d{1,2}/\d{1,2})", text)
     if not match:
@@ -157,8 +161,22 @@ def _date_to_day(value: Any) -> Optional[str]:
     return _DATE_TO_DAY.get(match.group(1))
 
 
+def _declares_table_tennis_required_date(value: Any) -> bool:
+    if _date_to_day(value) != TABLE_TENNIS_REQUIRED_DAY:
+        return False
+    text = _clean_text(value).casefold()
+    if re.search(r"\b(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?\b", text):
+        return bool(re.search(r"\bfri(?:day)?\b", text))
+    return True
+
+
 def _slot(day: str, start_time: str) -> str:
     return f"{day}-{start_time}"
+
+
+def _time_after_minutes(start_time: str, minutes: int) -> str:
+    total = _parse_minutes(start_time) + minutes
+    return f"{total // 60:02d}:{total % 60:02d}"
 
 
 def _parse_minutes(value: str) -> int:
@@ -203,6 +221,30 @@ def _resolve_lane_resource(
             return str(candidates[lane - 1].get("resource_id")), None
         return None, f"visual lane {lane} exceeds {len(candidates)} {resource_type} resource(s) at {slot}"
     return str(candidates[0].get("resource_id")), None
+
+
+def _ensure_approved_soccer_resource(
+    resources: list[Mapping[str, Any]],
+    *,
+    slot: str,
+    duration_minutes: int,
+) -> str:
+    day, start_time = slot.rsplit("-", 1)
+    resource_id = f"SOC-APPROVED-{day}-{start_time.replace(':', '')}"
+    for resource in resources:
+        if _clean_text(resource.get("resource_id")) == resource_id:
+            return resource_id
+    resources.append({
+        "resource_id": resource_id,
+        "resource_type": TEAM_RESOURCE_TYPE_SOCCER,
+        "label": "Approved Field",
+        "day": day,
+        "open_time": start_time,
+        "close_time": _time_after_minutes(start_time, duration_minutes),
+        "slot_minutes": duration_minutes,
+        "venue_name": "Approved Soccer Schedule",
+    })
+    return resource_id
 
 
 def _source_hash(record: Mapping[str, Any]) -> str:
@@ -555,7 +597,7 @@ def _parse_badminton(
 def _parse_soccer(
     path: Path,
     *,
-    resources: Sequence[Mapping[str, Any]],
+    resources: list[Mapping[str, Any]],
     warnings: list[str],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     wb = load_workbook(path, data_only=True)
@@ -603,7 +645,15 @@ def _parse_soccer(
             lane=1,
         )
         if not resource_id:
-            warnings.append(f"{source_cell}: {reason}")
+            resource_id = _ensure_approved_soccer_resource(
+                resources,
+                slot=slot,
+                duration_minutes=60,
+            )
+            warnings.append(
+                f"{source_cell}: {reason}; using approved Soccer workbook override "
+                f"resource {resource_id}."
+            )
         records.append(_approved_record(
             game_key=game_key,
             event=SPORT_TYPE["SOCCER"],
@@ -971,6 +1021,49 @@ def _validate_table_tennis_prelim_balance(ws, errors: list[str]) -> None:
                 f"but found: {'; '.join(outliers)}."
             )
 
+def _validate_table_tennis_friday_orange(
+    *,
+    ws,
+    records: Sequence[Mapping[str, Any]],
+    resources: Sequence[Mapping[str, Any]],
+    errors: list[str],
+) -> None:
+    header_cells: list[str] = []
+    for row in range(1, min(ws.max_row, 5) + 1):
+        for column in range(1, min(ws.max_column, 6) + 1):
+            value = ws.cell(row=row, column=column).value
+            if _declares_table_tennis_required_date(value):
+                header_cells.append(_cell_ref(ws.title, row, column))
+
+    if not header_cells:
+        errors.append(
+            f"{ws.title}: Table Tennis workbook must declare Friday 7/24 "
+            f"({TABLE_TENNIS_REQUIRED_DAY}) in the visible schedule header."
+        )
+
+    # No per-game day check here: _parse_table_tennis unconditionally builds
+    # every record's scheduled_slot with TABLE_TENNIS_REQUIRED_DAY (Fri-1), so
+    # a record-level day comparison can never disagree with it — it would be
+    # dead code that only looks like it validates day drift. The header scan
+    # above is what actually catches a workbook that isn't Friday 7/24.
+    resource_by_id = {
+        _clean_text(resource.get("resource_id")): resource
+        for resource in resources
+        if _clean_text(resource.get("resource_id"))
+    }
+    for record in records:
+        source = _clean_text(record.get("source_cell"))
+        game_key = _clean_text(record.get("game_key"))
+        resource_id = _clean_text(record.get("resource_id"))
+        if not resource_id:
+            continue
+        resource = resource_by_id.get(resource_id)
+        venue_name = _clean_text((resource or {}).get("venue_name"))
+        if TABLE_TENNIS_REQUIRED_VENUE_FRAGMENT not in venue_name.casefold():
+            errors.append(
+                f"{source}: Table Tennis game {game_key} uses resource {resource_id} "
+                f"at venue {venue_name or 'unknown'}; expected Orange."
+            )
 
 
 def _parse_table_tennis(
@@ -1068,6 +1161,12 @@ def _parse_table_tennis(
         )
     elif "SBC" in missing_from_schedule:
         warnings.append("Table Tennis U35 SBC roster/schedule discrepancy was explicitly waived.")
+    _validate_table_tennis_friday_orange(
+        ws=ws,
+        records=records,
+        resources=resources,
+        errors=errors,
+    )
     return records, placeholders
 
 
@@ -1251,8 +1350,10 @@ def build_approved_games_payload(
         f"{record.get('event')}::{record.get('sub_event') or record.get('stage')}"
         for record in records
     )
+    source_schedule_input = copy.deepcopy(dict(schedule_input))
+    source_schedule_input["resources"] = resources
     schedule_input_artifact, schedule_output_artifact = _build_publish_artifacts(
-        records, schedule_input, imported_at
+        records, source_schedule_input, imported_at
     )
     return {
         "version": 1,

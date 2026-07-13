@@ -58,11 +58,17 @@ def _write_soccer(path, team_a="ANH", team_b="GAC"):
     wb.save(path)
 
 
-def _write_table_tennis(path, include_sbc=True, matches=None, roster_entries=None):
+def _write_table_tennis(
+    path,
+    include_sbc=True,
+    matches=None,
+    roster_entries=None,
+    date_header="Fri 7/24",
+):
     wb = Workbook()
     ws = wb.active
     ws.append(["", "VAY SPORTS FEST 2026 - TABLE TENNIS SCHEDULE"])
-    ws.append(["Fri 7/24", "Table 1", "Table 2", "Table 3", "Table 4"])
+    ws.append([date_header, "Table 1", "Table 2", "Table 3", "Table 4"])
     matches = matches or ["Nhan Micah (ORN) - Phan Dora (WSD)"]
     for index, match in enumerate(matches):
         minutes = index * 15
@@ -151,6 +157,7 @@ def _schedule_input():
                 "open_time": "17:00",
                 "close_time": "18:00",
                 "slot_minutes": 20,
+                "venue_name": "Orange Chapel",
             },
         ],
     }
@@ -183,6 +190,35 @@ def test_approved_games_payload_builds_publishable_artifacts(tmp_path):
     assert validate_schedule_input(publish_input) == []
     assert validate_schedule_output(publish_output) == []
     assert validate_output_against_input(publish_output, publish_input) == []
+
+
+def test_soccer_approved_schedule_can_create_override_resource(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(table_tennis, include_sbc=False)
+    schedule_input = _schedule_input()
+    schedule_input["resources"] = [
+        resource for resource in schedule_input["resources"]
+        if resource["resource_type"] != TEAM_RESOURCE_TYPE_SOCCER
+    ]
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=schedule_input,
+    )
+
+    assert payload["validation"]["errors"] == []
+    assert any("approved Soccer workbook override" in warning for warning in payload["validation"]["warnings"])
+    publish_resources = payload["publish_artifacts"]["schedule_input"]["resources"]
+    assert any(resource["resource_id"] == "SOC-APPROVED-Sat-1-1300" for resource in publish_resources)
 
 
 def test_table_tennis_sbc_discrepancy_blocks_execute_without_waiver(tmp_path):
@@ -448,3 +484,77 @@ def test_table_tennis_source_validation_matches_lowercase_church_code(tmp_path):
     )
 
     assert payload["validation"]["errors"] == []
+
+
+def test_table_tennis_requires_friday_724_header(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(table_tennis, include_sbc=False, date_header="Sat 7/24")
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+    )
+
+    assert any("Friday 7/24" in error for error in payload["validation"]["errors"])
+
+
+def test_table_tennis_requires_orange_resource(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(table_tennis, include_sbc=False)
+    schedule_input = _schedule_input()
+    schedule_input["resources"][-1]["venue_name"] = "Esperanza Chapel"
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=schedule_input,
+    )
+
+    assert any("expected Orange" in error for error in payload["validation"]["errors"])
+
+
+def test_table_tennis_wrong_day_workbook_still_blocked_by_header_check(tmp_path):
+    """The header scan alone must catch a workbook that isn't Friday 7/24 at
+    all (not just a Friday-dated header with the wrong weekday label) — this
+    is the case the removed, unreachable per-game day check used to look
+    like it was covering. _parse_table_tennis always builds scheduled_slot
+    with the hardcoded required day, so a per-record comparison against that
+    same hardcoded value could never disagree with it regardless of what the
+    workbook's header actually says; the header scan is what has to do the
+    real work.
+    """
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(table_tennis, include_sbc=False, date_header="Sat 7/25")
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+    )
+
+    assert any("Friday 7/24" in error for error in payload["validation"]["errors"])
