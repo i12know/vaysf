@@ -925,6 +925,29 @@ The checkbox list is empty until a schedule has been published into
 schedule first and then review coordinator assignments; saved event names that
 no longer appear in the current schedule are shown as stale authorization.
 
+### Coordinator Score Entry Dashboard
+
+After the schedule is published and a coordinator has authorized events, the
+coordinator can open:
+
+```text
+https://sportsfest.vayhub.us/coordinator-score-entry/
+```
+
+The page requires a normal WordPress login and `sf2025_submit_results`. It then
+shows only the latest published, non-cancelled schedule rows whose `event`
+matches the user's `vaysf_authorized_events` list.
+
+The dashboard has three views:
+
+- **Needs Results**: assigned games from today or earlier with no result row yet.
+- **Submitted Today**: assigned games whose result was submitted by this user today.
+- **Assigned Games**: all currently published games assigned to this coordinator.
+
+For this first implementation slice, **Enter Score** is intentionally disabled.
+Use the page to confirm that `test_coordinator` sees only their assigned events
+before enabling real result submission forms in the next issue.
+
 ### Managing Churches
 
 The Churches page displays all participating churches with their details:

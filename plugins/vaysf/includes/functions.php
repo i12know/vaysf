@@ -2,7 +2,7 @@
 /**
  * File: includes/functions.php
  * Description: Helper functions for VAYSF Integration
- * Version: 1.0.5
+ * Version: 1.0.6
  * Author: Bumble Ho
  */
 
@@ -233,6 +233,112 @@ function vaysf_user_can_submit_schedule_result($user_id, $schedule) {
     }
 
     return in_array($event, vaysf_get_user_authorized_events($user_id), true);
+}
+
+/**
+ * Format schedule teams consistently for front-end and admin displays.
+ *
+ * @param array<string,mixed>|object $row Schedule row
+ * @return string Team/participant label
+ */
+function vaysf_format_schedule_teams($row) {
+    if (is_object($row)) {
+        $row = get_object_vars($row);
+    }
+
+    if (!is_array($row)) {
+        return '';
+    }
+
+    $teams = array();
+    foreach (array('team_a_label', 'team_b_label', 'team_c_label') as $field) {
+        if (!empty($row[$field])) {
+            $teams[] = $row[$field];
+        }
+    }
+
+    return implode(' vs ', $teams);
+}
+
+/**
+ * Query current-schedule rows assigned to a coordinator by event authorization.
+ *
+ * @param int $user_id WordPress user id
+ * @param string $view needs|submitted|assigned
+ * @return array<int,array<string,mixed>> Schedule/result rows for the dashboard
+ */
+function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs') {
+    global $wpdb;
+
+    $user_id = absint($user_id);
+    if (!$user_id || !user_can($user_id, 'sf2025_submit_results')) {
+        return array();
+    }
+
+    $authorized_events = vaysf_get_user_authorized_events($user_id);
+    if (!$authorized_events) {
+        return array();
+    }
+
+    $current_version = vaysf_get_current_published_schedule_version();
+    if ($current_version === null) {
+        return array();
+    }
+
+    $view = sanitize_key($view);
+    if (!in_array($view, array('needs', 'submitted', 'assigned'), true)) {
+        $view = 'needs';
+    }
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $table_results = vaysf_get_table_name('results');
+    $event_placeholders = implode(', ', array_fill(0, count($authorized_events), '%s'));
+
+    $where = array(
+        's.schedule_version = %d',
+        's.published_at IS NOT NULL',
+        "COALESCE(s.game_status, '') <> 'cancelled'",
+        "s.event IN ($event_placeholders)",
+    );
+    $args = array_merge(array($current_version), $authorized_events);
+
+    $now = current_time('timestamp');
+    $today_start = date('Y-m-d 00:00:00', $now);
+    $tomorrow_start = date('Y-m-d 00:00:00', strtotime('+1 day', $now));
+    $today_end = date('Y-m-d 23:59:59', $now);
+
+    if ($view === 'needs') {
+        $where[] = 'r.result_id IS NULL';
+        $where[] = 's.scheduled_time IS NOT NULL';
+        $where[] = 's.scheduled_time <= %s';
+        $args[] = $today_end;
+    } elseif ($view === 'submitted') {
+        $where[] = 'r.submitted_by_user_id = %d';
+        $where[] = 'r.created_at >= %s';
+        $where[] = 'r.created_at < %s';
+        $args[] = $user_id;
+        $args[] = $today_start;
+        $args[] = $tomorrow_start;
+    }
+
+    $sql = "
+        SELECT
+            s.*,
+            r.result_id,
+            r.public_status,
+            r.scan_status,
+            r.submitted_by_user_id,
+            r.certified_at,
+            r.verified_at,
+            r.created_at AS result_created_at
+        FROM $table_schedules s
+        LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
+        WHERE " . implode(' AND ', $where) . "
+        ORDER BY s.scheduled_time IS NULL, s.scheduled_time, s.event, s.game_key
+    ";
+
+    $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
+    return is_array($rows) ? $rows : array();
 }
 
 /**

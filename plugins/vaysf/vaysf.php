@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.19
+ * Version: 1.0.20
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,7 +18,7 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.19';
+    const VERSION = '1.0.20';
 
     /**
      * Database version
@@ -160,11 +160,19 @@ class VAYSF_Integration {
 			'index.php?vaysf_insurance_upload=1',
 			'top'
 		);
+
+		// Add rewrite rule for the coordinator score entry dashboard (Issue #239)
+		add_rewrite_rule(
+			'coordinator-score-entry/?$',
+			'index.php?vaysf_coordinator_score_entry=1',
+			'top'
+		);
 	}
 
 	public function register_query_vars($vars) {
 		$vars[] = 'vaysf_pastor_approval';
 		$vars[] = 'vaysf_insurance_upload';
+		$vars[] = 'vaysf_coordinator_score_entry';
 		return $vars;
 	}
 
@@ -188,6 +196,16 @@ class VAYSF_Integration {
 				exit;
 			} else {
 				wp_die('Insurance upload template not found. Please contact the site administrator.');
+			}
+		}
+
+		if (get_query_var('vaysf_coordinator_score_entry')) {
+			$template_path = plugin_dir_path(__FILE__) . 'templates/coordinator-score-entry.php';
+			if (file_exists($template_path)) {
+				include_once($template_path);
+				exit;
+			} else {
+				wp_die('Coordinator score entry template not found. Please contact the site administrator.');
 			}
 		}
 	}
@@ -833,6 +851,15 @@ function insurance_upload_shortcode($atts) {
 	return ob_get_clean();
 }
 add_shortcode('insurance_upload', 'insurance_upload_shortcode');
+
+function coordinator_score_entry_shortcode($atts) {
+	ob_start();
+	$GLOBALS['vaysf_rendering_coordinator_score_entry_shortcode'] = true;
+	include plugin_dir_path(__FILE__) . 'templates/coordinator-score-entry.php';
+	unset($GLOBALS['vaysf_rendering_coordinator_score_entry_shortcode']);
+	return ob_get_clean();
+}
+add_shortcode('coordinator_score_entry', 'coordinator_score_entry_shortcode');
 
 // Start the plugin
 VAYSF_Integration_init();
