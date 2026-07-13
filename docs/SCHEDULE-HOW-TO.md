@@ -496,7 +496,7 @@ the current importer can use every cell semantically:
 
 | Workbook | Role |
 |----------|------|
-| `2026 Main Schedule draft 11.xlsx` | Event-wide Master Schedule: BB/MVB/WVB/BC first-weekend matchups plus event operations envelope |
+| `VAY2026_Main_Schedule_draft_12.xlsx` | Event-wide Master Schedule: BB/MVB/WVB/BC first-weekend matchups plus event operations envelope |
 | `2026 VAY Badminton Schedule_draft_v1_10Jul2026.xlsx` | Badminton detailed Friday schedule and roster reference |
 | `COED SOCCER SCHEDULE.xlsx` | Soccer groups, pool matches, referees, and bracket reference |
 | `Schedule_Roster - Table Tennis (PingPong) 2026.xlsx` | Table Tennis schedule, rules, stage placeholders, and doubles roster reference |
@@ -596,7 +596,7 @@ middleware/data/VAY2026_Main_Schedule_draft_4.xlsx
 The latest reviewed human-scheduler workbook is:
 
 ```text
-middleware/data/2026 Main Schedule draft 11.xlsx
+middleware/data/VAY2026_Main_Schedule_draft_12.xlsx
 ```
 
 Run the import step after the matchup import and before the next
@@ -646,11 +646,11 @@ python main.py diagnose-schedule
 run-schedule.bat
 ```
 
-If leadership adopts `2026 Main Schedule draft 11.xlsx` as the current Master
+If leadership adopts `VAY2026_Main_Schedule_draft_12.xlsx` as the current Master
 Schedule, pass that file instead:
 
 ```bash
-python main.py import-master-schedule --file "data/2026 Main Schedule draft 11.xlsx"
+python main.py import-master-schedule --file "data/VAY2026_Main_Schedule_draft_12.xlsx"
 ```
 
 If `import-master-schedule` says a row is unresolved, treat it as a comparison
@@ -682,14 +682,14 @@ playing* in each slot, and that pairing is authoritative.
 The workbook currently lives in:
 
 ```text
-middleware/data/2026 Main Schedule draft 11.xlsx
+middleware/data/VAY2026_Main_Schedule_draft_12.xlsx
 ```
 
 Always start with a dry run so you can review the audit before anything is
 written:
 
 ```bash
-python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --dry-run
+python main.py import-match-schedule-overrides --file "data/VAY2026_Main_Schedule_draft_12.xlsx" --events BB,MVB,WVB --dry-run
 ```
 
 The dry run writes `match_schedule_overrides.audit.json` to the normal export
@@ -698,7 +698,7 @@ folder and never touches `match_schedule_overrides.json` or
 understood), commit it:
 
 ```bash
-python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --execute
+python main.py import-match-schedule-overrides --file "data/VAY2026_Main_Schedule_draft_12.xlsx" --events BB,MVB,WVB --execute
 ```
 
 `--execute` only writes `match_schedule_overrides.json` when validation has
@@ -723,8 +723,8 @@ Recommended 2026 override loop:
 
 ```bash
 python main.py import-team-matchups --file "data/2026-VAY-Lottery-Drawing_Team-Assignment(ALL-TEAM-SPORTS)_template.xlsx"
-python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --dry-run
-python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --execute
+python main.py import-match-schedule-overrides --file "data/VAY2026_Main_Schedule_draft_12.xlsx" --events BB,MVB,WVB --dry-run
+python main.py import-match-schedule-overrides --file "data/VAY2026_Main_Schedule_draft_12.xlsx" --events BB,MVB,WVB --execute
 python main.py export-church-teams
 python main.py build-schedule-workbook
 python main.py diagnose-schedule

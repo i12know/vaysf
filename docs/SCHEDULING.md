@@ -161,7 +161,7 @@ stop and audit the source rather than choosing one silently.
 
 | Workbook | Role | Authoritative for | Notes |
 |---|---|---|---|
-| `2026 Main Schedule draft 11.xlsx` | Event-wide Master Schedule | BB/MVB/WVB/BC first-weekend matchups, court/time boundaries, later-stage reservations, ceremonies, meals, setup, closures, and cross-event flow | Supersedes older visual master drafts for operational review. The current importer originally targeted `VAY2026_Main_Schedule_draft_4.xlsx`; pass `--file` when testing another draft. |
+| `VAY2026_Main_Schedule_draft_12.xlsx` | Event-wide Master Schedule | BB/MVB/WVB/BC first-weekend matchups, court/time boundaries, later-stage reservations, ceremonies, meals, setup, closures, and cross-event flow | Supersedes older visual master drafts, including draft 11, for operational review. Pass `--file` when testing another draft. |
 | `2026 VAY Badminton Schedule_draft_v1_10Jul2026.xlsx` | Badminton detailed schedule | Friday July 24 preliminary matchups, three-court timing, roster reference | Saturday playoff block remains an envelope in the Master Schedule; individual game schedule is coordinated by Badminton leadership. |
 | `COED SOCCER SCHEDULE.xlsx` | Soccer detailed schedule | Soccer groups, six pool matches, referee assignments, advancement bracket | G7-G12 advancement bracket times remain TBD in this workbook. |
 | `Schedule_Roster - Table Tennis (PingPong) 2026.xlsx` | Table Tennis detailed schedule and roster | Friday July 24 schedule, stage placeholders, rules, doubles rosters | Under-35 roster/schedule discrepancy remains: roster has `SBC`, schedule has `FVC`; resolve before treating that portion as authoritative. |
@@ -217,7 +217,7 @@ Detailed sport schedules         - fixed game/stage slots
 `import-approved-games` is the bridge from human-approved preliminary-game
 workbooks to the WordPress event-day score-entry table. It parses:
 
-- `2026 Main Schedule draft 11.xlsx` for BB/MVB/WVB/BC exact preliminary games;
+- `VAY2026_Main_Schedule_draft_12.xlsx` for BB/MVB/WVB/BC exact preliminary games;
 - `2026 VAY Badminton Schedule_draft_v1_10Jul2026.xlsx` for Badminton
   preliminary matches and category identity;
 - `COED SOCCER SCHEDULE.xlsx` for Soccer G1-G6 exact games while preserving
@@ -324,7 +324,7 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 |------|----------|------|-------|
 | `venue_input.xlsx` | `middleware/data/` (gitignored) | Booked venue: courts, times, gym modes, playoff slots | Layer 2 input |
 | `2026-VAY-Lottery-Drawing_Team-Assignment(ALL-TEAM-SPORTS)_template.xlsx` | `middleware/data/` | 2026 approved BB/MVB/WVB/SOC/BC matchup import source | Layer 2/3 human input |
-| `2026 Main Schedule draft 11.xlsx` | `middleware/data/` | Latest reviewed event-wide Master Schedule and operational envelope | Layer 3 human input |
+| `VAY2026_Main_Schedule_draft_12.xlsx` | `middleware/data/` | Latest reviewed event-wide Master Schedule and operational envelope | Layer 3 human input |
 | `2026 VAY Badminton Schedule_draft_v1_10Jul2026.xlsx` | `middleware/data/` | Badminton detailed schedule inside Master Schedule blocks | Layer 3 sport-detail input |
 | `COED SOCCER SCHEDULE.xlsx` | `middleware/data/` | Soccer detailed schedule and referee/bracket reference | Layer 3 sport-detail input |
 | `Schedule_Roster - Table Tennis (PingPong) 2026.xlsx` | `middleware/data/` | Table Tennis detailed schedule, rules, and roster reference | Layer 3 sport-detail input |
@@ -1221,7 +1221,7 @@ middleware/data/VAY2026_Main_Schedule_draft_4.xlsx
 The latest reviewed human-scheduler workbook is:
 
 ```text
-middleware/data/2026 Main Schedule draft 11.xlsx
+middleware/data/VAY2026_Main_Schedule_draft_12.xlsx
 ```
 
 Import it with:
@@ -1258,14 +1258,14 @@ other manual imports.
 The workbook currently lives at:
 
 ```text
-middleware/data/2026 Main Schedule draft 11.xlsx
+middleware/data/VAY2026_Main_Schedule_draft_12.xlsx
 ```
 
 Import it with:
 
 ```bash
-python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --dry-run
-python main.py import-match-schedule-overrides --file "data/2026 Main Schedule draft 11.xlsx" --events BB,MVB,WVB --execute
+python main.py import-match-schedule-overrides --file "data/VAY2026_Main_Schedule_draft_12.xlsx" --events BB,MVB,WVB --dry-run
+python main.py import-match-schedule-overrides --file "data/VAY2026_Main_Schedule_draft_12.xlsx" --events BB,MVB,WVB --execute
 ```
 
 This is a **different workbook family** from `import-master-schedule`'s, not a

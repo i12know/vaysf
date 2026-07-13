@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Draft 12 visual schedule override import - closes [#233](https://github.com/i12know/vaysf/issues/233)
+
+- Updated `import-match-schedule-overrides` to understand Excel theme/tint
+  fills in Loc's `VAY2026_Main_Schedule_draft_12.xlsx` workbook, so BB/MVB
+  cells no longer fail sport detection when the workbook stores colors as
+  theme references instead of literal RGB fills.
+- Rounded real Excel time values to the nearest minute before building slot
+  ids, avoiding false `13:59`/`19:59` resource lookups from near-hour floating
+  point time values in the workbook.
+- Suppressed intentional control/reservation blocks such as QF/SF labels,
+  Scripture Memorization, Bible Challenge finals, and broad playoff blocks
+  from the team-code override audit so dry-runs focus on actual matchup rows.
+- Updated scheduler documentation and importer defaults to reference
+  `VAY2026_Main_Schedule_draft_12.xlsx` as the current official override
+  workbook.
+
 ### Event-day schedule/results admin screens - closes [#229](https://github.com/i12know/vaysf/issues/229)
 
 - Added wp-admin `Schedules` and `Results` submenu pages for back-office
