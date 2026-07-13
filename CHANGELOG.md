@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Remove dead Competitions tab and superseded sf_competitions schema - closes [#230](https://github.com/i12know/vaysf/issues/230)
+
+- Removed the wp-admin "Competitions" submenu. Its callback,
+  `display_competitions_page`, was never implemented in any commit since the
+  menu item was added in the v1.0 RC — clicking it in wp-admin has always
+  thrown a fatal `Call to undefined method` error.
+- Removed the `sf_competitions` table (`sport_type`/`category`/`format`
+  taxonomy) from `create_tables()`. It predates the #203 event-day results
+  redesign, was never populated by any code path, and is superseded by the
+  `event`/`stage`/`sub_event` columns now carried directly on each
+  `sf_schedules` row.
+- Removed the unused `sf_schedules.competition_id` column and its index.
+  Confirmed via full-repo search that neither `competition_id` nor
+  `sf_competitions` is referenced anywhere outside `vaysf.php`'s own schema
+  definitions — no REST endpoint, admin page, or middleware code reads or
+  writes either.
+- Repointed the legacy `game_key` column-position ALTER (used only when
+  upgrading a hypothetical pre-#203 install in place) from
+  `AFTER competition_id` to `AFTER schedule_id`, since the former column no
+  longer exists in the canonical schema.
+- Bumped plugin `DB_VERSION` to `1.0.6`. No data migration is included or
+  needed — the plugin has never been deployed to a live WordPress install, so
+  there is no `sf_competitions` data or `competition_id` value to preserve.
+  If a live install is ever found to predate this change, this removal must
+  be redone as a real migration instead.
+
 ### Approved preliminary games for WordPress score entry - closes [#217](https://github.com/i12know/vaysf/issues/217)
 
 - Added `import-approved-games --dry-run|--execute` to parse the four approved
