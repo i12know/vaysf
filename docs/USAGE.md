@@ -904,6 +904,27 @@ Sports Fest wp-admin access or `sf2025_write`. Per-sport authorization is
 handled separately by the result-entry workflow so a coordinator can be limited
 to only the sports they oversee.
 
+Coordinator sport authorization is schedule-driven. The selectable sports/events
+should come from the distinct `event` values in the currently published
+`sf_schedules` rows, not from a hard-coded WordPress list. This keeps annual
+Sports Fest changes safe: if Soccer is renamed, removed, or replaced by a new
+sport, the coordinator options follow the schedule published by the middleware.
+ChMeetings remains the source of truth for coordinator identity/contact data;
+WordPress stores event-day access and authorized schedule events in user meta.
+
+To configure a coordinator after the approved schedule has been published:
+
+1. In WordPress, go to **Users** and open the coordinator account.
+2. Assign the **Sports Fest Coordinator** role if it is not already assigned.
+3. In **Sports Fest Result Authorization**, select the published schedule
+   events this person may submit scores for.
+4. Click **Update User**.
+
+The checkbox list is empty until a schedule has been published into
+`sf_schedules`. If a future season changes the official events, republish the
+schedule first and then review coordinator assignments; saved event names that
+no longer appear in the current schedule are shown as stale authorization.
+
 ### Managing Churches
 
 The Churches page displays all participating churches with their details:

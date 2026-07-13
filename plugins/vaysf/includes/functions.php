@@ -2,13 +2,17 @@
 /**
  * File: includes/functions.php
  * Description: Helper functions for VAYSF Integration
- * Version: 1.0.4
+ * Version: 1.0.5
  * Author: Bumble Ho
  */
 
 // Exit if accessed directly
 if (!defined('ABSPATH')) {
     exit;
+}
+
+if (!defined('VAYSF_AUTHORIZED_EVENTS_META_KEY')) {
+    define('VAYSF_AUTHORIZED_EVENTS_META_KEY', 'vaysf_authorized_events');
 }
 
 /**
@@ -20,6 +24,315 @@ if (!defined('ABSPATH')) {
 function vaysf_get_table_name($table) {
     global $wpdb;
     return $wpdb->prefix . 'sf_' . $table;
+}
+
+/**
+ * Get the latest published schedule version that still has active games.
+ *
+ * @return int|null Schedule version, or null when no published schedule exists
+ */
+function vaysf_get_current_published_schedule_version() {
+    global $wpdb;
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $version = $wpdb->get_var(
+        "SELECT MAX(schedule_version)
+        FROM $table_schedules
+        WHERE published_at IS NOT NULL
+            AND COALESCE(game_status, '') <> 'cancelled'"
+    );
+
+    if ($version === null) {
+        return null;
+    }
+
+    return absint($version);
+}
+
+/**
+ * Get distinct events from the currently published, non-cancelled schedule.
+ *
+ * @param int|null $schedule_version Optional version; defaults to current published version
+ * @return array<int,string> Event names as stored in sf_schedules.event
+ */
+function vaysf_get_published_schedule_events($schedule_version = null) {
+    global $wpdb;
+
+    if ($schedule_version === null) {
+        $schedule_version = vaysf_get_current_published_schedule_version();
+    }
+
+    if ($schedule_version === null) {
+        return array();
+    }
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $events = $wpdb->get_col(
+        $wpdb->prepare(
+            "SELECT DISTINCT event
+            FROM $table_schedules
+            WHERE schedule_version = %d
+                AND event IS NOT NULL
+                AND event <> ''
+                AND published_at IS NOT NULL
+                AND COALESCE(game_status, '') <> 'cancelled'
+            ORDER BY event",
+            absint($schedule_version)
+        )
+    );
+
+    if (!is_array($events)) {
+        return array();
+    }
+
+    return array_values(array_filter(array_map('strval', $events)));
+}
+
+/**
+ * Normalize event names for storage/comparison.
+ *
+ * @param mixed $events Event value or list of event values
+ * @return array<int,string> Unique sanitized event names
+ */
+function vaysf_normalize_authorized_events($events) {
+    if (!is_array($events)) {
+        $events = ($events === null || $events === '') ? array() : array($events);
+    }
+
+    $normalized = array();
+    foreach ($events as $event) {
+        $event = sanitize_text_field(wp_unslash($event));
+        if ($event === '') {
+            continue;
+        }
+        $normalized[$event] = $event;
+    }
+
+    return array_values($normalized);
+}
+
+/**
+ * Read a user's schedule-event authorization list.
+ *
+ * @param int $user_id WordPress user id
+ * @return array<int,string> Authorized event names
+ */
+function vaysf_get_user_authorized_events($user_id) {
+    $events = get_user_meta(absint($user_id), VAYSF_AUTHORIZED_EVENTS_META_KEY, true);
+    return vaysf_normalize_authorized_events($events);
+}
+
+/**
+ * Update a user's authorized events, constrained to the published schedule.
+ *
+ * @param int $user_id WordPress user id
+ * @param mixed $events Selected event values
+ * @return bool True when the authorization list was updated/deleted
+ */
+function vaysf_update_user_authorized_events($user_id, $events) {
+    $user_id = absint($user_id);
+    if (!$user_id) {
+        return false;
+    }
+
+    $available_events = vaysf_get_published_schedule_events();
+    if (!$available_events) {
+        return false;
+    }
+
+    $available_lookup = array_fill_keys($available_events, true);
+    $selected = array();
+    foreach (vaysf_normalize_authorized_events($events) as $event) {
+        if (isset($available_lookup[$event])) {
+            $selected[] = $event;
+        }
+    }
+
+    if (!$selected) {
+        delete_user_meta($user_id, VAYSF_AUTHORIZED_EVENTS_META_KEY);
+        return true;
+    }
+
+    update_user_meta($user_id, VAYSF_AUTHORIZED_EVENTS_META_KEY, array_values($selected));
+    return true;
+}
+
+/**
+ * Resolve a schedule row from an id, array, or object.
+ *
+ * @param mixed $schedule Schedule id or row
+ * @return array<string,mixed>|null Schedule row
+ */
+function vaysf_resolve_schedule_row($schedule) {
+    if (is_numeric($schedule)) {
+        global $wpdb;
+
+        $table_schedules = vaysf_get_table_name('schedules');
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM $table_schedules WHERE schedule_id = %d",
+                absint($schedule)
+            ),
+            ARRAY_A
+        );
+
+        return is_array($row) ? $row : null;
+    }
+
+    if (is_array($schedule)) {
+        return $schedule;
+    }
+
+    if (is_object($schedule)) {
+        return get_object_vars($schedule);
+    }
+
+    return null;
+}
+
+/**
+ * Check whether a user may submit a result for a schedule row.
+ *
+ * @param int $user_id WordPress user id
+ * @param mixed $schedule Schedule id, row array, or row object
+ * @return bool True when the user has result capability and event authorization
+ */
+function vaysf_user_can_submit_schedule_result($user_id, $schedule) {
+    $user_id = absint($user_id);
+    if (!$user_id || !user_can($user_id, 'sf2025_submit_results')) {
+        return false;
+    }
+
+    $schedule_row = vaysf_resolve_schedule_row($schedule);
+    if (!$schedule_row) {
+        return false;
+    }
+
+    $event = isset($schedule_row['event']) ? sanitize_text_field($schedule_row['event']) : '';
+    if ($event === '') {
+        return false;
+    }
+
+    $current_version = vaysf_get_current_published_schedule_version();
+    if ($current_version === null) {
+        return false;
+    }
+
+    $schedule_version = isset($schedule_row['schedule_version']) ? absint($schedule_row['schedule_version']) : null;
+    if ($schedule_version !== $current_version) {
+        return false;
+    }
+
+    $game_status = isset($schedule_row['game_status']) ? sanitize_text_field($schedule_row['game_status']) : '';
+    if ($game_status === 'cancelled') {
+        return false;
+    }
+
+    if (array_key_exists('published_at', $schedule_row) && empty($schedule_row['published_at'])) {
+        return false;
+    }
+
+    return in_array($event, vaysf_get_user_authorized_events($user_id), true);
+}
+
+/**
+ * Render user-profile controls for schedule-driven coordinator authorization.
+ *
+ * @param WP_User $user User being edited
+ * @return void
+ */
+function vaysf_render_coordinator_authorization_fields($user) {
+    if (!current_user_can('edit_user', $user->ID) || (!current_user_can('promote_users') && !current_user_can('manage_options'))) {
+        return;
+    }
+
+    $current_version = vaysf_get_current_published_schedule_version();
+    $available_events = vaysf_get_published_schedule_events($current_version);
+    $authorized_events = vaysf_get_user_authorized_events($user->ID);
+    $stale_events = array_values(array_diff($authorized_events, $available_events));
+    ?>
+    <h2><?php esc_html_e('Sports Fest Result Authorization', 'vaysf'); ?></h2>
+    <table class="form-table" role="presentation">
+        <tr>
+            <th scope="row"><?php esc_html_e('Authorized schedule events', 'vaysf'); ?></th>
+            <td>
+                <?php wp_nonce_field('vaysf_save_coordinator_authorization_' . $user->ID, 'vaysf_coordinator_authorization_nonce'); ?>
+                <?php if ($current_version === null || !$available_events) : ?>
+                    <p class="description">
+                        <?php esc_html_e('No published Sports Fest schedule events are available yet. Publish the approved schedule before assigning coordinator event access.', 'vaysf'); ?>
+                    </p>
+                <?php else : ?>
+                    <p class="description">
+                        <?php
+                        printf(
+                            esc_html__('Options come from published schedule version %d. Select the events this user may submit results for.', 'vaysf'),
+                            absint($current_version)
+                        );
+                        ?>
+                    </p>
+                    <fieldset>
+                        <?php foreach ($available_events as $event) : ?>
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    name="vaysf_authorized_events[]"
+                                    value="<?php echo esc_attr($event); ?>"
+                                    <?php checked(in_array($event, $authorized_events, true)); ?>
+                                >
+                                <?php echo esc_html($event); ?>
+                            </label><br>
+                        <?php endforeach; ?>
+                    </fieldset>
+                    <?php if (!user_can($user->ID, 'sf2025_submit_results')) : ?>
+                        <p class="description">
+                            <?php esc_html_e('This user does not currently have sf2025_submit_results. Assign a Sports Fest Coordinator, Manager, or Admin role before relying on these selections.', 'vaysf'); ?>
+                        </p>
+                    <?php endif; ?>
+                <?php endif; ?>
+                <?php if ($stale_events) : ?>
+                    <p class="description">
+                        <?php
+                        printf(
+                            esc_html__('Previously saved event authorization no longer appears in the current published schedule: %s', 'vaysf'),
+                            esc_html(implode(', ', $stale_events))
+                        );
+                        ?>
+                    </p>
+                <?php endif; ?>
+            </td>
+        </tr>
+    </table>
+    <?php
+}
+
+/**
+ * Save user-profile schedule-event authorization.
+ *
+ * @param int $user_id User being edited
+ * @return void
+ */
+function vaysf_save_coordinator_authorization_fields($user_id) {
+    $user_id = absint($user_id);
+    if (!$user_id || !current_user_can('edit_user', $user_id) || (!current_user_can('promote_users') && !current_user_can('manage_options'))) {
+        return;
+    }
+
+    if (
+        empty($_POST['vaysf_coordinator_authorization_nonce'])
+        || !wp_verify_nonce(
+            sanitize_text_field(wp_unslash($_POST['vaysf_coordinator_authorization_nonce'])),
+            'vaysf_save_coordinator_authorization_' . $user_id
+        )
+    ) {
+        return;
+    }
+
+    $selected_events = array();
+    if (!empty($_POST['vaysf_authorized_events']) && is_array($_POST['vaysf_authorized_events'])) {
+        $selected_events = wp_unslash($_POST['vaysf_authorized_events']);
+    }
+
+    vaysf_update_user_authorized_events($user_id, $selected_events);
 }
 
 /**
