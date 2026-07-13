@@ -94,6 +94,24 @@ class VAYSF_Admin {
             'vaysf-validation',
             array($this, 'display_validation_page')
         );
+
+        add_submenu_page(
+            'vaysf',
+            'Schedules',
+            'Schedules',
+            'sf2025_read',
+            'vaysf-schedules',
+            array($this, 'display_schedules_page')
+        );
+
+        add_submenu_page(
+            'vaysf',
+            'Results',
+            'Results',
+            'sf2025_read',
+            'vaysf-results',
+            array($this, 'display_results_page')
+        );
         
         add_submenu_page(
             'vaysf',
@@ -1370,6 +1388,983 @@ public function display_participants_page() {
                                 <td><?php echo esc_html(date('Y-m-d H:i', strtotime($approval['token_expiry']))); ?></td>
                                 <td>
                                     <a href="<?php echo admin_url('admin.php?page=vaysf-approvals&action=resend&id=' . $approval['approval_id']); ?>" class="button button-small">Resend Email</a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php
+    }
+
+    /**
+     * Return source_hash fields in the same order as middleware/schedule_publisher.py.
+     */
+    private function schedule_hash_fields() {
+        return array(
+            'event', 'stage', 'pool_id', 'round_number',
+            'team_a_key', 'team_a_label', 'team_b_key', 'team_b_label',
+            'team_c_key', 'team_c_label', 'team_ids_json',
+            'resource_id', 'scheduled_slot',
+        );
+    }
+
+    /**
+     * Compute the schedule source hash used by publish-schedule diffing.
+     */
+    private function compute_schedule_source_hash($row) {
+        $subset = array();
+        foreach ($this->schedule_hash_fields() as $field) {
+            $subset[$field] = array_key_exists($field, $row) ? $row[$field] : null;
+        }
+        ksort($subset);
+
+        return hash('sha256', wp_json_encode($subset, JSON_UNESCAPED_SLASHES));
+    }
+
+    private function schedule_status_options() {
+        return array('scheduled', 'in_progress', 'reported', 'official', 'under_review', 'cancelled');
+    }
+
+    private function public_status_options() {
+        return array('pending', 'in_progress', 'reported', 'official', 'under_review');
+    }
+
+    private function scan_status_options() {
+        return array('pending', 'uploaded', 'missing', 'not_required');
+    }
+
+    private function revision_state_options() {
+        return array('unverified', 'verified', 'rejected');
+    }
+
+    private function is_protected_schedule_status($status) {
+        return in_array($status, array('reported', 'official', 'under_review'), true);
+    }
+
+    private function format_game_teams($row) {
+        $teams = array();
+        foreach (array('team_a_label', 'team_b_label', 'team_c_label') as $field) {
+            if (!empty($row[$field])) {
+                $teams[] = $row[$field];
+            }
+        }
+        return implode(' vs ', $teams);
+    }
+
+    private function textarea_json_value($value) {
+        if (is_array($value) || is_object($value)) {
+            return wp_json_encode($value, JSON_PRETTY_PRINT);
+        }
+        return (string) $value;
+    }
+
+    private function sanitize_schedule_payload_from_post() {
+        $payload = array();
+        $text_fields = array(
+            'game_key', 'event', 'stage', 'pool_id', 'sub_event',
+            'team_a_key', 'team_a_label', 'team_b_key', 'team_b_label',
+            'team_c_key', 'team_c_label', 'team_ids_json',
+            'resource_id', 'scheduled_slot', 'scheduled_time',
+            'scheduled_location', 'game_status',
+        );
+
+        foreach ($text_fields as $field) {
+            $payload[$field] = isset($_POST[$field])
+                ? sanitize_text_field(wp_unslash($_POST[$field]))
+                : '';
+        }
+
+        // Nullable sf_schedules columns that also feed compute_schedule_source_hash():
+        // normalize a blank submission to null (not '') so an admin-edited row hashes
+        // the same way middleware/schedule_publisher.py hashes a game whose optional
+        // field is simply absent from schedule_input.json (Python .get() -> None ->
+        // JSON null). Leaving these as '' would make publish-schedule's diff report
+        // every admin-touched row as "changed" even when nothing meaningful changed.
+        foreach ($this->schedule_hash_fields() as $field) {
+            if ($field !== 'round_number' && $payload[$field] === '') {
+                $payload[$field] = null;
+            }
+        }
+
+        $payload['round_number'] = isset($_POST['round_number']) && $_POST['round_number'] !== ''
+            ? absint($_POST['round_number'])
+            : null;
+        $payload['schedule_version'] = isset($_POST['schedule_version'])
+            ? absint($_POST['schedule_version'])
+            : 0;
+        $payload['synced_to_chmeetings'] = !empty($_POST['synced_to_chmeetings']) ? 1 : 0;
+
+        return $payload;
+    }
+
+    private function save_schedule_from_post($schedule_id = 0) {
+        global $wpdb;
+
+        if (!current_user_can('sf2025_admin')) {
+            return new WP_Error('vaysf_forbidden', 'You are not allowed to modify schedules.');
+        }
+
+        $table_schedules = vaysf_get_table_name('schedules');
+        $schedule_id = absint($schedule_id);
+        $existing = null;
+
+        if ($schedule_id) {
+            $existing = $wpdb->get_row(
+                $wpdb->prepare("SELECT * FROM $table_schedules WHERE schedule_id = %d", $schedule_id),
+                ARRAY_A
+            );
+            if (!$existing) {
+                return new WP_Error('vaysf_schedule_missing', 'Schedule row not found.');
+            }
+        }
+
+        $payload = $this->sanitize_schedule_payload_from_post();
+        if ($payload['game_key'] === '') {
+            return new WP_Error('vaysf_schedule_game_key_required', 'Game key is required.');
+        }
+        if (!in_array($payload['game_status'], $this->schedule_status_options(), true)) {
+            return new WP_Error('vaysf_schedule_bad_status', 'Invalid game status.');
+        }
+
+        if ($existing && $this->is_protected_schedule_status($existing['game_status']) && empty($_POST['confirm_protected'])) {
+            return new WP_Error('vaysf_schedule_protected', 'Protected schedule rows require explicit confirmation before editing.');
+        }
+        if ($payload['game_status'] === 'cancelled' && empty($_POST['confirm_cancel'])) {
+            return new WP_Error('vaysf_schedule_cancel_confirm', 'Cancelling a schedule row requires explicit confirmation.');
+        }
+
+        $payload['source_hash'] = $this->compute_schedule_source_hash($payload);
+        $payload['updated_at'] = current_time('mysql');
+
+        $data = array(
+            'game_key' => $payload['game_key'],
+            'schedule_version' => $payload['schedule_version'],
+            'event' => $payload['event'],
+            'stage' => $payload['stage'],
+            'pool_id' => $payload['pool_id'],
+            'round_number' => $payload['round_number'],
+            'sub_event' => $payload['sub_event'],
+            'team_a_key' => $payload['team_a_key'],
+            'team_a_label' => $payload['team_a_label'],
+            'team_b_key' => $payload['team_b_key'],
+            'team_b_label' => $payload['team_b_label'],
+            'team_c_key' => $payload['team_c_key'],
+            'team_c_label' => $payload['team_c_label'],
+            'team_ids_json' => $payload['team_ids_json'],
+            'resource_id' => $payload['resource_id'],
+            'scheduled_slot' => $payload['scheduled_slot'],
+            'scheduled_time' => $payload['scheduled_time'] ?: null,
+            'scheduled_location' => $payload['scheduled_location'],
+            'game_status' => $payload['game_status'],
+            'source_hash' => $payload['source_hash'],
+            'synced_to_chmeetings' => $payload['synced_to_chmeetings'],
+            'updated_at' => $payload['updated_at'],
+        );
+        $formats = array(
+            '%s', '%d', '%s', '%s', '%s', '%d', '%s',
+            '%s', '%s', '%s', '%s', '%s', '%s', '%s',
+            '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s',
+        );
+
+        if ($schedule_id) {
+            $result = $wpdb->update(
+                $table_schedules,
+                $data,
+                array('schedule_id' => $schedule_id),
+                $formats,
+                array('%d')
+            );
+        } else {
+            $data['created_at'] = current_time('mysql');
+            $formats[] = '%s';
+            $result = $wpdb->insert($table_schedules, $data, $formats);
+        }
+
+        if ($result === false) {
+            return new WP_Error('vaysf_schedule_save_failed', 'Could not save schedule row.');
+        }
+
+        return true;
+    }
+
+    private function cancel_schedule_from_post($schedule_id) {
+        global $wpdb;
+
+        if (!current_user_can('sf2025_admin')) {
+            return new WP_Error('vaysf_forbidden', 'You are not allowed to cancel schedules.');
+        }
+        if (empty($_POST['confirm_cancel'])) {
+            return new WP_Error('vaysf_schedule_cancel_confirm', 'Cancelling a schedule row requires explicit confirmation.');
+        }
+
+        $table_schedules = vaysf_get_table_name('schedules');
+        $schedule = $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM $table_schedules WHERE schedule_id = %d", absint($schedule_id)),
+            ARRAY_A
+        );
+        if (!$schedule) {
+            return new WP_Error('vaysf_schedule_missing', 'Schedule row not found.');
+        }
+        if ($this->is_protected_schedule_status($schedule['game_status']) && empty($_POST['confirm_protected'])) {
+            return new WP_Error('vaysf_schedule_protected', 'Protected schedule rows require explicit confirmation before cancellation.');
+        }
+
+        $schedule['game_status'] = 'cancelled';
+        $schedule['source_hash'] = $this->compute_schedule_source_hash($schedule);
+
+        $result = $wpdb->update(
+            $table_schedules,
+            array(
+                'game_status' => 'cancelled',
+                'source_hash' => $schedule['source_hash'],
+                'updated_at' => current_time('mysql'),
+            ),
+            array('schedule_id' => absint($schedule_id)),
+            array('%s', '%s', '%s'),
+            array('%d')
+        );
+
+        if ($result === false) {
+            return new WP_Error('vaysf_schedule_cancel_failed', 'Could not cancel schedule row.');
+        }
+
+        return true;
+    }
+
+    private function print_admin_notice($result, $success_message) {
+        if (is_wp_error($result)) {
+            echo '<div class="notice notice-error"><p>' . esc_html($result->get_error_message()) . '</p></div>';
+        } elseif ($result) {
+            echo '<div class="notice notice-success"><p>' . esc_html($success_message) . '</p></div>';
+        }
+    }
+
+    private function render_schedule_form($schedule = array()) {
+        $schedule_id = isset($schedule['schedule_id']) ? absint($schedule['schedule_id']) : 0;
+        $action = $schedule_id ? 'save_schedule' : 'create_schedule';
+        $nonce_action = $action . '_' . $schedule_id;
+        $statuses = $this->schedule_status_options();
+        ?>
+        <form method="post" class="vaysf-admin-form">
+            <?php wp_nonce_field($nonce_action); ?>
+            <input type="hidden" name="vaysf_action" value="<?php echo esc_attr($action); ?>">
+            <input type="hidden" name="schedule_id" value="<?php echo esc_attr($schedule_id); ?>">
+            <table class="form-table" role="presentation">
+                <tr>
+                    <th><label for="game_key">Game Key</label></th>
+                    <td><input name="game_key" id="game_key" class="regular-text" required value="<?php echo esc_attr($schedule['game_key'] ?? ''); ?>"></td>
+                </tr>
+                <tr>
+                    <th><label for="schedule_version">Schedule Version</label></th>
+                    <td><input name="schedule_version" id="schedule_version" type="number" min="0" value="<?php echo esc_attr($schedule['schedule_version'] ?? 0); ?>"></td>
+                </tr>
+                <tr>
+                    <th>Event Metadata</th>
+                    <td>
+                        <input name="event" placeholder="Event" value="<?php echo esc_attr($schedule['event'] ?? ''); ?>">
+                        <input name="stage" placeholder="Stage" value="<?php echo esc_attr($schedule['stage'] ?? ''); ?>">
+                        <input name="pool_id" placeholder="Pool" value="<?php echo esc_attr($schedule['pool_id'] ?? ''); ?>">
+                        <input name="round_number" type="number" min="0" placeholder="Round" value="<?php echo esc_attr($schedule['round_number'] ?? ''); ?>">
+                        <input name="sub_event" placeholder="Sub-event" value="<?php echo esc_attr($schedule['sub_event'] ?? ''); ?>">
+                    </td>
+                </tr>
+                <tr>
+                    <th>Teams</th>
+                    <td>
+                        <p><input name="team_a_key" placeholder="Team A key" value="<?php echo esc_attr($schedule['team_a_key'] ?? ''); ?>"> <input class="regular-text" name="team_a_label" placeholder="Team A label" value="<?php echo esc_attr($schedule['team_a_label'] ?? ''); ?>"></p>
+                        <p><input name="team_b_key" placeholder="Team B key" value="<?php echo esc_attr($schedule['team_b_key'] ?? ''); ?>"> <input class="regular-text" name="team_b_label" placeholder="Team B label" value="<?php echo esc_attr($schedule['team_b_label'] ?? ''); ?>"></p>
+                        <p><input name="team_c_key" placeholder="Team C key" value="<?php echo esc_attr($schedule['team_c_key'] ?? ''); ?>"> <input class="regular-text" name="team_c_label" placeholder="Team C label" value="<?php echo esc_attr($schedule['team_c_label'] ?? ''); ?>"></p>
+                        <textarea name="team_ids_json" rows="3" class="large-text code" placeholder='["TEAM-A","TEAM-B"]'><?php echo esc_textarea($schedule['team_ids_json'] ?? ''); ?></textarea>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Schedule</th>
+                    <td>
+                        <input name="resource_id" placeholder="Resource ID" value="<?php echo esc_attr($schedule['resource_id'] ?? ''); ?>">
+                        <input name="scheduled_slot" placeholder="Slot" value="<?php echo esc_attr($schedule['scheduled_slot'] ?? ''); ?>">
+                        <input name="scheduled_time" placeholder="YYYY-MM-DD HH:MM:SS" value="<?php echo esc_attr($schedule['scheduled_time'] ?? ''); ?>">
+                        <input class="regular-text" name="scheduled_location" placeholder="Location" value="<?php echo esc_attr($schedule['scheduled_location'] ?? ''); ?>">
+                    </td>
+                </tr>
+                <tr>
+                    <th><label for="game_status">Status</label></th>
+                    <td>
+                        <select name="game_status" id="game_status">
+                            <?php foreach ($statuses as $status) : ?>
+                                <option value="<?php echo esc_attr($status); ?>" <?php selected($schedule['game_status'] ?? 'scheduled', $status); ?>><?php echo esc_html($status); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <label><input type="checkbox" name="synced_to_chmeetings" value="1" <?php checked(!empty($schedule['synced_to_chmeetings'])); ?>> Synced to ChMeetings</label>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Guards</th>
+                    <td>
+                        <label><input type="checkbox" name="confirm_protected" value="1"> I understand this may change a protected reported/official/under-review row.</label><br>
+                        <label><input type="checkbox" name="confirm_cancel" value="1"> I understand cancelled games follow the force-cancel path and should not be hard-deleted.</label>
+                    </td>
+                </tr>
+            </table>
+            <?php submit_button($schedule_id ? 'Save Schedule' : 'Create Schedule'); ?>
+        </form>
+        <?php
+    }
+
+    /**
+     * Display event-day schedules admin page.
+     */
+    public function display_schedules_page() {
+        global $wpdb;
+
+        $table_schedules = vaysf_get_table_name('schedules');
+        $vaysf_action = isset($_POST['vaysf_action']) ? sanitize_text_field(wp_unslash($_POST['vaysf_action'])) : '';
+        $schedule_id = isset($_POST['schedule_id'])
+            ? absint($_POST['schedule_id'])
+            : (isset($_REQUEST['id']) ? absint($_REQUEST['id']) : 0);
+
+        if ($vaysf_action === 'save_schedule' || $vaysf_action === 'create_schedule') {
+            $nonce_action = $vaysf_action . '_' . $schedule_id;
+            if (!isset($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), $nonce_action)) {
+                $this->print_admin_notice(new WP_Error('vaysf_bad_nonce', 'Invalid schedule request.'), '');
+            } else {
+                $this->print_admin_notice($this->save_schedule_from_post($schedule_id), 'Schedule saved.');
+            }
+        } elseif ($vaysf_action === 'cancel_schedule') {
+            if (!isset($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'cancel_schedule_' . $schedule_id)) {
+                $this->print_admin_notice(new WP_Error('vaysf_bad_nonce', 'Invalid schedule cancellation request.'), '');
+            } else {
+                $this->print_admin_notice($this->cancel_schedule_from_post($schedule_id), 'Schedule cancelled.');
+            }
+        }
+
+        $action = isset($_GET['action']) ? sanitize_text_field(wp_unslash($_GET['action'])) : '';
+        if ($action === 'new' || ($action === 'edit' && $schedule_id)) {
+            $schedule = array();
+            if ($schedule_id) {
+                $schedule = $wpdb->get_row(
+                    $wpdb->prepare("SELECT * FROM $table_schedules WHERE schedule_id = %d", $schedule_id),
+                    ARRAY_A
+                );
+            }
+            ?>
+            <div class="wrap">
+                <h1><?php echo $schedule_id ? 'Edit Schedule' : 'Create Schedule'; ?></h1>
+                <p><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=vaysf-schedules')); ?>">Back to Schedules</a></p>
+                <?php
+                if ($schedule_id && !$schedule) {
+                    echo '<div class="notice notice-error"><p>Schedule row not found.</p></div>';
+                } else {
+                    $this->render_schedule_form($schedule ?: array('game_status' => 'scheduled'));
+                }
+                ?>
+            </div>
+            <?php
+            return;
+        }
+
+        $event_filter = isset($_GET['event']) ? sanitize_text_field(wp_unslash($_GET['event'])) : '';
+        $status_filter = isset($_GET['game_status']) ? sanitize_text_field(wp_unslash($_GET['game_status'])) : '';
+        $version_filter = isset($_GET['schedule_version']) && $_GET['schedule_version'] !== '' ? absint($_GET['schedule_version']) : null;
+        $paged = max(1, isset($_GET['paged']) ? absint($_GET['paged']) : 1);
+        $per_page = 50;
+        $offset = ($paged - 1) * $per_page;
+
+        $where = array();
+        $args = array();
+        if ($event_filter !== '') {
+            $where[] = 'event = %s';
+            $args[] = $event_filter;
+        }
+        if ($status_filter !== '') {
+            $where[] = 'game_status = %s';
+            $args[] = $status_filter;
+        }
+        if ($version_filter !== null) {
+            $where[] = 'schedule_version = %d';
+            $args[] = $version_filter;
+        }
+        $where_clause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        $count_sql = "SELECT COUNT(*) FROM $table_schedules $where_clause";
+        $total_items = $args ? (int) $wpdb->get_var($wpdb->prepare($count_sql, $args)) : (int) $wpdb->get_var($count_sql);
+        $query_args = array_merge($args, array($per_page, $offset));
+        $query_sql = "SELECT * FROM $table_schedules $where_clause ORDER BY schedule_version DESC, scheduled_time IS NULL, scheduled_time, schedule_id LIMIT %d OFFSET %d";
+        $schedules = $wpdb->get_results($wpdb->prepare($query_sql, $query_args), ARRAY_A);
+        $events = $wpdb->get_col("SELECT DISTINCT event FROM $table_schedules WHERE event IS NOT NULL AND event <> '' ORDER BY event");
+        $versions = $wpdb->get_col("SELECT DISTINCT schedule_version FROM $table_schedules ORDER BY schedule_version DESC");
+        $total_pages = max(1, (int) ceil($total_items / $per_page));
+        ?>
+        <div class="wrap">
+            <h1>Schedules <a href="<?php echo esc_url(admin_url('admin.php?page=vaysf-schedules&action=new')); ?>" class="page-title-action">Add New</a></h1>
+            <form method="get" class="tablenav top">
+                <input type="hidden" name="page" value="vaysf-schedules">
+                <select name="event">
+                    <option value="">All events</option>
+                    <?php foreach ($events as $event) : ?>
+                        <option value="<?php echo esc_attr($event); ?>" <?php selected($event_filter, $event); ?>><?php echo esc_html($event); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="game_status">
+                    <option value="">All statuses</option>
+                    <?php foreach ($this->schedule_status_options() as $status) : ?>
+                        <option value="<?php echo esc_attr($status); ?>" <?php selected($status_filter, $status); ?>><?php echo esc_html($status); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="schedule_version">
+                    <option value="">All versions</option>
+                    <?php foreach ($versions as $version) : ?>
+                        <option value="<?php echo esc_attr($version); ?>" <?php selected((string) $version_filter, (string) $version); ?>><?php echo esc_html($version); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <input type="submit" class="button" value="Filter">
+            </form>
+            <table class="wp-list-table widefat fixed striped">
+                <thead>
+                    <tr>
+                        <th>Game Key</th>
+                        <th>Event / Stage / Pool</th>
+                        <th>Teams</th>
+                        <th>Resource / Slot</th>
+                        <th>Status</th>
+                        <th>Published</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (!$schedules) : ?>
+                        <tr><td colspan="7">No schedule rows found.</td></tr>
+                    <?php else : ?>
+                        <?php foreach ($schedules as $schedule) : ?>
+                            <tr>
+                                <td><strong><?php echo esc_html($schedule['game_key']); ?></strong><br><small>ID <?php echo esc_html($schedule['schedule_id']); ?> | v<?php echo esc_html($schedule['schedule_version']); ?></small></td>
+                                <td><?php echo esc_html($schedule['event']); ?><br><small><?php echo esc_html(trim(($schedule['stage'] ?: '') . ' ' . ($schedule['pool_id'] ?: ''))); ?></small></td>
+                                <td><?php echo esc_html($this->format_game_teams($schedule)); ?></td>
+                                <td><?php echo esc_html($schedule['resource_id']); ?><br><small><?php echo esc_html($schedule['scheduled_slot']); ?></small></td>
+                                <td><?php echo esc_html($schedule['game_status']); ?></td>
+                                <td><?php echo esc_html($schedule['published_at'] ?: '-'); ?></td>
+                                <td>
+                                    <a class="button button-small" href="<?php echo esc_url(admin_url('admin.php?page=vaysf-schedules&action=edit&id=' . $schedule['schedule_id'])); ?>">Edit</a>
+                                    <?php if ($schedule['game_status'] !== 'cancelled') : ?>
+                                        <?php
+                                        $row_is_protected = $this->is_protected_schedule_status($schedule['game_status']);
+                                        $cancel_confirm_message = $row_is_protected
+                                            ? sprintf(
+                                                'This game is currently "%s" (protected — reported/official/under review). '
+                                                . 'Cancelling it marks a completed or in-review match as cancelled. '
+                                                . 'This does not hard-delete it, but is a significant action. Continue?',
+                                                $schedule['game_status']
+                                            )
+                                            : 'Cancel this schedule row? This does not hard-delete it.';
+                                        ?>
+                                        <form method="post" style="display:inline;">
+                                            <?php wp_nonce_field('cancel_schedule_' . $schedule['schedule_id']); ?>
+                                            <input type="hidden" name="vaysf_action" value="cancel_schedule">
+                                            <input type="hidden" name="id" value="<?php echo esc_attr($schedule['schedule_id']); ?>">
+                                            <input type="hidden" name="confirm_cancel" value="1">
+                                            <?php if ($row_is_protected) : ?>
+                                                <input type="hidden" name="confirm_protected" value="1">
+                                            <?php endif; ?>
+                                            <button type="submit" class="button button-small<?php echo $row_is_protected ? ' button-link-delete' : ''; ?>" onclick="return confirm('<?php echo esc_js($cancel_confirm_message); ?>');"><?php echo $row_is_protected ? 'Cancel (protected)' : 'Cancel'; ?></button>
+                                        </form>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+            <div class="tablenav bottom">
+                <div class="tablenav-pages">
+                    <span class="displaying-num"><?php echo esc_html($total_items); ?> row(s)</span>
+                    <?php
+                    $base_args = array(
+                        'page' => 'vaysf-schedules',
+                        'event' => $event_filter,
+                        'game_status' => $status_filter,
+                    );
+                    if ($version_filter !== null) {
+                        $base_args['schedule_version'] = $version_filter;
+                    }
+                    if ($paged > 1) {
+                        echo '<a class="button" href="' . esc_url(add_query_arg(array_merge($base_args, array('paged' => $paged - 1)), admin_url('admin.php'))) . '">&laquo; Previous</a> ';
+                    }
+                    echo '<span class="paging-input">Page ' . esc_html($paged) . ' of ' . esc_html($total_pages) . '</span>';
+                    if ($paged < $total_pages) {
+                        echo ' <a class="button" href="' . esc_url(add_query_arg(array_merge($base_args, array('paged' => $paged + 1)), admin_url('admin.php'))) . '">Next &raquo;</a>';
+                    }
+                    ?>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
+    private function result_payload_from_post() {
+        return array(
+            'schedule_id' => isset($_POST['schedule_id']) ? absint($_POST['schedule_id']) : 0,
+            'score_json' => isset($_POST['score_json']) ? wp_unslash($_POST['score_json']) : '',
+            'winner_keys_json' => isset($_POST['winner_keys_json']) ? wp_unslash($_POST['winner_keys_json']) : '',
+            'correction_reason' => isset($_POST['correction_reason']) ? sanitize_textarea_field(wp_unslash($_POST['correction_reason'])) : '',
+            'public_status' => isset($_POST['public_status']) ? sanitize_text_field(wp_unslash($_POST['public_status'])) : 'pending',
+            'scan_status' => isset($_POST['scan_status']) ? sanitize_text_field(wp_unslash($_POST['scan_status'])) : 'pending',
+            'notes' => isset($_POST['notes']) ? sanitize_textarea_field(wp_unslash($_POST['notes'])) : '',
+            'verification_state' => isset($_POST['verification_state']) ? sanitize_text_field(wp_unslash($_POST['verification_state'])) : 'unverified',
+        );
+    }
+
+    /**
+     * A blank value is allowed (score_json/winner_keys_json are nullable and
+     * legitimately empty before a result is submitted); a non-blank value must
+     * be valid JSON so sf_results never persists a string a downstream reader
+     * (public display, middleware) would fail to json_decode().
+     */
+    private function validate_json_field($value, $label) {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return null;
+        }
+        json_decode($value);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return new WP_Error(
+                'vaysf_result_invalid_json',
+                sprintf('%s must be valid JSON: %s', $label, json_last_error_msg())
+            );
+        }
+        return null;
+    }
+
+    private function save_result_correction_from_post($result_id = 0) {
+        global $wpdb;
+
+        if (!current_user_can('sf2025_admin')) {
+            return new WP_Error('vaysf_forbidden', 'You are not allowed to modify results.');
+        }
+
+        $table_results = vaysf_get_table_name('results');
+        $table_revisions = vaysf_get_table_name('result_revisions');
+        $table_schedules = vaysf_get_table_name('schedules');
+        $payload = $this->result_payload_from_post();
+        $result_id = absint($result_id);
+
+        if (!$payload['schedule_id']) {
+            return new WP_Error('vaysf_result_schedule_required', 'Schedule row is required.');
+        }
+        if (!in_array($payload['public_status'], $this->public_status_options(), true)) {
+            return new WP_Error('vaysf_result_public_status', 'Invalid public status.');
+        }
+        if (!in_array($payload['scan_status'], $this->scan_status_options(), true)) {
+            return new WP_Error('vaysf_result_scan_status', 'Invalid scan status.');
+        }
+        if (!in_array($payload['verification_state'], $this->revision_state_options(), true)) {
+            return new WP_Error('vaysf_result_revision_state', 'Invalid revision state.');
+        }
+
+        foreach (array('score_json' => 'Score JSON', 'winner_keys_json' => 'Winner Keys JSON') as $json_field => $json_label) {
+            $json_error = $this->validate_json_field($payload[$json_field], $json_label);
+            if (is_wp_error($json_error)) {
+                return $json_error;
+            }
+        }
+
+        $schedule_exists = $wpdb->get_var(
+            $wpdb->prepare("SELECT COUNT(*) FROM $table_schedules WHERE schedule_id = %d", $payload['schedule_id'])
+        );
+        if (!$schedule_exists) {
+            return new WP_Error('vaysf_result_schedule_missing', 'Schedule row not found.');
+        }
+
+        $existing = null;
+        if ($result_id) {
+            $existing = $wpdb->get_row(
+                $wpdb->prepare("SELECT * FROM $table_results WHERE result_id = %d", $result_id),
+                ARRAY_A
+            );
+            if (!$existing) {
+                return new WP_Error('vaysf_result_missing', 'Result row not found.');
+            }
+        } else {
+            $existing = $wpdb->get_row(
+                $wpdb->prepare("SELECT * FROM $table_results WHERE schedule_id = %d", $payload['schedule_id']),
+                ARRAY_A
+            );
+            if ($existing) {
+                return new WP_Error('vaysf_result_duplicate', 'A result already exists for this schedule row. Edit the existing result instead.');
+            }
+        }
+
+        $now = current_time('mysql');
+        $user_id = get_current_user_id();
+        $wpdb->query('START TRANSACTION');
+
+        if ($existing) {
+            $result_id = absint($existing['result_id']);
+            $next_revision = absint($existing['current_revision']) + 1;
+        } else {
+            $inserted = $wpdb->insert(
+                $table_results,
+                array(
+                    'schedule_id' => $payload['schedule_id'],
+                    'score_json' => $payload['score_json'],
+                    'winner_keys_json' => $payload['winner_keys_json'],
+                    'submitted_by_user_id' => $user_id,
+                    'current_revision' => 0,
+                    'correction_reason' => $payload['correction_reason'],
+                    'public_status' => $payload['public_status'],
+                    'scan_status' => $payload['scan_status'],
+                    'notes' => $payload['notes'],
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ),
+                array('%d', '%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s')
+            );
+            if ($inserted === false) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('vaysf_result_create_failed', 'Could not create result row.');
+            }
+            $result_id = absint($wpdb->insert_id);
+            $next_revision = 1;
+        }
+
+        $revision_inserted = $wpdb->insert(
+            $table_revisions,
+            array(
+                'result_id' => $result_id,
+                'revision_number' => $next_revision,
+                'score_json' => $payload['score_json'],
+                'winner_keys_json' => $payload['winner_keys_json'],
+                'notes' => $payload['notes'],
+                'correction_reason' => $payload['correction_reason'],
+                'submitted_by_user_id' => $user_id,
+                'submitted_at' => $now,
+                'verification_state' => $payload['verification_state'],
+                'source_ip' => isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '',
+                'request_metadata' => wp_json_encode(array('source' => 'wp-admin', 'user_id' => $user_id)),
+            ),
+            array('%d', '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s')
+        );
+
+        if ($revision_inserted === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vaysf_revision_create_failed', 'Could not append result revision.');
+        }
+
+        $updated = $wpdb->update(
+            $table_results,
+            array(
+                'schedule_id' => $payload['schedule_id'],
+                'score_json' => $payload['score_json'],
+                'winner_keys_json' => $payload['winner_keys_json'],
+                'submitted_by_user_id' => $user_id,
+                'current_revision' => $next_revision,
+                'correction_reason' => $payload['correction_reason'],
+                'public_status' => $payload['public_status'],
+                'scan_status' => $payload['scan_status'],
+                'notes' => $payload['notes'],
+                'updated_at' => $now,
+            ),
+            array('result_id' => $result_id),
+            array('%d', '%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s'),
+            array('%d')
+        );
+
+        if ($updated === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vaysf_result_update_failed', 'Could not update current result row.');
+        }
+
+        $wpdb->query('COMMIT');
+        return true;
+    }
+
+    private function verify_result_from_post($result_id, $mode) {
+        global $wpdb;
+
+        if (!current_user_can('sf2025_admin')) {
+            return new WP_Error('vaysf_forbidden', 'You are not allowed to verify results.');
+        }
+
+        $data = array('updated_at' => current_time('mysql'));
+        $formats = array('%s');
+        if ($mode === 'verify') {
+            $data['verified_by_user_id'] = get_current_user_id();
+            $data['verified_at'] = current_time('mysql');
+            $formats[] = '%d';
+            $formats[] = '%s';
+        } elseif ($mode === 'certify') {
+            $data['certified_at'] = current_time('mysql');
+            $formats[] = '%s';
+        } else {
+            return new WP_Error('vaysf_bad_result_action', 'Invalid result action.');
+        }
+
+        $updated = $wpdb->update(
+            vaysf_get_table_name('results'),
+            $data,
+            array('result_id' => absint($result_id)),
+            $formats,
+            array('%d')
+        );
+
+        if ($updated === false) {
+            return new WP_Error('vaysf_result_verify_failed', 'Could not update result verification state.');
+        }
+
+        return true;
+    }
+
+    private function render_result_form($result = array()) {
+        global $wpdb;
+
+        $result_id = isset($result['result_id']) ? absint($result['result_id']) : 0;
+        $action = $result_id ? 'save_result' : 'create_result';
+        $nonce_action = $action . '_' . $result_id;
+        $schedules = $wpdb->get_results(
+            "SELECT schedule_id, game_key, event, team_a_label, team_b_label, team_c_label FROM " . vaysf_get_table_name('schedules') . " ORDER BY schedule_version DESC, game_key LIMIT 500",
+            ARRAY_A
+        );
+        ?>
+        <form method="post" class="vaysf-admin-form">
+            <?php wp_nonce_field($nonce_action); ?>
+            <input type="hidden" name="vaysf_action" value="<?php echo esc_attr($action); ?>">
+            <input type="hidden" name="result_id" value="<?php echo esc_attr($result_id); ?>">
+            <table class="form-table" role="presentation">
+                <tr>
+                    <th><label for="schedule_id">Schedule Row</label></th>
+                    <td>
+                        <select name="schedule_id" id="schedule_id" required>
+                            <option value="">Choose a game</option>
+                            <?php foreach ($schedules as $schedule) : ?>
+                                <?php $label = $schedule['game_key'] . ' - ' . $schedule['event'] . ' - ' . $this->format_game_teams($schedule); ?>
+                                <option value="<?php echo esc_attr($schedule['schedule_id']); ?>" <?php selected($result['schedule_id'] ?? '', $schedule['schedule_id']); ?>><?php echo esc_html($label); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th><label for="score_json">Score JSON</label></th>
+                    <td><textarea name="score_json" id="score_json" rows="5" class="large-text code"><?php echo esc_textarea($this->textarea_json_value($result['score_json'] ?? '')); ?></textarea></td>
+                </tr>
+                <tr>
+                    <th><label for="winner_keys_json">Winner Keys JSON</label></th>
+                    <td><textarea name="winner_keys_json" id="winner_keys_json" rows="3" class="large-text code"><?php echo esc_textarea($this->textarea_json_value($result['winner_keys_json'] ?? '')); ?></textarea></td>
+                </tr>
+                <tr>
+                    <th>Status</th>
+                    <td>
+                        <select name="public_status">
+                            <?php foreach ($this->public_status_options() as $status) : ?>
+                                <option value="<?php echo esc_attr($status); ?>" <?php selected($result['public_status'] ?? 'pending', $status); ?>><?php echo esc_html($status); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <select name="scan_status">
+                            <?php foreach ($this->scan_status_options() as $status) : ?>
+                                <option value="<?php echo esc_attr($status); ?>" <?php selected($result['scan_status'] ?? 'pending', $status); ?>><?php echo esc_html($status); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <select name="verification_state">
+                            <?php foreach ($this->revision_state_options() as $state) : ?>
+                                <option value="<?php echo esc_attr($state); ?>"><?php echo esc_html($state); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th><label for="correction_reason">Correction Reason</label></th>
+                    <td><textarea name="correction_reason" id="correction_reason" rows="3" class="large-text"><?php echo esc_textarea($result['correction_reason'] ?? ''); ?></textarea></td>
+                </tr>
+                <tr>
+                    <th><label for="notes">Notes</label></th>
+                    <td><textarea name="notes" id="notes" rows="3" class="large-text"><?php echo esc_textarea($result['notes'] ?? ''); ?></textarea></td>
+                </tr>
+            </table>
+            <?php submit_button($result_id ? 'Save Correction' : 'Create Result'); ?>
+        </form>
+        <?php
+    }
+
+    /**
+     * Display event-day results and revision history admin page.
+     */
+    public function display_results_page() {
+        global $wpdb;
+
+        $table_results = vaysf_get_table_name('results');
+        $table_schedules = vaysf_get_table_name('schedules');
+        $table_revisions = vaysf_get_table_name('result_revisions');
+        $vaysf_action = isset($_POST['vaysf_action']) ? sanitize_text_field(wp_unslash($_POST['vaysf_action'])) : '';
+        $result_id = isset($_POST['result_id'])
+            ? absint($_POST['result_id'])
+            : (isset($_REQUEST['id']) ? absint($_REQUEST['id']) : 0);
+
+        if ($vaysf_action === 'save_result' || $vaysf_action === 'create_result') {
+            $nonce_action = $vaysf_action . '_' . $result_id;
+            if (!isset($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), $nonce_action)) {
+                $this->print_admin_notice(new WP_Error('vaysf_bad_nonce', 'Invalid result request.'), '');
+            } else {
+                $this->print_admin_notice($this->save_result_correction_from_post($result_id), $result_id ? 'Result correction saved and revision appended.' : 'Result created and revision appended.');
+            }
+        } elseif ($vaysf_action === 'verify_result' || $vaysf_action === 'certify_result') {
+            $mode = $vaysf_action === 'verify_result' ? 'verify' : 'certify';
+            if (!isset($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), $vaysf_action . '_' . $result_id)) {
+                $this->print_admin_notice(new WP_Error('vaysf_bad_nonce', 'Invalid verification request.'), '');
+            } else {
+                $this->print_admin_notice($this->verify_result_from_post($result_id, $mode), ucfirst($mode) . ' action saved.');
+            }
+        }
+
+        $action = isset($_GET['action']) ? sanitize_text_field(wp_unslash($_GET['action'])) : '';
+        if ($action === 'new' || ($action === 'edit' && $result_id)) {
+            $result = array();
+            if ($result_id) {
+                $result = $wpdb->get_row(
+                    $wpdb->prepare("SELECT * FROM $table_results WHERE result_id = %d", $result_id),
+                    ARRAY_A
+                );
+            }
+            ?>
+            <div class="wrap">
+                <h1><?php echo $result_id ? 'Edit Result' : 'Create Result'; ?></h1>
+                <p><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=vaysf-results')); ?>">Back to Results</a></p>
+                <?php
+                if ($result_id && !$result) {
+                    echo '<div class="notice notice-error"><p>Result row not found.</p></div>';
+                } else {
+                    $this->render_result_form($result);
+                }
+                ?>
+            </div>
+            <?php
+            return;
+        }
+
+        if ($action === 'revisions' && $result_id) {
+            $result = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT r.*, s.game_key, s.event FROM $table_results r LEFT JOIN $table_schedules s ON r.schedule_id = s.schedule_id WHERE r.result_id = %d",
+                    $result_id
+                ),
+                ARRAY_A
+            );
+            $revisions = $wpdb->get_results(
+                $wpdb->prepare("SELECT * FROM $table_revisions WHERE result_id = %d ORDER BY revision_number DESC", $result_id),
+                ARRAY_A
+            );
+            ?>
+            <div class="wrap">
+                <h1>Result Revision History</h1>
+                <p><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=vaysf-results')); ?>">Back to Results</a></p>
+                <?php if (!$result) : ?>
+                    <div class="notice notice-error"><p>Result row not found.</p></div>
+                <?php else : ?>
+                    <h2><?php echo esc_html($result['game_key'] . ' - ' . $result['event']); ?></h2>
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th>Revision</th>
+                                <th>Score</th>
+                                <th>Winner Keys</th>
+                                <th>State</th>
+                                <th>Reason / Notes</th>
+                                <th>Submitted</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!$revisions) : ?>
+                                <tr><td colspan="6">No revisions found.</td></tr>
+                            <?php else : ?>
+                                <?php foreach ($revisions as $revision) : ?>
+                                    <tr>
+                                        <td><?php echo esc_html($revision['revision_number']); ?></td>
+                                        <td><pre><?php echo esc_html($revision['score_json']); ?></pre></td>
+                                        <td><pre><?php echo esc_html($revision['winner_keys_json']); ?></pre></td>
+                                        <td><?php echo esc_html($revision['verification_state']); ?></td>
+                                        <td><?php echo esc_html($revision['correction_reason']); ?><br><small><?php echo esc_html($revision['notes']); ?></small></td>
+                                        <td><?php echo esc_html($revision['submitted_at']); ?><br><small>User <?php echo esc_html($revision['submitted_by_user_id']); ?></small></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+            </div>
+            <?php
+            return;
+        }
+
+        $public_filter = isset($_GET['public_status']) ? sanitize_text_field(wp_unslash($_GET['public_status'])) : '';
+        $event_filter = isset($_GET['event']) ? sanitize_text_field(wp_unslash($_GET['event'])) : '';
+        $where = array();
+        $args = array();
+        if ($public_filter !== '') {
+            $where[] = 'r.public_status = %s';
+            $args[] = $public_filter;
+        }
+        if ($event_filter !== '') {
+            $where[] = 's.event = %s';
+            $args[] = $event_filter;
+        }
+        $where_clause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+        $query_sql = "SELECT r.*, s.game_key, s.event, s.stage, s.team_a_label, s.team_b_label, s.team_c_label FROM $table_results r LEFT JOIN $table_schedules s ON r.schedule_id = s.schedule_id $where_clause ORDER BY r.updated_at DESC, r.result_id DESC LIMIT 200";
+        $results = $args ? $wpdb->get_results($wpdb->prepare($query_sql, $args), ARRAY_A) : $wpdb->get_results($query_sql, ARRAY_A);
+        $events = $wpdb->get_col("SELECT DISTINCT event FROM $table_schedules WHERE event IS NOT NULL AND event <> '' ORDER BY event");
+        ?>
+        <div class="wrap">
+            <h1>Results <a href="<?php echo esc_url(admin_url('admin.php?page=vaysf-results&action=new')); ?>" class="page-title-action">Add New</a></h1>
+            <form method="get" class="tablenav top">
+                <input type="hidden" name="page" value="vaysf-results">
+                <select name="event">
+                    <option value="">All events</option>
+                    <?php foreach ($events as $event) : ?>
+                        <option value="<?php echo esc_attr($event); ?>" <?php selected($event_filter, $event); ?>><?php echo esc_html($event); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="public_status">
+                    <option value="">All statuses</option>
+                    <?php foreach ($this->public_status_options() as $status) : ?>
+                        <option value="<?php echo esc_attr($status); ?>" <?php selected($public_filter, $status); ?>><?php echo esc_html($status); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <input type="submit" class="button" value="Filter">
+            </form>
+            <table class="wp-list-table widefat fixed striped">
+                <thead>
+                    <tr>
+                        <th>Game</th>
+                        <th>Teams</th>
+                        <th>Status</th>
+                        <th>Revision</th>
+                        <th>Certified / Verified</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (!$results) : ?>
+                        <tr><td colspan="6">No results found.</td></tr>
+                    <?php else : ?>
+                        <?php foreach ($results as $result) : ?>
+                            <tr>
+                                <td><strong><?php echo esc_html($result['game_key']); ?></strong><br><small><?php echo esc_html($result['event']); ?></small></td>
+                                <td><?php echo esc_html($this->format_game_teams($result)); ?></td>
+                                <td><?php echo esc_html($result['public_status']); ?><br><small>Scan: <?php echo esc_html($result['scan_status']); ?></small></td>
+                                <td><?php echo esc_html($result['current_revision']); ?></td>
+                                <td><?php echo esc_html($result['certified_at'] ?: '-'); ?><br><small><?php echo esc_html($result['verified_at'] ?: '-'); ?></small></td>
+                                <td>
+                                    <a class="button button-small" href="<?php echo esc_url(admin_url('admin.php?page=vaysf-results&action=edit&id=' . $result['result_id'])); ?>">Correct</a>
+                                    <a class="button button-small" href="<?php echo esc_url(admin_url('admin.php?page=vaysf-results&action=revisions&id=' . $result['result_id'])); ?>">Revisions</a>
+                                    <form method="post" style="display:inline;">
+                                        <?php wp_nonce_field('certify_result_' . $result['result_id']); ?>
+                                        <input type="hidden" name="vaysf_action" value="certify_result">
+                                        <input type="hidden" name="id" value="<?php echo esc_attr($result['result_id']); ?>">
+                                        <button class="button button-small" type="submit">Certify</button>
+                                    </form>
+                                    <form method="post" style="display:inline;">
+                                        <?php wp_nonce_field('verify_result_' . $result['result_id']); ?>
+                                        <input type="hidden" name="vaysf_action" value="verify_result">
+                                        <input type="hidden" name="id" value="<?php echo esc_attr($result['result_id']); ?>">
+                                        <button class="button button-small" type="submit">Verify</button>
+                                    </form>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

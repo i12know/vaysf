@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.16
+ * Version: 1.0.17
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,7 +18,7 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.16';
+    const VERSION = '1.0.17';
 
     /**
      * Database version
@@ -517,7 +517,12 @@ class VAYSF_Integration {
         dbDelta($sql_schedules);
 
         // Results table (redesigned for Issue #203 — one current result per schedule row;
-        // revision history moves to sf_result_revisions below)
+        // revision history moves to sf_result_revisions below).
+        // Explicit ENGINE=InnoDB: the admin correction flow (Issue #229) wraps the
+        // sf_results update and the sf_result_revisions insert in a single
+        // START TRANSACTION/COMMIT — that's only a real atomicity guarantee if both
+        // tables are transactional. dbDelta() ignores table-level options, so this
+        // does not affect its column/index diffing.
         $table_results = $wpdb->prefix . self::TABLE_PREFIX . 'results';
         $sql_results = "CREATE TABLE $table_results (
             result_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -539,7 +544,7 @@ class VAYSF_Integration {
             UNIQUE KEY schedule_id (schedule_id),
             KEY public_status (public_status),
             KEY scan_status (scan_status)
-        ) $charset_collate;";
+        ) ENGINE=InnoDB $charset_collate;";
         dbDelta($sql_results);
 
         // Result revisions table — append-only submission/correction history (Issue #203)
@@ -561,7 +566,7 @@ class VAYSF_Integration {
             UNIQUE KEY result_revision (result_id, revision_number),
             KEY submitted_by_user_id (submitted_by_user_id),
             KEY verification_state (verification_state)
-        ) $charset_collate;";
+        ) ENGINE=InnoDB $charset_collate;";
         dbDelta($sql_result_revisions);
 
         // Result files table — protected scoresheet attachments, one row per file (Issue #203)
