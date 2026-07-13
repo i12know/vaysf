@@ -209,6 +209,37 @@ def test_parse_args_import_match_schedule_overrides_requires_mode(monkeypatch, c
     assert exc.value.code == 2
 
 
+def test_parse_args_import_approved_games_execute(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "import-approved-games",
+            "--main-schedule",
+            "main.xlsx",
+            "--badminton",
+            "badminton.xlsx",
+            "--soccer",
+            "soccer.xlsx",
+            "--table-tennis",
+            "tt.xlsx",
+            "--schedule-input",
+            "schedule_input.json",
+            "--execute",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "import-approved-games"
+    assert args.main_schedule == "main.xlsx"
+    assert args.badminton == "badminton.xlsx"
+    assert args.soccer == "soccer.xlsx"
+    assert args.table_tennis == "tt.xlsx"
+    assert args.schedule_input == "schedule_input.json"
+    assert args.execute is True
+    assert args.dry_run is False
+
+
 def test_parse_args_upload_person_photo_execute(monkeypatch):
     monkeypatch.setattr(
         main.sys,

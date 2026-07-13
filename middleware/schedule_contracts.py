@@ -53,11 +53,13 @@ _KNOWN_INPUT_TOP_LEVEL = {
     "gym_court_scenario", "game_count", "resource_count",
     "pod_unprotected_entries", "pod_validation_reconciliation",
     "manual_matchups", "manual_schedule_overrides", "match_schedule_overrides",
+    "approved_games",
 }
 _KNOWN_OUTPUT_TOP_LEVEL = {
     "solved_at", "status", "solver_wall_seconds", "assignments", "unscheduled",
     "pool_results", "conflict_audit_summary", "conflict_audit",
     "pod_unprotected_entries", "pod_validation_reconciliation",
+    "approved_games",
 }
 
 

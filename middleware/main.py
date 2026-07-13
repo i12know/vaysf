@@ -511,6 +511,81 @@ def parse_args() -> argparse.Namespace:
         help="Write the match_schedule_overrides.json sidecar when validation is clean",
     )
 
+    approved_games_parser = subparsers.add_parser(
+        "import-approved-games",
+        help=(
+            "Import approved preliminary games from the 2026 schedule workbooks "
+            "and emit publish-schedule-ready JSON artifacts"
+        ),
+    )
+    approved_games_parser.add_argument(
+        "--main-schedule",
+        default=None,
+        help="Path to Loc's approved main schedule workbook (default: data/2026 Main Schedule draft 11.xlsx)",
+    )
+    approved_games_parser.add_argument(
+        "--badminton",
+        default=None,
+        help="Path to the approved badminton schedule workbook",
+    )
+    approved_games_parser.add_argument(
+        "--soccer",
+        default=None,
+        help="Path to the approved soccer schedule workbook",
+    )
+    approved_games_parser.add_argument(
+        "--table-tennis",
+        default=None,
+        help="Path to the approved table tennis schedule workbook",
+    )
+    approved_games_parser.add_argument(
+        "--venue-input",
+        default=None,
+        help=(
+            "Optional reconciled venue_input.xlsx path for audit provenance. "
+            "Resource validation uses --schedule-input resources."
+        ),
+    )
+    approved_games_parser.add_argument(
+        "--schedule-input",
+        default=None,
+        help=(
+            "schedule_input.json used for generated-game/resource context "
+            "(default: EXPORT_DIR/schedule_input.json)"
+        ),
+    )
+    approved_games_parser.add_argument(
+        "--output",
+        default=None,
+        help="Sidecar/audit path (default: EXPORT_DIR/approved_schedule_games*.json)",
+    )
+    approved_games_parser.add_argument(
+        "--publish-input",
+        default=None,
+        help="Output path for publish-ready schedule_input JSON",
+    )
+    approved_games_parser.add_argument(
+        "--publish-output",
+        default=None,
+        help="Output path for publish-ready schedule_output JSON",
+    )
+    approved_games_parser.add_argument(
+        "--waive-table-tennis-discrepancy",
+        action="store_true",
+        help="Allow --execute despite the known U35 SBC/FVC table-tennis source discrepancy",
+    )
+    approved_mode = approved_games_parser.add_mutually_exclusive_group(required=True)
+    approved_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Parse and validate only; write an audit JSON but no publish artifacts",
+    )
+    approved_mode.add_argument(
+        "--execute",
+        action="store_true",
+        help="Write approved_schedule_games.json and publish-ready JSON artifacts when validation is clean",
+    )
+
     # Generate-venue-template command
     venue_template_parser = subparsers.add_parser(
         "generate-venue-template",
@@ -1721,6 +1796,131 @@ def main() -> None:
                     match_schedule_overrides.write_match_schedule_overrides_sidecar(payload, output_path)
                     logger.info(f"Match schedule overrides sidecar written to: {output_path.resolve()}")
                     success = True
+    elif args.command == "import-approved-games":
+        from schedule_contracts import (
+            ScheduleContractError,
+            validate_output_against_input,
+            validate_schedule_input,
+            validate_schedule_output,
+        )
+        from scheduling import approved_games
+
+        main_schedule_path = (
+            Path(args.main_schedule)
+            if args.main_schedule
+            else approved_games.default_main_schedule_path(DATA_DIR)
+        )
+        badminton_path = (
+            Path(args.badminton)
+            if args.badminton
+            else approved_games.default_badminton_path(DATA_DIR)
+        )
+        soccer_path = (
+            Path(args.soccer)
+            if args.soccer
+            else approved_games.default_soccer_path(DATA_DIR)
+        )
+        table_tennis_path = (
+            Path(args.table_tennis)
+            if args.table_tennis
+            else approved_games.default_table_tennis_path(DATA_DIR)
+        )
+        schedule_input_path = (
+            Path(args.schedule_input)
+            if args.schedule_input
+            else _default_schedule_json_path("schedule_input.json")
+        )
+        output_path = (
+            Path(args.output)
+            if args.output
+            else (
+                approved_games.default_audit_path(Path(EXPORT_DIR))
+                if args.dry_run
+                else approved_games.default_sidecar_path(Path(EXPORT_DIR))
+            )
+        )
+        publish_input_path = (
+            Path(args.publish_input)
+            if args.publish_input
+            else approved_games.default_publish_input_path(Path(EXPORT_DIR))
+        )
+        publish_output_path = (
+            Path(args.publish_output)
+            if args.publish_output
+            else approved_games.default_publish_output_path(Path(EXPORT_DIR))
+        )
+
+        try:
+            schedule_input = json.loads(schedule_input_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            logger.error(f"import-approved-games: schedule_input.json not found at {schedule_input_path}")
+            success = False
+        except json.JSONDecodeError as exc:
+            logger.error(
+                f"import-approved-games: schedule_input.json is not valid JSON "
+                f"at {schedule_input_path}: {exc}"
+            )
+            success = False
+        else:
+            logger.info(
+                "import-approved-games: validating against "
+                f"{schedule_input_path} ({len(schedule_input.get('games', []) or [])} game(s), "
+                f"{len(schedule_input.get('resources', []) or [])} resource(s))"
+            )
+            payload = approved_games.build_approved_games_payload(
+                main_schedule_path=main_schedule_path,
+                badminton_path=badminton_path,
+                soccer_path=soccer_path,
+                table_tennis_path=table_tennis_path,
+                venue_input_path=Path(args.venue_input) if args.venue_input else None,
+                schedule_input=schedule_input,
+                waive_table_tennis_discrepancy=args.waive_table_tennis_discrepancy,
+            )
+            for line in approved_games.summarize_payload_for_log(payload):
+                logger.info(line)
+            validation = payload.get("validation", {}) or {}
+            for warning in validation.get("warnings", []) or []:
+                logger.warning(f"approved games validation: {warning}")
+            errors = list(validation.get("errors", []) or [])
+
+            if not errors:
+                publish_input = payload["publish_artifacts"]["schedule_input"]
+                publish_output = payload["publish_artifacts"]["schedule_output"]
+                try:
+                    for warning in validate_schedule_input(publish_input):
+                        logger.warning(f"approved publish input contract: {warning}")
+                    for warning in validate_schedule_output(publish_output):
+                        logger.warning(f"approved publish output contract: {warning}")
+                    for warning in validate_output_against_input(publish_output, publish_input):
+                        logger.warning(f"approved publish artifacts contract: {warning}")
+                except ScheduleContractError as exc:
+                    errors.append(str(exc))
+
+            if errors:
+                logger.error(f"approved games import found {len(errors)} error(s):")
+                for error in errors:
+                    logger.error(f"  - {error}")
+
+            if args.dry_run:
+                approved_games.write_json(payload, output_path)
+                logger.info(f"Approved games audit written to: {output_path.resolve()}")
+                success = not errors
+            elif errors:
+                success = False
+            else:
+                approved_games.write_json(payload, output_path)
+                approved_games.write_json(
+                    payload["publish_artifacts"]["schedule_input"],
+                    publish_input_path,
+                )
+                approved_games.write_json(
+                    payload["publish_artifacts"]["schedule_output"],
+                    publish_output_path,
+                )
+                logger.info(f"Approved games sidecar written to: {output_path.resolve()}")
+                logger.info(f"Approved publish schedule_input written to: {publish_input_path.resolve()}")
+                logger.info(f"Approved publish schedule_output written to: {publish_output_path.resolve()}")
+                success = True
     elif args.command == "generate-venue-template":
         out = Path(args.output) if args.output else None
         success = generate_venue_template(out)
