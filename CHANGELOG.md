@@ -29,6 +29,15 @@
 - Added Table Tennis preliminary row-count balance validation so uneven
   category schedules, such as one athlete receiving too few appearances while
   another receives an extra bye row, are reported during dry run.
+- Added the final #197 Table Tennis venue/date guard: the approved Table
+  Tennis workbook must visibly declare Friday 7/24, and every imported
+  Table Tennis / Table Tennis 35+ game must resolve to a Friday `Fri-1`
+  Table Tennis resource at Orange before execution is allowed.
+- Treat the approved COED Soccer schedule workbook as an operator override
+  source when it uses a field slot outside generated venue availability:
+  `import-approved-games` now creates an auditable `SOC-APPROVED-*` resource
+  for that exact slot instead of blocking execution on an unresolved
+  Soccer Field resource.
 - Review fixes to the roster-vs-source validation:
   - `_table_tennis_side_parts()`'s `Name (CODE)` parser now accepts a
     lower/mixed-case church code (e.g. `Nhan Micah (orn)`), not just
