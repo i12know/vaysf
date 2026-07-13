@@ -528,3 +528,33 @@ def test_table_tennis_requires_orange_resource(tmp_path):
     )
 
     assert any("expected Orange" in error for error in payload["validation"]["errors"])
+
+
+def test_table_tennis_wrong_day_workbook_still_blocked_by_header_check(tmp_path):
+    """The header scan alone must catch a workbook that isn't Friday 7/24 at
+    all (not just a Friday-dated header with the wrong weekday label) — this
+    is the case the removed, unreachable per-game day check used to look
+    like it was covering. _parse_table_tennis always builds scheduled_slot
+    with the hardcoded required day, so a per-record comparison against that
+    same hardcoded value could never disagree with it regardless of what the
+    workbook's header actually says; the header scan is what has to do the
+    real work.
+    """
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(table_tennis, include_sbc=False, date_header="Sat 7/25")
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+    )
+
+    assert any("Friday 7/24" in error for error in payload["validation"]["errors"])

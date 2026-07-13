@@ -179,13 +179,6 @@ def _time_after_minutes(start_time: str, minutes: int) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
-def _slot_day(slot: Any) -> str:
-    text = _clean_text(slot)
-    if "-" not in text:
-        return ""
-    return text.rsplit("-", 1)[0]
-
-
 def _parse_minutes(value: str) -> int:
     hours, minutes = str(value).split(":")
     return int(hours) * 60 + int(minutes)
@@ -1048,6 +1041,11 @@ def _validate_table_tennis_friday_orange(
             f"({TABLE_TENNIS_REQUIRED_DAY}) in the visible schedule header."
         )
 
+    # No per-game day check here: _parse_table_tennis unconditionally builds
+    # every record's scheduled_slot with TABLE_TENNIS_REQUIRED_DAY (Fri-1), so
+    # a record-level day comparison can never disagree with it — it would be
+    # dead code that only looks like it validates day drift. The header scan
+    # above is what actually catches a workbook that isn't Friday 7/24.
     resource_by_id = {
         _clean_text(resource.get("resource_id")): resource
         for resource in resources
@@ -1056,13 +1054,6 @@ def _validate_table_tennis_friday_orange(
     for record in records:
         source = _clean_text(record.get("source_cell"))
         game_key = _clean_text(record.get("game_key"))
-        slot = _clean_text(record.get("scheduled_slot"))
-        if _slot_day(slot) != TABLE_TENNIS_REQUIRED_DAY:
-            errors.append(
-                f"{source}: Table Tennis game {game_key} must be scheduled on "
-                f"{TABLE_TENNIS_REQUIRED_DAY} / Friday 7/24, not {slot or 'an unresolved slot'}."
-            )
-
         resource_id = _clean_text(record.get("resource_id"))
         if not resource_id:
             continue
