@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Event-day coordinator role foundation - closes [#235](https://github.com/i12know/vaysf/issues/235)
+
+- Added a narrow `sf2025_coordinator` WordPress role with `read` and
+  `sf2025_submit_results` for event-day score entry, without exposing the
+  existing broad Sports Fest wp-admin menus.
+- Added `sf2025_submit_results` to Sports Fest admins, managers, and WordPress
+  administrators so existing operator accounts keep result-submission access.
+- Made role registration upgrade-safe by explicitly adding new capabilities to
+  existing roles; `add_role()` alone is a no-op after first activation.
+- Documented coordinator account setup and the intentional temporary use of the
+  older `sf2025_` capability prefix for the 2026 release.
+- Bumped plugin header/version to `1.0.18`; database version remains `1.0.6`
+  because #235 adds roles/capabilities only.
+
 ### Draft 12 visual schedule override import - closes [#233](https://github.com/i12know/vaysf/issues/233)
 
 - Updated `import-match-schedule-overrides` to understand Excel theme/tint
