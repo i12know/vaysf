@@ -142,7 +142,7 @@ $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
         <div class="vaysf-score-entry-notice">
             <p><?php esc_html_e('Please log in with your coordinator account to view assigned games.', 'vaysf'); ?></p>
             <p>
-                <a href="<?php echo esc_url(wp_login_url(site_url('coordinator-score-entry'))); ?>">
+                <a href="<?php echo esc_url(wp_login_url(vaysf_get_coordinator_score_entry_url('assigned'))); ?>">
                     <?php esc_html_e('Log in', 'vaysf'); ?>
                 </a>
             </p>

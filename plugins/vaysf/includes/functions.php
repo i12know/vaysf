@@ -2,7 +2,7 @@
 /**
  * File: includes/functions.php
  * Description: Helper functions for VAYSF Integration
- * Version: 1.0.6
+ * Version: 1.0.7
  * Author: Bumble Ho
  */
 
@@ -339,6 +339,100 @@ function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs') {
 
     $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
     return is_array($rows) ? $rows : array();
+}
+
+/**
+ * Build the coordinator score entry URL.
+ *
+ * @param string $view Dashboard view key
+ * @return string URL
+ */
+function vaysf_get_coordinator_score_entry_url($view = 'assigned') {
+    $view = sanitize_key($view);
+    if (!in_array($view, array('needs', 'submitted', 'assigned'), true)) {
+        $view = 'assigned';
+    }
+
+    return add_query_arg('view', $view, site_url('coordinator-score-entry'));
+}
+
+/**
+ * Register a wp-admin dashboard widget for coordinator accounts.
+ *
+ * @return void
+ */
+function vaysf_register_coordinator_score_dashboard_widget() {
+    if (!current_user_can('sf2025_submit_results')) {
+        return;
+    }
+
+    wp_add_dashboard_widget(
+        'vaysf_coordinator_score_entry',
+        esc_html__('Sports Fest Score Entry', 'vaysf'),
+        'vaysf_render_coordinator_score_dashboard_widget'
+    );
+}
+
+/**
+ * Render the coordinator dashboard widget.
+ *
+ * @return void
+ */
+function vaysf_render_coordinator_score_dashboard_widget() {
+    $authorized_events = vaysf_get_user_authorized_events(get_current_user_id());
+    $dashboard_url = vaysf_get_coordinator_score_entry_url('assigned');
+    ?>
+    <p><?php esc_html_e('Open your assigned Sports Fest games from the coordinator dashboard. Score entry will be enabled in the next release slice.', 'vaysf'); ?></p>
+    <?php if ($authorized_events) : ?>
+        <p>
+            <strong><?php esc_html_e('Assigned events:', 'vaysf'); ?></strong>
+            <?php echo esc_html(implode(', ', $authorized_events)); ?>
+        </p>
+    <?php else : ?>
+        <p><?php esc_html_e('No schedule events have been assigned to your coordinator account yet.', 'vaysf'); ?></p>
+    <?php endif; ?>
+    <p>
+        <a class="button button-primary" href="<?php echo esc_url($dashboard_url); ?>">
+            <?php esc_html_e('Open Score Entry Dashboard', 'vaysf'); ?>
+        </a>
+    </p>
+    <?php
+}
+
+/**
+ * Render a coordinator score-entry link on user profile screens.
+ *
+ * @param WP_User $user User being viewed
+ * @return void
+ */
+function vaysf_render_coordinator_score_profile_link($user) {
+    if (!user_can($user->ID, 'sf2025_submit_results')) {
+        return;
+    }
+
+    if ((int) get_current_user_id() !== (int) $user->ID && !current_user_can('edit_user', $user->ID)) {
+        return;
+    }
+
+    $dashboard_url = vaysf_get_coordinator_score_entry_url('assigned');
+    ?>
+    <h2><?php esc_html_e('Sports Fest Score Entry', 'vaysf'); ?></h2>
+    <table class="form-table" role="presentation">
+        <tr>
+            <th scope="row"><?php esc_html_e('Coordinator dashboard', 'vaysf'); ?></th>
+            <td>
+                <p>
+                    <a class="button button-primary" href="<?php echo esc_url($dashboard_url); ?>">
+                        <?php esc_html_e('Open Score Entry Dashboard', 'vaysf'); ?>
+                    </a>
+                </p>
+                <p class="description">
+                    <?php esc_html_e('This page shows the published games assigned to this coordinator account.', 'vaysf'); ?>
+                </p>
+            </td>
+        </tr>
+    </table>
+    <?php
 }
 
 /**

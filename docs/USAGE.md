@@ -948,6 +948,11 @@ For this first implementation slice, **Enter Score** is intentionally disabled.
 Use the page to confirm that `test_coordinator` sees only their assigned events
 before enabling real result submission forms in the next issue.
 
+Coordinators do not need to remember the URL. Any account with
+`sf2025_submit_results` sees a **Sports Fest Score Entry** widget on the normal
+WordPress Dashboard with an **Open Score Entry Dashboard** button. The same link
+also appears on that user's WordPress Profile page.
+
 ### Managing Churches
 
 The Churches page displays all participating churches with their details:

@@ -13,9 +13,11 @@
 - Added **Needs Results**, **Submitted Today**, and **Assigned Games** views;
   score entry buttons are present but disabled until the next result-form
   slice.
+- Added a coordinator wp-admin Dashboard widget and Profile-page link so
+  event-day users can open the score entry dashboard immediately after login.
 - Replaced confusing `My Matches` wording in the event-day results RFC with
   coordinator-facing `Assigned Games` language.
-- Bumped plugin header/version to `1.0.20`; database version remains `1.0.6`
+- Bumped plugin header/version to `1.0.21`; database version remains `1.0.6`
   because #239 adds a read-only front-end dashboard only.
 
 ### Schedule-driven coordinator event authorization - closes [#237](https://github.com/i12know/vaysf/issues/237)
