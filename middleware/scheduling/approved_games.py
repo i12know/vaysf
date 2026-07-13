@@ -14,6 +14,7 @@ import json
 import re
 from collections import Counter
 from datetime import datetime, time as dt_time
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -29,7 +30,7 @@ from config import (
 )
 from scheduling import master_schedule
 from scheduling import match_schedule_overrides
-from validation.name_matcher import likely_name_match
+from validation.name_matcher import likely_name_match, normalized_name
 
 APPROVED_GAMES_SIDECAR_FILENAME = "approved_schedule_games.json"
 APPROVED_GAMES_AUDIT_FILENAME = "approved_schedule_games.audit.json"
@@ -730,13 +731,32 @@ def _row_full_name(row: Mapping[str, Any]) -> str:
     )
 
 
-def _find_table_tennis_roster_athlete(
+def _name_tokens(value: str) -> list[str]:
+    return re.sub(r"[^\w\s]+", " ", normalized_name(value)).split()
+
+
+def _typo_tolerant_name_match(query_name: str, candidate_name: str) -> bool:
+    query_key = normalized_name(query_name)
+    candidate_key = normalized_name(candidate_name)
+    if not query_key or not candidate_key:
+        return False
+
+    direct_ratio = SequenceMatcher(None, query_key, candidate_key).ratio()
+    sorted_ratio = SequenceMatcher(
+        None,
+        " ".join(sorted(_name_tokens(query_key))),
+        " ".join(sorted(_name_tokens(candidate_key))),
+    ).ratio()
+    return max(direct_ratio, sorted_ratio) >= 0.92
+
+
+def _filtered_table_tennis_roster_candidates(
     candidates: Sequence[Mapping[str, Any]],
-    athlete_name: str,
     *,
     format_class: Optional[str] = None,
     gender: Optional[str] = None,
-) -> Optional[Mapping[str, Any]]:
+) -> list[Mapping[str, Any]]:
+    filtered: list[Mapping[str, Any]] = []
     for row in candidates:
         if format_class and _format_class(row.get("sport_format")) != format_class:
             continue
@@ -744,8 +764,44 @@ def _find_table_tennis_roster_athlete(
             row_gender = _clean_text(row.get("sport_gender")).casefold()
             if row_gender and row_gender != gender.casefold():
                 continue
+        filtered.append(row)
+    return filtered
+
+
+def _find_table_tennis_roster_athlete(
+    candidates: Sequence[Mapping[str, Any]],
+    athlete_name: str,
+    *,
+    format_class: Optional[str] = None,
+    gender: Optional[str] = None,
+    warnings: Optional[list[str]] = None,
+    source_cell: str = "",
+    context: str = "",
+) -> Optional[Mapping[str, Any]]:
+    filtered_candidates = _filtered_table_tennis_roster_candidates(
+        candidates,
+        format_class=format_class,
+        gender=gender,
+    )
+    for row in filtered_candidates:
         if likely_name_match(athlete_name, _row_full_name(row)):
             return row
+
+    typo_matches = [
+        row for row in filtered_candidates
+        if _typo_tolerant_name_match(athlete_name, _row_full_name(row))
+    ]
+    if len(typo_matches) == 1:
+        row = typo_matches[0]
+        if warnings is not None:
+            warning_prefix = f"{source_cell}: " if source_cell else ""
+            warning_context = f" {context}" if context else ""
+            warnings.append(
+                f"{warning_prefix}athlete {athlete_name!r} matched roster athlete "
+                f"{_row_full_name(row)!r} by typo-tolerant Table Tennis name matching"
+                f"{warning_context}."
+            )
+        return row
     return None
 
 
@@ -789,6 +845,9 @@ def _validate_table_tennis_source_against_roster(
                 candidates,
                 athlete,
                 format_class="doubles",
+                warnings=warnings,
+                source_cell=entry["source_cell"],
+                context=f"under {entry['team_code']} {entry['event']} doubles",
             ):
                 errors.append(
                     f"{entry['source_cell']}: athlete {athlete!r} is not registered "
@@ -853,6 +912,9 @@ def _validate_table_tennis_source_against_roster(
                     label,
                     format_class=format_class,
                     gender=gender,
+                    warnings=warnings,
+                    source_cell=source_cell,
+                    context=f"under {team_code} {event} {sub_event}",
                 ):
                     errors.append(
                         f"{source_cell}: athlete {label!r} is not registered for "

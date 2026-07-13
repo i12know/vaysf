@@ -29,6 +29,9 @@
 - Added Table Tennis preliminary row-count balance validation so uneven
   category schedules, such as one athlete receiving too few appearances while
   another receives an extra bye row, are reported during dry run.
+- Downgraded unique same-church/same-category Table Tennis athlete name typos
+  to dry-run warnings instead of hard errors, preserving an audit trail while
+  allowing source sheets like `Justin Pham` vs `Justtin Pham` to proceed.
 - Documented the dry-run-first operator workflow and approved-game publication
   path in `docs/SCHEDULE-HOW-TO.md` and `docs/SCHEDULING.md`.
 

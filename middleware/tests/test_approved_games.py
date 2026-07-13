@@ -326,6 +326,50 @@ def test_table_tennis_source_validation_flags_unregistered_athlete(tmp_path):
     assert any("Noah Vo" in error and "not registered" in error for error in errors)
 
 
+def test_table_tennis_source_validation_warns_for_unique_name_typo(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(
+        table_tennis,
+        include_sbc=False,
+        matches=["(U35) GAC-2 - BYE"],
+        roster_entries=[("(U35) GAC-2", "Phillip Tran & Justin Pham")],
+    )
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+        roster_rows=[
+            _tt_roster_row(
+                "GAC",
+                "Phillip",
+                "Tran",
+                gender="Mixed",
+                sport_format="Mixed Double",
+            ),
+            _tt_roster_row(
+                "GAC",
+                "Justtin",
+                "Pham",
+                gender="Mixed",
+                sport_format="Mixed Double",
+            ),
+        ],
+    )
+
+    assert payload["validation"]["errors"] == []
+    warnings = payload["validation"]["warnings"]
+    assert any("Justin Pham" in warning and "Justtin Pham" in warning for warning in warnings)
+
+
 def test_table_tennis_prelim_balance_flags_low_and_high_appearances(tmp_path):
     main = tmp_path / "main.xlsx"
     badminton = tmp_path / "badminton.xlsx"
