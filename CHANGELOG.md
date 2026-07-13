@@ -22,6 +22,32 @@
   (still pure LF) — this was purely a zip-build artifact. Rebuilt with clean
   LF content, verified byte-for-byte against the tracked source, and
   confirmed `php -l` passes on the extracted copies.
+- Review fix: `sanitize_schedule_payload_from_post()` now normalizes a blank
+  optional `sf_schedules` field to `null` instead of `''` before
+  `compute_schedule_source_hash()` runs, so an admin-edited row with a blank
+  `pool_id`/`team_c_key`/etc. hashes identically to how
+  `schedule_publisher.py` hashes the same game when that field is simply
+  absent from `schedule_input.json`. Verified the PHP and Python hashes now
+  match byte-for-byte for an equivalent row. Previously the mismatch would
+  make `publish-schedule --dry-run` report every admin-touched row as
+  "changed" even when nothing meaningful did.
+- Review fix: cancelling a protected (`reported`/`official`/`under_review`)
+  schedule row from the Schedules list now shows a distinct confirmation
+  naming the row's actual status and a "Cancel (protected)" button label,
+  instead of the same generic "Cancel this schedule row?" prompt used for an
+  ordinary row.
+- Review fix: `save_result_correction_from_post()` now rejects a non-blank
+  `score_json`/`winner_keys_json` submission that isn't valid JSON (blank is
+  still allowed, matching the nullable column). Verified against valid,
+  malformed, plain-text, and literal-`null` JSON inputs.
+- Review fix: `sf_results` and `sf_result_revisions` now declare
+  `ENGINE=InnoDB` explicitly. The admin correction flow wraps a
+  `sf_result_revisions` insert and a `sf_results` update in a single
+  `START TRANSACTION`/`COMMIT`, which is only a real atomicity guarantee if
+  both tables are transactional; this removes the dependency on the
+  server's default storage engine. `dbDelta()` does not diff table-level
+  options, so this only affects table creation, not existing installs (moot
+  here since the plugin has never been deployed).
 
 ### Remove dead Competitions tab and superseded sf_competitions schema - closes [#230](https://github.com/i12know/vaysf/issues/230)
 

@@ -1476,6 +1476,18 @@ public function display_participants_page() {
                 : '';
         }
 
+        // Nullable sf_schedules columns that also feed compute_schedule_source_hash():
+        // normalize a blank submission to null (not '') so an admin-edited row hashes
+        // the same way middleware/schedule_publisher.py hashes a game whose optional
+        // field is simply absent from schedule_input.json (Python .get() -> None ->
+        // JSON null). Leaving these as '' would make publish-schedule's diff report
+        // every admin-touched row as "changed" even when nothing meaningful changed.
+        foreach ($this->schedule_hash_fields() as $field) {
+            if ($field !== 'round_number' && $payload[$field] === '') {
+                $payload[$field] = null;
+            }
+        }
+
         $payload['round_number'] = isset($_POST['round_number']) && $_POST['round_number'] !== ''
             ? absint($_POST['round_number'])
             : null;
@@ -1835,15 +1847,26 @@ public function display_participants_page() {
                                 <td>
                                     <a class="button button-small" href="<?php echo esc_url(admin_url('admin.php?page=vaysf-schedules&action=edit&id=' . $schedule['schedule_id'])); ?>">Edit</a>
                                     <?php if ($schedule['game_status'] !== 'cancelled') : ?>
+                                        <?php
+                                        $row_is_protected = $this->is_protected_schedule_status($schedule['game_status']);
+                                        $cancel_confirm_message = $row_is_protected
+                                            ? sprintf(
+                                                'This game is currently "%s" (protected — reported/official/under review). '
+                                                . 'Cancelling it marks a completed or in-review match as cancelled. '
+                                                . 'This does not hard-delete it, but is a significant action. Continue?',
+                                                $schedule['game_status']
+                                            )
+                                            : 'Cancel this schedule row? This does not hard-delete it.';
+                                        ?>
                                         <form method="post" style="display:inline;">
                                             <?php wp_nonce_field('cancel_schedule_' . $schedule['schedule_id']); ?>
                                             <input type="hidden" name="vaysf_action" value="cancel_schedule">
                                             <input type="hidden" name="id" value="<?php echo esc_attr($schedule['schedule_id']); ?>">
                                             <input type="hidden" name="confirm_cancel" value="1">
-                                            <?php if ($this->is_protected_schedule_status($schedule['game_status'])) : ?>
+                                            <?php if ($row_is_protected) : ?>
                                                 <input type="hidden" name="confirm_protected" value="1">
                                             <?php endif; ?>
-                                            <button type="submit" class="button button-small" onclick="return confirm('Cancel this schedule row? This does not hard-delete it.');">Cancel</button>
+                                            <button type="submit" class="button button-small<?php echo $row_is_protected ? ' button-link-delete' : ''; ?>" onclick="return confirm('<?php echo esc_js($cancel_confirm_message); ?>');"><?php echo $row_is_protected ? 'Cancel (protected)' : 'Cancel'; ?></button>
                                         </form>
                                     <?php endif; ?>
                                 </td>
@@ -1891,6 +1914,27 @@ public function display_participants_page() {
         );
     }
 
+    /**
+     * A blank value is allowed (score_json/winner_keys_json are nullable and
+     * legitimately empty before a result is submitted); a non-blank value must
+     * be valid JSON so sf_results never persists a string a downstream reader
+     * (public display, middleware) would fail to json_decode().
+     */
+    private function validate_json_field($value, $label) {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return null;
+        }
+        json_decode($value);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return new WP_Error(
+                'vaysf_result_invalid_json',
+                sprintf('%s must be valid JSON: %s', $label, json_last_error_msg())
+            );
+        }
+        return null;
+    }
+
     private function save_result_correction_from_post($result_id = 0) {
         global $wpdb;
 
@@ -1915,6 +1959,13 @@ public function display_participants_page() {
         }
         if (!in_array($payload['verification_state'], $this->revision_state_options(), true)) {
             return new WP_Error('vaysf_result_revision_state', 'Invalid revision state.');
+        }
+
+        foreach (array('score_json' => 'Score JSON', 'winner_keys_json' => 'Winner Keys JSON') as $json_field => $json_label) {
+            $json_error = $this->validate_json_field($payload[$json_field], $json_label);
+            if (is_wp_error($json_error)) {
+                return $json_error;
+            }
         }
 
         $schedule_exists = $wpdb->get_var(
