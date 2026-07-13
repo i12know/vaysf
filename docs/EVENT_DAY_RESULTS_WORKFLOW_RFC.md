@@ -383,12 +383,33 @@ Each submission should require:
 
 - HTTPS;
 - authenticated WordPress user;
-- Sports Fest write capability;
+- Sports Fest result-submission capability;
 - WordPress nonce;
 - authorization for the match's sport;
 - validation that the match belongs to the currently published schedule version.
 
 User metadata may store the sports each coordinator is authorized to manage.
+
+**Decision (2026-07-13):** Coordinator sport authorization should be anchored
+to the **published WordPress schedule**, not to a hard-coded plugin list and not
+directly to ChMeetings groups. ChMeetings remains the source of truth for the
+person's identity and contact record; WordPress remains the source of truth for
+event-day access because WordPress owns login, roles, nonces, published schedule
+rows, and result submissions. The available coordinator authorization choices
+must be derived from distinct `sf_schedules.event` values in the currently
+published, non-cancelled schedule. This keeps annual sport drift out of the
+plugin: if Soccer is absent next year, renamed, changed to a new format, or
+replaced by another event such as Ultimate Frisbee, the authorization choices
+follow the schedule that Python published instead of a stale PHP enum.
+
+Coordinator user meta should store those canonical published event strings, for
+example `vaysf_authorized_events = ["Basketball - Men Team", "Volleyball -
+Women Team"]`. A result submission is authorized only when the user has the
+Sports Fest result-submission capability and the target schedule row's `event`
+is present in that user meta list. A future ChMeetings sync may help create or
+link coordinator accounts from a ChMeetings coordinator group, but it should
+write into the same WordPress user-meta authorization model rather than making
+ChMeetings group names part of the live result-submission check.
 
 The existing role and capability names may remain unchanged for this release even though they contain the older `sf2025` label. Renaming capabilities immediately before the event would add unnecessary migration risk.
 

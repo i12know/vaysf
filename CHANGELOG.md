@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Schedule-driven coordinator event authorization - closes [#237](https://github.com/i12know/vaysf/issues/237)
+
+- Added user-meta based coordinator event authorization with schedule-derived
+  options from the latest published, non-cancelled `sf_schedules.event` values
+  instead of a hard-coded plugin sports list.
+- Added WordPress user-profile controls so admins can assign one or more
+  published schedule events to coordinator, manager, or admin users.
+- Added `vaysf_user_can_submit_schedule_result()` so future event-day score
+  submission endpoints can require `sf2025_submit_results`, the current
+  published schedule version, a non-cancelled game, and matching event
+  authorization before accepting a result.
+- Documented the source-of-truth split: ChMeetings owns coordinator identity
+  and contact data, while WordPress owns event-day login, roles, schedule rows,
+  result submissions, and coordinator event authorization.
+- Bumped plugin header/version to `1.0.19`; database version remains `1.0.6`
+  because #237 stores assignments in WordPress user meta only.
+
 ### Event-day coordinator role foundation - closes [#235](https://github.com/i12know/vaysf/issues/235)
 
 - Added a narrow `sf2025_coordinator` WordPress role with `read` and
