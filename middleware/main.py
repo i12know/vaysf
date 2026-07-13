@@ -473,7 +473,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Path to the visual match schedule workbook; --file is an alias "
-            "(default: data/2026 Main Schedule draft 11.xlsx)"
+            "(default: data/VAY2026_Main_Schedule_draft_12.xlsx)"
         ),
     )
     import_match_overrides_parser.add_argument(
@@ -521,7 +521,7 @@ def parse_args() -> argparse.Namespace:
     approved_games_parser.add_argument(
         "--main-schedule",
         default=None,
-        help="Path to Loc's approved main schedule workbook (default: data/2026 Main Schedule draft 11.xlsx)",
+        help="Path to Loc's approved main schedule workbook (default: data/VAY2026_Main_Schedule_draft_12.xlsx)",
     )
     approved_games_parser.add_argument(
         "--badminton",

@@ -1,6 +1,6 @@
 from datetime import time
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Color, PatternFill
 
 from config import (
@@ -20,6 +20,13 @@ _WVB_FILL = PatternFill("solid", fgColor="FFCCFF")
 _BC_FILL = PatternFill("solid", fgColor="92D050")
 _BB_THEME_FILL = PatternFill("solid", fgColor=Color(theme=5, tint=0.5999938962981048))
 _MVB_THEME_FILL = PatternFill("solid", fgColor=Color(theme=8, tint=0.3999755851924192))
+
+
+def test_default_workbook_path_uses_current_official_draft_12(tmp_path):
+    assert (
+        mso.default_workbook_path(tmp_path)
+        == tmp_path / "VAY2026_Main_Schedule_draft_12.xlsx"
+    )
 
 
 def _venue_row(ws, row: int, day_label: str, venues: list):
@@ -153,6 +160,22 @@ def test_parser_classifies_theme_fill_colors_from_draft_12_layout(tmp_path, monk
     assert two_team["J2:L2"]["sport"] == "MVB"
     assert two_team["B2:D2"]["slot"] == "Sat-1-14:00"
     assert two_team["J2:L2"]["slot"] == "Sat-1-14:00"
+
+
+def test_theme_rgb_by_index_parses_saved_workbook_theme(tmp_path):
+    workbook = tmp_path / "theme.xlsx"
+    wb = Workbook()
+    wb.save(workbook)
+
+    reloaded = load_workbook(workbook)
+    theme = mso._theme_rgb_by_index(reloaded)
+
+    assert theme[0] == "FFFFFF"  # lt1
+    assert theme[1] == "000000"  # dk1
+    assert theme[2] == "EEECE1"  # lt2
+    assert theme[3] == "1F497D"  # dk2
+    assert theme[5] == "C0504D"  # accent2
+    assert theme[8] == "4BACC6"  # accent5
 
 
 def test_parser_ignores_repeated_wide_control_blocks(tmp_path):

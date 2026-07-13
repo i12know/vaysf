@@ -16,6 +16,13 @@ from schedule_styles import SPORT_STYLES
 from scheduling import approved_games
 
 
+def test_default_main_schedule_path_uses_current_official_draft_12(tmp_path):
+    assert (
+        approved_games.default_main_schedule_path(tmp_path)
+        == tmp_path / "VAY2026_Main_Schedule_draft_12.xlsx"
+    )
+
+
 def _solid(color: str) -> PatternFill:
     return PatternFill(fill_type="solid", fgColor=color)
 

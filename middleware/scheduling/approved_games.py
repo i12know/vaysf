@@ -38,7 +38,7 @@ APPROVED_GAMES_AUDIT_FILENAME = "approved_schedule_games.audit.json"
 APPROVED_SCHEDULE_INPUT_FILENAME = "approved_schedule_input.json"
 APPROVED_SCHEDULE_OUTPUT_FILENAME = "approved_schedule_output.json"
 
-DEFAULT_MAIN_SCHEDULE_FILENAME = "2026 Main Schedule draft 11.xlsx"
+DEFAULT_MAIN_SCHEDULE_FILENAME = "VAY2026_Main_Schedule_draft_12.xlsx"
 DEFAULT_BADMINTON_FILENAME = "2026 VAY Badminton Schedule_draft_v1_10Jul2026.xlsx"
 DEFAULT_SOCCER_FILENAME = "COED SOCCER SCHEDULE.xlsx"
 DEFAULT_TABLE_TENNIS_FILENAME = "Schedule_Roster - Table Tennis (PingPong) 2026.xlsx"

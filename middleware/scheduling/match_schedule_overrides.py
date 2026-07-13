@@ -38,7 +38,7 @@ from schedule_styles import SPORT_STYLES
 from scheduling import master_schedule
 from scheduling.manual_matchups import _extract_roster_team_codes, _is_bye
 
-MATCH_SCHEDULE_OVERRIDES_WORKBOOK_FILENAME = "2026 Main Schedule draft 11.xlsx"
+MATCH_SCHEDULE_OVERRIDES_WORKBOOK_FILENAME = "VAY2026_Main_Schedule_draft_12.xlsx"
 MATCH_SCHEDULE_OVERRIDES_SIDECAR_FILENAME = "match_schedule_overrides.json"
 
 DEFAULT_EVENT_CODES = ("BB", "MVB", "WVB")
