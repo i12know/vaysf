@@ -142,14 +142,27 @@ For full testing options (including live group membership tests), see the [Usage
    - Approval Email Subject: Subject line for pastor approval emails
    - API Key: Generate a secure API key to allow middleware access
 
-### 3. Set Up Database Tables
+### 3. Confirm Sports Fest Roles
+
+The plugin registers the Sports Fest roles during activation:
+
+- Sports Fest Admin (`sf2025_admin`)
+- Sports Fest Manager (`sf2025_manager`)
+- Sports Fest Viewer (`sf2025_viewer`)
+- Sports Fest Coordinator (`sf2025_coordinator`)
+
+For event-day result submission, create normal WordPress users for sport
+coordinators and assign the **Sports Fest Coordinator** role. The role grants
+the narrow `sf2025_submit_results` capability used by the results workflow.
+
+### 4. Set Up Database Tables
 
 The plugin will automatically create the required database tables when activated. If you encounter any issues:
 
 1. Deactivate and reactivate the plugin
 2. Check the WordPress error log for any database-related errors
 
-### 4. Configure Email Sending
+### 5. Configure Email Sending
 
 For reliable email delivery, we recommend installing the WP Mail SMTP plugin:
 

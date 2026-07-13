@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.17
+ * Version: 1.0.18
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,7 +18,7 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.17';
+    const VERSION = '1.0.18';
 
     /**
      * Database version
@@ -218,33 +218,73 @@ class VAYSF_Integration {
      * Register custom roles and capabilities
      */
     private function register_roles() {
-        // Add sf2025_admin role
-        add_role('sf2025_admin', 'Sports Fest Admin', array(
-            'read' => true,
-            'sf2025_admin' => true,
-            'sf2025_read' => true,
-            'sf2025_write' => true
-        ));
-        
-        // Add sf2025_manager role
-        add_role('sf2025_manager', 'Sports Fest Manager', array(
-            'read' => true,
-            'sf2025_read' => true,
-            'sf2025_write' => true
-        ));
-        
-        // Add sf2025_viewer role
-        add_role('sf2025_viewer', 'Sports Fest Viewer', array(
-            'read' => true,
-            'sf2025_read' => true
-        ));
-        
-        // Add capabilities to administrator role
+        $roles = array(
+            'sf2025_admin' => array(
+                'display_name' => 'Sports Fest Admin',
+                'capabilities' => array(
+                    'read' => true,
+                    'sf2025_admin' => true,
+                    'sf2025_read' => true,
+                    'sf2025_write' => true,
+                    'sf2025_submit_results' => true,
+                ),
+            ),
+            'sf2025_manager' => array(
+                'display_name' => 'Sports Fest Manager',
+                'capabilities' => array(
+                    'read' => true,
+                    'sf2025_read' => true,
+                    'sf2025_write' => true,
+                    'sf2025_submit_results' => true,
+                ),
+            ),
+            'sf2025_viewer' => array(
+                'display_name' => 'Sports Fest Viewer',
+                'capabilities' => array(
+                    'read' => true,
+                    'sf2025_read' => true,
+                ),
+            ),
+            'sf2025_coordinator' => array(
+                'display_name' => 'Sports Fest Coordinator',
+                'capabilities' => array(
+                    'read' => true,
+                    'sf2025_submit_results' => true,
+                ),
+            ),
+        );
+
+        foreach ($roles as $role_slug => $role_config) {
+            if (!get_role($role_slug)) {
+                add_role($role_slug, $role_config['display_name'], $role_config['capabilities']);
+            }
+            $this->ensure_role_capabilities($role_slug, array_keys($role_config['capabilities']));
+        }
+
+        // Add capabilities to administrator role.
         $admin_role = get_role('administrator');
         if ($admin_role) {
             $admin_role->add_cap('sf2025_admin');
             $admin_role->add_cap('sf2025_read');
             $admin_role->add_cap('sf2025_write');
+            $admin_role->add_cap('sf2025_submit_results');
+        }
+    }
+
+    /**
+     * Ensure existing installs receive newly introduced capabilities.
+     *
+     * WordPress add_role() is a no-op when a role already exists, so upgrades
+     * must explicitly add new capabilities to the existing role object.
+     */
+    private function ensure_role_capabilities($role_slug, $capabilities) {
+        $role = get_role($role_slug);
+        if (!$role) {
+            return;
+        }
+
+        foreach ($capabilities as $capability) {
+            $role->add_cap($capability);
         }
     }
     

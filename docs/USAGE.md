@@ -884,6 +884,26 @@ After logging into WordPress admin, navigate to the Sports Fest menu in the side
 - **Validation**: Validation issue tracking and resolution
 - **Settings**: System configuration
 
+### WordPress Sports Fest Roles
+
+The plugin registers restricted WordPress roles for Sports Fest operations:
+
+- **Sports Fest Admin** (`sf2025_admin`) - full Sports Fest administration.
+- **Sports Fest Manager** (`sf2025_manager`) - read/write Sports Fest operations.
+- **Sports Fest Viewer** (`sf2025_viewer`) - read-only Sports Fest access.
+- **Sports Fest Coordinator** (`sf2025_coordinator`) - event-day result submission.
+
+The internal capability names intentionally keep the older `sf2025_` prefix for
+the 2026 release. Renaming role or capability slugs immediately before Sports
+Fest would create avoidable migration risk.
+
+For event-day score entry, create an individual WordPress account for each sport
+coordinator and assign the **Sports Fest Coordinator** role. This role grants
+normal WordPress login access plus `sf2025_submit_results`, but not broad
+Sports Fest wp-admin access or `sf2025_write`. Per-sport authorization is
+handled separately by the result-entry workflow so a coordinator can be limited
+to only the sports they oversee.
+
 ### Managing Churches
 
 The Churches page displays all participating churches with their details:
