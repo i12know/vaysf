@@ -28,6 +28,7 @@ from config import (
     TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE,
     TEAM_RESOURCE_TYPE_SOCCER,
 )
+from schedule_workbook import ScheduleWorkbookBuilder
 from scheduling import master_schedule
 from scheduling import match_schedule_overrides
 from validation.name_matcher import likely_name_match, normalized_name
@@ -112,12 +113,11 @@ def _is_bye(value: Any) -> bool:
 
 
 def _format_class(value: Any) -> str:
-    text = _clean_text(value).casefold()
-    if "double" in text:
-        return "doubles"
-    if "single" in text:
-        return "singles"
-    return text
+    # Reuses ScheduleWorkbookBuilder's classifier instead of a second copy of the
+    # same "single"/"double" substring check; the one caller only ever compares
+    # the result against the literal "doubles"/"singles", so the "anomaly"
+    # fallback (vs. a bare non-matching string) is not observable here.
+    return ScheduleWorkbookBuilder._pod_format_class(_clean_text(value))
 
 
 def _cell_ref(sheet: str, row: int, col: int) -> str:
@@ -657,7 +657,7 @@ def _table_tennis_marker_event(text: str) -> Optional[str]:
 
 def _table_tennis_side_parts(text: str) -> tuple[str, Optional[str]]:
     cleaned = _strip_table_tennis_marker(_clean_text(text))
-    match = re.match(r"^(.*?)\s*\(([A-Z0-9-]{2,8})\)\s*$", cleaned)
+    match = re.match(r"^(.*?)\s*\(([A-Za-z0-9-]{2,8})\)\s*$", cleaned)
     if match:
         return match.group(1).strip(), _team_code(match.group(2))
     return cleaned.strip(), None

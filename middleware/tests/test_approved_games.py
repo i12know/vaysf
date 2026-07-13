@@ -410,3 +410,41 @@ def test_table_tennis_prelim_balance_flags_low_and_high_appearances(tmp_path):
     )
     assert "Nguyen Christina=2" in balance_error
     assert "To Jacklyn=4" in balance_error
+
+
+def test_table_tennis_side_parts_accepts_lowercase_team_code():
+    # A hand-typed workbook cell can write the church code in any case; the
+    # extracted team code should still normalize to uppercase either way.
+    for text in ("Nhan Micah (ORN)", "Nhan Micah (orn)", "Nhan Micah (Orn)"):
+        label, team_code = approved_games._table_tennis_side_parts(text)
+        assert label == "Nhan Micah"
+        assert team_code == "ORN"
+
+
+def test_table_tennis_source_validation_matches_lowercase_church_code(tmp_path):
+    main = tmp_path / "main.xlsx"
+    badminton = tmp_path / "badminton.xlsx"
+    soccer = tmp_path / "soccer.xlsx"
+    table_tennis = tmp_path / "tt.xlsx"
+    _write_main_schedule(main)
+    _write_badminton(badminton)
+    _write_soccer(soccer)
+    _write_table_tennis(
+        table_tennis,
+        include_sbc=False,
+        matches=["Nhan Micah (orn) - Phan Dora (WSD)"],
+    )
+
+    payload = approved_games.build_approved_games_payload(
+        main_schedule_path=main,
+        badminton_path=badminton,
+        soccer_path=soccer,
+        table_tennis_path=table_tennis,
+        schedule_input=_schedule_input(),
+        roster_rows=[
+            _tt_roster_row("ORN", "Micah", "Nhan"),
+            _tt_roster_row("WSD", "Dora", "Phan"),
+        ],
+    )
+
+    assert payload["validation"]["errors"] == []

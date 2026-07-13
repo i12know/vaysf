@@ -29,6 +29,16 @@
 - Added Table Tennis preliminary row-count balance validation so uneven
   category schedules, such as one athlete receiving too few appearances while
   another receives an extra bye row, are reported during dry run.
+- Review fixes to the roster-vs-source validation:
+  - `_table_tennis_side_parts()`'s `Name (CODE)` parser now accepts a
+    lower/mixed-case church code (e.g. `Nhan Micah (orn)`), not just
+    uppercase. It previously fell through to treating the whole
+    `"Name (code)"` string as a single athlete label whenever the code
+    wasn't already uppercase, which would have raised a spurious
+    "not present in the current roster" error for a hand-typed cell.
+  - `_format_class()` now delegates to the existing
+    `ScheduleWorkbookBuilder._pod_format_class()` instead of re-implementing
+    the same "single"/"double" substring check a second time.
 - Downgraded unique same-church/same-category Table Tennis athlete name typos
   to dry-run warnings instead of hard errors, preserving an audit trail while
   allowing source sheets like `Justin Pham` vs `Justtin Pham` to proceed.
