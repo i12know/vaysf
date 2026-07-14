@@ -941,7 +941,8 @@ matches the user's `vaysf_authorized_events` list.
 The dashboard has three views:
 
 - **Needs Results**: assigned games from today or earlier with no result row yet.
-- **Submitted Today**: assigned games whose result was submitted by this user today.
+- **Submitted Today**: assigned games whose result was submitted or corrected by
+  this user today.
 - **Assigned Games**: all currently published games assigned to this coordinator.
 
 Use the **Event filter** dropdown below the tabs to show all assigned events or
@@ -951,9 +952,17 @@ Managers** automatically have all published events available in this dashboard;
 ordinary coordinators are limited to their `vaysf_authorized_events` assignments.
 The dropdown submits immediately when the selection changes.
 
-For this first implementation slice, **Enter Score** is intentionally disabled.
-Use the page to confirm that `test_coordinator` sees only their assigned events
-before enabling real result submission forms in the next issue.
+For simple two-team Basketball/Soccer-style games, coordinators can click
+**Enter Score**, enter both team scores, certify the score, and submit. The
+plugin writes the current row to `sf_results`, appends a history row to
+`sf_result_revisions`, and marks the schedule row `reported`. If a score is
+opened again, the button changes to **Edit Score** and the next save appends a
+new revision without deleting the previous one.
+
+Volleyball set scoring, Bible Challenge three-team scoring, racquet sport
+scoring, scoresheet uploads, and public standings/results display are separate
+event-day slices. Their games remain visible on the dashboard but the score form
+button stays disabled until the matching sport-specific form exists.
 
 Coordinators do not need to remember the URL. Any account with
 `sf2025_submit_results` sees a **Sports Fest Score Entry** widget on the normal
