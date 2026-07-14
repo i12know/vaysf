@@ -24,6 +24,8 @@ class VAYSF_Shortcodes {
         add_shortcode('vaysf_stats', array($this, 'stats_shortcode'));
         add_shortcode('vaysf_churches', array($this, 'churches_shortcode'));
         add_shortcode('vaysf_participants', array($this, 'participants_shortcode'));
+        add_shortcode('vaysf_live_schedule', array($this, 'live_schedule_shortcode'));
+        add_shortcode('vaysf_advancement', array($this, 'advancement_shortcode'));
     }
     
     /**
@@ -242,8 +244,416 @@ class VAYSF_Shortcodes {
     }
     
     /**
+     * Shortcode for the spectator-facing live schedule and reported scores (Issue #206).
+     *
+     * Standings are intentionally not part of this shortcode: the resolved
+     * event-day RFC decision is no automatic standings for the 2026 release,
+     * and there is no per-sport rules configuration yet to compute them from
+     * (that is future work, not this shortcode's job).
+     *
+     * @param array $atts Shortcode attributes: event, day, venue, refresh (seconds; 0 disables auto-refresh)
+     * @return string Shortcode output
+     */
+    public function live_schedule_shortcode($atts) {
+        $atts = shortcode_atts(array(
+            'event' => '',
+            'day' => '',
+            'venue' => '',
+            'refresh' => 25,
+        ), $atts);
+
+        $event = isset($_GET['vaysf_event']) ? sanitize_text_field(wp_unslash($_GET['vaysf_event'])) : $atts['event'];
+        $day = isset($_GET['vaysf_day']) ? vaysf_sanitize_public_day_filter($_GET['vaysf_day']) : vaysf_sanitize_public_day_filter($atts['day']);
+        $venue = isset($_GET['vaysf_venue']) ? sanitize_text_field(wp_unslash($_GET['vaysf_venue'])) : $atts['venue'];
+        $refresh_seconds = max(0, (int) $atts['refresh']);
+
+        $filters = array('event' => $event, 'day' => $day, 'venue' => $venue);
+        $rows = vaysf_get_public_schedule_rows($filters);
+
+        ob_start();
+        $instance_id = wp_unique_id('vaysf-live-schedule-');
+        ?>
+        <div class="vaysf-live-schedule" id="<?php echo esc_attr($instance_id); ?>" data-refresh-seconds="<?php echo esc_attr($refresh_seconds); ?>">
+            <?php $this->render_public_filter_form($event, $day, $venue); ?>
+
+            <?php if (empty($rows)) : ?>
+                <p><?php echo esc_html__('No published schedule yet.', 'vaysf'); ?></p>
+            <?php else : ?>
+                <table class="vaysf-live-schedule-table">
+                    <thead>
+                        <tr>
+                            <th><?php echo esc_html__('Time', 'vaysf'); ?></th>
+                            <th><?php echo esc_html__('Event', 'vaysf'); ?></th>
+                            <th><?php echo esc_html__('Matchup', 'vaysf'); ?></th>
+                            <th><?php echo esc_html__('Location', 'vaysf'); ?></th>
+                            <th><?php echo esc_html__('Status', 'vaysf'); ?></th>
+                            <th><?php echo esc_html__('Score', 'vaysf'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($rows as $row) : $this->render_live_schedule_row($row); endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+            <p class="vaysf-live-schedule-updated">
+                <?php echo esc_html__('Last updated:', 'vaysf'); ?>
+                <span class="vaysf-last-updated"><?php echo esc_html(date_i18n('g:i:s a')); ?></span>
+            </p>
+        </div>
+        <?php
+        $this->include_frontend_styles();
+        if ($refresh_seconds > 0) {
+            $this->render_live_schedule_script($instance_id, $filters, $refresh_seconds);
+        }
+
+        return ob_get_clean();
+    }
+
+    /**
+     * Shortcode for spectator-facing confirmed semifinal/final advancement (Issue #206).
+     *
+     * "Confirmed" reflects an admin having populated the Semifinal/Final
+     * schedule row's team slots after deciding pool-play qualifiers — see
+     * vaysf_get_public_advancement_rows() for why no separate confirmation
+     * flag is needed.
+     *
+     * @param array $atts Shortcode attributes: event, refresh (seconds; 0 disables auto-refresh)
+     * @return string Shortcode output
+     */
+    public function advancement_shortcode($atts) {
+        $atts = shortcode_atts(array(
+            'event' => '',
+            'refresh' => 60,
+        ), $atts);
+
+        $event = isset($_GET['vaysf_event']) ? sanitize_text_field(wp_unslash($_GET['vaysf_event'])) : $atts['event'];
+        $refresh_seconds = max(0, (int) $atts['refresh']);
+        $rows = vaysf_get_public_advancement_rows(array('event' => $event));
+
+        ob_start();
+        $instance_id = wp_unique_id('vaysf-advancement-');
+        ?>
+        <div class="vaysf-advancement" id="<?php echo esc_attr($instance_id); ?>" data-refresh-seconds="<?php echo esc_attr($refresh_seconds); ?>">
+            <?php if (empty($rows)) : ?>
+                <p><?php echo esc_html__('No confirmed advancement yet.', 'vaysf'); ?></p>
+            <?php else : ?>
+                <table class="vaysf-advancement-table">
+                    <thead>
+                        <tr>
+                            <th><?php echo esc_html__('Event', 'vaysf'); ?></th>
+                            <th><?php echo esc_html__('Stage', 'vaysf'); ?></th>
+                            <th><?php echo esc_html__('Matchup', 'vaysf'); ?></th>
+                            <th><?php echo esc_html__('Time', 'vaysf'); ?></th>
+                            <th><?php echo esc_html__('Location', 'vaysf'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($rows as $row) : $this->render_advancement_row($row); endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+        <?php
+        $this->include_frontend_styles();
+        if ($refresh_seconds > 0) {
+            $this->render_advancement_script($instance_id, array('event' => $event), $refresh_seconds);
+        }
+
+        return ob_get_clean();
+    }
+
+    /**
+     * Render the GET-based sport/day/venue filter form shared by public shortcodes.
+     *
+     * A plain GET form works without JavaScript; the auto-refresh script layers
+     * on top for spectators who leave the page open.
+     *
+     * @param string $event Selected event filter
+     * @param string $day Selected day filter (Y-m-d)
+     * @param string $venue Selected venue filter
+     */
+    private function render_public_filter_form($event, $day, $venue) {
+        $events = vaysf_get_published_schedule_events();
+        $days = vaysf_get_public_schedule_days();
+        $venues = vaysf_get_public_schedule_venues();
+
+        if (empty($events) && empty($days) && empty($venues)) {
+            return;
+        }
+        ?>
+        <form method="get" class="vaysf-live-schedule-filters">
+            <?php if (!empty($events)) : ?>
+                <select name="vaysf_event">
+                    <option value=""><?php echo esc_html__('All Sports', 'vaysf'); ?></option>
+                    <?php foreach ($events as $evt) : ?>
+                        <option value="<?php echo esc_attr($evt); ?>" <?php selected($event, $evt); ?>><?php echo esc_html($evt); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            <?php endif; ?>
+            <?php if (!empty($days)) : ?>
+                <select name="vaysf_day">
+                    <option value=""><?php echo esc_html__('All Days', 'vaysf'); ?></option>
+                    <?php foreach ($days as $d) : ?>
+                        <option value="<?php echo esc_attr($d); ?>" <?php selected($day, $d); ?>><?php echo esc_html(date_i18n('D, M j', strtotime($d))); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            <?php endif; ?>
+            <?php if (!empty($venues)) : ?>
+                <select name="vaysf_venue">
+                    <option value=""><?php echo esc_html__('All Venues', 'vaysf'); ?></option>
+                    <?php foreach ($venues as $v) : ?>
+                        <option value="<?php echo esc_attr($v); ?>" <?php selected($venue, $v); ?>><?php echo esc_html($v); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            <?php endif; ?>
+            <button type="submit"><?php echo esc_html__('Filter', 'vaysf'); ?></button>
+        </form>
+        <?php
+    }
+
+    /**
+     * Render one live-schedule table row.
+     *
+     * @param array<string,mixed> $row Public schedule row from vaysf_get_public_schedule_rows()
+     */
+    private function render_live_schedule_row($row) {
+        $matchup = $this->format_matchup_label($row);
+        $status = $row['public_status'] !== '' ? $row['public_status'] : $row['game_status'];
+        ?>
+        <tr data-game-key="<?php echo esc_attr($row['game_key']); ?>">
+            <td class="vaysf-live-time"><?php echo esc_html($this->format_scheduled_time($row['scheduled_time'])); ?></td>
+            <td><?php echo esc_html($row['event']); ?><?php if ($row['stage'] !== '') : ?><br><small><?php echo esc_html($row['stage']); ?></small><?php endif; ?></td>
+            <td><?php echo esc_html($matchup); ?></td>
+            <td><?php echo esc_html($row['scheduled_location']); ?></td>
+            <td class="vaysf-live-status vaysf-status-<?php echo esc_attr(sanitize_html_class($status)); ?>"><?php echo esc_html(ucwords(str_replace('_', ' ', $status))); ?></td>
+            <td class="vaysf-live-score"><?php echo esc_html($this->format_score_label($row['score'])); ?></td>
+        </tr>
+        <?php
+    }
+
+    /**
+     * Render one advancement table row.
+     *
+     * @param array<string,mixed> $row Public advancement row from vaysf_get_public_advancement_rows()
+     */
+    private function render_advancement_row($row) {
+        ?>
+        <tr data-game-key="<?php echo esc_attr($row['game_key']); ?>">
+            <td><?php echo esc_html($row['event']); ?></td>
+            <td><?php echo esc_html($row['stage']); ?></td>
+            <td><?php echo esc_html($this->format_matchup_label($row)); ?></td>
+            <td><?php echo esc_html($this->format_scheduled_time($row['scheduled_time'])); ?></td>
+            <td><?php echo esc_html($row['scheduled_location']); ?></td>
+        </tr>
+        <?php
+    }
+
+    /**
+     * Build a human-readable "A vs B(vs C)" matchup label, using placeholders
+     * for slots not yet filled in (e.g. an unconfirmed semifinal opponent).
+     *
+     * @param array<string,mixed> $row Row with team_a_label/team_b_label/team_c_label
+     * @return string Matchup label
+     */
+    private function format_matchup_label($row) {
+        $labels = array();
+        foreach (array('team_a_label', 'team_b_label', 'team_c_label') as $key) {
+            if (!empty($row[$key])) {
+                $labels[] = $row[$key];
+            }
+        }
+
+        if (empty($labels)) {
+            return __('TBD', 'vaysf');
+        }
+
+        return implode(' vs ', $labels);
+    }
+
+    /**
+     * Format a MySQL datetime for spectator display in the site's timezone.
+     *
+     * @param string $scheduled_time MySQL datetime string
+     * @return string Formatted time, or a TBD placeholder when absent
+     */
+    private function format_scheduled_time($scheduled_time) {
+        if (empty($scheduled_time)) {
+            return __('TBD', 'vaysf');
+        }
+
+        $timestamp = strtotime($scheduled_time);
+        if (!$timestamp) {
+            return __('TBD', 'vaysf');
+        }
+
+        return date_i18n('D g:i a', $timestamp);
+    }
+
+    /**
+     * Format a public score summary as "A - B(- C)", or a dash before any result exists.
+     *
+     * @param array<string,mixed>|null $score Score summary from vaysf_format_public_score_summary()
+     * @return string Display string
+     */
+    private function format_score_label($score) {
+        if (!is_array($score)) {
+            return '—';
+        }
+
+        $parts = array();
+        foreach (array('team_a_score', 'team_b_score', 'team_c_score') as $key) {
+            if (isset($score[$key]) && $score[$key] !== null) {
+                $parts[] = (string) $score[$key];
+            }
+        }
+
+        if (empty($parts)) {
+            return '—';
+        }
+
+        return implode(' - ', $parts);
+    }
+
+    /**
+     * Echo the auto-refresh script for one live-schedule shortcode instance.
+     *
+     * Patches only the status/score cells of already-rendered rows by
+     * data-game-key; it does not add rows for games published after initial
+     * page load. A page reload picks up newly published games — acceptable
+     * for a 20-30 second polling window during a live event.
+     *
+     * @param string $instance_id DOM id of the shortcode's wrapper element
+     * @param array<string,string> $filters event/day/venue filter values
+     * @param int $refresh_seconds Poll interval in seconds
+     */
+    private function render_live_schedule_script($instance_id, $filters, $refresh_seconds) {
+        $endpoint = rest_url(VAYSF_REST_API::API_NAMESPACE . '/public/schedule');
+        ?>
+        <script>
+        (function () {
+            var root = document.getElementById(<?php echo wp_json_encode($instance_id); ?>);
+            if (!root) { return; }
+            var endpoint = <?php echo wp_json_encode($endpoint); ?>;
+            var filters = <?php echo wp_json_encode($filters); ?>;
+            var refreshMs = <?php echo (int) $refresh_seconds; ?> * 1000;
+
+            function buildUrl() {
+                var url = new URL(endpoint);
+                Object.keys(filters).forEach(function (key) {
+                    if (filters[key]) { url.searchParams.set(key, filters[key]); }
+                });
+                return url.toString();
+            }
+
+            function formatScore(score) {
+                if (!score) { return String.fromCharCode(8212); }
+                var parts = [score.team_a_score, score.team_b_score];
+                if (typeof score.team_c_score !== 'undefined' && score.team_c_score !== null) {
+                    parts.push(score.team_c_score);
+                }
+                return parts.join(' - ');
+            }
+
+            function titleCase(text) {
+                return String(text || '').replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+            }
+
+            function refresh() {
+                fetch(buildUrl(), { credentials: 'omit' })
+                    .then(function (r) { return r.json(); })
+                    .then(function (rows) {
+                        if (!Array.isArray(rows)) { return; }
+                        rows.forEach(function (row) {
+                            var tr = root.querySelector('tr[data-game-key="' + row.game_key + '"]');
+                            if (!tr) { return; }
+                            var status = row.public_status || row.game_status;
+                            var statusCell = tr.querySelector('.vaysf-live-status');
+                            var scoreCell = tr.querySelector('.vaysf-live-score');
+                            if (statusCell) {
+                                statusCell.textContent = titleCase(status);
+                                statusCell.className = 'vaysf-live-status vaysf-status-' + status;
+                            }
+                            if (scoreCell) {
+                                scoreCell.textContent = formatScore(row.score);
+                            }
+                        });
+                        var updated = root.querySelector('.vaysf-last-updated');
+                        if (updated) {
+                            updated.textContent = new Date().toLocaleTimeString();
+                        }
+                    })
+                    .catch(function () {});
+            }
+
+            setInterval(refresh, refreshMs);
+        })();
+        </script>
+        <?php
+    }
+
+    /**
+     * Echo the auto-refresh script for one advancement shortcode instance.
+     *
+     * Same in-place patch approach as render_live_schedule_script(): updates
+     * matchup text for already-rendered rows, does not add newly confirmed
+     * semifinal/final rows without a page reload.
+     *
+     * @param string $instance_id DOM id of the shortcode's wrapper element
+     * @param array<string,string> $filters event filter value
+     * @param int $refresh_seconds Poll interval in seconds
+     */
+    private function render_advancement_script($instance_id, $filters, $refresh_seconds) {
+        $endpoint = rest_url(VAYSF_REST_API::API_NAMESPACE . '/public/advancement');
+        ?>
+        <script>
+        (function () {
+            var root = document.getElementById(<?php echo wp_json_encode($instance_id); ?>);
+            if (!root) { return; }
+            var endpoint = <?php echo wp_json_encode($endpoint); ?>;
+            var filters = <?php echo wp_json_encode($filters); ?>;
+            var refreshMs = <?php echo (int) $refresh_seconds; ?> * 1000;
+
+            function buildUrl() {
+                var url = new URL(endpoint);
+                Object.keys(filters).forEach(function (key) {
+                    if (filters[key]) { url.searchParams.set(key, filters[key]); }
+                });
+                return url.toString();
+            }
+
+            function matchupLabel(row) {
+                var labels = [row.team_a_label, row.team_b_label, row.team_c_label].filter(function (label) {
+                    return !!label;
+                });
+                return labels.length ? labels.join(' vs ') : 'TBD';
+            }
+
+            function refresh() {
+                fetch(buildUrl(), { credentials: 'omit' })
+                    .then(function (r) { return r.json(); })
+                    .then(function (rows) {
+                        if (!Array.isArray(rows)) { return; }
+                        rows.forEach(function (row) {
+                            var tr = root.querySelector('tr[data-game-key="' + row.game_key + '"]');
+                            if (!tr) { return; }
+                            var cells = tr.querySelectorAll('td');
+                            if (cells.length >= 3) {
+                                cells[2].textContent = matchupLabel(row);
+                            }
+                        });
+                    })
+                    .catch(function () {});
+            }
+
+            setInterval(refresh, refreshMs);
+        })();
+        </script>
+        <?php
+    }
+
+    /**
      * Helper method to get status class
-     * 
+     *
      * @param string $status Approval status
      * @return string CSS class
      */
@@ -538,14 +948,88 @@ class VAYSF_Shortcodes {
                     background-color: #e2e3e5;
                     color: #383d41;
                 }
-                
+
+                .vaysf-live-schedule-filters {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 8px;
+                    margin-bottom: 15px;
+                }
+
+                .vaysf-live-schedule-filters select,
+                .vaysf-live-schedule-filters button {
+                    padding: 6px 10px;
+                }
+
+                .vaysf-live-schedule-table,
+                .vaysf-advancement-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 10px 0 20px;
+                }
+
+                .vaysf-live-schedule-table th,
+                .vaysf-live-schedule-table td,
+                .vaysf-advancement-table th,
+                .vaysf-advancement-table td {
+                    padding: 10px;
+                    text-align: left;
+                    border-bottom: 1px solid #ddd;
+                }
+
+                .vaysf-live-schedule-table th,
+                .vaysf-advancement-table th {
+                    background-color: #f5f5f5;
+                    font-weight: bold;
+                }
+
+                .vaysf-live-schedule-updated {
+                    font-size: 12px;
+                    color: #667085;
+                }
+
+                .vaysf-live-status {
+                    display: inline-block;
+                    padding: 3px 8px;
+                    border-radius: 3px;
+                    font-size: 12px;
+                    font-weight: bold;
+                }
+
+                .vaysf-status-scheduled,
+                .vaysf-status-in_progress {
+                    background-color: #e2e3e5;
+                    color: #383d41;
+                }
+
+                .vaysf-status-reported {
+                    background-color: #fff3cd;
+                    color: #856404;
+                }
+
+                .vaysf-status-official {
+                    background-color: #d4edda;
+                    color: #155724;
+                }
+
+                .vaysf-status-under_review {
+                    background-color: #f8d7da;
+                    color: #721c24;
+                }
+
+                .vaysf-live-score {
+                    font-weight: bold;
+                }
+
                 @media (max-width: 768px) {
                     .vaysf-stats-grid {
                         grid-template-columns: 1fr;
                     }
-                    
+
                     .vaysf-churches-table,
-                    .vaysf-participants-table {
+                    .vaysf-participants-table,
+                    .vaysf-live-schedule-table,
+                    .vaysf-advancement-table {
                         display: block;
                         overflow-x: auto;
                     }

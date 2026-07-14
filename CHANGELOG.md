@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Public live schedule and advancement display - closes [#206](https://github.com/i12know/vaysf/issues/206)
+
+- Added `includes/public-display.php` with helpers to fetch the currently
+  published, non-cancelled schedule (optionally filtered by event/day/venue)
+  joined with each game's current result, and to fetch confirmed
+  Semifinal/Final advancement placeholders.
+- Added public, unauthenticated REST endpoints `GET /public/schedule` and
+  `GET /public/advancement`, matching the existing public insurance-link
+  pattern (no API key, no login). Both exclude scoresheet file paths,
+  coordinator/submitter identities, internal notes, and revision history —
+  a reported/official score is reduced to its headline numbers only.
+- Added `[vaysf_live_schedule event="" day="" venue="" refresh="25"]` and
+  `[vaysf_advancement event="" refresh="60"]` shortcodes. Each renders a
+  server-side table on page load (works without JavaScript) plus a small
+  polling script that patches status/score cells in place from the public
+  REST endpoint every `refresh` seconds; a plain GET filter form lets
+  spectators narrow by sport/day/venue without JavaScript.
+- "Confirmed advancement" reflects an admin having populated a Semifinal/Final
+  schedule row's team slots after deciding pool-play qualifiers — there is no
+  separate advancement-confirmation flag in the current schema, so none was
+  added.
+- Did **not** add a `[vaysf_standings]` shortcode or the RFC's discrepancy
+  averaging/red-flag display: neither has real data to work from yet.
+  Standings requires per-sport rules configuration and calculation (future
+  #207); discrepancy detection requires the submission flow to distinguish a
+  second coordinator's independent report from an ordinary correction, which
+  `vaysf_persist_score_result()` does not do today (every resubmission
+  overwrites the current result as a revision). Both are follow-up work, not
+  silently faked here.
+- Bumped plugin header/version to `1.0.27`; database version remains `1.0.6`
+  because this issue only reads existing tables.
+
 ### Score-entry helper extraction - closes [#243](https://github.com/i12know/vaysf/issues/243)
 
 - Split coordinator score-entry and event-day result helpers out of
