@@ -925,13 +925,19 @@ The checkbox list is empty until a schedule has been published into
 schedule first and then review coordinator assignments; saved event names that
 no longer appear in the current schedule are shown as stale authorization.
 
-### Generating Basketball Score Sheets
+### Generating Basketball And Volleyball Score Sheets
 
 After the approved schedule artifacts have been created, generate the printable
 basketball paper score sheets from the middleware directory:
 
 ```powershell
 python main.py generate-scoresheets --sport basketball
+```
+
+To generate Volleyball score sheets for both MVB and WVB:
+
+```powershell
+python main.py generate-scoresheets --sport volleyball
 ```
 
 By default the command reads `approved_schedule_input.json` and
@@ -965,6 +971,13 @@ By default the QR URL uses `WP_URL` from `.env` and appends
 `--score-entry-url` only when printing against a staging or alternate site. If no
 roster workbook is available, the command still generates printable sheets with
 blank roster lines.
+
+Volleyball score sheets use the same schedule artifacts, logo, QR-code target,
+and optional roster workbook. Each MVB/WVB game renders as one letter-size page
+with two normal set lanes, an optional tiebreaker lane, referee blanks, opening
+prayer verse, comments/signature lines, and compact roster blocks for up to 20
+athletes per team. Volleyball roster rows include photo/name/age when available;
+there are no jersey-number or foul columns.
 
 ### Coordinator Score Entry Dashboard
 

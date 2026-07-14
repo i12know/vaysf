@@ -1,8 +1,9 @@
 """Generate print-ready paper score sheets for event-day games.
 
 Issue #211 starts with Basketball because those sheets need player rosters for
-foul tracking.  The renderer intentionally produces an image-backed PDF using
-Pillow so it can run with the existing middleware dependencies.
+foul tracking. Issue #250 extends the same print pipeline to Volleyball. The
+renderer intentionally produces an image-backed PDF using Pillow so it can run
+with the existing middleware dependencies.
 """
 
 from __future__ import annotations
@@ -26,12 +27,16 @@ from config import Config
 from schedule_publisher import merge_schedule
 
 BASKETBALL_EVENT = "Basketball - Men Team"
+VOLLEYBALL_MEN_EVENT = "Volleyball - Men Team"
+VOLLEYBALL_WOMEN_EVENT = "Volleyball - Women Team"
+VOLLEYBALL_EVENTS = {VOLLEYBALL_MEN_EVENT, VOLLEYBALL_WOMEN_EVENT}
 PAGE_W, PAGE_H = 1275, 1650  # Letter page at 150 DPI.
 MARGIN = 70
 LOGO_BOX = (72, 58, 182, 168)
 QR_SIZE = 150
 QR_BOX = (PAGE_W - MARGIN - QR_SIZE, 52)
 MAX_ROSTER_ROWS = 15
+MAX_VOLLEYBALL_ROSTER_ROWS = 20
 
 COL_BLACK = (32, 38, 46)
 COL_BLUE = (20, 72, 118)
@@ -311,26 +316,22 @@ def _roster_name(row: dict[str, Any]) -> str:
     return full or str(row.get("Full Name") or "").strip() or "Player"
 
 
-def build_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Index Basketball roster rows by church/team code."""
+def _event_matches_roster_row(row: dict[str, Any], event: str) -> bool:
+    sport_type = str(row.get("sport_type") or "").strip()
+    sport_gender = str(row.get("sport_gender") or "").strip()
+    sport_format = str(row.get("sport_format") or "").strip()
+    if sport_type == event:
+        return True
+    if event == BASKETBALL_EVENT:
+        return sport_type == "Basketball" and sport_gender == "Men" and sport_format == "Team"
+    if event == VOLLEYBALL_MEN_EVENT:
+        return sport_type == "Volleyball" and sport_gender == "Men" and sport_format == "Team"
+    if event == VOLLEYBALL_WOMEN_EVENT:
+        return sport_type == "Volleyball" and sport_gender == "Women" and sport_format == "Team"
+    return False
 
-    indexed: dict[str, list[dict[str, Any]]] = {}
-    for row in roster_rows:
-        sport_type = str(row.get("sport_type") or "").strip()
-        sport_gender = str(row.get("sport_gender") or "").strip()
-        sport_format = str(row.get("sport_format") or "").strip()
-        is_basketball = sport_type == BASKETBALL_EVENT or (
-            sport_type == "Basketball"
-            and sport_gender == "Men"
-            and sport_format == "Team"
-        )
-        if not is_basketball:
-            continue
-        code = _team_code(row.get("Church Team"))
-        if not code:
-            continue
-        indexed.setdefault(code, []).append(row)
 
+def _sort_roster_index(indexed: dict[str, list[dict[str, Any]]]) -> None:
     for rows in indexed.values():
         rows.sort(
             key=lambda item: (
@@ -338,6 +339,41 @@ def build_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict[str, list[
                 str(item.get("First Name") or "").casefold(),
             )
         )
+
+
+def build_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Index Basketball roster rows by church/team code."""
+
+    indexed: dict[str, list[dict[str, Any]]] = {}
+    for row in roster_rows:
+        if not _event_matches_roster_row(row, BASKETBALL_EVENT):
+            continue
+        code = _team_code(row.get("Church Team"))
+        if not code:
+            continue
+        indexed.setdefault(code, []).append(row)
+    _sort_roster_index(indexed)
+    return indexed
+
+
+def build_volleyball_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Index Volleyball roster rows by event and church/team code."""
+
+    indexed: dict[str, dict[str, list[dict[str, Any]]]] = {
+        VOLLEYBALL_MEN_EVENT: {},
+        VOLLEYBALL_WOMEN_EVENT: {},
+    }
+    for row in roster_rows:
+        for event in VOLLEYBALL_EVENTS:
+            if not _event_matches_roster_row(row, event):
+                continue
+            code = _team_code(row.get("Church Team"))
+            if not code:
+                continue
+            indexed[event].setdefault(code, []).append(row)
+
+    for event_index in indexed.values():
+        _sort_roster_index(event_index)
     return indexed
 
 
@@ -367,6 +403,23 @@ def _draw_header(draw: ImageDraw.ImageDraw, game: dict[str, Any]) -> None:
     location = _friendly_location(game)
     draw.text((220, 58), "Vietnamese Alliance Youth Sports Festival", font=_font("regular", 25), fill=COL_BLACK)
     draw.text((220, 96), f"Basketball SCORESHEET: {team_a} vs. {team_b}", font=_font("bold", 31), fill=COL_BLACK)
+    draw.text((220, 140), f"Game ID: {game_key}", font=_font("bold", 23), fill=COL_BLUE)
+    draw.text(
+        (220, 174),
+        f"{_friendly_slot(game.get('scheduled_slot'))}     Location: {location}",
+        font=_font("regular", 22),
+        fill=COL_BLACK,
+    )
+    draw.text((PAGE_W - MARGIN - QR_SIZE, 210), "Scan to enter score", font=_font("regular", 15), fill=COL_MUTED)
+
+
+def _draw_generic_header(draw: ImageDraw.ImageDraw, game: dict[str, Any], title: str) -> None:
+    team_a = _team_label(game, "a")
+    team_b = _team_label(game, "b")
+    game_key = str(game.get("game_key") or "")
+    location = _friendly_location(game)
+    draw.text((220, 58), "Vietnamese Alliance Youth Sports Festival", font=_font("regular", 25), fill=COL_BLACK)
+    draw.text((220, 96), f"{title}: {team_a} vs. {team_b}", font=_font("bold", 31), fill=COL_BLACK)
     draw.text((220, 140), f"Game ID: {game_key}", font=_font("bold", 23), fill=COL_BLUE)
     draw.text(
         (220, 174),
@@ -407,6 +460,98 @@ def _draw_referee_section(draw: ImageDraw.ImageDraw) -> None:
         font=_font("italic", 15),
         fill=COL_BLACK,
     )
+
+
+def _draw_volleyball_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any]) -> None:
+    team_a = _team_label(game, "a")
+    team_b = _team_label(game, "b")
+    x = MARGIN
+    y = 500
+    width = PAGE_W - MARGIN * 2
+    label_w = 140
+    team_w = 112
+    row_h = 44
+    rows = [
+        ("Set 1", team_a, "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 CAP"),
+        ("", team_b, "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 CAP"),
+        ("Set 2", team_a, "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 CAP"),
+        ("", team_b, "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 CAP"),
+        ("Tiebreaker", team_a, "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 CAP"),
+        ("", team_b, "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 CAP"),
+    ]
+    height = row_h * len(rows) + 34
+    draw.rectangle((x, y, x + width, y + height), outline=COL_BORDER, width=2)
+    draw.rectangle((x, y, x + width, y + 34), fill=COL_HEADER, outline=COL_BORDER, width=2)
+    _center_text(draw, (x, y, x + width, y + 34), "VOLLEYBALL SET SCORE TRACKER", _font("bold", 18), COL_BLACK)
+    draw.line((x + label_w, y + 34, x + label_w, y + height), fill=COL_BORDER, width=1)
+    draw.line((x + label_w + team_w, y + 34, x + label_w + team_w, y + height), fill=COL_BORDER, width=1)
+
+    for idx, (label, team, score_line) in enumerate(rows):
+        row_y = y + 34 + idx * row_h
+        draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
+        if label:
+            draw.text((x + 12, row_y + 10), label, font=_font("bold", 18), fill=COL_BLACK)
+        draw.text((x + label_w + 16, row_y + 10), team, font=_font("bold", 18), fill=COL_BLACK)
+        draw.text((x + label_w + team_w + 16, row_y + 11), score_line, font=_font("regular", 20), fill=COL_BLACK)
+
+
+def _draw_volleyball_roster_table(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    origin: tuple[int, int],
+    width: int,
+    title: str,
+    roster_rows: list[dict[str, Any]],
+    photo_cache: PhotoCache,
+) -> None:
+    x, y = origin
+    header_h = 48
+    row_h = 29
+    table_h = header_h + row_h * MAX_VOLLEYBALL_ROSTER_ROWS
+    draw.rectangle((x, y, x + width, y + table_h), outline=COL_BORDER, width=2)
+    draw.rectangle((x, y, x + width, y + 29), fill=COL_HEADER, outline=COL_BORDER, width=2)
+    _center_text(draw, (x, y, x + width, y + 29), title, _font("bold", 16), COL_BLACK)
+
+    col_no = 35
+    col_photo = 36
+    col_age = 44
+    photo_x = x + col_no
+    name_x = photo_x + col_photo + 7
+    age_x = x + width - col_age
+    for line_x in (photo_x, name_x - 7, age_x):
+        draw.line((line_x, y + 29, line_x, y + table_h), fill=COL_BORDER, width=1)
+    draw.text((x + 10, y + 33), "#", font=_font("bold", 10), fill=COL_BLACK)
+    draw.text((name_x, y + 33), "ATHLETE", font=_font("bold", 10), fill=COL_BLACK)
+    draw.text((age_x + 10, y + 33), "AGE", font=_font("bold", 10), fill=COL_BLACK)
+
+    rows = roster_rows[:MAX_VOLLEYBALL_ROSTER_ROWS]
+    for idx in range(MAX_VOLLEYBALL_ROSTER_ROWS):
+        row_y = y + header_h + idx * row_h
+        draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
+        draw.text((x + 11, row_y + 7), str(idx + 1), font=_font("regular", 10), fill=COL_MUTED)
+        photo_box = (photo_x + 4, row_y + 3, photo_x + 30, row_y + 29)
+        draw.rectangle(photo_box, outline=(185, 193, 203), width=1)
+        if idx < len(rows):
+            row = rows[idx]
+            name = _roster_name(row)
+            age = row.get("Age (at Event)")
+            age_text = f"{int(age)}" if isinstance(age, (int, float)) else str(age or "").strip()
+            photo = photo_cache.load(row.get("Photo"))
+            if photo is not None:
+                _paste_contained(canvas, photo, photo_box)
+            draw.text((name_x, row_y + 6), name, font=_font("regular", 13), fill=COL_BLACK)
+            if age_text:
+                _center_text(draw, (age_x, row_y, x + width, row_y + row_h), age_text, _font("regular", 12), COL_BLACK)
+        else:
+            draw.line((name_x, row_y + 16, age_x - 8, row_y + 16), fill=(190, 196, 204), width=1)
+
+    if len(roster_rows) > MAX_VOLLEYBALL_ROSTER_ROWS:
+        draw.text(
+            (x + 12, y + table_h + 5),
+            f"+{len(roster_rows) - MAX_VOLLEYBALL_ROSTER_ROWS} more",
+            font=_font("regular", 12),
+            fill=COL_MUTED,
+        )
 
 
 def _draw_roster_table(
@@ -493,6 +638,17 @@ def _draw_footer(draw: ImageDraw.ImageDraw) -> None:
     draw.line((650, y + 172, 920, y + 172), fill=COL_BORDER, width=2)
 
 
+def _draw_volleyball_footer(draw: ImageDraw.ImageDraw) -> None:
+    y = 1390
+    draw.text((MARGIN, y + 8), "REFEREE COMMENTS", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((MARGIN, y + 58, PAGE_W - MARGIN, y + 58), fill=COL_BORDER, width=1)
+    draw.line((MARGIN, y + 104, PAGE_W - MARGIN, y + 104), fill=COL_BORDER, width=1)
+    draw.text((MARGIN, y + 150), "REFEREE SIGNATURES:", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((300, y + 172, 570, y + 172), fill=COL_BORDER, width=2)
+    draw.text((596, y + 150), "AND", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((650, y + 172, 920, y + 172), fill=COL_BORDER, width=2)
+
+
 def render_basketball_scoresheet_page(
     game: dict[str, Any],
     roster_index: Optional[dict[str, list[dict[str, Any]]]] = None,
@@ -540,6 +696,56 @@ def render_basketball_scoresheet_page(
     return page
 
 
+def render_volleyball_scoresheet_page(
+    game: dict[str, Any],
+    roster_index: Optional[dict[str, dict[str, list[dict[str, Any]]]]] = None,
+    logo_path: Optional[Path] = None,
+    score_entry_base_url: Optional[str] = None,
+    photo_cache: Optional[PhotoCache] = None,
+) -> Image.Image:
+    """Render one volleyball game score sheet as an RGB image."""
+
+    roster_index = roster_index or {}
+    photo_cache = photo_cache or PhotoCache()
+    logo = _load_logo(logo_path or default_logo_path())
+    page = Image.new("RGB", (PAGE_W, PAGE_H), "white")
+    draw = ImageDraw.Draw(page)
+
+    _draw_logo(page, logo)
+    _draw_qr(page, str(game.get("game_key") or ""), score_entry_base_url)
+    title = "MVB SCORESHEET" if game.get("event") == VOLLEYBALL_MEN_EVENT else "WVB SCORESHEET"
+    _draw_generic_header(draw, game, title)
+    _draw_referee_section(draw)
+    _draw_volleyball_score_grid(draw, game)
+
+    event = str(game.get("event") or "").strip()
+    event_index = roster_index.get(event, {})
+    team_a_code = _team_code(_team_label(game, "a"))
+    team_b_code = _team_code(_team_label(game, "b"))
+    table_y = 810
+    table_w = (PAGE_W - MARGIN * 2 - 28) // 2
+    _draw_volleyball_roster_table(
+        page,
+        draw,
+        (MARGIN, table_y),
+        table_w,
+        _team_label(game, "a"),
+        event_index.get(team_a_code, []),
+        photo_cache,
+    )
+    _draw_volleyball_roster_table(
+        page,
+        draw,
+        (MARGIN + table_w + 28, table_y),
+        table_w,
+        _team_label(game, "b"),
+        event_index.get(team_b_code, []),
+        photo_cache,
+    )
+    _draw_volleyball_footer(draw)
+    return page
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -555,6 +761,17 @@ def _basketball_games(schedule_input: dict[str, Any], schedule_output: dict[str,
         for game in merge_schedule(schedule_input, schedule_output)
         if str(game.get("event") or "").strip() == BASKETBALL_EVENT
         and str(game.get("game_key") or "").startswith("BBM-")
+    ]
+    games.sort(key=lambda game: (str(game.get("scheduled_slot") or ""), str(game.get("resource_id") or ""), str(game.get("game_key") or "")))
+    return games
+
+
+def _volleyball_games(schedule_input: dict[str, Any], schedule_output: dict[str, Any]) -> list[dict[str, Any]]:
+    games = [
+        game
+        for game in merge_schedule(schedule_input, schedule_output)
+        if str(game.get("event") or "").strip() in VOLLEYBALL_EVENTS
+        and str(game.get("game_key") or "").startswith(("VBM-", "VBW-"))
     ]
     games.sort(key=lambda game: (str(game.get("scheduled_slot") or ""), str(game.get("resource_id") or ""), str(game.get("game_key") or "")))
     return games
@@ -592,6 +809,43 @@ def write_basketball_scoresheets_pdf(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = output_filename or f"Basketball_Scoresheets_{dt.date.today().isoformat()}.pdf"
+    output_path = output_dir / filename
+    pages[0].save(output_path, "PDF", save_all=True, append_images=pages[1:], resolution=150.0)
+    return output_path, len(pages)
+
+
+def write_volleyball_scoresheets_pdf(
+    schedule_input_path: Path,
+    schedule_output_path: Path,
+    output_dir: Path,
+    roster_rows: Optional[list[dict[str, Any]]] = None,
+    logo_path: Optional[Path] = None,
+    score_entry_base_url: Optional[str] = None,
+    output_filename: Optional[str] = None,
+) -> tuple[Path, int]:
+    """Write one combined volleyball score-sheet PDF and return (path, pages)."""
+
+    schedule_input = _load_json(schedule_input_path)
+    schedule_output = _load_json(schedule_output_path)
+    games = _volleyball_games(schedule_input, schedule_output)
+    if not games:
+        raise ScoreSheetError("No scheduled volleyball games found in the supplied schedule artifacts.")
+
+    roster_index = build_volleyball_roster_index(roster_rows or [])
+    photo_cache = PhotoCache()
+    pages = [
+        render_volleyball_scoresheet_page(
+            game,
+            roster_index=roster_index,
+            logo_path=logo_path,
+            score_entry_base_url=score_entry_base_url,
+            photo_cache=photo_cache,
+        )
+        for game in games
+    ]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename = output_filename or f"Volleyball_Scoresheets_{dt.date.today().isoformat()}.pdf"
     output_path = output_dir / filename
     pages[0].save(output_path, "PDF", save_all=True, append_images=pages[1:], resolution=150.0)
     return output_path, len(pages)
