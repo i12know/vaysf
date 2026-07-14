@@ -225,15 +225,15 @@ def test_render_volleyball_scoresheet_places_logo_and_roster_photo(tmp_path):
     )
 
     assert page.getpixel((LOGO_BOX[0] + 20, LOGO_BOX[1] + 20)) == (220, 20, 30)
-    assert page.getpixel((111, 864)) == (40, 200, 90)
+    assert page.getpixel((111, 804)) == (40, 200, 90)
 
 
 def test_basketball_roster_table_capacity_is_15():
     assert MAX_ROSTER_ROWS == 15
 
 
-def test_volleyball_roster_table_capacity_is_20():
-    assert MAX_VOLLEYBALL_ROSTER_ROWS == 20
+def test_volleyball_roster_table_capacity_is_18():
+    assert MAX_VOLLEYBALL_ROSTER_ROWS == 18
 
 
 def test_friendly_location_formats_basketball_gym_resource_ids():

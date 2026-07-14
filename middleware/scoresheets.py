@@ -36,7 +36,8 @@ LOGO_BOX = (72, 58, 182, 168)
 QR_SIZE = 150
 QR_BOX = (PAGE_W - MARGIN - QR_SIZE, 52)
 MAX_ROSTER_ROWS = 15
-MAX_VOLLEYBALL_ROSTER_ROWS = 20
+MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN = 9
+MAX_VOLLEYBALL_ROSTER_ROWS = MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN * 2
 
 COL_BLACK = (32, 38, 46)
 COL_BLUE = (20, 72, 118)
@@ -443,8 +444,7 @@ def _draw_score_boxes(draw: ImageDraw.ImageDraw, game: dict[str, Any]) -> None:
         draw.rectangle((x, top + 42, x + team_w, top + 78), outline=COL_BORDER, width=2, fill=(255, 255, 255))
 
 
-def _draw_referee_section(draw: ImageDraw.ImageDraw) -> None:
-    y = 370
+def _draw_referee_section(draw: ImageDraw.ImageDraw, y: int = 370) -> None:
     label_font = _font("bold", 18)
     text_font = _font("regular", 18)
     for label in ("PRIMARY REFEREE:", "SECONDARY REFEREE:"):
@@ -462,11 +462,10 @@ def _draw_referee_section(draw: ImageDraw.ImageDraw) -> None:
     )
 
 
-def _draw_volleyball_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any]) -> None:
+def _draw_volleyball_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any], y: int = 500) -> None:
     team_a = _team_label(game, "a")
     team_b = _team_label(game, "b")
     x = MARGIN
-    y = 500
     width = PAGE_W - MARGIN * 2
     label_w = 140
     team_w = 112
@@ -506,32 +505,46 @@ def _draw_volleyball_roster_table(
 ) -> None:
     x, y = origin
     header_h = 48
-    row_h = 29
-    table_h = header_h + row_h * MAX_VOLLEYBALL_ROSTER_ROWS
+    row_h = 57
+    table_h = header_h + row_h * MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN
     draw.rectangle((x, y, x + width, y + table_h), outline=COL_BORDER, width=2)
     draw.rectangle((x, y, x + width, y + 29), fill=COL_HEADER, outline=COL_BORDER, width=2)
     _center_text(draw, (x, y, x + width, y + 29), title, _font("bold", 16), COL_BLACK)
 
-    col_no = 35
-    col_photo = 36
-    col_age = 44
-    photo_x = x + col_no
-    name_x = photo_x + col_photo + 7
-    age_x = x + width - col_age
-    for line_x in (photo_x, name_x - 7, age_x):
-        draw.line((line_x, y + 29, line_x, y + table_h), fill=COL_BORDER, width=1)
-    draw.text((x + 10, y + 33), "#", font=_font("bold", 10), fill=COL_BLACK)
-    draw.text((name_x, y + 33), "ATHLETE", font=_font("bold", 10), fill=COL_BLACK)
-    draw.text((age_x + 10, y + 33), "AGE", font=_font("bold", 10), fill=COL_BLACK)
+    gap = 10
+    column_w = (width - gap) // 2
+    columns = [x, x + column_w + gap]
+    draw.line((columns[1] - gap // 2, y + 29, columns[1] - gap // 2, y + table_h), fill=COL_BORDER, width=2)
+
+    col_no = 28
+    col_photo = 54
+    col_age = 34
+    for col_x in columns:
+        photo_x = col_x + col_no
+        name_x = photo_x + col_photo + 7
+        age_x = col_x + column_w - col_age
+        for line_x in (photo_x, name_x - 7, age_x):
+            draw.line((line_x, y + 29, line_x, y + table_h), fill=COL_BORDER, width=1)
+        draw.text((col_x + 9, y + 33), "#", font=_font("bold", 10), fill=COL_BLACK)
+        draw.text((name_x, y + 33), "ATHLETE", font=_font("bold", 10), fill=COL_BLACK)
+        draw.text((age_x + 8, y + 33), "AGE", font=_font("bold", 10), fill=COL_BLACK)
 
     rows = roster_rows[:MAX_VOLLEYBALL_ROSTER_ROWS]
-    for idx in range(MAX_VOLLEYBALL_ROSTER_ROWS):
-        row_y = y + header_h + idx * row_h
-        draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
-        draw.text((x + 11, row_y + 7), str(idx + 1), font=_font("regular", 10), fill=COL_MUTED)
-        photo_box = (photo_x + 4, row_y + 3, photo_x + 30, row_y + 29)
-        draw.rectangle(photo_box, outline=(185, 193, 203), width=1)
-        if idx < len(rows):
+    for col_idx, col_x in enumerate(columns):
+        start_idx = col_idx * MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN
+        photo_x = col_x + col_no
+        name_x = photo_x + col_photo + 7
+        age_x = col_x + column_w - col_age
+        for row_idx in range(MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN):
+            idx = start_idx + row_idx
+            row_y = y + header_h + row_idx * row_h
+            draw.line((col_x, row_y, col_x + column_w, row_y), fill=COL_BORDER, width=1)
+            draw.text((col_x + 8, row_y + 21), str(idx + 1), font=_font("regular", 10), fill=COL_MUTED)
+            photo_box = (photo_x + 4, row_y + 5, photo_x + 48, row_y + 51)
+            draw.rectangle(photo_box, outline=(185, 193, 203), width=1)
+            if idx >= len(rows):
+                draw.line((name_x, row_y + 30, age_x - 8, row_y + 30), fill=(190, 196, 204), width=1)
+                continue
             row = rows[idx]
             name = _roster_name(row)
             age = row.get("Age (at Event)")
@@ -539,11 +552,9 @@ def _draw_volleyball_roster_table(
             photo = photo_cache.load(row.get("Photo"))
             if photo is not None:
                 _paste_contained(canvas, photo, photo_box)
-            draw.text((name_x, row_y + 6), name, font=_font("regular", 13), fill=COL_BLACK)
+            _draw_wrapped(draw, name, (name_x, row_y + 10), _font("regular", 14), age_x - name_x - 6, COL_BLACK, line_gap=1)
             if age_text:
-                _center_text(draw, (age_x, row_y, x + width, row_y + row_h), age_text, _font("regular", 12), COL_BLACK)
-        else:
-            draw.line((name_x, row_y + 16, age_x - 8, row_y + 16), fill=(190, 196, 204), width=1)
+                _center_text(draw, (age_x, row_y, col_x + column_w, row_y + row_h), age_text, _font("regular", 12), COL_BLACK)
 
     if len(roster_rows) > MAX_VOLLEYBALL_ROSTER_ROWS:
         draw.text(
@@ -715,14 +726,14 @@ def render_volleyball_scoresheet_page(
     _draw_qr(page, str(game.get("game_key") or ""), score_entry_base_url)
     title = "MVB SCORESHEET" if game.get("event") == VOLLEYBALL_MEN_EVENT else "WVB SCORESHEET"
     _draw_generic_header(draw, game, title)
-    _draw_referee_section(draw)
-    _draw_volleyball_score_grid(draw, game)
+    _draw_referee_section(draw, y=288)
+    _draw_volleyball_score_grid(draw, game, y=420)
 
     event = str(game.get("event") or "").strip()
     event_index = roster_index.get(event, {})
     team_a_code = _team_code(_team_label(game, "a"))
     team_b_code = _team_code(_team_label(game, "b"))
-    table_y = 810
+    table_y = 740
     table_w = (PAGE_W - MARGIN * 2 - 28) // 2
     _draw_volleyball_roster_table(
         page,
