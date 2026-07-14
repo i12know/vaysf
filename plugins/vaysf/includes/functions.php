@@ -304,6 +304,418 @@ function vaysf_format_schedule_teams($row) {
 }
 
 /**
+ * Events supported by the first simple score-entry slice.
+ *
+ * Volleyball and racquet sports need sport-specific forms, so keep this
+ * intentionally narrow until those workflows are implemented.
+ *
+ * @return array<int,string> Event names eligible for two-team numeric scoring
+ */
+function vaysf_simple_score_events() {
+    return apply_filters(
+        'vaysf_simple_score_events',
+        array(
+            'Basketball - Men Team',
+            'Soccer - Coed Exhibition',
+        )
+    );
+}
+
+/**
+ * Events supported by the first three-team score-entry slice.
+ *
+ * @return array<int,string> Event names eligible for three-team numeric scoring
+ */
+function vaysf_three_team_score_events() {
+    return apply_filters(
+        'vaysf_three_team_score_events',
+        array(
+            'Bible Challenge - Mixed Team',
+        )
+    );
+}
+
+/**
+ * Check whether a schedule row can use the simple two-team score form.
+ *
+ * @param mixed $schedule Schedule id, row array, or row object
+ * @return bool True when the row is a supported two-team score game
+ */
+function vaysf_is_simple_score_schedule($schedule) {
+    $schedule_row = vaysf_resolve_schedule_row($schedule);
+    if (!$schedule_row) {
+        return false;
+    }
+
+    $event = isset($schedule_row['event']) ? sanitize_text_field($schedule_row['event']) : '';
+    if (!in_array($event, vaysf_simple_score_events(), true)) {
+        return false;
+    }
+
+    return !empty($schedule_row['team_a_key'])
+        && !empty($schedule_row['team_b_key'])
+        && empty($schedule_row['team_c_key']);
+}
+
+/**
+ * Check whether a schedule row can use the three-team score form.
+ *
+ * @param mixed $schedule Schedule id, row array, or row object
+ * @return bool True when the row is a supported three-team score game
+ */
+function vaysf_is_three_team_score_schedule($schedule) {
+    $schedule_row = vaysf_resolve_schedule_row($schedule);
+    if (!$schedule_row) {
+        return false;
+    }
+
+    $event = isset($schedule_row['event']) ? sanitize_text_field($schedule_row['event']) : '';
+    if (!in_array($event, vaysf_three_team_score_events(), true)) {
+        return false;
+    }
+
+    return !empty($schedule_row['team_a_key'])
+        && !empty($schedule_row['team_b_key'])
+        && !empty($schedule_row['team_c_key']);
+}
+
+/**
+ * Check whether a schedule row currently has any coordinator score form.
+ *
+ * @param mixed $schedule Schedule id, row array, or row object
+ * @return bool True when a supported score-entry form exists
+ */
+function vaysf_is_supported_score_schedule($schedule) {
+    return vaysf_is_simple_score_schedule($schedule) || vaysf_is_three_team_score_schedule($schedule);
+}
+
+/**
+ * Read the current result row for a schedule row.
+ *
+ * @param int $schedule_id Schedule row id
+ * @return array<string,mixed>|null Result row
+ */
+function vaysf_get_result_for_schedule($schedule_id) {
+    global $wpdb;
+
+    $schedule_id = absint($schedule_id);
+    if (!$schedule_id) {
+        return null;
+    }
+
+    $table_results = vaysf_get_table_name('results');
+    $result = $wpdb->get_row(
+        $wpdb->prepare("SELECT * FROM $table_results WHERE schedule_id = %d", $schedule_id),
+        ARRAY_A
+    );
+
+    return is_array($result) ? $result : null;
+}
+
+/**
+ * Build a score-form URL for a schedule row.
+ *
+ * @param mixed $schedule Schedule id, row array, or row object
+ * @param string $view Dashboard return view
+ * @param string $event_filter Optional event filter
+ * @return string URL
+ */
+function vaysf_get_simple_score_form_url($schedule, $view = 'assigned', $event_filter = '') {
+    $schedule_row = vaysf_resolve_schedule_row($schedule);
+    $schedule_id = $schedule_row && !empty($schedule_row['schedule_id']) ? absint($schedule_row['schedule_id']) : absint($schedule);
+    $url = vaysf_get_coordinator_score_entry_url($view, $event_filter);
+
+    return add_query_arg(
+        array(
+            'action' => 'score',
+            'schedule_id' => $schedule_id,
+        ),
+        $url
+    );
+}
+
+/**
+ * Persist a score payload to the current result row and append a revision.
+ *
+ * @param int $user_id WordPress user id
+ * @param array<string,mixed> $schedule Schedule row
+ * @param array<string,mixed> $score_payload Score payload for score_json
+ * @param array<int,string> $winner_keys Winner team keys
+ * @param string $notes Optional notes
+ * @param string $correction_reason Correction label for repeat submissions
+ * @return true|WP_Error True on success
+ */
+function vaysf_persist_score_result($user_id, $schedule, $score_payload, $winner_keys, $notes = '', $correction_reason = '') {
+    global $wpdb;
+
+    $user_id = absint($user_id);
+    $schedule_id = isset($schedule['schedule_id']) ? absint($schedule['schedule_id']) : 0;
+    $notes = sanitize_textarea_field(wp_unslash($notes));
+    $correction_reason = sanitize_textarea_field($correction_reason);
+    if (!$user_id || !$schedule_id) {
+        return new WP_Error('vaysf_score_missing_context', __('Score entry is missing the user or schedule row.', 'vaysf'));
+    }
+
+    $now = current_time('mysql');
+    $score_payload['submitted_at'] = $now;
+    $score_json = wp_json_encode($score_payload);
+    $winner_keys_json = wp_json_encode($winner_keys);
+    if ($score_json === false || $winner_keys_json === false) {
+        return new WP_Error('vaysf_score_json_failed', __('Could not encode the score payload.', 'vaysf'));
+    }
+
+    $table_results = vaysf_get_table_name('results');
+    $table_revisions = vaysf_get_table_name('result_revisions');
+    $table_schedules = vaysf_get_table_name('schedules');
+    $existing = vaysf_get_result_for_schedule($schedule_id);
+    $source_ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+    $metadata = wp_json_encode(
+        array(
+            'source' => 'coordinator-score-entry',
+            'user_id' => $user_id,
+            'schedule_id' => $schedule_id,
+        )
+    );
+
+    $wpdb->query('START TRANSACTION');
+
+    if ($existing) {
+        $result_id = absint($existing['result_id']);
+        $next_revision = absint($existing['current_revision']) + 1;
+    } else {
+        $created = $wpdb->insert(
+            $table_results,
+            array(
+                'schedule_id' => $schedule_id,
+                'score_json' => $score_json,
+                'winner_keys_json' => $winner_keys_json,
+                'submitted_by_user_id' => $user_id,
+                'certified_at' => $now,
+                'current_revision' => 0,
+                'public_status' => 'reported',
+                'scan_status' => 'pending',
+                'notes' => $notes,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ),
+            array('%d', '%s', '%s', '%d', '%s', '%d', '%s', '%s', '%s', '%s', '%s')
+        );
+        if ($created === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vaysf_score_create_failed', __('Could not create the result row.', 'vaysf'));
+        }
+        $result_id = absint($wpdb->insert_id);
+        $next_revision = 1;
+    }
+
+    $revision_created = $wpdb->insert(
+        $table_revisions,
+        array(
+            'result_id' => $result_id,
+            'revision_number' => $next_revision,
+            'score_json' => $score_json,
+            'winner_keys_json' => $winner_keys_json,
+            'notes' => $notes,
+            'correction_reason' => $existing ? $correction_reason : '',
+            'submitted_by_user_id' => $user_id,
+            'submitted_at' => $now,
+            'verification_state' => 'unverified',
+            'source_ip' => $source_ip,
+            'request_metadata' => $metadata,
+        ),
+        array('%d', '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s')
+    );
+
+    if ($revision_created === false) {
+        $wpdb->query('ROLLBACK');
+        return new WP_Error('vaysf_score_revision_failed', __('Could not append the result revision.', 'vaysf'));
+    }
+
+    $updated = $wpdb->update(
+        $table_results,
+        array(
+            'schedule_id' => $schedule_id,
+            'score_json' => $score_json,
+            'winner_keys_json' => $winner_keys_json,
+            'submitted_by_user_id' => $user_id,
+            'certified_at' => $now,
+            'current_revision' => $next_revision,
+            'correction_reason' => $existing ? $correction_reason : '',
+            'public_status' => 'reported',
+            'scan_status' => 'pending',
+            'notes' => $notes,
+            'updated_at' => $now,
+        ),
+        array('result_id' => $result_id),
+        array('%d', '%s', '%s', '%d', '%s', '%d', '%s', '%s', '%s', '%s', '%s'),
+        array('%d')
+    );
+
+    if ($updated === false) {
+        $wpdb->query('ROLLBACK');
+        return new WP_Error('vaysf_score_update_failed', __('Could not update the current result row.', 'vaysf'));
+    }
+
+    $current_game_status = isset($schedule['game_status']) ? sanitize_text_field($schedule['game_status']) : '';
+    $next_game_status = in_array($current_game_status, array('official', 'under_review'), true)
+        ? $current_game_status
+        : 'reported';
+    $schedule_updated = $wpdb->update(
+        $table_schedules,
+        array(
+            'game_status' => $next_game_status,
+            'updated_at' => $now,
+        ),
+        array('schedule_id' => $schedule_id),
+        array('%s', '%s'),
+        array('%d')
+    );
+
+    if ($schedule_updated === false) {
+        $wpdb->query('ROLLBACK');
+        return new WP_Error('vaysf_score_schedule_update_failed', __('Could not mark the game as reported.', 'vaysf'));
+    }
+
+    $wpdb->query('COMMIT');
+    return true;
+}
+
+/**
+ * Submit or correct a simple two-team score from the coordinator dashboard.
+ *
+ * @param int $user_id WordPress user id
+ * @param int $schedule_id Schedule row id
+ * @param int $team_a_score Team A score
+ * @param int $team_b_score Team B score
+ * @param bool $certified Whether the submitter certified the score
+ * @param string $notes Optional notes
+ * @return true|WP_Error True on success
+ */
+function vaysf_submit_simple_score_result($user_id, $schedule_id, $team_a_score, $team_b_score, $certified, $notes = '') {
+    if (!is_int($team_a_score) || !is_int($team_b_score) || $team_a_score < 0 || $team_b_score < 0) {
+        return new WP_Error('vaysf_simple_score_invalid_score', __('Scores must be whole numbers zero or greater.', 'vaysf'));
+    }
+
+    $schedule = vaysf_resolve_schedule_row($schedule_id);
+    if (!$schedule) {
+        return new WP_Error('vaysf_simple_score_schedule_missing', __('Schedule row not found.', 'vaysf'));
+    }
+
+    if (!vaysf_user_can_submit_schedule_result($user_id, $schedule)) {
+        return new WP_Error('vaysf_simple_score_forbidden', __('You are not authorized to submit a score for this game.', 'vaysf'));
+    }
+
+    if (!vaysf_is_simple_score_schedule($schedule)) {
+        return new WP_Error('vaysf_simple_score_unsupported', __('This game needs a sport-specific score form that is not enabled yet.', 'vaysf'));
+    }
+
+    if (!$certified) {
+        return new WP_Error('vaysf_simple_score_uncertified', __('Please certify that the score is complete and accurate.', 'vaysf'));
+    }
+
+    $team_a_key = sanitize_text_field($schedule['team_a_key']);
+    $team_b_key = sanitize_text_field($schedule['team_b_key']);
+    $winner_keys = array();
+    if ($team_a_score > $team_b_score) {
+        $winner_keys[] = $team_a_key;
+    } elseif ($team_b_score > $team_a_score) {
+        $winner_keys[] = $team_b_key;
+    }
+
+    return vaysf_persist_score_result(
+        absint($user_id),
+        $schedule,
+        array(
+            'type' => 'simple_score',
+            'team_a_key' => $team_a_key,
+            'team_a_label' => sanitize_text_field($schedule['team_a_label'] ?? $team_a_key),
+            'team_a_score' => $team_a_score,
+            'team_b_key' => $team_b_key,
+            'team_b_label' => sanitize_text_field($schedule['team_b_label'] ?? $team_b_key),
+            'team_b_score' => $team_b_score,
+            'is_tie' => $team_a_score === $team_b_score,
+        ),
+        $winner_keys,
+        $notes,
+        __('Coordinator score correction', 'vaysf')
+    );
+}
+
+/**
+ * Submit or correct a three-team Bible Challenge score.
+ *
+ * @param int $user_id WordPress user id
+ * @param int $schedule_id Schedule row id
+ * @param int $team_a_score Team A score
+ * @param int $team_b_score Team B score
+ * @param int $team_c_score Team C score
+ * @param bool $certified Whether the submitter certified the score
+ * @param string $notes Optional notes
+ * @return true|WP_Error True on success
+ */
+function vaysf_submit_three_team_score_result($user_id, $schedule_id, $team_a_score, $team_b_score, $team_c_score, $certified, $notes = '') {
+    if (
+        !is_int($team_a_score) || !is_int($team_b_score) || !is_int($team_c_score)
+        || $team_a_score < 0 || $team_b_score < 0 || $team_c_score < 0
+    ) {
+        return new WP_Error('vaysf_three_team_score_invalid_score', __('Scores must be whole numbers zero or greater.', 'vaysf'));
+    }
+
+    $schedule = vaysf_resolve_schedule_row($schedule_id);
+    if (!$schedule) {
+        return new WP_Error('vaysf_three_team_score_schedule_missing', __('Schedule row not found.', 'vaysf'));
+    }
+
+    if (!vaysf_user_can_submit_schedule_result($user_id, $schedule)) {
+        return new WP_Error('vaysf_three_team_score_forbidden', __('You are not authorized to submit a score for this game.', 'vaysf'));
+    }
+
+    if (!vaysf_is_three_team_score_schedule($schedule)) {
+        return new WP_Error('vaysf_three_team_score_unsupported', __('This game needs a different score form.', 'vaysf'));
+    }
+
+    if (!$certified) {
+        return new WP_Error('vaysf_three_team_score_uncertified', __('Please certify that the score is complete and accurate.', 'vaysf'));
+    }
+
+    $team_a_key = sanitize_text_field($schedule['team_a_key']);
+    $team_b_key = sanitize_text_field($schedule['team_b_key']);
+    $team_c_key = sanitize_text_field($schedule['team_c_key']);
+    $max_score = max($team_a_score, $team_b_score, $team_c_score);
+    $winner_keys = array();
+    if ($team_a_score === $max_score) {
+        $winner_keys[] = $team_a_key;
+    }
+    if ($team_b_score === $max_score) {
+        $winner_keys[] = $team_b_key;
+    }
+    if ($team_c_score === $max_score) {
+        $winner_keys[] = $team_c_key;
+    }
+
+    return vaysf_persist_score_result(
+        absint($user_id),
+        $schedule,
+        array(
+            'type' => 'three_team_score',
+            'team_a_key' => $team_a_key,
+            'team_a_label' => sanitize_text_field($schedule['team_a_label'] ?? $team_a_key),
+            'team_a_score' => $team_a_score,
+            'team_b_key' => $team_b_key,
+            'team_b_label' => sanitize_text_field($schedule['team_b_label'] ?? $team_b_key),
+            'team_b_score' => $team_b_score,
+            'team_c_key' => $team_c_key,
+            'team_c_label' => sanitize_text_field($schedule['team_c_label'] ?? $team_c_key),
+            'team_c_score' => $team_c_score,
+            'is_tie' => count($winner_keys) > 1,
+        ),
+        $winner_keys,
+        $notes,
+        __('Coordinator Bible Challenge score correction', 'vaysf')
+    );
+}
+
+/**
  * Query current-schedule rows assigned to a coordinator by event authorization.
  *
  * @param int $user_id WordPress user id
@@ -365,12 +777,16 @@ function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs', $
         $where[] = 's.scheduled_time <= %s';
         $args[] = $today_end;
     } elseif ($view === 'submitted') {
-        $where[] = 'r.submitted_by_user_id = %d';
-        $where[] = 'r.created_at >= %s';
-        $where[] = 'r.created_at < %s';
-        $args[] = $user_id;
+        $where[] = 'r.updated_at >= %s';
+        $where[] = 'r.updated_at < %s';
+        if (!vaysf_user_has_all_score_entry_events($user_id)) {
+            $where[] = 'r.submitted_by_user_id = %d';
+        }
         $args[] = $today_start;
         $args[] = $tomorrow_start;
+        if (!vaysf_user_has_all_score_entry_events($user_id)) {
+            $args[] = $user_id;
+        }
     }
 
     $sql = "
@@ -452,7 +868,7 @@ function vaysf_render_coordinator_score_dashboard_widget() {
     $authorized_events = vaysf_get_user_score_entry_events(get_current_user_id());
     $dashboard_url = vaysf_get_coordinator_score_entry_url('assigned');
     ?>
-    <p><?php esc_html_e('Open your assigned Sports Fest games from the coordinator dashboard. Score entry will be enabled in the next release slice.', 'vaysf'); ?></p>
+    <p><?php esc_html_e('Open your assigned Sports Fest games from the coordinator dashboard. Basketball and Soccer-style scores can be submitted now; other sport forms are coming in later slices.', 'vaysf'); ?></p>
     <?php if ($authorized_events) : ?>
         <p>
             <strong><?php esc_html_e('Assigned events:', 'vaysf'); ?></strong>
@@ -503,6 +919,27 @@ function vaysf_prepend_coordinator_dashboard_widget_order($result, $option, $use
     $result['normal'] = implode(',', array_values(array_unique($normal_ids)));
 
     return $result;
+}
+
+/**
+ * Keep the score-entry dashboard widget visible for result-entry users.
+ *
+ * @param mixed $result Hidden metabox user option
+ * @param string $option Option name
+ * @param WP_User $user User object
+ * @return mixed Updated hidden metabox list
+ */
+function vaysf_show_coordinator_dashboard_widget($result, $option, $user) {
+    if (!is_object($user) || !user_can($user->ID, 'sf2025_submit_results')) {
+        return $result;
+    }
+
+    $widget_id = 'vaysf_coordinator_score_entry';
+    if (!is_array($result)) {
+        return $result;
+    }
+
+    return array_values(array_diff($result, array($widget_id)));
 }
 
 /**

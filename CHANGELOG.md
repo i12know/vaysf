@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Simple coordinator score entry form - closes [#241](https://github.com/i12know/vaysf/issues/241)
+
+- Added coordinator-facing score forms for simple two-team Basketball/Soccer
+  style games and three-team Bible Challenge games from
+  `/coordinator-score-entry/`.
+- Replaced eligible dashboard placeholders with **Enter Score** / **Edit
+  Score** links while keeping Volleyball and racquet sport games disabled until
+  their sport-specific forms are implemented.
+- Enforced login, `sf2025_submit_results`, nonce validation, current published
+  schedule version, non-cancelled schedule rows, score-form event support, and
+  coordinator event authorization before accepting a score.
+- Persisted submissions to `sf_results`, appended every submission/correction to
+  `sf_result_revisions`, marked the schedule row `reported`, and captured the
+  submitter, timestamp, certification, optional notes, and source metadata.
+- Made **Submitted Today** personal for ordinary coordinators but global for
+  WordPress Administrators, Sports Fest Admins, and Sports Fest Managers, and
+  forced the wp-admin score-entry dashboard widget visible for result-entry
+  users so existing dashboard preferences do not hide it.
+- Moved the event filter above the dashboard tabs so the selected event governs
+  the counts shown in **Needs Results**, **Submitted Today**, and **Assigned
+  Games**.
+- Bumped plugin header/version to `1.0.25`; database version remains `1.0.6`
+  because #241 writes to the existing event-day results tables.
+
 ### Coordinator score entry dashboard - closes [#239](https://github.com/i12know/vaysf/issues/239)
 
 - Added a front-end `/coordinator-score-entry/` route and
@@ -11,8 +35,8 @@
   latest published, non-cancelled schedule rows by the user's
   `vaysf_authorized_events`.
 - Added **Needs Results**, **Submitted Today**, and **Assigned Games** views;
-  score entry buttons are present but disabled until the next result-form
-  slice.
+  the initial #239 dashboard kept score entry buttons disabled until #241 added
+  the first result-form slice.
 - Added an event dropdown below the dashboard tabs so coordinators can filter
   by all assigned events or one assigned event at a time; the filter now applies
   immediately when changed.
