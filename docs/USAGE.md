@@ -981,10 +981,23 @@ scores such as `21-18` are allowed. The set-by-set scores are stored in the
 result JSON. Split matches store no winner key; decided matches record the
 winner from sets won.
 
-Racquet sport scoring, scoresheet uploads, and standings/advancement calculation
-are separate event-day slices. Their games remain visible on the dashboard but
-the score form button stays disabled until the matching sport-specific form
-exists.
+The score form also accepts an optional **Score sheet scan** upload after the
+numeric score fields. Accepted files are PDF, JPEG, and PNG up to 32 MB. The
+score is saved first; if the scan upload fails, the score remains recorded and
+the scan can be attached later by editing the same match. Uploaded scans are
+stored in the protected `uploads/vaysf/result-scans/` area, linked to the
+specific result revision in `sf_result_files`, and are never exposed through the
+public schedule/results display.
+
+After a scan is uploaded, authorized users see protected **View** and
+**Download** links on the same score-entry form. WordPress Administrators,
+**Sports Fest Admins**, and **Sports Fest Managers** can view all score-sheet
+scans. Ordinary coordinators can view scans only for games they are authorized
+to submit.
+
+Racquet sport scoring and standings/advancement calculation are separate
+event-day slices. Their games remain visible on the dashboard but the score form
+button stays disabled until the matching sport-specific form exists.
 
 Coordinators do not need to remember the URL. Any account with
 `sf2025_submit_results` sees a **Sports Fest Score Entry** widget on the normal

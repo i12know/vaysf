@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.27
+ * Version: 1.0.28
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,7 +18,7 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.27';
+    const VERSION = '1.0.28';
 
     /**
      * Database version
@@ -139,6 +139,7 @@ class VAYSF_Integration {
         add_action('wp_dashboard_setup', 'vaysf_register_coordinator_score_dashboard_widget');
         add_filter('get_user_option_meta-box-order_dashboard', 'vaysf_prepend_coordinator_dashboard_widget_order', 10, 3);
         add_filter('get_user_option_metaboxhidden_dashboard', 'vaysf_show_coordinator_dashboard_widget', 10, 3);
+        add_action('admin_post_vaysf_download_result_file', 'vaysf_download_result_file');
 		
 	   // Add hook for rewrite rules (moved this to WordPress 'init' hook)
 		add_action('init', array($this, 'register_rewrite_rules'));
@@ -407,6 +408,21 @@ class VAYSF_Integration {
         $insurance_index = $insurance_dir . '/index.php';
         if (!file_exists($insurance_index)) {
             file_put_contents($insurance_index, '<?php // Silence is golden');
+        }
+
+        $result_scans_dir = $vaysf_dir . '/result-scans';
+        if (!file_exists($result_scans_dir)) {
+            wp_mkdir_p($result_scans_dir);
+        }
+
+        $result_scans_index = $result_scans_dir . '/index.php';
+        if (!file_exists($result_scans_index)) {
+            file_put_contents($result_scans_index, '<?php // Silence is golden');
+        }
+
+        $result_scans_htaccess = $result_scans_dir . '/.htaccess';
+        if (!file_exists($result_scans_htaccess)) {
+            file_put_contents($result_scans_htaccess, "Require all denied\n");
         }
     }
     

@@ -2193,6 +2193,7 @@ public function display_participants_page() {
         $table_results = vaysf_get_table_name('results');
         $table_schedules = vaysf_get_table_name('schedules');
         $table_revisions = vaysf_get_table_name('result_revisions');
+        $table_files = vaysf_get_table_name('result_files');
         $vaysf_action = isset($_POST['vaysf_action']) ? sanitize_text_field(wp_unslash($_POST['vaysf_action'])) : '';
         $result_id = isset($_POST['result_id'])
             ? absint($_POST['result_id'])
@@ -2251,6 +2252,27 @@ public function display_participants_page() {
                 $wpdb->prepare("SELECT * FROM $table_revisions WHERE result_id = %d ORDER BY revision_number DESC", $result_id),
                 ARRAY_A
             );
+            $files = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT f.*, rr.revision_id, rr.revision_number
+                    FROM $table_files f
+                    INNER JOIN $table_revisions rr ON rr.revision_id = f.result_revision_id
+                    WHERE rr.result_id = %d
+                    ORDER BY rr.revision_number DESC, f.uploaded_at DESC",
+                    $result_id
+                ),
+                ARRAY_A
+            );
+            $files_by_revision = array();
+            if (is_array($files)) {
+                foreach ($files as $file) {
+                    $revision_key = absint($file['revision_id']);
+                    if (!isset($files_by_revision[$revision_key])) {
+                        $files_by_revision[$revision_key] = array();
+                    }
+                    $files_by_revision[$revision_key][] = $file;
+                }
+            }
             ?>
             <div class="wrap">
                 <h1>Result Revision History</h1>
@@ -2267,12 +2289,13 @@ public function display_participants_page() {
                                 <th>Winner Keys</th>
                                 <th>State</th>
                                 <th>Reason / Notes</th>
+                                <th>Files</th>
                                 <th>Submitted</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (!$revisions) : ?>
-                                <tr><td colspan="6">No revisions found.</td></tr>
+                                <tr><td colspan="7">No revisions found.</td></tr>
                             <?php else : ?>
                                 <?php foreach ($revisions as $revision) : ?>
                                     <tr>
@@ -2281,6 +2304,22 @@ public function display_participants_page() {
                                         <td><pre><?php echo esc_html($revision['winner_keys_json']); ?></pre></td>
                                         <td><?php echo esc_html($revision['verification_state']); ?></td>
                                         <td><?php echo esc_html($revision['correction_reason']); ?><br><small><?php echo esc_html($revision['notes']); ?></small></td>
+                                        <td>
+                                            <?php $revision_files = $files_by_revision[absint($revision['revision_id'])] ?? array(); ?>
+                                            <?php if (!$revision_files) : ?>
+                                                -
+                                            <?php else : ?>
+                                                <?php foreach ($revision_files as $file) : ?>
+                                                    <div>
+                                                        <?php echo esc_html($file['original_filename']); ?><br>
+                                                        <small><?php echo esc_html(size_format(absint($file['byte_size']))); ?></small>
+                                                        <a href="<?php echo esc_url(vaysf_get_result_file_view_url($file['file_id'])); ?>" target="_blank" rel="noopener noreferrer">View</a>
+                                                        |
+                                                        <a href="<?php echo esc_url(vaysf_get_result_file_download_url($file['file_id'])); ?>">Download</a>
+                                                    </div>
+                                                <?php endforeach; ?>
+                                            <?php endif; ?>
+                                        </td>
                                         <td><?php echo esc_html($revision['submitted_at']); ?><br><small>User <?php echo esc_html($revision['submitted_by_user_id']); ?></small></td>
                                     </tr>
                                 <?php endforeach; ?>
