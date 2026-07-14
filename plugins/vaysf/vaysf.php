@@ -76,6 +76,9 @@ class VAYSF_Integration {
                 // Helper functions
                 require_once(plugin_dir_path(__FILE__) . 'includes/functions.php');
 
+                // Coordinator score-entry and event-day result helpers
+                require_once(plugin_dir_path(__FILE__) . 'includes/score-entry.php');
+
                 // Include REST API
                 require_once(plugin_dir_path(__FILE__) . 'includes/rest-api.php');
 		

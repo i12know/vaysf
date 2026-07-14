@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Score-entry helper extraction - closes [#243](https://github.com/i12know/vaysf/issues/243)
+
+- Split coordinator score-entry and event-day result helpers out of
+  `includes/functions.php` into `includes/score-entry.php`.
+- Loaded the new module explicitly from `vaysf.php` after the base helper file
+  so existing score-entry behavior remains unchanged.
+- Rebuilt `plugins/vaysf.zip`; plugin and database versions remain unchanged
+  because this is a maintainability-only refactor.
+
 ### Volleyball coordinator score entry form - closes [#244](https://github.com/i12know/vaysf/issues/244)
 
 - Added Volleyball Men/Women set-based score entry to the coordinator score
