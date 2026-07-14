@@ -306,8 +306,8 @@ function vaysf_format_schedule_teams($row) {
 /**
  * Events supported by the first simple score-entry slice.
  *
- * Volleyball and racquet sports need sport-specific forms, so keep this
- * intentionally narrow until those workflows are implemented.
+ * Racquet sports need sport-specific forms, so keep this intentionally narrow
+ * until those workflows are implemented.
  *
  * @return array<int,string> Event names eligible for two-team numeric scoring
  */
@@ -331,6 +331,21 @@ function vaysf_three_team_score_events() {
         'vaysf_three_team_score_events',
         array(
             'Bible Challenge - Mixed Team',
+        )
+    );
+}
+
+/**
+ * Events supported by volleyball set-based score entry.
+ *
+ * @return array<int,string> Event names eligible for volleyball set scoring
+ */
+function vaysf_volleyball_score_events() {
+    return apply_filters(
+        'vaysf_volleyball_score_events',
+        array(
+            'Volleyball - Men Team',
+            'Volleyball - Women Team',
         )
     );
 }
@@ -380,13 +395,62 @@ function vaysf_is_three_team_score_schedule($schedule) {
 }
 
 /**
+ * Check whether a schedule row can use the volleyball set score form.
+ *
+ * @param mixed $schedule Schedule id, row array, or row object
+ * @return bool True when the row is a supported two-team volleyball game
+ */
+function vaysf_is_volleyball_score_schedule($schedule) {
+    $schedule_row = vaysf_resolve_schedule_row($schedule);
+    if (!$schedule_row) {
+        return false;
+    }
+
+    $event = isset($schedule_row['event']) ? sanitize_text_field($schedule_row['event']) : '';
+    if (!in_array($event, vaysf_volleyball_score_events(), true)) {
+        return false;
+    }
+
+    return !empty($schedule_row['team_a_key'])
+        && !empty($schedule_row['team_b_key'])
+        && empty($schedule_row['team_c_key']);
+}
+
+/**
+ * Check whether a volleyball schedule row may end as a split match.
+ *
+ * Sports Fest preliminary/pool volleyball matches may stop after two split
+ * sets. Playoff-style rows should still require a deciding tiebreaker.
+ *
+ * @param mixed $schedule Schedule id, row array, or row object
+ * @return bool True when a split/no-winner volleyball result is allowed
+ */
+function vaysf_volleyball_allows_split_match($schedule) {
+    $schedule_row = vaysf_resolve_schedule_row($schedule);
+    if (!$schedule_row || !vaysf_is_volleyball_score_schedule($schedule_row)) {
+        return false;
+    }
+
+    $stage = isset($schedule_row['stage']) ? sanitize_text_field($schedule_row['stage']) : '';
+    $stage_key = strtolower(trim($stage));
+    if (in_array($stage_key, array('pool', 'prelim', 'preliminary'), true)) {
+        return true;
+    }
+
+    $game_key = isset($schedule_row['game_key']) ? sanitize_text_field($schedule_row['game_key']) : '';
+    return (bool) preg_match('/^VB[MW]-\d+$/', $game_key);
+}
+
+/**
  * Check whether a schedule row currently has any coordinator score form.
  *
  * @param mixed $schedule Schedule id, row array, or row object
  * @return bool True when a supported score-entry form exists
  */
 function vaysf_is_supported_score_schedule($schedule) {
-    return vaysf_is_simple_score_schedule($schedule) || vaysf_is_three_team_score_schedule($schedule);
+    return vaysf_is_simple_score_schedule($schedule)
+        || vaysf_is_three_team_score_schedule($schedule)
+        || vaysf_is_volleyball_score_schedule($schedule);
 }
 
 /**
@@ -716,6 +780,176 @@ function vaysf_submit_three_team_score_result($user_id, $schedule_id, $team_a_sc
 }
 
 /**
+ * Submit or correct a volleyball set-based score.
+ *
+ * The first two sets are required. A tiebreaker is optional for preliminary
+ * rows, which may end as a split match. Playoff-style rows still require a
+ * deciding tiebreaker when the first two sets split. Set caps are intentionally
+ * not enforced because Sports Fest may cap sets at 25-24 or lower when time is
+ * tight.
+ *
+ * @param int $user_id WordPress user id
+ * @param int $schedule_id Schedule row id
+ * @param int $set_1_team_a_score Team A set 1 score
+ * @param int $set_1_team_b_score Team B set 1 score
+ * @param int $set_2_team_a_score Team A set 2 score
+ * @param int $set_2_team_b_score Team B set 2 score
+ * @param int|null $tiebreaker_team_a_score Optional Team A tiebreaker score
+ * @param int|null $tiebreaker_team_b_score Optional Team B tiebreaker score
+ * @param bool $certified Whether the submitter certified the score
+ * @param string $notes Optional notes
+ * @param bool $require_tiebreaker_for_split Whether a split must have a winner
+ * @return true|WP_Error True on success
+ */
+function vaysf_submit_volleyball_score_result(
+    $user_id,
+    $schedule_id,
+    $set_1_team_a_score,
+    $set_1_team_b_score,
+    $set_2_team_a_score,
+    $set_2_team_b_score,
+    $tiebreaker_team_a_score,
+    $tiebreaker_team_b_score,
+    $certified,
+    $notes = '',
+    $require_tiebreaker_for_split = false
+) {
+    $required_scores = array(
+        $set_1_team_a_score,
+        $set_1_team_b_score,
+        $set_2_team_a_score,
+        $set_2_team_b_score,
+    );
+    foreach ($required_scores as $score) {
+        if (!is_int($score) || $score < 0) {
+            return new WP_Error('vaysf_volleyball_score_invalid_score', __('Scores must be whole numbers zero or greater.', 'vaysf'));
+        }
+    }
+
+    $has_tiebreaker = $tiebreaker_team_a_score !== null || $tiebreaker_team_b_score !== null;
+    if ($has_tiebreaker) {
+        if (
+            !is_int($tiebreaker_team_a_score)
+            || !is_int($tiebreaker_team_b_score)
+            || $tiebreaker_team_a_score < 0
+            || $tiebreaker_team_b_score < 0
+        ) {
+            return new WP_Error('vaysf_volleyball_score_invalid_tiebreaker', __('Enter both tiebreaker scores as whole numbers, or leave both blank.', 'vaysf'));
+        }
+    }
+
+    $schedule = vaysf_resolve_schedule_row($schedule_id);
+    if (!$schedule) {
+        return new WP_Error('vaysf_volleyball_score_schedule_missing', __('Schedule row not found.', 'vaysf'));
+    }
+
+    if (!vaysf_user_can_submit_schedule_result($user_id, $schedule)) {
+        return new WP_Error('vaysf_volleyball_score_forbidden', __('You are not authorized to submit a score for this game.', 'vaysf'));
+    }
+
+    if (!vaysf_is_volleyball_score_schedule($schedule)) {
+        return new WP_Error('vaysf_volleyball_score_unsupported', __('This game needs a different score form.', 'vaysf'));
+    }
+
+    if (!$certified) {
+        return new WP_Error('vaysf_volleyball_score_uncertified', __('Please certify that the score is complete and accurate.', 'vaysf'));
+    }
+
+    $team_a_key = sanitize_text_field($schedule['team_a_key']);
+    $team_b_key = sanitize_text_field($schedule['team_b_key']);
+    $team_a_label = sanitize_text_field($schedule['team_a_label'] ?? $team_a_key);
+    $team_b_label = sanitize_text_field($schedule['team_b_label'] ?? $team_b_key);
+    $set_specs = array(
+        array('number' => 1, 'label' => __('Set 1', 'vaysf'), 'team_a_score' => $set_1_team_a_score, 'team_b_score' => $set_1_team_b_score),
+        array('number' => 2, 'label' => __('Set 2', 'vaysf'), 'team_a_score' => $set_2_team_a_score, 'team_b_score' => $set_2_team_b_score),
+    );
+
+    $sets = array();
+    $team_a_sets_won = 0;
+    $team_b_sets_won = 0;
+    foreach ($set_specs as $set) {
+        if ($set['team_a_score'] === $set['team_b_score']) {
+            return new WP_Error('vaysf_volleyball_score_tied_set', __('Volleyball sets cannot end tied.', 'vaysf'));
+        }
+
+        $winner_key = $set['team_a_score'] > $set['team_b_score'] ? $team_a_key : $team_b_key;
+        if ($winner_key === $team_a_key) {
+            $team_a_sets_won++;
+        } else {
+            $team_b_sets_won++;
+        }
+
+        $sets[] = array(
+            'number' => $set['number'],
+            'label' => $set['label'],
+            'team_a_score' => $set['team_a_score'],
+            'team_b_score' => $set['team_b_score'],
+            'winner_key' => $winner_key,
+        );
+    }
+
+    $split_first_two_sets = $team_a_sets_won === $team_b_sets_won;
+    $allows_split_match = vaysf_volleyball_allows_split_match($schedule);
+    if ($split_first_two_sets && !$has_tiebreaker && ($require_tiebreaker_for_split || !$allows_split_match)) {
+        return new WP_Error('vaysf_volleyball_score_tiebreaker_required', __('The first two sets are split, so enter the tiebreaker score or clear the strict winner checkbox.', 'vaysf'));
+    }
+    if (!$split_first_two_sets && $has_tiebreaker) {
+        return new WP_Error('vaysf_volleyball_score_unneeded_tiebreaker', __('Only enter a tiebreaker when the first two sets are split.', 'vaysf'));
+    }
+
+    if ($has_tiebreaker) {
+        if ($tiebreaker_team_a_score === $tiebreaker_team_b_score) {
+            return new WP_Error('vaysf_volleyball_score_tied_tiebreaker', __('The tiebreaker cannot end tied.', 'vaysf'));
+        }
+
+        $winner_key = $tiebreaker_team_a_score > $tiebreaker_team_b_score ? $team_a_key : $team_b_key;
+        if ($winner_key === $team_a_key) {
+            $team_a_sets_won++;
+        } else {
+            $team_b_sets_won++;
+        }
+
+        $sets[] = array(
+            'number' => 3,
+            'label' => __('Tiebreaker', 'vaysf'),
+            'team_a_score' => $tiebreaker_team_a_score,
+            'team_b_score' => $tiebreaker_team_b_score,
+            'winner_key' => $winner_key,
+        );
+    }
+
+    $is_split_match = $team_a_sets_won === $team_b_sets_won;
+    $winner_keys = array();
+    if (!$is_split_match) {
+        $winner_keys = $team_a_sets_won > $team_b_sets_won ? array($team_a_key) : array($team_b_key);
+    }
+
+    return vaysf_persist_score_result(
+        absint($user_id),
+        $schedule,
+        array(
+            'type' => 'volleyball_set_score',
+            'team_a_key' => $team_a_key,
+            'team_a_label' => $team_a_label,
+            'team_a_score' => $team_a_sets_won,
+            'team_a_sets_won' => $team_a_sets_won,
+            'team_b_key' => $team_b_key,
+            'team_b_label' => $team_b_label,
+            'team_b_score' => $team_b_sets_won,
+            'team_b_sets_won' => $team_b_sets_won,
+            'sets' => $sets,
+            'tiebreaker_played' => $has_tiebreaker,
+            'strict_match_winner_required' => (bool) $require_tiebreaker_for_split,
+            'split_match' => $is_split_match,
+            'is_tie' => $is_split_match,
+        ),
+        $winner_keys,
+        $notes,
+        __('Coordinator Volleyball score correction', 'vaysf')
+    );
+}
+
+/**
  * Query current-schedule rows assigned to a coordinator by event authorization.
  *
  * @param int $user_id WordPress user id
@@ -868,7 +1102,7 @@ function vaysf_render_coordinator_score_dashboard_widget() {
     $authorized_events = vaysf_get_user_score_entry_events(get_current_user_id());
     $dashboard_url = vaysf_get_coordinator_score_entry_url('assigned');
     ?>
-    <p><?php esc_html_e('Open your assigned Sports Fest games from the coordinator dashboard. Basketball and Soccer-style scores can be submitted now; other sport forms are coming in later slices.', 'vaysf'); ?></p>
+    <p><?php esc_html_e('Open your assigned Sports Fest games from the coordinator dashboard. Basketball, Soccer-style, Bible Challenge, and Volleyball scores can be submitted now; other sport forms are coming in later slices.', 'vaysf'); ?></p>
     <?php if ($authorized_events) : ?>
         <p>
             <strong><?php esc_html_e('Assigned events:', 'vaysf'); ?></strong>

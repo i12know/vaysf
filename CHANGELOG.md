@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Volleyball coordinator score entry form - closes [#244](https://github.com/i12know/vaysf/issues/244)
+
+- Added Volleyball Men/Women set-based score entry to the coordinator score
+  dashboard.
+- Required Set 1 and Set 2 scores for both teams, with an optional tiebreaker
+  row. Preliminary/pool matches may be submitted as 1-1 split matches; the form
+  includes a strict-rule checkbox for playoff-style matches that require one
+  winner.
+- Accepted capped scores such as `25-24` and time-capped scores such as
+  `21-18` without enforcing a win-by-2 rule.
+- Stored volleyball set details in `score_json`, recorded winner keys only for
+  decided matches, appended revisions through the existing event-day results
+  audit trail, and left standings/advancement manual for this slice.
+- Bumped plugin header/version to `1.0.26`; database version remains `1.0.6`
+  because #244 writes to the existing event-day results tables.
+
 ### Simple coordinator score entry form - closes [#241](https://github.com/i12know/vaysf/issues/241)
 
 - Added coordinator-facing score forms for simple two-team Basketball/Soccer

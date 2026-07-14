@@ -970,10 +970,21 @@ Bible Challenge games use the same page with three score boxes, one for each
 team in the scheduled match. The highest score is recorded as the winner; tied
 highest scores preserve multiple winner keys for later review.
 
-Volleyball set scoring, racquet sport scoring, scoresheet uploads, and public
-standings/results display are separate event-day slices. Their games remain
-visible on the dashboard but the score form button stays disabled until the
-matching sport-specific form exists.
+Volleyball Men and Women games use the same page with set-based entry. Set 1
+and Set 2 are required for both teams. The tiebreaker row is optional for
+preliminary/pool matches because Sports Fest house rules allow a 1-1 split
+match. The form includes a **Strict rule** checkbox that requires a tiebreaker
+winner when the first two sets split; this should be used for playoff-style
+matches or any match where the referee requires one winner. The form does not
+enforce a strict win-by-2 rule, so capped scores such as `25-24` or time-capped
+scores such as `21-18` are allowed. The set-by-set scores are stored in the
+result JSON. Split matches store no winner key; decided matches record the
+winner from sets won.
+
+Racquet sport scoring, scoresheet uploads, and public standings/results display
+are separate event-day slices. Their games remain visible on the dashboard but
+the score form button stays disabled until the matching sport-specific form
+exists.
 
 Coordinators do not need to remember the URL. Any account with
 `sf2025_submit_results` sees a **Sports Fest Score Entry** widget on the normal
