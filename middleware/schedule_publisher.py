@@ -38,7 +38,7 @@ _HASHED_FIELDS = (
     "event", "stage", "pool_id", "round_number",
     "team_a_key", "team_a_label", "team_b_key", "team_b_label",
     "team_c_key", "team_c_label", "team_ids_json",
-    "resource_id", "scheduled_slot",
+    "resource_id", "scheduled_slot", "scheduled_location",
 )
 
 
@@ -52,6 +52,35 @@ def compute_source_hash(merged_game: dict[str, Any]) -> str:
     subset = {field: merged_game.get(field) for field in _HASHED_FIELDS}
     canonical = json.dumps(subset, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _format_resource_label(resource: dict[str, Any]) -> str:
+    """Return a public-friendly resource label from schedule_input metadata."""
+
+    label = str(resource.get("label") or "").strip()
+    if not label:
+        return ""
+
+    label = label.replace("-", " ")
+    resource_type = str(resource.get("resource_type") or "").strip().casefold()
+    if resource_type == "bc station" and label.casefold().startswith("court "):
+        return "Station " + label.split(" ", 1)[1]
+
+    return label
+
+
+def _format_scheduled_location(resource: dict[str, Any]) -> str:
+    """Return a venue/court label suitable for WordPress sf_schedules."""
+
+    if not resource:
+        return ""
+
+    venue_name = str(resource.get("venue_name") or "").strip()
+    resource_label = _format_resource_label(resource)
+
+    if venue_name and resource_label:
+        return f"{venue_name} - {resource_label}"
+    return venue_name or resource_label or str(resource.get("resource_id") or "").strip()
 
 
 def merge_schedule(
@@ -70,6 +99,11 @@ def merge_schedule(
         for game in schedule_input.get("games", [])
         if isinstance(game, dict) and game.get("game_id")
     }
+    resource_meta = {
+        str(resource.get("resource_id")): resource
+        for resource in schedule_input.get("resources", [])
+        if isinstance(resource, dict) and resource.get("resource_id")
+    }
 
     merged: list[dict[str, Any]] = []
     for assignment in schedule_output.get("assignments", []):
@@ -79,6 +113,11 @@ def merge_schedule(
         if not game_id:
             continue
         game = game_meta.get(game_id, {})
+        resource_id = str(assignment.get("resource_id") or "").strip()
+        scheduled_location = (
+            str(assignment.get("scheduled_location") or "").strip()
+            or _format_scheduled_location(resource_meta.get(resource_id, {}))
+        )
 
         merged_game: dict[str, Any] = {
             "game_key": game_id,
@@ -93,8 +132,9 @@ def merge_schedule(
             "team_c_key": game.get("team_c_id"),
             "team_c_label": game.get("team_c_label"),
             "team_ids_json": json.dumps(_game_team_ids({**game, **assignment})),
-            "resource_id": assignment.get("resource_id"),
+            "resource_id": resource_id,
             "scheduled_slot": assignment.get("slot"),
+            "scheduled_location": scheduled_location,
             "game_status": "scheduled",
         }
         merged_game["source_hash"] = compute_source_hash(merged_game)

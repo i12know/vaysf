@@ -248,6 +248,48 @@ def parse_args() -> argparse.Namespace:
     badges_parser.add_argument("--force", action="store_true",
                                help="Re-render even if a current badge file already exists")
 
+    # Generate-scoresheets command (Issue #211)
+    scoresheets_parser = subparsers.add_parser(
+        "generate-scoresheets",
+        help="Generate blank, print-ready paper score-sheet PDFs",
+    )
+    scoresheets_parser.add_argument(
+        "--sport",
+        choices=["basketball"],
+        default="basketball",
+        help="Sport score-sheet type to generate (default: basketball)",
+    )
+    scoresheets_parser.add_argument(
+        "--input",
+        default=None,
+        help="Path to schedule_input JSON (default: EXPORT_DIR/approved_schedule_input.json, else DATA_DIR)",
+    )
+    scoresheets_parser.add_argument(
+        "--schedule-output",
+        default=None,
+        help="Path to schedule_output JSON (default: EXPORT_DIR/approved_schedule_output.json, else DATA_DIR)",
+    )
+    scoresheets_parser.add_argument(
+        "--input-xlsx",
+        default=None,
+        help="Optional Church_Team_Status_ALL workbook for roster names/ages",
+    )
+    scoresheets_parser.add_argument(
+        "--logo",
+        default=None,
+        help="Optional logo image path (default: plugins/vaysf/assets/logo.png)",
+    )
+    scoresheets_parser.add_argument(
+        "--score-entry-url",
+        default=None,
+        help="Optional coordinator score-entry page URL (default: WP_URL/coordinator-score-entry/)",
+    )
+    scoresheets_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output directory for generated PDFs (default: EXPORT_DIR/scoresheets)",
+    )
+
     # Solve-schedule command
     solve_schedule_parser = subparsers.add_parser(
         "solve-schedule",
@@ -2021,6 +2063,66 @@ def main() -> None:
                     dry_run=args.dry_run,
                     force=args.force,
                 )
+    elif args.command == "generate-scoresheets":
+        from schedule_workbook import ScheduleWorkbookBuilder
+        from scoresheets import (
+            ScoreSheetError,
+            enrich_roster_photos_from_workbook,
+            write_basketball_scoresheets_pdf,
+        )
+
+        if args.sport != "basketball":
+            logger.error(f"generate-scoresheets: unsupported sport {args.sport!r}")
+            success = False
+        else:
+            input_path = (
+                Path(args.input)
+                if args.input
+                else _default_schedule_json_path("approved_schedule_input.json")
+            )
+            schedule_output_path = (
+                Path(args.schedule_output)
+                if args.schedule_output
+                else _default_schedule_json_path("approved_schedule_output.json")
+            )
+            output_dir = Path(args.output) if args.output else Path(EXPORT_DIR) / "scoresheets"
+            logo_path = Path(args.logo) if args.logo else None
+            score_entry_base_url = args.score_entry_url
+            context_xlsx = Path(args.input_xlsx) if args.input_xlsx else None
+            if context_xlsx is None:
+                context_xlsx = _find_latest_all_workbook(input_path.parent)
+                if context_xlsx is None and Path(EXPORT_DIR) != input_path.parent:
+                    context_xlsx = _find_latest_all_workbook(Path(EXPORT_DIR))
+
+            roster_rows = []
+            if context_xlsx:
+                logger.info(f"generate-scoresheets: using roster context workbook {context_xlsx}")
+                roster_rows, _validation_rows = ScheduleWorkbookBuilder.read_roster_validation_rows(context_xlsx)
+                roster_rows = enrich_roster_photos_from_workbook(roster_rows, context_xlsx)
+            else:
+                logger.warning(
+                    "generate-scoresheets: no Church_Team_Status_ALL workbook found; "
+                    "basketball roster tables will include blank writable rows."
+                )
+
+            try:
+                pdf_path, page_count = write_basketball_scoresheets_pdf(
+                    schedule_input_path=input_path,
+                    schedule_output_path=schedule_output_path,
+                    output_dir=output_dir,
+                    roster_rows=roster_rows,
+                    logo_path=logo_path,
+                    score_entry_base_url=score_entry_base_url,
+                )
+            except ScoreSheetError as exc:
+                logger.error(f"generate-scoresheets: {exc}")
+                success = False
+            else:
+                logger.info(
+                    f"Basketball score sheets written to: {pdf_path.resolve()} "
+                    f"({page_count} page(s))"
+                )
+                success = True
     elif args.command == "check-consent":
         if not os.path.exists(args.file):
             logger.error(f"Consent export file not found at {args.file}")

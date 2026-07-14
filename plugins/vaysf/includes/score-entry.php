@@ -218,6 +218,46 @@ function vaysf_resolve_schedule_row($schedule) {
 }
 
 /**
+ * Resolve a current published schedule row by stable game_key.
+ *
+ * Printed score-sheet QR codes use game_key rather than schedule_id because
+ * schedule_id is a WordPress database row id and may change after republishing.
+ *
+ * @param string $game_key Stable schedule game key, e.g. BBM-01
+ * @return array<string,mixed>|null Schedule row
+ */
+function vaysf_resolve_schedule_row_by_game_key($game_key) {
+    global $wpdb;
+
+    $game_key = sanitize_text_field($game_key);
+    if ($game_key === '') {
+        return null;
+    }
+
+    $current_version = vaysf_get_current_published_schedule_version();
+    if ($current_version === null) {
+        return null;
+    }
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $row = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT * FROM $table_schedules
+            WHERE game_key = %s
+                AND schedule_version = %d
+                AND published_at IS NOT NULL
+                AND COALESCE(game_status, '') <> 'cancelled'
+            LIMIT 1",
+            $game_key,
+            absint($current_version)
+        ),
+        ARRAY_A
+    );
+
+    return is_array($row) ? $row : null;
+}
+
+/**
  * Check whether a user may submit a result for a schedule row.
  *
  * @param int $user_id WordPress user id
@@ -465,6 +505,349 @@ function vaysf_get_result_for_schedule($schedule_id) {
 }
 
 /**
+ * Maximum accepted score-sheet scan upload size in bytes (32 MB).
+ *
+ * @return int
+ */
+function vaysf_get_scoresheet_max_bytes() {
+    return 33554432;
+}
+
+/**
+ * Read files already attached to a result.
+ *
+ * @param int $result_id Result row id
+ * @return array<int,array<string,mixed>> File rows with revision metadata
+ */
+function vaysf_get_result_files_for_result($result_id) {
+    global $wpdb;
+
+    $result_id = absint($result_id);
+    if (!$result_id) {
+        return array();
+    }
+
+    $table_files = vaysf_get_table_name('result_files');
+    $table_revisions = vaysf_get_table_name('result_revisions');
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT f.*, rr.result_id, rr.revision_number
+            FROM $table_files f
+            INNER JOIN $table_revisions rr ON rr.revision_id = f.result_revision_id
+            WHERE rr.result_id = %d
+            ORDER BY f.uploaded_at DESC, f.file_id DESC",
+            $result_id
+        ),
+        ARRAY_A
+    );
+
+    return is_array($rows) ? $rows : array();
+}
+
+/**
+ * Build a protected download URL for a stored result file.
+ *
+ * @param int $file_id Result file id
+ * @return string URL
+ */
+function vaysf_get_result_file_download_url($file_id) {
+    $file_id = absint($file_id);
+    return wp_nonce_url(
+        admin_url('admin-post.php?action=vaysf_download_result_file&file_id=' . $file_id),
+        'vaysf_download_result_file_' . $file_id
+    );
+}
+
+/**
+ * Build a protected inline view URL for a stored result file.
+ *
+ * @param int $file_id Result file id
+ * @return string URL
+ */
+function vaysf_get_result_file_view_url($file_id) {
+    $file_id = absint($file_id);
+    return wp_nonce_url(
+        admin_url('admin-post.php?action=vaysf_download_result_file&view=1&file_id=' . $file_id),
+        'vaysf_download_result_file_' . $file_id
+    );
+}
+
+/**
+ * Fetch one result file plus its schedule context for authorization/downloads.
+ *
+ * @param int $file_id Result file id
+ * @return array<string,mixed>|null File row
+ */
+function vaysf_get_result_file_with_context($file_id) {
+    global $wpdb;
+
+    $file_id = absint($file_id);
+    if (!$file_id) {
+        return null;
+    }
+
+    $table_files = vaysf_get_table_name('result_files');
+    $table_revisions = vaysf_get_table_name('result_revisions');
+    $table_results = vaysf_get_table_name('results');
+    $table_schedules = vaysf_get_table_name('schedules');
+
+    $row = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT f.*, rr.result_id, rr.revision_number, r.schedule_id, s.*
+            FROM $table_files f
+            INNER JOIN $table_revisions rr ON rr.revision_id = f.result_revision_id
+            INNER JOIN $table_results r ON r.result_id = rr.result_id
+            INNER JOIN $table_schedules s ON s.schedule_id = r.schedule_id
+            WHERE f.file_id = %d",
+            $file_id
+        ),
+        ARRAY_A
+    );
+
+    return is_array($row) ? $row : null;
+}
+
+/**
+ * Check whether a user may download a protected result file.
+ *
+ * @param int $user_id WordPress user id
+ * @param array<string,mixed> $file_row Result file row with schedule fields
+ * @return bool
+ */
+function vaysf_user_can_download_result_file($user_id, $file_row) {
+    $user_id = absint($user_id);
+    if (!$user_id || !is_array($file_row)) {
+        return false;
+    }
+
+    if (user_can($user_id, 'manage_options') || user_can($user_id, 'sf2025_admin') || user_can($user_id, 'sf2025_write')) {
+        return true;
+    }
+
+    return vaysf_user_can_submit_schedule_result($user_id, $file_row);
+}
+
+/**
+ * Validate an uploaded score-sheet scan and return trusted file metadata.
+ *
+ * @param array $file Uploaded file array
+ * @return array<string,string|int>|WP_Error|null Metadata, error, or null when no file was chosen
+ */
+function vaysf_validate_scoresheet_upload($file) {
+    if (empty($file) || !isset($file['tmp_name'])) {
+        return null;
+    }
+
+    if (isset($file['error']) && (int) $file['error'] === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+
+    if (!empty($file['error']) && (int) $file['error'] !== UPLOAD_ERR_OK) {
+        return new WP_Error('vaysf_scoresheet_upload_error', __('The score sheet scan could not be uploaded. Please try again.', 'vaysf'));
+    }
+
+    if (!isset($file['size']) || (int) $file['size'] <= 0 || (int) $file['size'] > vaysf_get_scoresheet_max_bytes()) {
+        return new WP_Error('vaysf_scoresheet_size', __('Score sheet scans must be PDF/JPEG/PNG files no larger than 32 MB.', 'vaysf'));
+    }
+
+    $original_name = isset($file['name']) ? sanitize_file_name($file['name']) : 'score-sheet';
+    $extension = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
+    $allowed = array(
+        'pdf' => 'application/pdf',
+        'jpg' => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'png' => 'image/png',
+    );
+    if (!isset($allowed[$extension])) {
+        return new WP_Error('vaysf_scoresheet_type', __('Score sheet scans must be PDF, JPEG, or PNG files.', 'vaysf'));
+    }
+
+    $signature = is_readable($file['tmp_name']) ? file_get_contents($file['tmp_name'], false, null, 0, 8) : '';
+    $valid_magic = false;
+    if ($extension === 'pdf') {
+        $valid_magic = strpos((string) $signature, '%PDF-') === 0;
+    } elseif ($extension === 'png') {
+        $valid_magic = (string) $signature === "\x89PNG\r\n\x1a\n";
+    } elseif ($extension === 'jpg' || $extension === 'jpeg') {
+        $valid_magic = substr((string) $signature, 0, 3) === "\xff\xd8\xff";
+    }
+
+    if (!$valid_magic) {
+        return new WP_Error('vaysf_scoresheet_magic', __('The score sheet scan does not look like the selected file type.', 'vaysf'));
+    }
+
+    return array(
+        'original_name' => $original_name,
+        'extension' => $extension === 'jpeg' ? 'jpg' : $extension,
+        'mime_type' => $allowed[$extension],
+        'byte_size' => (int) $file['size'],
+    );
+}
+
+/**
+ * Validate, store, and attach an optional score-sheet scan to a result revision.
+ *
+ * @param int $result_id Result id
+ * @param int $revision_id Result revision id
+ * @param int $user_id Uploader user id
+ * @param array $file Uploaded file array
+ * @return array<string,mixed>|WP_Error|null Stored file row, error, or null when no file was chosen
+ */
+function vaysf_store_result_scoresheet_file($result_id, $revision_id, $user_id, $file) {
+    global $wpdb;
+
+    $result_id = absint($result_id);
+    $revision_id = absint($revision_id);
+    $user_id = absint($user_id);
+    if (!$result_id || !$revision_id || !$user_id) {
+        return new WP_Error('vaysf_scoresheet_missing_context', __('Score sheet upload is missing result context.', 'vaysf'));
+    }
+
+    $metadata = vaysf_validate_scoresheet_upload($file);
+    if ($metadata === null || is_wp_error($metadata)) {
+        return $metadata;
+    }
+
+    $table_revisions = vaysf_get_table_name('result_revisions');
+    $revision = $wpdb->get_row(
+        $wpdb->prepare("SELECT * FROM $table_revisions WHERE revision_id = %d AND result_id = %d", $revision_id, $result_id),
+        ARRAY_A
+    );
+    if (!$revision) {
+        return new WP_Error('vaysf_scoresheet_revision_missing', __('Result revision not found for score sheet upload.', 'vaysf'));
+    }
+
+    $table_results = vaysf_get_table_name('results');
+    $result = $wpdb->get_row(
+        $wpdb->prepare("SELECT * FROM $table_results WHERE result_id = %d", $result_id),
+        ARRAY_A
+    );
+    $schedule = $result ? vaysf_resolve_schedule_row($result['schedule_id']) : null;
+    if (!$schedule || !vaysf_user_can_download_result_file($user_id, $schedule)) {
+        return new WP_Error('vaysf_scoresheet_forbidden', __('You are not authorized to attach a score sheet scan for this game.', 'vaysf'));
+    }
+
+    $upload_dir = wp_upload_dir();
+    if (!empty($upload_dir['error'])) {
+        return new WP_Error('vaysf_scoresheet_upload_dir', __('The upload directory is not available. Please try again.', 'vaysf'));
+    }
+
+    $relative_dir = 'vaysf/result-scans/' . current_time('Y/m');
+    $base_dir = trailingslashit($upload_dir['basedir']) . 'vaysf/result-scans';
+    $target_dir = trailingslashit($upload_dir['basedir']) . $relative_dir;
+    if (!file_exists($target_dir)) {
+        wp_mkdir_p($target_dir);
+    }
+    if (!is_dir($target_dir)) {
+        return new WP_Error('vaysf_scoresheet_storage_dir', __('The protected score sheet scan directory could not be created. The score itself was still recorded.', 'vaysf'));
+    }
+    foreach (array($base_dir, $target_dir) as $dir) {
+        $index_file = trailingslashit($dir) . 'index.php';
+        if (!file_exists($index_file)) {
+            file_put_contents($index_file, '<?php // Silence is golden');
+        }
+    }
+    $htaccess = trailingslashit($base_dir) . '.htaccess';
+    if (!file_exists($htaccess)) {
+        file_put_contents($htaccess, "Require all denied\n");
+    }
+
+    $game_key = !empty($schedule['game_key']) ? sanitize_file_name($schedule['game_key']) : 'result-' . $result_id;
+    $filename = sanitize_file_name($game_key . '-rev' . absint($revision['revision_number']) . '-' . wp_generate_password(8, false, false) . '.' . $metadata['extension']);
+    $relative_path = trailingslashit($relative_dir) . $filename;
+    $dest_path = trailingslashit($target_dir) . $filename;
+    $hash = hash_file('sha256', $file['tmp_name']);
+    if (!$hash) {
+        return new WP_Error('vaysf_scoresheet_hash', __('The score sheet scan could not be verified. The score itself was still recorded.', 'vaysf'));
+    }
+
+    if (!is_uploaded_file($file['tmp_name'])) {
+        return new WP_Error('vaysf_scoresheet_source', __('The score sheet scan was not received as a valid upload. The score itself was still recorded.', 'vaysf'));
+    }
+
+    $moved = @move_uploaded_file($file['tmp_name'], $dest_path);
+    if (!$moved) {
+        return new WP_Error('vaysf_scoresheet_storage', __('The score sheet scan could not be saved. The score itself was still recorded.', 'vaysf'));
+    }
+    @chmod($dest_path, 0640);
+
+    $table_files = vaysf_get_table_name('result_files');
+    $inserted = $wpdb->insert(
+        $table_files,
+        array(
+            'result_revision_id' => $revision_id,
+            'file_path' => $relative_path,
+            'original_filename' => $metadata['original_name'],
+            'mime_type' => $metadata['mime_type'],
+            'byte_size' => $metadata['byte_size'],
+            'sha256_hash' => $hash,
+            'uploaded_by_user_id' => $user_id,
+            'uploaded_at' => current_time('mysql'),
+        ),
+        array('%d', '%s', '%s', '%s', '%d', '%s', '%d', '%s')
+    );
+    if ($inserted === false) {
+        @unlink($dest_path);
+        return new WP_Error('vaysf_scoresheet_db', __('The score sheet scan could not be attached to the result. The score itself was still recorded.', 'vaysf'));
+    }
+
+    $wpdb->update(
+        $table_results,
+        array('scan_status' => 'uploaded', 'updated_at' => current_time('mysql')),
+        array('result_id' => $result_id),
+        array('%s', '%s'),
+        array('%d')
+    );
+
+    return array(
+        'file_id' => absint($wpdb->insert_id),
+        'file_path' => $relative_path,
+        'original_filename' => $metadata['original_name'],
+        'mime_type' => $metadata['mime_type'],
+        'byte_size' => $metadata['byte_size'],
+        'sha256_hash' => $hash,
+    );
+}
+
+/**
+ * Serve a protected result file through an authenticated admin-post URL.
+ *
+ * @return void
+ */
+function vaysf_download_result_file() {
+    $file_id = isset($_GET['file_id']) ? absint($_GET['file_id']) : 0;
+    if (!$file_id || !is_user_logged_in()) {
+        wp_die(__('File not found.', 'vaysf'), __('File not found', 'vaysf'), array('response' => 404));
+    }
+
+    if (empty($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'vaysf_download_result_file_' . $file_id)) {
+        wp_die(__('Invalid download link.', 'vaysf'), __('Forbidden', 'vaysf'), array('response' => 403));
+    }
+
+    $file = vaysf_get_result_file_with_context($file_id);
+    if (!$file || !vaysf_user_can_download_result_file(get_current_user_id(), $file)) {
+        wp_die(__('You are not authorized to download this score sheet scan.', 'vaysf'), __('Forbidden', 'vaysf'), array('response' => 403));
+    }
+
+    $upload_dir = wp_upload_dir();
+    $base_dir = realpath(trailingslashit($upload_dir['basedir']) . 'vaysf/result-scans');
+    $path = realpath(trailingslashit($upload_dir['basedir']) . $file['file_path']);
+    $base_prefix = $base_dir ? trailingslashit(wp_normalize_path($base_dir)) : '';
+    $normalized_path = $path ? wp_normalize_path($path) : '';
+    if (!$base_dir || !$path || strpos($normalized_path, $base_prefix) !== 0 || !is_readable($path)) {
+        wp_die(__('File not found.', 'vaysf'), __('File not found', 'vaysf'), array('response' => 404));
+    }
+
+    nocache_headers();
+    header('Content-Type: ' . $file['mime_type']);
+    header('Content-Length: ' . filesize($path));
+    $disposition = !empty($_GET['view']) ? 'inline' : 'attachment';
+    header('Content-Disposition: ' . $disposition . '; filename="' . sanitize_file_name($file['original_filename']) . '"');
+    readfile($path);
+    exit;
+}
+
+/**
  * Build a score-form URL for a schedule row.
  *
  * @param mixed $schedule Schedule id, row array, or row object
@@ -487,6 +870,30 @@ function vaysf_get_simple_score_form_url($schedule, $view = 'assigned', $event_f
 }
 
 /**
+ * Build a stable QR-friendly score-form URL for a schedule row.
+ *
+ * @param mixed $schedule Schedule id, row array, or row object
+ * @param string $view Dashboard return view
+ * @param string $event_filter Optional event filter
+ * @return string URL
+ */
+function vaysf_get_score_form_url_by_game_key($schedule, $view = 'assigned', $event_filter = '') {
+    $schedule_row = vaysf_resolve_schedule_row($schedule);
+    $game_key = $schedule_row && !empty($schedule_row['game_key'])
+        ? sanitize_text_field($schedule_row['game_key'])
+        : '';
+    $url = vaysf_get_coordinator_score_entry_url($view, $event_filter);
+
+    return add_query_arg(
+        array(
+            'action' => 'score',
+            'game_key' => $game_key,
+        ),
+        $url
+    );
+}
+
+/**
  * Persist a score payload to the current result row and append a revision.
  *
  * @param int $user_id WordPress user id
@@ -495,7 +902,7 @@ function vaysf_get_simple_score_form_url($schedule, $view = 'assigned', $event_f
  * @param array<int,string> $winner_keys Winner team keys
  * @param string $notes Optional notes
  * @param string $correction_reason Correction label for repeat submissions
- * @return true|WP_Error True on success
+ * @return array<string,int>|WP_Error Result/revision identifiers on success
  */
 function vaysf_persist_score_result($user_id, $schedule, $score_payload, $winner_keys, $notes = '', $correction_reason = '') {
     global $wpdb;
@@ -582,6 +989,7 @@ function vaysf_persist_score_result($user_id, $schedule, $score_payload, $winner
         $wpdb->query('ROLLBACK');
         return new WP_Error('vaysf_score_revision_failed', __('Could not append the result revision.', 'vaysf'));
     }
+    $revision_id = absint($wpdb->insert_id);
 
     $updated = $wpdb->update(
         $table_results,
@@ -629,7 +1037,11 @@ function vaysf_persist_score_result($user_id, $schedule, $score_payload, $winner
     }
 
     $wpdb->query('COMMIT');
-    return true;
+    return array(
+        'result_id' => $result_id,
+        'revision_id' => $revision_id,
+        'revision_number' => $next_revision,
+    );
 }
 
 /**
@@ -641,7 +1053,7 @@ function vaysf_persist_score_result($user_id, $schedule, $score_payload, $winner
  * @param int $team_b_score Team B score
  * @param bool $certified Whether the submitter certified the score
  * @param string $notes Optional notes
- * @return true|WP_Error True on success
+ * @return array<string,int>|WP_Error Result/revision identifiers on success
  */
 function vaysf_submit_simple_score_result($user_id, $schedule_id, $team_a_score, $team_b_score, $certified, $notes = '') {
     if (!is_int($team_a_score) || !is_int($team_b_score) || $team_a_score < 0 || $team_b_score < 0) {
@@ -703,7 +1115,7 @@ function vaysf_submit_simple_score_result($user_id, $schedule_id, $team_a_score,
  * @param int $team_c_score Team C score
  * @param bool $certified Whether the submitter certified the score
  * @param string $notes Optional notes
- * @return true|WP_Error True on success
+ * @return array<string,int>|WP_Error Result/revision identifiers on success
  */
 function vaysf_submit_three_team_score_result($user_id, $schedule_id, $team_a_score, $team_b_score, $team_c_score, $certified, $notes = '') {
     if (
@@ -787,7 +1199,7 @@ function vaysf_submit_three_team_score_result($user_id, $schedule_id, $team_a_sc
  * @param bool $certified Whether the submitter certified the score
  * @param string $notes Optional notes
  * @param bool $require_tiebreaker_for_split Whether a split must have a winner
- * @return true|WP_Error True on success
+ * @return array<string,int>|WP_Error Result/revision identifiers on success
  */
 function vaysf_submit_volleyball_score_result(
     $user_id,

@@ -421,7 +421,7 @@ class VAYSF_Shortcodes {
         $status = $row['public_status'] !== '' ? $row['public_status'] : $row['game_status'];
         ?>
         <tr data-game-key="<?php echo esc_attr($row['game_key']); ?>">
-            <td class="vaysf-live-time"><?php echo esc_html($this->format_scheduled_time($row['scheduled_time'])); ?></td>
+            <td class="vaysf-live-time"><?php echo esc_html($this->format_scheduled_time($row)); ?></td>
             <td><?php echo esc_html($row['event']); ?><?php if ($row['stage'] !== '') : ?><br><small><?php echo esc_html($row['stage']); ?></small><?php endif; ?></td>
             <td><?php echo esc_html($matchup); ?></td>
             <td><?php echo esc_html($row['scheduled_location']); ?></td>
@@ -442,7 +442,7 @@ class VAYSF_Shortcodes {
             <td><?php echo esc_html($row['event']); ?></td>
             <td><?php echo esc_html($row['stage']); ?></td>
             <td><?php echo esc_html($this->format_matchup_label($row)); ?></td>
-            <td><?php echo esc_html($this->format_scheduled_time($row['scheduled_time'])); ?></td>
+            <td><?php echo esc_html($this->format_scheduled_time($row)); ?></td>
             <td><?php echo esc_html($row['scheduled_location']); ?></td>
         </tr>
         <?php
@@ -471,22 +471,17 @@ class VAYSF_Shortcodes {
     }
 
     /**
-     * Format a MySQL datetime for spectator display in the site's timezone.
+     * Format a schedule row time for spectator display in the site's timezone.
      *
-     * @param string $scheduled_time MySQL datetime string
+     * @param array<string,mixed>|string $row Public schedule row, or a legacy datetime string
      * @return string Formatted time, or a TBD placeholder when absent
      */
-    private function format_scheduled_time($scheduled_time) {
-        if (empty($scheduled_time)) {
-            return __('TBD', 'vaysf');
+    private function format_scheduled_time($row) {
+        if (is_array($row)) {
+            return vaysf_format_schedule_display_time($row['scheduled_time'] ?? '', $row['scheduled_slot'] ?? '', 'D g:i A');
         }
 
-        $timestamp = strtotime($scheduled_time);
-        if (!$timestamp) {
-            return __('TBD', 'vaysf');
-        }
-
-        return date_i18n('D g:i a', $timestamp);
+        return vaysf_format_schedule_display_time($row, '', 'D g:i A');
     }
 
     /**

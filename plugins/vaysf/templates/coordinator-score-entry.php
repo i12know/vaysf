@@ -15,6 +15,7 @@ $vaysf_rendering_shortcode = !empty($GLOBALS['vaysf_rendering_coordinator_score_
 $view = isset($_GET['view']) ? sanitize_key(wp_unslash($_GET['view'])) : 'needs';
 $page_action = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : '';
 $schedule_id = isset($_GET['schedule_id']) ? absint($_GET['schedule_id']) : 0;
+$game_key = isset($_GET['game_key']) ? sanitize_text_field(wp_unslash($_GET['game_key'])) : '';
 $requested_event = isset($_GET['event']) ? sanitize_text_field(wp_unslash($_GET['event'])) : '';
 $notice_message = '';
 $notice_is_error = false;
@@ -25,6 +26,16 @@ $tabs = array(
 );
 if (!isset($tabs[$view])) {
     $view = 'needs';
+}
+
+if (!$schedule_id && $game_key !== '') {
+    $game_key_schedule = vaysf_resolve_schedule_row_by_game_key($game_key);
+    if ($game_key_schedule && !empty($game_key_schedule['schedule_id'])) {
+        $schedule_id = absint($game_key_schedule['schedule_id']);
+        if ($requested_event === '' && !empty($game_key_schedule['event'])) {
+            $requested_event = sanitize_text_field($game_key_schedule['event']);
+        }
+    }
 }
 
 if (
@@ -133,10 +144,24 @@ if (
             $notice_message = $submit_result->get_error_message();
             $notice_is_error = true;
         } else {
+            $redirect_args = array('score_submitted' => '1');
+            if (
+                !empty($_FILES['scoresheet_file'])
+                && isset($_FILES['scoresheet_file']['error'])
+                && (int) $_FILES['scoresheet_file']['error'] !== UPLOAD_ERR_NO_FILE
+            ) {
+                $stored_scan = vaysf_store_result_scoresheet_file(
+                    isset($submit_result['result_id']) ? absint($submit_result['result_id']) : 0,
+                    isset($submit_result['revision_id']) ? absint($submit_result['revision_id']) : 0,
+                    get_current_user_id(),
+                    $_FILES['scoresheet_file']
+                );
+                $redirect_args['scan_upload'] = is_wp_error($stored_scan) ? 'failed' : 'uploaded';
+            }
+
             wp_safe_redirect(
                 add_query_arg(
-                    'score_submitted',
-                    '1',
+                    $redirect_args,
                     vaysf_get_coordinator_score_entry_url('submitted', $posted_event)
                 )
             );
@@ -152,9 +177,17 @@ if (
 
 if (isset($_GET['score_submitted']) && $_GET['score_submitted'] === '1') {
     $notice_message = __('Score submitted and revision saved.', 'vaysf');
+    if (isset($_GET['scan_upload']) && $_GET['scan_upload'] === 'uploaded') {
+        $notice_message = __('Score submitted and score sheet scan saved.', 'vaysf');
+    } elseif (isset($_GET['scan_upload']) && $_GET['scan_upload'] === 'failed') {
+        $notice_message = __('Score submitted, but the score sheet scan could not be saved. You can edit the game and upload it later.', 'vaysf');
+    }
 }
 
 $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
+$score_entry_return_url = isset($_SERVER['REQUEST_URI'])
+    ? esc_url_raw(home_url(wp_unslash($_SERVER['REQUEST_URI'])))
+    : vaysf_get_coordinator_score_entry_url('assigned');
 
 if (!$vaysf_rendering_shortcode) {
     get_header();
@@ -330,6 +363,15 @@ if (!$vaysf_rendering_shortcode) {
             font-size: 0.9rem;
             margin: 8px 0 0;
         }
+        .vaysf-score-entry-file-list {
+            background: #f6f7f7;
+            border: 1px solid #dcdcde;
+            margin: 14px 0;
+            padding: 12px;
+        }
+        .vaysf-score-entry-file-list ul {
+            margin: 8px 0 0 18px;
+        }
         .vaysf-score-entry-form textarea {
             min-height: 96px;
         }
@@ -386,7 +428,7 @@ if (!$vaysf_rendering_shortcode) {
         <div class="vaysf-score-entry-notice">
             <p><?php esc_html_e('Please log in with your coordinator account to view assigned games.', 'vaysf'); ?></p>
             <p>
-                <a href="<?php echo esc_url(wp_login_url(vaysf_get_coordinator_score_entry_url('assigned'))); ?>">
+                <a href="<?php echo esc_url(wp_login_url($score_entry_return_url)); ?>">
                     <?php esc_html_e('Log in', 'vaysf'); ?>
                 </a>
             </p>
@@ -423,6 +465,7 @@ if (!$vaysf_rendering_shortcode) {
                 <?php
                 $score_schedule = vaysf_resolve_schedule_row($schedule_id);
                 $score_result = vaysf_get_result_for_schedule($schedule_id);
+                $score_files = $score_result ? vaysf_get_result_files_for_result($score_result['result_id']) : array();
                 $score_payload = array();
                 if ($score_result && !empty($score_result['score_json'])) {
                     $decoded_score = json_decode($score_result['score_json'], true);
@@ -479,13 +522,21 @@ if (!$vaysf_rendering_shortcode) {
                     if ($score_form_type === 'volleyball' && array_key_exists('strict_match_winner_required', $score_payload)) {
                         $volleyball_strict_checked = !empty($score_payload['strict_match_winner_required']);
                     }
+                    $score_schedule_time = vaysf_format_schedule_display_time($score_schedule['scheduled_time'] ?? '', $score_schedule['scheduled_slot'] ?? '', 'D M j, g:i A');
+                    if ($score_schedule_time === __('TBD', 'vaysf')) {
+                        $score_schedule_time = esc_html__('Time TBD', 'vaysf');
+                    }
+                    $score_location_parts = array_filter(array($score_schedule['scheduled_location'] ?? '', $score_schedule['resource_id'] ?? '', $score_schedule['scheduled_slot'] ?? ''));
+                    $score_location_text = $score_location_parts ? implode(' / ', $score_location_parts) : esc_html__('Location TBD', 'vaysf');
                     ?>
                     <div class="vaysf-score-entry-form">
                         <h2><?php echo esc_html($score_schedule['game_key']); ?></h2>
                         <p class="vaysf-score-entry-meta"><?php echo esc_html($score_schedule['event']); ?></p>
                         <p class="vaysf-score-entry-teams"><?php echo esc_html(vaysf_format_schedule_teams($score_schedule)); ?></p>
+                        <p class="vaysf-score-entry-meta"><?php echo esc_html($score_schedule_time); ?></p>
+                        <p class="vaysf-score-entry-meta"><?php echo esc_html($score_location_text); ?></p>
 
-                        <form method="post" action="<?php echo esc_url(vaysf_get_simple_score_form_url($score_schedule, $view, $selected_event)); ?>">
+                        <form method="post" enctype="multipart/form-data" action="<?php echo esc_url(vaysf_get_simple_score_form_url($score_schedule, $view, $selected_event)); ?>">
                             <?php wp_nonce_field('vaysf_submit_simple_score_' . absint($score_schedule['schedule_id'])); ?>
                             <input type="hidden" name="vaysf_score_entry_action" value="submit_simple_score">
                             <input type="hidden" name="schedule_id" value="<?php echo esc_attr($score_schedule['schedule_id']); ?>">
@@ -548,6 +599,37 @@ if (!$vaysf_rendering_shortcode) {
                                     <?php endif; ?>
                                 </div>
                             <?php endif; ?>
+
+                            <?php if ($score_files) : ?>
+                                <div class="vaysf-score-entry-file-list">
+                                    <strong><?php esc_html_e('Uploaded score sheet scans', 'vaysf'); ?></strong>
+                                    <ul>
+                                        <?php foreach ($score_files as $score_file) : ?>
+                                            <li>
+                                                <?php echo esc_html($score_file['original_filename']); ?>
+                                                <small>
+                                                    <?php
+                                                    printf(
+                                                        esc_html__('Revision %1$d, %2$s', 'vaysf'),
+                                                        absint($score_file['revision_number']),
+                                                        esc_html(size_format(absint($score_file['byte_size'])))
+                                                    );
+                                                    ?>
+                                                </small>
+                                                <a href="<?php echo esc_url(vaysf_get_result_file_view_url($score_file['file_id'])); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e('View', 'vaysf'); ?></a>
+                                                |
+                                                <a href="<?php echo esc_url(vaysf_get_result_file_download_url($score_file['file_id'])); ?>"><?php esc_html_e('Download', 'vaysf'); ?></a>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                </div>
+                            <?php endif; ?>
+
+                            <label for="vaysf-score-sheet-file"><?php esc_html_e('Score sheet scan', 'vaysf'); ?></label>
+                            <input id="vaysf-score-sheet-file" name="scoresheet_file" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png">
+                            <p class="vaysf-score-entry-help">
+                                <?php esc_html_e('Optional. Upload a PDF, JPEG, or PNG score sheet scan up to 32 MB. If upload fails, the score will still be saved and the scan can be attached later.', 'vaysf'); ?>
+                            </p>
 
                             <label for="vaysf-score-notes"><?php esc_html_e('Notes', 'vaysf'); ?></label>
                             <textarea id="vaysf-score-notes" name="notes"><?php echo esc_textarea($score_result['notes'] ?? ''); ?></textarea>
@@ -630,9 +712,10 @@ if (!$vaysf_rendering_shortcode) {
             <?php else : ?>
                 <?php foreach ($rows as $row) : ?>
                     <?php
-                    $scheduled_time = !empty($row['scheduled_time'])
-                        ? date_i18n('D M j, g:i A', strtotime($row['scheduled_time']))
-                        : esc_html__('Time TBD', 'vaysf');
+                    $scheduled_time = vaysf_format_schedule_display_time($row['scheduled_time'] ?? '', $row['scheduled_slot'] ?? '', 'D M j, g:i A');
+                    if ($scheduled_time === __('TBD', 'vaysf')) {
+                        $scheduled_time = esc_html__('Time TBD', 'vaysf');
+                    }
                     $location_parts = array_filter(array($row['scheduled_location'] ?? '', $row['resource_id'] ?? '', $row['scheduled_slot'] ?? ''));
                     $location_text = $location_parts ? implode(' / ', $location_parts) : esc_html__('Location TBD', 'vaysf');
                     $teams_text = vaysf_format_schedule_teams($row);
@@ -661,7 +744,7 @@ if (!$vaysf_rendering_shortcode) {
                         <?php if (vaysf_is_supported_score_schedule($row)) : ?>
                             <a
                                 class="vaysf-score-entry-button vaysf-score-entry-action"
-                                href="<?php echo esc_url(vaysf_get_simple_score_form_url($row, $view, $selected_event)); ?>"
+                                href="<?php echo esc_url(vaysf_get_score_form_url_by_game_key($row, $view, $selected_event)); ?>"
                             >
                                 <?php echo $has_result ? esc_html__('Edit Score', 'vaysf') : esc_html__('Enter Score', 'vaysf'); ?>
                             </a>

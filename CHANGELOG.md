@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+### Public schedule location labels and score-sheet polish
+
+- Joined schedule assignments to `schedule_input.json` resource metadata during
+  publish so WordPress schedule rows receive friendly `scheduled_location`
+  labels such as `EHS Main Gym - Court 1` and `EHS Library - Station 1`.
+- Kept the public schedule from rendering a blank Location cell by falling back
+  to `resource_id` when older published rows do not yet have a friendly
+  `scheduled_location`.
+- Bumped the WordPress plugin to `1.0.30` and rebuilt `plugins/vaysf.zip`.
+
+### Basketball score-sheet generator - closes [#211](https://github.com/i12know/vaysf/issues/211)
+
+- Added `python main.py generate-scoresheets --sport basketball` to create a
+  combined print-ready PDF from the approved schedule artifacts.
+- Rendered the committed VAY Sports Ministry logo from
+  `plugins/vaysf/assets/logo.png` in the upper-left corner of every generated
+  basketball score-sheet page.
+- Included game ID, schedule/court, final score boxes, referee blanks, opening
+  prayer verse, comments/signature lines, and a QR code on each sheet that opens
+  the coordinator score-entry page by stable `game_key`.
+- Rendered basketball roster tables with up to 15 athletes per team, including
+  profile photos from the roster workbook's Excel `IMAGE()` formulas, names,
+  ages, writable jersey-number blanks, and five foul-tracking bubbles.
+- Enlarged basketball roster rows, photo boxes, and player-name text after the
+  first 1.0.29 print review while keeping the one-page, 15-player-per-team
+  layout.
+- Fixed roster photo recovery when Excel cached `IMAGE()` cells as blank/NaN,
+  accepted Excel's `_xludf.IMAGE()` formula shape, and removed the heavy
+  separator above referee comments to give the printed roster more room.
+- Added WordPress score-entry support for `?action=score&game_key=...` links so
+  printed QR codes do not depend on unstable database `schedule_id` values.
+- Formatted published schedule slot ids such as `Sat-1-16:00` as visible match
+  times on the public schedule and coordinator score-entry pages when
+  `scheduled_time` is blank.
+- Bumped the WordPress plugin to `1.0.29` and rebuilt `plugins/vaysf.zip`
+  together with the protected score-sheet scan upload work.
+
+### Protected score-sheet scan uploads - closes [#205](https://github.com/i12know/vaysf/issues/205)
+
+- Added optional score-sheet scan upload to the coordinator score-entry form.
+  Accepted files are PDF, JPEG, and PNG up to 32 MB.
+- Stored score-sheet scans under the protected `uploads/vaysf/result-scans/`
+  path, recorded SHA-256 hash, MIME type, byte size, original filename,
+  uploader, and revision linkage in `sf_result_files`, and marked the result
+  `scan_status` as `uploaded` when a scan is attached.
+- Kept score submission independent from scan upload: if a scan upload fails,
+  the score/revision still saves and the scan can be attached later by editing
+  the same match.
+- Added protected View/Download links for uploaded scans on the coordinator
+  score form and admin result revision screen. WordPress Administrators, Sports
+  Fest Admins, and Sports Fest Managers can view all scans; ordinary
+  coordinators can view scans only for schedule rows they are authorized to
+  submit.
+- Bumped plugin header/version to `1.0.29`; database version remains `1.0.6`
+  because #203 already created the `sf_result_files` table.
+
 ### Public live schedule and advancement display - closes [#206](https://github.com/i12know/vaysf/issues/206)
 
 - Added `includes/public-display.php` with helpers to fetch the currently
