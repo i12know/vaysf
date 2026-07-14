@@ -6,13 +6,19 @@ from scoresheets import (
     BASKETBALL_EVENT,
     LOGO_BOX,
     MAX_ROSTER_ROWS,
+    MAX_VOLLEYBALL_ROSTER_ROWS,
+    VOLLEYBALL_MEN_EVENT,
+    VOLLEYBALL_WOMEN_EVENT,
     _extract_photo_ref,
     _friendly_location,
     build_roster_index,
+    build_volleyball_roster_index,
     enrich_roster_photos_from_workbook,
     render_basketball_scoresheet_page,
+    render_volleyball_scoresheet_page,
     score_entry_url_for_game,
     write_basketball_scoresheets_pdf,
+    write_volleyball_scoresheets_pdf,
 )
 
 SCORE_ENTRY_URL = "https://sportsfest.example.test/coordinator-score-entry/"
@@ -36,7 +42,7 @@ def _schedule_input():
             },
             {
                 "game_id": "VBM-01",
-                "event": "Volleyball - Men Team",
+                "event": VOLLEYBALL_MEN_EVENT,
                 "stage": "Pool",
                 "pool_id": "A",
                 "round": 1,
@@ -44,6 +50,19 @@ def _schedule_input():
                 "team_a_label": "RPC",
                 "team_b_id": "VBM::GAC",
                 "team_b_label": "GAC",
+                "duration_minutes": 60,
+                "resource_type": "Volleyball Court",
+            },
+            {
+                "game_id": "VBW-01",
+                "event": VOLLEYBALL_WOMEN_EVENT,
+                "stage": "Pool",
+                "pool_id": "A",
+                "round": 1,
+                "team_a_id": "VBW::SDC",
+                "team_a_label": "SDC",
+                "team_b_id": "VBW::GLA",
+                "team_b_label": "GLA",
                 "duration_minutes": 60,
                 "resource_type": "Volleyball Court",
             },
@@ -58,6 +77,7 @@ def _schedule_output():
         "assignments": [
             {"game_id": "BBM-01", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-16:00"},
             {"game_id": "VBM-01", "resource_id": "GYM-Sat-1-2", "slot": "Sat-1-17:00"},
+            {"game_id": "VBW-01", "resource_id": "GYM-Sat-1-3", "slot": "Sat-1-18:00"},
         ],
         "unscheduled": [],
     }
@@ -98,6 +118,34 @@ def test_build_roster_index_accepts_exported_basketball_triplet():
     indexed = build_roster_index(rows)
 
     assert [row["First Name"] for row in indexed["RPC"]] == ["An"]
+
+
+def test_build_volleyball_roster_index_keeps_men_and_women_separate():
+    rows = [
+        {
+            "Church Team": "RPC",
+            "First Name": "An",
+            "Last Name": "Nguyen",
+            "Age (at Event)": 17,
+            "sport_type": "Volleyball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+        },
+        {
+            "Church Team": "RPC",
+            "First Name": "Bao",
+            "Last Name": "Tran",
+            "Age (at Event)": 18,
+            "sport_type": "Volleyball",
+            "sport_gender": "Women",
+            "sport_format": "Team",
+        },
+    ]
+
+    indexed = build_volleyball_roster_index(rows)
+
+    assert [row["First Name"] for row in indexed[VOLLEYBALL_MEN_EVENT]["RPC"]] == ["An"]
+    assert [row["First Name"] for row in indexed[VOLLEYBALL_WOMEN_EVENT]["RPC"]] == ["Bao"]
 
 
 def test_render_basketball_scoresheet_places_logo_upper_left(tmp_path):
@@ -142,8 +190,50 @@ def test_render_basketball_scoresheet_places_logo_upper_left(tmp_path):
     assert page.getpixel((124, 570)) == (30, 120, 220)
 
 
+def test_render_volleyball_scoresheet_places_logo_and_roster_photo(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    photo = tmp_path / "player.png"
+    _photo(photo, color=(40, 200, 90, 255))
+    roster_index = build_volleyball_roster_index(
+        [
+            {
+                "Church Team": "RPC",
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "Age (at Event)": 17,
+                "Photo": str(photo),
+                "sport_type": "Volleyball",
+                "sport_gender": "Men",
+                "sport_format": "Team",
+            }
+        ]
+    )
+
+    page = render_volleyball_scoresheet_page(
+        {
+            "game_key": "VBM-01",
+            "event": VOLLEYBALL_MEN_EVENT,
+            "team_a_label": "RPC",
+            "team_b_label": "GAC",
+            "resource_id": "GYM-Sat-1-2",
+            "scheduled_slot": "Sat-1-17:00",
+        },
+        roster_index=roster_index,
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+    )
+
+    assert page.getpixel((LOGO_BOX[0] + 20, LOGO_BOX[1] + 20)) == (220, 20, 30)
+    assert page.getpixel((111, 804)) == (40, 200, 90)
+
+
 def test_basketball_roster_table_capacity_is_15():
     assert MAX_ROSTER_ROWS == 15
+
+
+def test_volleyball_roster_table_capacity_is_18():
+    assert MAX_VOLLEYBALL_ROSTER_ROWS == 18
 
 
 def test_friendly_location_formats_basketball_gym_resource_ids():
@@ -222,5 +312,36 @@ def test_write_basketball_scoresheets_pdf_filters_to_basketball(tmp_path):
     )
 
     assert page_count == 1
+    assert pdf_path.exists()
+    assert pdf_path.read_bytes().startswith(b"%PDF")
+
+
+def test_write_volleyball_scoresheets_pdf_filters_to_volleyball(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    input_path = tmp_path / "approved_schedule_input.json"
+    output_path = tmp_path / "approved_schedule_output.json"
+    input_path.write_text(json.dumps(_schedule_input()), encoding="utf-8")
+    output_path.write_text(json.dumps(_schedule_output()), encoding="utf-8")
+
+    pdf_path, page_count = write_volleyball_scoresheets_pdf(
+        input_path,
+        output_path,
+        tmp_path / "scoresheets",
+        roster_rows=[
+            {
+                "Church Team": "RPC",
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "Age (at Event)": 17,
+                "sport_type": VOLLEYBALL_MEN_EVENT,
+            }
+        ],
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+        output_filename="volleyball.pdf",
+    )
+
+    assert page_count == 2
     assert pdf_path.exists()
     assert pdf_path.read_bytes().startswith(b"%PDF")

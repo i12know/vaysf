@@ -248,14 +248,14 @@ def parse_args() -> argparse.Namespace:
     badges_parser.add_argument("--force", action="store_true",
                                help="Re-render even if a current badge file already exists")
 
-    # Generate-scoresheets command (Issue #211)
+    # Generate-scoresheets command (Issues #211, #250)
     scoresheets_parser = subparsers.add_parser(
         "generate-scoresheets",
         help="Generate blank, print-ready paper score-sheet PDFs",
     )
     scoresheets_parser.add_argument(
         "--sport",
-        choices=["basketball"],
+        choices=["basketball", "volleyball"],
         default="basketball",
         help="Sport score-sheet type to generate (default: basketball)",
     )
@@ -2069,9 +2069,15 @@ def main() -> None:
             ScoreSheetError,
             enrich_roster_photos_from_workbook,
             write_basketball_scoresheets_pdf,
+            write_volleyball_scoresheets_pdf,
         )
 
-        if args.sport != "basketball":
+        writer_by_sport = {
+            "basketball": write_basketball_scoresheets_pdf,
+            "volleyball": write_volleyball_scoresheets_pdf,
+        }
+        writer = writer_by_sport.get(args.sport)
+        if writer is None:
             logger.error(f"generate-scoresheets: unsupported sport {args.sport!r}")
             success = False
         else:
@@ -2102,11 +2108,11 @@ def main() -> None:
             else:
                 logger.warning(
                     "generate-scoresheets: no Church_Team_Status_ALL workbook found; "
-                    "basketball roster tables will include blank writable rows."
+                    f"{args.sport} roster tables will include blank writable rows."
                 )
 
             try:
-                pdf_path, page_count = write_basketball_scoresheets_pdf(
+                pdf_path, page_count = writer(
                     schedule_input_path=input_path,
                     schedule_output_path=schedule_output_path,
                     output_dir=output_dir,
@@ -2119,7 +2125,7 @@ def main() -> None:
                 success = False
             else:
                 logger.info(
-                    f"Basketball score sheets written to: {pdf_path.resolve()} "
+                    f"{args.sport.title()} score sheets written to: {pdf_path.resolve()} "
                     f"({page_count} page(s))"
                 )
                 success = True

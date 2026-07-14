@@ -10,6 +10,10 @@
 - Kept the public schedule from rendering a blank Location cell by falling back
   to `resource_id` when older published rows do not yet have a friendly
   `scheduled_location`.
+- Added `python main.py generate-scoresheets --sport volleyball` to create
+  print-ready MVB/WVB score sheets with QR links, set-score tracker rows,
+  referee/comment/signature blanks, and compact 20-player roster blocks with
+  photo/name/age when a roster workbook is supplied.
 - Bumped the WordPress plugin to `1.0.30` and rebuilt `plugins/vaysf.zip`.
 
 ### Basketball score-sheet generator - closes [#211](https://github.com/i12know/vaysf/issues/211)

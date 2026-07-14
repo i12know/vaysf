@@ -318,6 +318,22 @@ def test_parse_args_generate_scoresheets_basketball(monkeypatch):
     assert args.output == "scoresheets"
 
 
+def test_parse_args_generate_scoresheets_volleyball(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "generate-scoresheets",
+            "--sport",
+            "volleyball",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "generate-scoresheets"
+    assert args.sport == "volleyball"
+
+
 def test_parse_args_publish_schedule_requires_mode(monkeypatch, capsys):
     monkeypatch.setattr(main.sys, "argv", ["main.py", "publish-schedule"])
     with pytest.raises(SystemExit) as exc:
