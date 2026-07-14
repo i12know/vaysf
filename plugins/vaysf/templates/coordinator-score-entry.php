@@ -426,20 +426,6 @@ if (!$vaysf_rendering_shortcode) {
                     </div>
                 <?php endif; ?>
             <?php else : ?>
-            <div class="vaysf-score-entry-tabs" role="tablist" aria-label="<?php echo esc_attr__('Score entry views', 'vaysf'); ?>">
-                <?php foreach ($tabs as $tab_key => $tab_label) : ?>
-                    <a
-                        href="<?php echo esc_url(vaysf_get_coordinator_score_entry_url($tab_key, $selected_event)); ?>"
-                        class="<?php echo $view === $tab_key ? 'is-active' : ''; ?>"
-                        role="tab"
-                        aria-selected="<?php echo $view === $tab_key ? 'true' : 'false'; ?>"
-                    >
-                        <?php echo esc_html($tab_label); ?>
-                        (<?php echo esc_html(count($row_sets[$tab_key])); ?>)
-                    </a>
-                <?php endforeach; ?>
-            </div>
-
             <form class="vaysf-score-entry-filter" method="get">
                 <input type="hidden" name="view" value="<?php echo esc_attr($view); ?>">
                 <div>
@@ -459,6 +445,20 @@ if (!$vaysf_rendering_shortcode) {
                     <button type="submit"><?php esc_html_e('Filter', 'vaysf'); ?></button>
                 </noscript>
             </form>
+
+            <div class="vaysf-score-entry-tabs" role="tablist" aria-label="<?php echo esc_attr__('Score entry views', 'vaysf'); ?>">
+                <?php foreach ($tabs as $tab_key => $tab_label) : ?>
+                    <a
+                        href="<?php echo esc_url(vaysf_get_coordinator_score_entry_url($tab_key, $selected_event)); ?>"
+                        class="<?php echo $view === $tab_key ? 'is-active' : ''; ?>"
+                        role="tab"
+                        aria-selected="<?php echo $view === $tab_key ? 'true' : 'false'; ?>"
+                    >
+                        <?php echo esc_html($tab_label); ?>
+                        (<?php echo esc_html(count($row_sets[$tab_key])); ?>)
+                    </a>
+                <?php endforeach; ?>
+            </div>
 
             <p class="vaysf-score-entry-event-list">
                 <?php

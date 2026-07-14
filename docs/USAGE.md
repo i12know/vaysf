@@ -950,12 +950,14 @@ Managers**, **Submitted Today** shows all submitted/corrected results today
 across the events visible to that account. For ordinary coordinators, it remains
 limited to the results submitted by that coordinator account.
 
-Use the **Event filter** dropdown below the tabs to show all assigned events or
-one assigned event at a time. This is especially useful for manager/admin
-accounts. WordPress Administrators, **Sports Fest Admins**, and **Sports Fest
-Managers** automatically have all published events available in this dashboard;
-ordinary coordinators are limited to their `vaysf_authorized_events` assignments.
-The dropdown submits immediately when the selection changes.
+Use the **Event filter** dropdown above the tabs to show all assigned events or
+one assigned event at a time. The filter governs the counts shown inside
+**Needs Results**, **Submitted Today**, and **Assigned Games**. This is
+especially useful for manager/admin accounts. WordPress Administrators,
+**Sports Fest Admins**, and **Sports Fest Managers** automatically have all
+published events available in this dashboard; ordinary coordinators are limited
+to their `vaysf_authorized_events` assignments. The dropdown submits immediately
+when the selection changes.
 
 For simple two-team Basketball/Soccer-style games, coordinators can click
 **Enter Score**, enter both team scores, certify the score, and submit. The

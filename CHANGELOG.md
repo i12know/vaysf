@@ -20,7 +20,10 @@
   WordPress Administrators, Sports Fest Admins, and Sports Fest Managers, and
   forced the wp-admin score-entry dashboard widget visible for result-entry
   users so existing dashboard preferences do not hide it.
-- Bumped plugin header/version to `1.0.24`; database version remains `1.0.6`
+- Moved the event filter above the dashboard tabs so the selected event governs
+  the counts shown in **Needs Results**, **Submitted Today**, and **Assigned
+  Games**.
+- Bumped plugin header/version to `1.0.25`; database version remains `1.0.6`
   because #241 writes to the existing event-day results tables.
 
 ### Coordinator score entry dashboard - closes [#239](https://github.com/i12know/vaysf/issues/239)
