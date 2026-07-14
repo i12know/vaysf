@@ -981,7 +981,7 @@ scores such as `21-18` are allowed. The set-by-set scores are stored in the
 result JSON. Split matches store no winner key; decided matches record the
 winner from sets won.
 
-Racquet sport scoring, scoresheet uploads, and public standings/results display
+Racquet sport scoring, scoresheet uploads, and standings/advancement calculation
 are separate event-day slices. Their games remain visible on the dashboard but
 the score form button stays disabled until the matching sport-specific form
 exists.
@@ -990,6 +990,45 @@ Coordinators do not need to remember the URL. Any account with
 `sf2025_submit_results` sees a **Sports Fest Score Entry** widget on the normal
 WordPress Dashboard with an **Open Score Entry Dashboard** button. The same link
 also appears on that user's WordPress Profile page.
+
+### Public Live Schedule and Advancement Display
+
+Two shortcodes show spectator-facing, read-only event-day information on any
+public page — no login required:
+
+```text
+[vaysf_live_schedule event="Basketball" day="2026-07-18" venue="Small Gym" refresh="25"]
+[vaysf_advancement event="Basketball" refresh="60"]
+```
+
+All attributes are optional. `refresh` is the auto-poll interval in seconds;
+set it to `0` to disable auto-refresh and render a static table.
+
+`[vaysf_live_schedule]` shows the currently published, non-cancelled schedule
+in time order with the current status (`Scheduled`, `Reported`, `Official`, or
+`Under Review`) and, once a coordinator has submitted a result, the score.
+Scores never appear before a result exists. A GET-based filter form (sport,
+day, venue) sits above the table and works without JavaScript; a small polling
+script refreshes the status/score cells in place for spectators who leave the
+page open.
+
+`[vaysf_advancement]` shows confirmed Semifinal/Final matchups: a game appears
+here once an admin has filled in at least one team slot on that Semifinal/Final
+schedule row after deciding the pool-play qualifiers (see
+`docs/EVENT_DAY_RESULTS_WORKFLOW_RFC.md` §6.3). There is no separate
+advancement-confirmation step beyond editing that schedule row.
+
+Both shortcodes are backed by public, unauthenticated REST endpoints
+(`GET /wp-json/vaysf/v1/public/schedule` and `GET /wp-json/vaysf/v1/public/advancement`,
+matching the existing public insurance-link pattern) that exclude scoresheet
+file paths, coordinator/submitter identities, internal notes, and revision
+history.
+
+**Not included yet:** a `[vaysf_standings]` shortcode and the RFC's
+discrepancy-averaging display. Standings need per-sport rules configuration
+that does not exist yet; discrepancy detection needs the submission flow to
+distinguish an independent second report from an ordinary correction, which it
+does not do today. Both are follow-up work.
 
 ### Managing Churches
 
