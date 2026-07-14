@@ -189,7 +189,11 @@ function vaysf_get_public_schedule_rows($filters = array()) {
     $table_schedules = vaysf_get_table_name('schedules');
     $table_results = vaysf_get_table_name('results');
 
-    $where = array('s.schedule_version = %d', "COALESCE(s.game_status, '') <> 'cancelled'");
+    $where = array(
+        's.schedule_version = %d',
+        's.published_at IS NOT NULL',
+        "COALESCE(s.game_status, '') <> 'cancelled'",
+    );
     $args = array($schedule_version);
 
     $event = isset($filters['event']) ? vaysf_sanitize_public_filter($filters['event']) : '';
@@ -255,6 +259,7 @@ function vaysf_get_public_advancement_rows($filters = array()) {
 
     $where = array(
         'schedule_version = %d',
+        'published_at IS NOT NULL',
         "COALESCE(game_status, '') <> 'cancelled'",
         "stage IN ('Semifinal', 'Final')",
         "(COALESCE(team_a_key, '') <> '' OR COALESCE(team_b_key, '') <> '' OR COALESCE(team_c_key, '') <> '')",
