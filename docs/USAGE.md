@@ -945,6 +945,11 @@ The dashboard has three views:
   this user today.
 - **Assigned Games**: all currently published games assigned to this coordinator.
 
+For WordPress Administrators, **Sports Fest Admins**, and **Sports Fest
+Managers**, **Submitted Today** shows all submitted/corrected results today
+across the events visible to that account. For ordinary coordinators, it remains
+limited to the results submitted by that coordinator account.
+
 Use the **Event filter** dropdown below the tabs to show all assigned events or
 one assigned event at a time. This is especially useful for manager/admin
 accounts. WordPress Administrators, **Sports Fest Admins**, and **Sports Fest
@@ -959,10 +964,14 @@ plugin writes the current row to `sf_results`, appends a history row to
 opened again, the button changes to **Edit Score** and the next save appends a
 new revision without deleting the previous one.
 
-Volleyball set scoring, Bible Challenge three-team scoring, racquet sport
-scoring, scoresheet uploads, and public standings/results display are separate
-event-day slices. Their games remain visible on the dashboard but the score form
-button stays disabled until the matching sport-specific form exists.
+Bible Challenge games use the same page with three score boxes, one for each
+team in the scheduled match. The highest score is recorded as the winner; tied
+highest scores preserve multiple winner keys for later review.
+
+Volleyball set scoring, racquet sport scoring, scoresheet uploads, and public
+standings/results display are separate event-day slices. Their games remain
+visible on the dashboard but the score form button stays disabled until the
+matching sport-specific form exists.
 
 Coordinators do not need to remember the URL. Any account with
 `sf2025_submit_results` sees a **Sports Fest Score Entry** widget on the normal

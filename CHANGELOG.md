@@ -4,18 +4,23 @@
 
 ### Simple coordinator score entry form - closes [#241](https://github.com/i12know/vaysf/issues/241)
 
-- Added a coordinator-facing score form for simple two-team Basketball/Soccer
-  style games from `/coordinator-score-entry/`.
+- Added coordinator-facing score forms for simple two-team Basketball/Soccer
+  style games and three-team Bible Challenge games from
+  `/coordinator-score-entry/`.
 - Replaced eligible dashboard placeholders with **Enter Score** / **Edit
-  Score** links while keeping Volleyball, Bible Challenge, and racquet sport
-  games disabled until their sport-specific forms are implemented.
+  Score** links while keeping Volleyball and racquet sport games disabled until
+  their sport-specific forms are implemented.
 - Enforced login, `sf2025_submit_results`, nonce validation, current published
-  schedule version, non-cancelled schedule rows, simple-score event support, and
+  schedule version, non-cancelled schedule rows, score-form event support, and
   coordinator event authorization before accepting a score.
 - Persisted submissions to `sf_results`, appended every submission/correction to
   `sf_result_revisions`, marked the schedule row `reported`, and captured the
   submitter, timestamp, certification, optional notes, and source metadata.
-- Bumped plugin header/version to `1.0.23`; database version remains `1.0.6`
+- Made **Submitted Today** personal for ordinary coordinators but global for
+  WordPress Administrators, Sports Fest Admins, and Sports Fest Managers, and
+  forced the wp-admin score-entry dashboard widget visible for result-entry
+  users so existing dashboard preferences do not hide it.
+- Bumped plugin header/version to `1.0.24`; database version remains `1.0.6`
   because #241 writes to the existing event-day results tables.
 
 ### Coordinator score entry dashboard - closes [#239](https://github.com/i12know/vaysf/issues/239)

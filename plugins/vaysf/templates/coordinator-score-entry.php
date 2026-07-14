@@ -2,8 +2,8 @@
 /**
  * Coordinator score entry dashboard (Issues #239 and #241).
  *
- * Provides the coordinator-facing dashboard plus the first simple two-team
- * score form for Basketball/Soccer-style games.
+ * Provides the coordinator-facing dashboard plus the first two-team and
+ * three-team score forms.
  */
 
 // Exit if accessed directly
@@ -38,8 +38,10 @@ if (
     $posted_event = isset($_POST['event']) ? sanitize_text_field(wp_unslash($_POST['event'])) : '';
     $posted_view = isset($_POST['view']) ? sanitize_key(wp_unslash($_POST['view'])) : 'assigned';
     $posted_view = isset($tabs[$posted_view]) ? $posted_view : 'assigned';
+    $score_form_type = isset($_POST['score_form_type']) ? sanitize_key(wp_unslash($_POST['score_form_type'])) : 'simple';
     $team_a_score_raw = isset($_POST['team_a_score']) ? trim((string) wp_unslash($_POST['team_a_score'])) : '';
     $team_b_score_raw = isset($_POST['team_b_score']) ? trim((string) wp_unslash($_POST['team_b_score'])) : '';
+    $team_c_score_raw = isset($_POST['team_c_score']) ? trim((string) wp_unslash($_POST['team_c_score'])) : '';
 
     if (
         empty($_POST['_wpnonce'])
@@ -47,18 +49,36 @@ if (
     ) {
         $notice_message = __('Score submission expired. Please try again.', 'vaysf');
         $notice_is_error = true;
-    } elseif ($team_a_score_raw === '' || $team_b_score_raw === '' || !ctype_digit($team_a_score_raw) || !ctype_digit($team_b_score_raw)) {
+    } elseif (
+        $team_a_score_raw === ''
+        || $team_b_score_raw === ''
+        || !ctype_digit($team_a_score_raw)
+        || !ctype_digit($team_b_score_raw)
+        || ($score_form_type === 'three_team' && ($team_c_score_raw === '' || !ctype_digit($team_c_score_raw)))
+    ) {
         $notice_message = __('Scores must be whole numbers zero or greater.', 'vaysf');
         $notice_is_error = true;
     } else {
-        $submit_result = vaysf_submit_simple_score_result(
-            get_current_user_id(),
-            $posted_schedule_id,
-            (int) $team_a_score_raw,
-            (int) $team_b_score_raw,
-            !empty($_POST['certify_score']),
-            isset($_POST['notes']) ? wp_unslash($_POST['notes']) : ''
-        );
+        if ($score_form_type === 'three_team') {
+            $submit_result = vaysf_submit_three_team_score_result(
+                get_current_user_id(),
+                $posted_schedule_id,
+                (int) $team_a_score_raw,
+                (int) $team_b_score_raw,
+                (int) $team_c_score_raw,
+                !empty($_POST['certify_score']),
+                isset($_POST['notes']) ? wp_unslash($_POST['notes']) : ''
+            );
+        } else {
+            $submit_result = vaysf_submit_simple_score_result(
+                get_current_user_id(),
+                $posted_schedule_id,
+                (int) $team_a_score_raw,
+                (int) $team_b_score_raw,
+                !empty($_POST['certify_score']),
+                isset($_POST['notes']) ? wp_unslash($_POST['notes']) : ''
+            );
+        }
 
         if (is_wp_error($submit_result)) {
             $notice_message = $submit_result->get_error_message();
@@ -220,6 +240,9 @@ if (!$vaysf_rendering_shortcode) {
             grid-template-columns: repeat(2, minmax(0, 1fr));
             margin: 18px 0;
         }
+        .vaysf-score-entry-score-grid-three {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
         .vaysf-score-entry-score-grid label,
         .vaysf-score-entry-form label {
             display: block;
@@ -334,7 +357,7 @@ if (!$vaysf_rendering_shortcode) {
                 }
                 $can_score = $score_schedule
                     && vaysf_user_can_submit_schedule_result($user_id, $score_schedule)
-                    && vaysf_is_simple_score_schedule($score_schedule);
+                    && vaysf_is_supported_score_schedule($score_schedule);
                 $back_url = vaysf_get_coordinator_score_entry_url($view, $selected_event);
                 ?>
 
@@ -347,8 +370,11 @@ if (!$vaysf_rendering_shortcode) {
                     <?php
                     $team_a_label = $score_schedule['team_a_label'] ?: $score_schedule['team_a_key'];
                     $team_b_label = $score_schedule['team_b_label'] ?: $score_schedule['team_b_key'];
+                    $team_c_label = $score_schedule['team_c_label'] ?: $score_schedule['team_c_key'];
                     $team_a_value = isset($score_payload['team_a_score']) ? (string) absint($score_payload['team_a_score']) : '';
                     $team_b_value = isset($score_payload['team_b_score']) ? (string) absint($score_payload['team_b_score']) : '';
+                    $team_c_value = isset($score_payload['team_c_score']) ? (string) absint($score_payload['team_c_score']) : '';
+                    $score_form_type = vaysf_is_three_team_score_schedule($score_schedule) ? 'three_team' : 'simple';
                     ?>
                     <div class="vaysf-score-entry-form">
                         <h2><?php echo esc_html($score_schedule['game_key']); ?></h2>
@@ -361,8 +387,9 @@ if (!$vaysf_rendering_shortcode) {
                             <input type="hidden" name="schedule_id" value="<?php echo esc_attr($score_schedule['schedule_id']); ?>">
                             <input type="hidden" name="view" value="<?php echo esc_attr($view); ?>">
                             <input type="hidden" name="event" value="<?php echo esc_attr($selected_event); ?>">
+                            <input type="hidden" name="score_form_type" value="<?php echo esc_attr($score_form_type); ?>">
 
-                            <div class="vaysf-score-entry-score-grid">
+                            <div class="vaysf-score-entry-score-grid <?php echo $score_form_type === 'three_team' ? 'vaysf-score-entry-score-grid-three' : ''; ?>">
                                 <div>
                                     <label for="team-a-score"><?php echo esc_html($team_a_label); ?></label>
                                     <input id="team-a-score" name="team_a_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_a_value); ?>">
@@ -371,6 +398,12 @@ if (!$vaysf_rendering_shortcode) {
                                     <label for="team-b-score"><?php echo esc_html($team_b_label); ?></label>
                                     <input id="team-b-score" name="team_b_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_b_value); ?>">
                                 </div>
+                                <?php if ($score_form_type === 'three_team') : ?>
+                                    <div>
+                                        <label for="team-c-score"><?php echo esc_html($team_c_label); ?></label>
+                                        <input id="team-c-score" name="team_c_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_c_value); ?>">
+                                    </div>
+                                <?php endif; ?>
                             </div>
 
                             <label for="vaysf-score-notes"><?php esc_html_e('Notes', 'vaysf'); ?></label>
@@ -482,7 +515,7 @@ if (!$vaysf_rendering_shortcode) {
                         <div class="vaysf-score-entry-teams"><?php echo esc_html($teams_text); ?></div>
                         <div class="vaysf-score-entry-meta"><?php echo esc_html($scheduled_time); ?></div>
                         <div class="vaysf-score-entry-meta"><?php echo esc_html($location_text); ?></div>
-                        <?php if (vaysf_is_simple_score_schedule($row)) : ?>
+                        <?php if (vaysf_is_supported_score_schedule($row)) : ?>
                             <a
                                 class="vaysf-score-entry-button vaysf-score-entry-action"
                                 href="<?php echo esc_url(vaysf_get_simple_score_form_url($row, $view, $selected_event)); ?>"
