@@ -28,6 +28,9 @@
 - Enlarged basketball roster rows, photo boxes, and player-name text after the
   first 1.0.29 print review while keeping the one-page, 15-player-per-team
   layout.
+- Fixed roster photo recovery when Excel cached `IMAGE()` cells as blank/NaN,
+  accepted Excel's `_xludf.IMAGE()` formula shape, and removed the heavy
+  separator above referee comments to give the printed roster more room.
 - Added WordPress score-entry support for `?action=score&game_key=...` links so
   printed QR codes do not depend on unstable database `schedule_id` values.
 - Formatted published schedule slot ids such as `Sat-1-16:00` as visible match

@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
+import math
 import re
 import urllib.error
 import urllib.request
@@ -192,13 +193,22 @@ class PhotoCache:
 
 
 def _extract_photo_ref(photo_ref: Any) -> str:
-    text = str(photo_ref or "").strip()
-    if not text or text.upper() == "N/A":
+    if _is_blank_photo_ref(photo_ref):
         return ""
-    formula_match = re.search(r'=IMAGE\("([^"]+)"', text, flags=re.IGNORECASE)
+    text = str(photo_ref).strip()
+    formula_match = re.search(r'IMAGE\("([^"]+)"', text, flags=re.IGNORECASE)
     if formula_match:
         return formula_match.group(1).strip()
     return text
+
+
+def _is_blank_photo_ref(photo_ref: Any) -> bool:
+    if photo_ref is None:
+        return True
+    if isinstance(photo_ref, float) and math.isnan(photo_ref):
+        return True
+    text = str(photo_ref).strip()
+    return not text or text.upper() in {"N/A", "NAN", "NONE", "NULL"}
 
 
 def _load_photo_image(url_or_path: str) -> Optional[Image.Image]:
@@ -248,11 +258,11 @@ def enrich_roster_photos_from_workbook(
         return rows
 
     for row_dict, cells in zip(rows, ws.iter_rows(min_row=2), strict=False):
-        if row_dict.get("Photo"):
+        if not _is_blank_photo_ref(row_dict.get("Photo")):
             continue
         if photo_idx < len(cells):
             formula_or_value = cells[photo_idx].value
-            if formula_or_value:
+            if not _is_blank_photo_ref(formula_or_value):
                 row_dict["Photo"] = formula_or_value
     wb.close()
     return rows
@@ -268,6 +278,18 @@ def _friendly_slot(slot: Any) -> str:
     day, hour, minute = match.groups()
     clock = dt.time(int(hour), int(minute)).strftime("%I:%M %p").lstrip("0")
     return f"{DAY_LABELS.get(day, day)}, {clock}"
+
+
+def _friendly_location(game: dict[str, Any]) -> str:
+    location = str(game.get("scheduled_location") or "").strip()
+    if location:
+        return location
+
+    resource_id = str(game.get("resource_id") or "").strip()
+    gym_match = re.match(r"^(?:GYM|BB)-[A-Za-z]+-\d+-(\d+)$", resource_id)
+    if gym_match:
+        return f"EHS Main Gym - Court {gym_match.group(1)}"
+    return resource_id or "TBD"
 
 
 def _team_code(value: Any) -> str:
@@ -342,7 +364,7 @@ def _draw_header(draw: ImageDraw.ImageDraw, game: dict[str, Any]) -> None:
     team_a = _team_label(game, "a")
     team_b = _team_label(game, "b")
     game_key = str(game.get("game_key") or "")
-    location = str(game.get("scheduled_location") or game.get("resource_id") or "TBD").strip()
+    location = _friendly_location(game)
     draw.text((220, 58), "Vietnamese Alliance Youth Sports Festival", font=_font("regular", 25), fill=COL_BLACK)
     draw.text((220, 96), f"Basketball SCORESHEET: {team_a} vs. {team_b}", font=_font("bold", 31), fill=COL_BLACK)
     draw.text((220, 140), f"Game ID: {game_key}", font=_font("bold", 23), fill=COL_BLUE)
@@ -398,16 +420,16 @@ def _draw_roster_table(
 ) -> None:
     x, y = origin
     header_h = 58
-    row_h = 54
+    row_h = 56
     table_h = header_h + row_h * MAX_ROSTER_ROWS
     draw.rectangle((x, y, x + width, y + table_h), outline=COL_BORDER, width=2)
     draw.rectangle((x, y, x + width, y + 30), fill=COL_HEADER, outline=COL_BORDER, width=2)
     _center_text(draw, (x, y, x + width, y + 30), title, _font("bold", 17), COL_BLACK)
 
     col_no = 44
-    col_photo = 58
-    col_age = 36
-    col_foul = 86
+    col_photo = 62
+    col_age = 34
+    col_foul = 82
     no_x = x + col_no
     photo_x = no_x + col_photo
     foul_x = x + width - col_foul
@@ -427,7 +449,7 @@ def _draw_roster_table(
     for idx in range(MAX_ROSTER_ROWS):
         row_y = y + header_h + idx * row_h
         draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
-        photo_box = (no_x + 4, row_y + 5, no_x + 50, row_y + 51)
+        photo_box = (no_x + 3, row_y + 4, no_x + 53, row_y + 54)
         draw.rectangle(photo_box, outline=(185, 193, 203), width=1)
         if idx < len(rows):
             row = rows[idx]
@@ -438,17 +460,17 @@ def _draw_roster_table(
             if photo is not None:
                 _paste_contained(canvas, photo, photo_box)
             draw.line((x + 8, row_y + 30, no_x - 8, row_y + 30), fill=(170, 178, 188), width=1)
-            _draw_wrapped(draw, name, (name_x, row_y + 9), _font("regular", 15), age_x - name_x - 5, COL_BLACK, line_gap=2)
+            _draw_wrapped(draw, name, (name_x, row_y + 9), _font("regular", 16), age_x - name_x - 5, COL_BLACK, line_gap=2)
             if age_text:
-                _center_text(draw, (age_x, row_y, foul_x, row_y + row_h), age_text, _font("regular", 12), COL_BLACK)
+                _center_text(draw, (age_x, row_y, foul_x, row_y + row_h), age_text, _font("regular", 13), COL_BLACK)
         else:
             draw.line((x + 8, row_y + 30, no_x - 8, row_y + 30), fill=(190, 196, 204), width=1)
             draw.line((name_x, row_y + 30, age_x - 8, row_y + 30), fill=(190, 196, 204), width=1)
 
-        foul_start = foul_x + 9
+        foul_start = foul_x + 8
         for foul_idx in range(5):
-            cx = foul_start + foul_idx * 14
-            cy = row_y + 27
+            cx = foul_start + foul_idx * 13
+            cy = row_y + 28
             draw.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), outline=COL_BORDER, width=1)
 
     if len(roster_rows) > MAX_ROSTER_ROWS:
@@ -461,15 +483,14 @@ def _draw_roster_table(
 
 
 def _draw_footer(draw: ImageDraw.ImageDraw) -> None:
-    y = 1420
-    draw.line((MARGIN, y, PAGE_W - MARGIN, y), fill=COL_BORDER, width=2)
-    draw.text((MARGIN, y + 28), "REFEREE COMMENTS", font=_font("bold", 18), fill=COL_BLACK)
-    draw.line((MARGIN, y + 78, PAGE_W - MARGIN, y + 78), fill=COL_BORDER, width=1)
-    draw.line((MARGIN, y + 124, PAGE_W - MARGIN, y + 124), fill=COL_BORDER, width=1)
-    draw.text((MARGIN, y + 170), "REFEREE SIGNATURES:", font=_font("bold", 18), fill=COL_BLACK)
-    draw.line((300, y + 192, 570, y + 192), fill=COL_BORDER, width=2)
-    draw.text((596, y + 170), "AND", font=_font("bold", 18), fill=COL_BLACK)
-    draw.line((650, y + 192, 920, y + 192), fill=COL_BORDER, width=2)
+    y = 1430
+    draw.text((MARGIN, y + 8), "REFEREE COMMENTS", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((MARGIN, y + 58, PAGE_W - MARGIN, y + 58), fill=COL_BORDER, width=1)
+    draw.line((MARGIN, y + 104, PAGE_W - MARGIN, y + 104), fill=COL_BORDER, width=1)
+    draw.text((MARGIN, y + 150), "REFEREE SIGNATURES:", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((300, y + 172, 570, y + 172), fill=COL_BORDER, width=2)
+    draw.text((596, y + 150), "AND", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((650, y + 172, 920, y + 172), fill=COL_BORDER, width=2)
 
 
 def render_basketball_scoresheet_page(
