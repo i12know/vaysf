@@ -144,10 +144,24 @@ if (
             $notice_message = $submit_result->get_error_message();
             $notice_is_error = true;
         } else {
+            $redirect_args = array('score_submitted' => '1');
+            if (
+                !empty($_FILES['scoresheet_file'])
+                && isset($_FILES['scoresheet_file']['error'])
+                && (int) $_FILES['scoresheet_file']['error'] !== UPLOAD_ERR_NO_FILE
+            ) {
+                $stored_scan = vaysf_store_result_scoresheet_file(
+                    isset($submit_result['result_id']) ? absint($submit_result['result_id']) : 0,
+                    isset($submit_result['revision_id']) ? absint($submit_result['revision_id']) : 0,
+                    get_current_user_id(),
+                    $_FILES['scoresheet_file']
+                );
+                $redirect_args['scan_upload'] = is_wp_error($stored_scan) ? 'failed' : 'uploaded';
+            }
+
             wp_safe_redirect(
                 add_query_arg(
-                    'score_submitted',
-                    '1',
+                    $redirect_args,
                     vaysf_get_coordinator_score_entry_url('submitted', $posted_event)
                 )
             );
@@ -163,6 +177,11 @@ if (
 
 if (isset($_GET['score_submitted']) && $_GET['score_submitted'] === '1') {
     $notice_message = __('Score submitted and revision saved.', 'vaysf');
+    if (isset($_GET['scan_upload']) && $_GET['scan_upload'] === 'uploaded') {
+        $notice_message = __('Score submitted and score sheet scan saved.', 'vaysf');
+    } elseif (isset($_GET['scan_upload']) && $_GET['scan_upload'] === 'failed') {
+        $notice_message = __('Score submitted, but the score sheet scan could not be saved. You can edit the game and upload it later.', 'vaysf');
+    }
 }
 
 $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
@@ -344,6 +363,15 @@ if (!$vaysf_rendering_shortcode) {
             font-size: 0.9rem;
             margin: 8px 0 0;
         }
+        .vaysf-score-entry-file-list {
+            background: #f6f7f7;
+            border: 1px solid #dcdcde;
+            margin: 14px 0;
+            padding: 12px;
+        }
+        .vaysf-score-entry-file-list ul {
+            margin: 8px 0 0 18px;
+        }
         .vaysf-score-entry-form textarea {
             min-height: 96px;
         }
@@ -437,6 +465,7 @@ if (!$vaysf_rendering_shortcode) {
                 <?php
                 $score_schedule = vaysf_resolve_schedule_row($schedule_id);
                 $score_result = vaysf_get_result_for_schedule($schedule_id);
+                $score_files = $score_result ? vaysf_get_result_files_for_result($score_result['result_id']) : array();
                 $score_payload = array();
                 if ($score_result && !empty($score_result['score_json'])) {
                     $decoded_score = json_decode($score_result['score_json'], true);
@@ -499,7 +528,7 @@ if (!$vaysf_rendering_shortcode) {
                         <p class="vaysf-score-entry-meta"><?php echo esc_html($score_schedule['event']); ?></p>
                         <p class="vaysf-score-entry-teams"><?php echo esc_html(vaysf_format_schedule_teams($score_schedule)); ?></p>
 
-                        <form method="post" action="<?php echo esc_url(vaysf_get_simple_score_form_url($score_schedule, $view, $selected_event)); ?>">
+                        <form method="post" enctype="multipart/form-data" action="<?php echo esc_url(vaysf_get_simple_score_form_url($score_schedule, $view, $selected_event)); ?>">
                             <?php wp_nonce_field('vaysf_submit_simple_score_' . absint($score_schedule['schedule_id'])); ?>
                             <input type="hidden" name="vaysf_score_entry_action" value="submit_simple_score">
                             <input type="hidden" name="schedule_id" value="<?php echo esc_attr($score_schedule['schedule_id']); ?>">
@@ -562,6 +591,37 @@ if (!$vaysf_rendering_shortcode) {
                                     <?php endif; ?>
                                 </div>
                             <?php endif; ?>
+
+                            <?php if ($score_files) : ?>
+                                <div class="vaysf-score-entry-file-list">
+                                    <strong><?php esc_html_e('Uploaded score sheet scans', 'vaysf'); ?></strong>
+                                    <ul>
+                                        <?php foreach ($score_files as $score_file) : ?>
+                                            <li>
+                                                <?php echo esc_html($score_file['original_filename']); ?>
+                                                <small>
+                                                    <?php
+                                                    printf(
+                                                        esc_html__('Revision %1$d, %2$s', 'vaysf'),
+                                                        absint($score_file['revision_number']),
+                                                        esc_html(size_format(absint($score_file['byte_size'])))
+                                                    );
+                                                    ?>
+                                                </small>
+                                                <a href="<?php echo esc_url(vaysf_get_result_file_view_url($score_file['file_id'])); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e('View', 'vaysf'); ?></a>
+                                                |
+                                                <a href="<?php echo esc_url(vaysf_get_result_file_download_url($score_file['file_id'])); ?>"><?php esc_html_e('Download', 'vaysf'); ?></a>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                </div>
+                            <?php endif; ?>
+
+                            <label for="vaysf-score-sheet-file"><?php esc_html_e('Score sheet scan', 'vaysf'); ?></label>
+                            <input id="vaysf-score-sheet-file" name="scoresheet_file" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png">
+                            <p class="vaysf-score-entry-help">
+                                <?php esc_html_e('Optional. Upload a PDF, JPEG, or PNG score sheet scan up to 32 MB. If upload fails, the score will still be saved and the scan can be attached later.', 'vaysf'); ?>
+                            </p>
 
                             <label for="vaysf-score-notes"><?php esc_html_e('Notes', 'vaysf'); ?></label>
                             <textarea id="vaysf-score-notes" name="notes"><?php echo esc_textarea($score_result['notes'] ?? ''); ?></textarea>

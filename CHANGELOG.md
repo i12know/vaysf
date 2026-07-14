@@ -17,7 +17,27 @@
   ages, writable jersey-number blanks, and five foul-tracking bubbles.
 - Added WordPress score-entry support for `?action=score&game_key=...` links so
   printed QR codes do not depend on unstable database `schedule_id` values.
-- Bumped the WordPress plugin to `1.0.28` and rebuilt `plugins/vaysf.zip`.
+- Bumped the WordPress plugin to `1.0.29` and rebuilt `plugins/vaysf.zip`
+  together with the protected score-sheet scan upload work.
+
+### Protected score-sheet scan uploads - closes [#205](https://github.com/i12know/vaysf/issues/205)
+
+- Added optional score-sheet scan upload to the coordinator score-entry form.
+  Accepted files are PDF, JPEG, and PNG up to 32 MB.
+- Stored score-sheet scans under the protected `uploads/vaysf/result-scans/`
+  path, recorded SHA-256 hash, MIME type, byte size, original filename,
+  uploader, and revision linkage in `sf_result_files`, and marked the result
+  `scan_status` as `uploaded` when a scan is attached.
+- Kept score submission independent from scan upload: if a scan upload fails,
+  the score/revision still saves and the scan can be attached later by editing
+  the same match.
+- Added protected View/Download links for uploaded scans on the coordinator
+  score form and admin result revision screen. WordPress Administrators, Sports
+  Fest Admins, and Sports Fest Managers can view all scans; ordinary
+  coordinators can view scans only for schedule rows they are authorized to
+  submit.
+- Bumped plugin header/version to `1.0.29`; database version remains `1.0.6`
+  because #203 already created the `sf_result_files` table.
 
 ### Public live schedule and advancement display - closes [#206](https://github.com/i12know/vaysf/issues/206)
 
