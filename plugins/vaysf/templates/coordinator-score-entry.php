@@ -175,7 +175,8 @@ $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
     <?php else : ?>
         <?php
         $user_id = get_current_user_id();
-        $authorized_events = vaysf_get_user_authorized_events($user_id);
+        $has_all_event_access = vaysf_user_has_all_score_entry_events($user_id);
+        $authorized_events = vaysf_get_user_score_entry_events($user_id);
         $current_version = vaysf_get_current_published_schedule_version();
         $selected_event = in_array($requested_event, $authorized_events, true) ? $requested_event : '';
         $row_sets = array(
@@ -213,8 +214,10 @@ $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
                 <input type="hidden" name="view" value="<?php echo esc_attr($view); ?>">
                 <div>
                     <label for="vaysf-score-entry-event"><?php esc_html_e('Event filter', 'vaysf'); ?></label>
-                    <select id="vaysf-score-entry-event" name="event">
-                        <option value=""><?php esc_html_e('All assigned events', 'vaysf'); ?></option>
+                    <select id="vaysf-score-entry-event" name="event" onchange="this.form.submit()">
+                        <option value="">
+                            <?php echo esc_html($has_all_event_access ? __('All events', 'vaysf') : __('All assigned events', 'vaysf')); ?>
+                        </option>
                         <?php foreach ($authorized_events as $event) : ?>
                             <option value="<?php echo esc_attr($event); ?>" <?php selected($selected_event, $event); ?>>
                                 <?php echo esc_html($event); ?>
@@ -222,7 +225,9 @@ $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <button type="submit"><?php esc_html_e('Filter', 'vaysf'); ?></button>
+                <noscript>
+                    <button type="submit"><?php esc_html_e('Filter', 'vaysf'); ?></button>
+                </noscript>
             </form>
 
             <p class="vaysf-score-entry-event-list">
@@ -235,7 +240,9 @@ $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
                     );
                 } else {
                     printf(
-                        esc_html__('Schedule version %1$d. Showing all assigned events: %2$s', 'vaysf'),
+                        $has_all_event_access
+                            ? esc_html__('Schedule version %1$d. Showing all events: %2$s', 'vaysf')
+                            : esc_html__('Schedule version %1$d. Showing all assigned events: %2$s', 'vaysf'),
                         absint($current_version),
                         esc_html(implode(', ', $authorized_events))
                     );

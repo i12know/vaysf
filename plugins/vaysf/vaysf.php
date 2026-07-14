@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.21
+ * Version: 1.0.22
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,7 +18,7 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.21';
+    const VERSION = '1.0.22';
 
     /**
      * Database version
@@ -129,6 +129,7 @@ class VAYSF_Integration {
         add_action('personal_options_update', 'vaysf_save_coordinator_authorization_fields');
         add_action('edit_user_profile_update', 'vaysf_save_coordinator_authorization_fields');
         add_action('wp_dashboard_setup', 'vaysf_register_coordinator_score_dashboard_widget');
+        add_filter('get_user_option_meta-box-order_dashboard', 'vaysf_prepend_coordinator_dashboard_widget_order', 10, 3);
 		
 	   // Add hook for rewrite rules (moved this to WordPress 'init' hook)
 		add_action('init', array($this, 'register_rewrite_rules'));

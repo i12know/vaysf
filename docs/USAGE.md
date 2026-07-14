@@ -946,7 +946,10 @@ The dashboard has three views:
 
 Use the **Event filter** dropdown below the tabs to show all assigned events or
 one assigned event at a time. This is especially useful for manager/admin
-accounts once they are authorized for several events.
+accounts. WordPress Administrators, **Sports Fest Admins**, and **Sports Fest
+Managers** automatically have all published events available in this dashboard;
+ordinary coordinators are limited to their `vaysf_authorized_events` assignments.
+The dropdown submits immediately when the selection changes.
 
 For this first implementation slice, **Enter Score** is intentionally disabled.
 Use the page to confirm that `test_coordinator` sees only their assigned events

@@ -2,7 +2,7 @@
 /**
  * File: includes/functions.php
  * Description: Helper functions for VAYSF Integration
- * Version: 1.0.7
+ * Version: 1.0.8
  * Author: Bumble Ho
  */
 
@@ -123,6 +123,45 @@ function vaysf_get_user_authorized_events($user_id) {
 }
 
 /**
+ * Check whether a user should see all published score-entry events.
+ *
+ * @param int $user_id WordPress user id
+ * @return bool True for WordPress admins and Sports Fest admin/manager roles
+ */
+function vaysf_user_has_all_score_entry_events($user_id) {
+    $user_id = absint($user_id);
+    if (!$user_id || !user_can($user_id, 'sf2025_submit_results')) {
+        return false;
+    }
+
+    return user_can($user_id, 'manage_options')
+        || user_can($user_id, 'sf2025_admin')
+        || user_can($user_id, 'sf2025_write');
+}
+
+/**
+ * Get the events a user may see on the score-entry dashboard.
+ *
+ * Coordinators are limited to user meta assignments. Administrators, Sports
+ * Fest Admins, and Sports Fest Managers see all current published events.
+ *
+ * @param int $user_id WordPress user id
+ * @return array<int,string> Event names
+ */
+function vaysf_get_user_score_entry_events($user_id) {
+    $user_id = absint($user_id);
+    if (!$user_id || !user_can($user_id, 'sf2025_submit_results')) {
+        return array();
+    }
+
+    if (vaysf_user_has_all_score_entry_events($user_id)) {
+        return vaysf_get_published_schedule_events();
+    }
+
+    return vaysf_get_user_authorized_events($user_id);
+}
+
+/**
  * Update a user's authorized events, constrained to the published schedule.
  *
  * @param int $user_id WordPress user id
@@ -232,6 +271,10 @@ function vaysf_user_can_submit_schedule_result($user_id, $schedule) {
         return false;
     }
 
+    if (vaysf_user_has_all_score_entry_events($user_id)) {
+        return in_array($event, vaysf_get_published_schedule_events($current_version), true);
+    }
+
     return in_array($event, vaysf_get_user_authorized_events($user_id), true);
 }
 
@@ -276,7 +319,7 @@ function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs', $
         return array();
     }
 
-    $authorized_events = vaysf_get_user_authorized_events($user_id);
+    $authorized_events = vaysf_get_user_score_entry_events($user_id);
     if (!$authorized_events) {
         return array();
     }
@@ -387,6 +430,17 @@ function vaysf_register_coordinator_score_dashboard_widget() {
         esc_html__('Sports Fest Score Entry', 'vaysf'),
         'vaysf_render_coordinator_score_dashboard_widget'
     );
+
+    global $wp_meta_boxes;
+    if (empty($wp_meta_boxes['dashboard']['normal']['core']['vaysf_coordinator_score_entry'])) {
+        return;
+    }
+
+    $widget = $wp_meta_boxes['dashboard']['normal']['core']['vaysf_coordinator_score_entry'];
+    unset($wp_meta_boxes['dashboard']['normal']['core']['vaysf_coordinator_score_entry']);
+    $wp_meta_boxes['dashboard']['normal']['core'] = array(
+        'vaysf_coordinator_score_entry' => $widget,
+    ) + $wp_meta_boxes['dashboard']['normal']['core'];
 }
 
 /**
@@ -395,7 +449,7 @@ function vaysf_register_coordinator_score_dashboard_widget() {
  * @return void
  */
 function vaysf_render_coordinator_score_dashboard_widget() {
-    $authorized_events = vaysf_get_user_authorized_events(get_current_user_id());
+    $authorized_events = vaysf_get_user_score_entry_events(get_current_user_id());
     $dashboard_url = vaysf_get_coordinator_score_entry_url('assigned');
     ?>
     <p><?php esc_html_e('Open your assigned Sports Fest games from the coordinator dashboard. Score entry will be enabled in the next release slice.', 'vaysf'); ?></p>
@@ -413,6 +467,42 @@ function vaysf_render_coordinator_score_dashboard_widget() {
         </a>
     </p>
     <?php
+}
+
+/**
+ * Keep the score-entry dashboard widget first for coordinator-capable users.
+ *
+ * @param mixed $result Dashboard metabox order user option
+ * @param string $option Option name
+ * @param WP_User $user User object
+ * @return mixed Updated option value
+ */
+function vaysf_prepend_coordinator_dashboard_widget_order($result, $option, $user) {
+    if (!is_object($user) || !user_can($user->ID, 'sf2025_submit_results')) {
+        return $result;
+    }
+
+    if (!is_array($result)) {
+        $result = array();
+    }
+
+    $widget_id = 'vaysf_coordinator_score_entry';
+    foreach (array('normal', 'side', 'column3', 'column4') as $column) {
+        $ids = array();
+        if (!empty($result[$column])) {
+            $ids = array_filter(array_map('trim', explode(',', $result[$column])));
+        }
+        $ids = array_values(array_diff($ids, array($widget_id)));
+        $result[$column] = implode(',', $ids);
+    }
+
+    $normal_ids = !empty($result['normal'])
+        ? array_filter(array_map('trim', explode(',', $result['normal'])))
+        : array();
+    array_unshift($normal_ids, $widget_id);
+    $result['normal'] = implode(',', array_values(array_unique($normal_ids)));
+
+    return $result;
 }
 
 /**
