@@ -1,9 +1,8 @@
 <?php
 /**
- * Coordinator score entry dashboard (Issues #239 and #241).
+ * Coordinator score entry dashboard (Issues #239, #241, and #244).
  *
- * Provides the coordinator-facing dashboard plus the first two-team and
- * three-team score forms.
+ * Provides the coordinator-facing dashboard plus supported sport score forms.
  */
 
 // Exit if accessed directly
@@ -42,6 +41,12 @@ if (
     $team_a_score_raw = isset($_POST['team_a_score']) ? trim((string) wp_unslash($_POST['team_a_score'])) : '';
     $team_b_score_raw = isset($_POST['team_b_score']) ? trim((string) wp_unslash($_POST['team_b_score'])) : '';
     $team_c_score_raw = isset($_POST['team_c_score']) ? trim((string) wp_unslash($_POST['team_c_score'])) : '';
+    $volleyball_set_1_team_a_raw = isset($_POST['volleyball_set_1_team_a_score']) ? trim((string) wp_unslash($_POST['volleyball_set_1_team_a_score'])) : '';
+    $volleyball_set_1_team_b_raw = isset($_POST['volleyball_set_1_team_b_score']) ? trim((string) wp_unslash($_POST['volleyball_set_1_team_b_score'])) : '';
+    $volleyball_set_2_team_a_raw = isset($_POST['volleyball_set_2_team_a_score']) ? trim((string) wp_unslash($_POST['volleyball_set_2_team_a_score'])) : '';
+    $volleyball_set_2_team_b_raw = isset($_POST['volleyball_set_2_team_b_score']) ? trim((string) wp_unslash($_POST['volleyball_set_2_team_b_score'])) : '';
+    $volleyball_tiebreaker_team_a_raw = isset($_POST['volleyball_tiebreaker_team_a_score']) ? trim((string) wp_unslash($_POST['volleyball_tiebreaker_team_a_score'])) : '';
+    $volleyball_tiebreaker_team_b_raw = isset($_POST['volleyball_tiebreaker_team_b_score']) ? trim((string) wp_unslash($_POST['volleyball_tiebreaker_team_b_score'])) : '';
 
     if (
         empty($_POST['_wpnonce'])
@@ -49,6 +54,46 @@ if (
     ) {
         $notice_message = __('Score submission expired. Please try again.', 'vaysf');
         $notice_is_error = true;
+    } elseif ($score_form_type === 'volleyball') {
+        $required_volleyball_scores = array(
+            $volleyball_set_1_team_a_raw,
+            $volleyball_set_1_team_b_raw,
+            $volleyball_set_2_team_a_raw,
+            $volleyball_set_2_team_b_raw,
+        );
+        $required_scores_valid = true;
+        foreach ($required_volleyball_scores as $score_raw) {
+            if ($score_raw === '' || !ctype_digit($score_raw)) {
+                $required_scores_valid = false;
+                break;
+            }
+        }
+        $has_tiebreaker_score = $volleyball_tiebreaker_team_a_raw !== '' || $volleyball_tiebreaker_team_b_raw !== '';
+        $tiebreaker_scores_valid = !$has_tiebreaker_score
+            || (
+                $volleyball_tiebreaker_team_a_raw !== ''
+                && $volleyball_tiebreaker_team_b_raw !== ''
+                && ctype_digit($volleyball_tiebreaker_team_a_raw)
+                && ctype_digit($volleyball_tiebreaker_team_b_raw)
+            );
+
+        if (!$required_scores_valid || !$tiebreaker_scores_valid) {
+            $notice_message = __('Scores must be whole numbers zero or greater. Enter both tiebreaker scores or leave both blank.', 'vaysf');
+            $notice_is_error = true;
+        } else {
+            $submit_result = vaysf_submit_volleyball_score_result(
+                get_current_user_id(),
+                $posted_schedule_id,
+                (int) $volleyball_set_1_team_a_raw,
+                (int) $volleyball_set_1_team_b_raw,
+                (int) $volleyball_set_2_team_a_raw,
+                (int) $volleyball_set_2_team_b_raw,
+                $has_tiebreaker_score ? (int) $volleyball_tiebreaker_team_a_raw : null,
+                $has_tiebreaker_score ? (int) $volleyball_tiebreaker_team_b_raw : null,
+                !empty($_POST['certify_score']),
+                isset($_POST['notes']) ? wp_unslash($_POST['notes']) : ''
+            );
+        }
     } elseif (
         $team_a_score_raw === ''
         || $team_b_score_raw === ''
@@ -79,7 +124,9 @@ if (
                 isset($_POST['notes']) ? wp_unslash($_POST['notes']) : ''
             );
         }
+    }
 
+    if (!$notice_is_error) {
         if (is_wp_error($submit_result)) {
             $notice_message = $submit_result->get_error_message();
             $notice_is_error = true;
@@ -255,6 +302,32 @@ if (!$vaysf_rendering_shortcode) {
             padding: 9px;
             width: 100%;
         }
+        .vaysf-score-entry-set-table {
+            border-collapse: collapse;
+            margin: 18px 0;
+            width: 100%;
+        }
+        .vaysf-score-entry-set-table th,
+        .vaysf-score-entry-set-table td {
+            border: 1px solid #dcdcde;
+            padding: 8px;
+            text-align: left;
+        }
+        .vaysf-score-entry-set-table th {
+            background: #f6f7f7;
+            font-weight: 700;
+        }
+        .vaysf-score-entry-set-table input {
+            border: 1px solid #8c8f94;
+            max-width: 110px;
+            padding: 8px;
+            width: 100%;
+        }
+        .vaysf-score-entry-help {
+            color: #646970;
+            font-size: 0.9rem;
+            margin: 8px 0 0;
+        }
         .vaysf-score-entry-form textarea {
             min-height: 96px;
         }
@@ -363,7 +436,7 @@ if (!$vaysf_rendering_shortcode) {
 
                 <?php if (!$can_score) : ?>
                     <div class="vaysf-score-entry-notice vaysf-score-entry-error">
-                        <p><?php esc_html_e('This game is not available for simple score entry from your account.', 'vaysf'); ?></p>
+                        <p><?php esc_html_e('This game is not available for score entry from your account.', 'vaysf'); ?></p>
                     </div>
                     <p><a class="vaysf-score-entry-secondary-link" href="<?php echo esc_url($back_url); ?>"><?php esc_html_e('Back to dashboard', 'vaysf'); ?></a></p>
                 <?php else : ?>
@@ -374,7 +447,30 @@ if (!$vaysf_rendering_shortcode) {
                     $team_a_value = isset($score_payload['team_a_score']) ? (string) absint($score_payload['team_a_score']) : '';
                     $team_b_value = isset($score_payload['team_b_score']) ? (string) absint($score_payload['team_b_score']) : '';
                     $team_c_value = isset($score_payload['team_c_score']) ? (string) absint($score_payload['team_c_score']) : '';
-                    $score_form_type = vaysf_is_three_team_score_schedule($score_schedule) ? 'three_team' : 'simple';
+                    $score_form_type = 'simple';
+                    if (vaysf_is_three_team_score_schedule($score_schedule)) {
+                        $score_form_type = 'three_team';
+                    } elseif (vaysf_is_volleyball_score_schedule($score_schedule)) {
+                        $score_form_type = 'volleyball';
+                    }
+                    $volleyball_set_values = array(
+                        1 => array('team_a' => '', 'team_b' => ''),
+                        2 => array('team_a' => '', 'team_b' => ''),
+                        3 => array('team_a' => '', 'team_b' => ''),
+                    );
+                    if ($score_form_type === 'volleyball' && !empty($score_payload['sets']) && is_array($score_payload['sets'])) {
+                        foreach ($score_payload['sets'] as $set_payload) {
+                            if (!is_array($set_payload) || empty($set_payload['number'])) {
+                                continue;
+                            }
+                            $set_number = absint($set_payload['number']);
+                            if (!isset($volleyball_set_values[$set_number])) {
+                                continue;
+                            }
+                            $volleyball_set_values[$set_number]['team_a'] = isset($set_payload['team_a_score']) ? (string) absint($set_payload['team_a_score']) : '';
+                            $volleyball_set_values[$set_number]['team_b'] = isset($set_payload['team_b_score']) ? (string) absint($set_payload['team_b_score']) : '';
+                        }
+                    }
                     ?>
                     <div class="vaysf-score-entry-form">
                         <h2><?php echo esc_html($score_schedule['game_key']); ?></h2>
@@ -389,22 +485,54 @@ if (!$vaysf_rendering_shortcode) {
                             <input type="hidden" name="event" value="<?php echo esc_attr($selected_event); ?>">
                             <input type="hidden" name="score_form_type" value="<?php echo esc_attr($score_form_type); ?>">
 
-                            <div class="vaysf-score-entry-score-grid <?php echo $score_form_type === 'three_team' ? 'vaysf-score-entry-score-grid-three' : ''; ?>">
-                                <div>
-                                    <label for="team-a-score"><?php echo esc_html($team_a_label); ?></label>
-                                    <input id="team-a-score" name="team_a_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_a_value); ?>">
-                                </div>
-                                <div>
-                                    <label for="team-b-score"><?php echo esc_html($team_b_label); ?></label>
-                                    <input id="team-b-score" name="team_b_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_b_value); ?>">
-                                </div>
-                                <?php if ($score_form_type === 'three_team') : ?>
+                            <?php if ($score_form_type === 'volleyball') : ?>
+                                <table class="vaysf-score-entry-set-table">
+                                    <thead>
+                                        <tr>
+                                            <th><?php esc_html_e('Set', 'vaysf'); ?></th>
+                                            <th><?php echo esc_html($team_a_label); ?></th>
+                                            <th><?php echo esc_html($team_b_label); ?></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <th scope="row"><?php esc_html_e('Set 1', 'vaysf'); ?></th>
+                                            <td><input name="volleyball_set_1_team_a_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($volleyball_set_values[1]['team_a']); ?>"></td>
+                                            <td><input name="volleyball_set_1_team_b_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($volleyball_set_values[1]['team_b']); ?>"></td>
+                                        </tr>
+                                        <tr>
+                                            <th scope="row"><?php esc_html_e('Set 2', 'vaysf'); ?></th>
+                                            <td><input name="volleyball_set_2_team_a_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($volleyball_set_values[2]['team_a']); ?>"></td>
+                                            <td><input name="volleyball_set_2_team_b_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($volleyball_set_values[2]['team_b']); ?>"></td>
+                                        </tr>
+                                        <tr>
+                                            <th scope="row"><?php esc_html_e('Tiebreaker', 'vaysf'); ?></th>
+                                            <td><input name="volleyball_tiebreaker_team_a_score" type="number" min="0" step="1" inputmode="numeric" value="<?php echo esc_attr($volleyball_set_values[3]['team_a']); ?>"></td>
+                                            <td><input name="volleyball_tiebreaker_team_b_score" type="number" min="0" step="1" inputmode="numeric" value="<?php echo esc_attr($volleyball_set_values[3]['team_b']); ?>"></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                <p class="vaysf-score-entry-help">
+                                    <?php esc_html_e('Enter the tiebreaker only when the first two sets are split. Time-capped set scores such as 25-24 or 21-18 are allowed.', 'vaysf'); ?>
+                                </p>
+                            <?php else : ?>
+                                <div class="vaysf-score-entry-score-grid <?php echo $score_form_type === 'three_team' ? 'vaysf-score-entry-score-grid-three' : ''; ?>">
                                     <div>
-                                        <label for="team-c-score"><?php echo esc_html($team_c_label); ?></label>
-                                        <input id="team-c-score" name="team_c_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_c_value); ?>">
+                                        <label for="team-a-score"><?php echo esc_html($team_a_label); ?></label>
+                                        <input id="team-a-score" name="team_a_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_a_value); ?>">
                                     </div>
-                                <?php endif; ?>
-                            </div>
+                                    <div>
+                                        <label for="team-b-score"><?php echo esc_html($team_b_label); ?></label>
+                                        <input id="team-b-score" name="team_b_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_b_value); ?>">
+                                    </div>
+                                    <?php if ($score_form_type === 'three_team') : ?>
+                                        <div>
+                                            <label for="team-c-score"><?php echo esc_html($team_c_label); ?></label>
+                                            <input id="team-c-score" name="team_c_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_c_value); ?>">
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endif; ?>
 
                             <label for="vaysf-score-notes"><?php esc_html_e('Notes', 'vaysf'); ?></label>
                             <textarea id="vaysf-score-notes" name="notes"><?php echo esc_textarea($score_result['notes'] ?? ''); ?></textarea>
