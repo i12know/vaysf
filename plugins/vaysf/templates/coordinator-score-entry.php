@@ -15,6 +15,7 @@ $vaysf_rendering_shortcode = !empty($GLOBALS['vaysf_rendering_coordinator_score_
 $view = isset($_GET['view']) ? sanitize_key(wp_unslash($_GET['view'])) : 'needs';
 $page_action = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : '';
 $schedule_id = isset($_GET['schedule_id']) ? absint($_GET['schedule_id']) : 0;
+$game_key = isset($_GET['game_key']) ? sanitize_text_field(wp_unslash($_GET['game_key'])) : '';
 $requested_event = isset($_GET['event']) ? sanitize_text_field(wp_unslash($_GET['event'])) : '';
 $notice_message = '';
 $notice_is_error = false;
@@ -25,6 +26,16 @@ $tabs = array(
 );
 if (!isset($tabs[$view])) {
     $view = 'needs';
+}
+
+if (!$schedule_id && $game_key !== '') {
+    $game_key_schedule = vaysf_resolve_schedule_row_by_game_key($game_key);
+    if ($game_key_schedule && !empty($game_key_schedule['schedule_id'])) {
+        $schedule_id = absint($game_key_schedule['schedule_id']);
+        if ($requested_event === '' && !empty($game_key_schedule['event'])) {
+            $requested_event = sanitize_text_field($game_key_schedule['event']);
+        }
+    }
 }
 
 if (
@@ -155,6 +166,9 @@ if (isset($_GET['score_submitted']) && $_GET['score_submitted'] === '1') {
 }
 
 $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
+$score_entry_return_url = isset($_SERVER['REQUEST_URI'])
+    ? esc_url_raw(home_url(wp_unslash($_SERVER['REQUEST_URI'])))
+    : vaysf_get_coordinator_score_entry_url('assigned');
 
 if (!$vaysf_rendering_shortcode) {
     get_header();
@@ -386,7 +400,7 @@ if (!$vaysf_rendering_shortcode) {
         <div class="vaysf-score-entry-notice">
             <p><?php esc_html_e('Please log in with your coordinator account to view assigned games.', 'vaysf'); ?></p>
             <p>
-                <a href="<?php echo esc_url(wp_login_url(vaysf_get_coordinator_score_entry_url('assigned'))); ?>">
+                <a href="<?php echo esc_url(wp_login_url($score_entry_return_url)); ?>">
                     <?php esc_html_e('Log in', 'vaysf'); ?>
                 </a>
             </p>
@@ -661,7 +675,7 @@ if (!$vaysf_rendering_shortcode) {
                         <?php if (vaysf_is_supported_score_schedule($row)) : ?>
                             <a
                                 class="vaysf-score-entry-button vaysf-score-entry-action"
-                                href="<?php echo esc_url(vaysf_get_simple_score_form_url($row, $view, $selected_event)); ?>"
+                                href="<?php echo esc_url(vaysf_get_score_form_url_by_game_key($row, $view, $selected_event)); ?>"
                             >
                                 <?php echo $has_result ? esc_html__('Edit Score', 'vaysf') : esc_html__('Enter Score', 'vaysf'); ?>
                             </a>

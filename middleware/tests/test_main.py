@@ -287,6 +287,37 @@ def test_parse_args_upload_person_photo_url_dry_run(monkeypatch):
     assert args.dry_run is True
 
 
+def test_parse_args_generate_scoresheets_basketball(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "generate-scoresheets",
+            "--sport",
+            "basketball",
+            "--input",
+            "approved_schedule_input.json",
+            "--schedule-output",
+            "approved_schedule_output.json",
+            "--input-xlsx",
+            "Church_Team_Status_ALL.xlsx",
+            "--score-entry-url",
+            "https://sportsfest.example.test/coordinator-score-entry/",
+            "--output",
+            "scoresheets",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "generate-scoresheets"
+    assert args.sport == "basketball"
+    assert args.input == "approved_schedule_input.json"
+    assert args.schedule_output == "approved_schedule_output.json"
+    assert args.input_xlsx == "Church_Team_Status_ALL.xlsx"
+    assert args.score_entry_url == "https://sportsfest.example.test/coordinator-score-entry/"
+    assert args.output == "scoresheets"
+
+
 def test_parse_args_publish_schedule_requires_mode(monkeypatch, capsys):
     monkeypatch.setattr(main.sys, "argv", ["main.py", "publish-schedule"])
     with pytest.raises(SystemExit) as exc:

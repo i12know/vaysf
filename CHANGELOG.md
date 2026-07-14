@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Basketball score-sheet generator - closes [#211](https://github.com/i12know/vaysf/issues/211)
+
+- Added `python main.py generate-scoresheets --sport basketball` to create a
+  combined print-ready PDF from the approved schedule artifacts.
+- Rendered the committed VAY Sports Ministry logo from
+  `plugins/vaysf/assets/logo.png` in the upper-left corner of every generated
+  basketball score-sheet page.
+- Included game ID, schedule/court, final score boxes, referee blanks, opening
+  prayer verse, comments/signature lines, and a QR code on each sheet that opens
+  the coordinator score-entry page by stable `game_key`.
+- Rendered basketball roster tables with up to 15 athletes per team, including
+  profile photos from the roster workbook's Excel `IMAGE()` formulas, names,
+  ages, writable jersey-number blanks, and five foul-tracking bubbles.
+- Added WordPress score-entry support for `?action=score&game_key=...` links so
+  printed QR codes do not depend on unstable database `schedule_id` values.
+- Bumped the WordPress plugin to `1.0.28` and rebuilt `plugins/vaysf.zip`.
+
 ### Public live schedule and advancement display - closes [#206](https://github.com/i12know/vaysf/issues/206)
 
 - Added `includes/public-display.php` with helpers to fetch the currently

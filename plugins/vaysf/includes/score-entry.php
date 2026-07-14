@@ -218,6 +218,46 @@ function vaysf_resolve_schedule_row($schedule) {
 }
 
 /**
+ * Resolve a current published schedule row by stable game_key.
+ *
+ * Printed score-sheet QR codes use game_key rather than schedule_id because
+ * schedule_id is a WordPress database row id and may change after republishing.
+ *
+ * @param string $game_key Stable schedule game key, e.g. BBM-01
+ * @return array<string,mixed>|null Schedule row
+ */
+function vaysf_resolve_schedule_row_by_game_key($game_key) {
+    global $wpdb;
+
+    $game_key = sanitize_text_field($game_key);
+    if ($game_key === '') {
+        return null;
+    }
+
+    $current_version = vaysf_get_current_published_schedule_version();
+    if ($current_version === null) {
+        return null;
+    }
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $row = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT * FROM $table_schedules
+            WHERE game_key = %s
+                AND schedule_version = %d
+                AND published_at IS NOT NULL
+                AND COALESCE(game_status, '') <> 'cancelled'
+            LIMIT 1",
+            $game_key,
+            absint($current_version)
+        ),
+        ARRAY_A
+    );
+
+    return is_array($row) ? $row : null;
+}
+
+/**
  * Check whether a user may submit a result for a schedule row.
  *
  * @param int $user_id WordPress user id
@@ -481,6 +521,30 @@ function vaysf_get_simple_score_form_url($schedule, $view = 'assigned', $event_f
         array(
             'action' => 'score',
             'schedule_id' => $schedule_id,
+        ),
+        $url
+    );
+}
+
+/**
+ * Build a stable QR-friendly score-form URL for a schedule row.
+ *
+ * @param mixed $schedule Schedule id, row array, or row object
+ * @param string $view Dashboard return view
+ * @param string $event_filter Optional event filter
+ * @return string URL
+ */
+function vaysf_get_score_form_url_by_game_key($schedule, $view = 'assigned', $event_filter = '') {
+    $schedule_row = vaysf_resolve_schedule_row($schedule);
+    $game_key = $schedule_row && !empty($schedule_row['game_key'])
+        ? sanitize_text_field($schedule_row['game_key'])
+        : '';
+    $url = vaysf_get_coordinator_score_entry_url($view, $event_filter);
+
+    return add_query_arg(
+        array(
+            'action' => 'score',
+            'game_key' => $game_key,
         ),
         $url
     );

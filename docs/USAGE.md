@@ -925,6 +925,47 @@ The checkbox list is empty until a schedule has been published into
 schedule first and then review coordinator assignments; saved event names that
 no longer appear in the current schedule are shown as stale authorization.
 
+### Generating Basketball Score Sheets
+
+After the approved schedule artifacts have been created, generate the printable
+basketball paper score sheets from the middleware directory:
+
+```powershell
+python main.py generate-scoresheets --sport basketball
+```
+
+By default the command reads `approved_schedule_input.json` and
+`approved_schedule_output.json` from `EXPORT_DIR` (falling back to `DATA_DIR`)
+and writes a combined PDF to `EXPORT_DIR/scoresheets`. To point at explicit
+files:
+
+```powershell
+python main.py generate-scoresheets --sport basketball `
+  --input "G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data\approved_schedule_input.json" `
+  --schedule-output "G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data\approved_schedule_output.json" `
+  --input-xlsx "G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data\Church_Team_Status_ALL_2026-07-13.xlsx" `
+  --score-entry-url "https://sportsfest.vayhub.us/coordinator-score-entry/"
+```
+
+Each basketball game renders as one letter-size PDF page with the committed VAY
+Sports Ministry logo from `plugins/vaysf/assets/logo.png` in the upper-left
+corner, the `game_key`, schedule/court, final-score boxes, referee blanks,
+opening prayer verse, comments/signature lines, and a QR code that opens the
+coordinator score-entry page for that stable `game_key`.
+
+When `--input-xlsx` points to the current `Church_Team_Status_ALL` workbook, the
+basketball roster tables include up to 15 athletes per team. Each row prints a
+profile photo from the workbook's Excel `IMAGE()` formula when available, the
+athlete name, age, a blank line for the referee to write the jersey number, and
+five foul bubbles. If a team has more than 15 eligible athletes, the sheet prints
+the first 15 and logs a truncation note on the page.
+
+By default the QR URL uses `WP_URL` from `.env` and appends
+`/coordinator-score-entry/?action=score&game_key=<game_key>`; use
+`--score-entry-url` only when printing against a staging or alternate site. If no
+roster workbook is available, the command still generates printable sheets with
+blank roster lines.
+
 ### Coordinator Score Entry Dashboard
 
 After the schedule is published and a coordinator has authorized events, the
