@@ -342,12 +342,13 @@ def _draw_header(draw: ImageDraw.ImageDraw, game: dict[str, Any]) -> None:
     team_a = _team_label(game, "a")
     team_b = _team_label(game, "b")
     game_key = str(game.get("game_key") or "")
+    location = str(game.get("scheduled_location") or game.get("resource_id") or "TBD").strip()
     draw.text((220, 58), "Vietnamese Alliance Youth Sports Festival", font=_font("regular", 25), fill=COL_BLACK)
     draw.text((220, 96), f"Basketball SCORESHEET: {team_a} vs. {team_b}", font=_font("bold", 31), fill=COL_BLACK)
     draw.text((220, 140), f"Game ID: {game_key}", font=_font("bold", 23), fill=COL_BLUE)
     draw.text(
         (220, 174),
-        f"{_friendly_slot(game.get('scheduled_slot'))}     Court: {game.get('resource_id') or 'TBD'}",
+        f"{_friendly_slot(game.get('scheduled_slot'))}     Location: {location}",
         font=_font("regular", 22),
         fill=COL_BLACK,
     )

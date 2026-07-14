@@ -90,6 +90,22 @@ function vaysf_format_schedule_display_time($scheduled_time, $scheduled_slot = '
 }
 
 /**
+ * Format schedule location, falling back to resource_id when needed.
+ *
+ * @param string $scheduled_location Friendly stored venue/location label
+ * @param string $resource_id Solver resource id
+ * @return string Display location or empty string
+ */
+function vaysf_format_schedule_display_location($scheduled_location, $resource_id = '') {
+    $scheduled_location = trim((string) $scheduled_location);
+    if ($scheduled_location !== '') {
+        return $scheduled_location;
+    }
+
+    return trim((string) $resource_id);
+}
+
+/**
  * Log sync request for churches
  * 
  * @return bool Success status

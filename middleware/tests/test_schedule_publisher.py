@@ -46,18 +46,22 @@ def _schedule_input_2team_3team():
             {
                 "resource_id": "GYM-Sat-1-1",
                 "resource_type": "Basketball Court",
+                "label": "Court-1",
                 "day": "Sat-1",
                 "open_time": "08:00",
                 "close_time": "10:00",
                 "slot_minutes": 60,
+                "venue_name": "EHS Main Gym",
             },
             {
                 "resource_id": "ROOM-Sat-1-1",
-                "resource_type": "Classroom",
+                "resource_type": "BC Station",
+                "label": "Court-1",
                 "day": "Sat-1",
                 "open_time": "08:00",
                 "close_time": "10:00",
                 "slot_minutes": 30,
+                "venue_name": "EHS Library",
             },
         ],
     }
@@ -90,6 +94,7 @@ def _merged_game(**overrides):
         "team_ids_json": json.dumps(["BBM-P1-T1", "BBM-P1-T2"]),
         "resource_id": "GYM-Sat-1-1",
         "scheduled_slot": "Sat-1-08:00",
+        "scheduled_location": "EHS Main Gym - Court 1",
     }
     base.update(overrides)
     base["source_hash"] = compute_source_hash(base)
@@ -143,6 +148,7 @@ def test_merge_schedule_joins_assignments_to_game_metadata():
     assert json.loads(two_team["team_ids_json"]) == ["BBM-P1-T1", "BBM-P1-T2"]
     assert two_team["resource_id"] == "GYM-Sat-1-1"
     assert two_team["scheduled_slot"] == "Sat-1-08:00"
+    assert two_team["scheduled_location"] == "EHS Main Gym - Court 1"
     assert two_team["game_status"] == "scheduled"
 
 
@@ -155,6 +161,7 @@ def test_merge_schedule_handles_three_team_games():
     assert three_team["team_b_key"] == "BC-T2"
     assert three_team["team_c_key"] == "BC-T3"
     assert json.loads(three_team["team_ids_json"]) == ["BC-T1", "BC-T2", "BC-T3"]
+    assert three_team["scheduled_location"] == "EHS Library - Station 1"
 
 
 def test_merge_schedule_skips_assignments_without_game_id():

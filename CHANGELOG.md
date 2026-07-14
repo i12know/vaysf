@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Public schedule location labels and score-sheet polish
+
+- Joined schedule assignments to `schedule_input.json` resource metadata during
+  publish so WordPress schedule rows receive friendly `scheduled_location`
+  labels such as `EHS Main Gym - Court 1` and `EHS Library - Station 1`.
+- Kept the public schedule from rendering a blank Location cell by falling back
+  to `resource_id` when older published rows do not yet have a friendly
+  `scheduled_location`.
+- Bumped the WordPress plugin to `1.0.30` and rebuilt `plugins/vaysf.zip`.
+
 ### Basketball score-sheet generator - closes [#211](https://github.com/i12know/vaysf/issues/211)
 
 - Added `python main.py generate-scoresheets --sport basketball` to create a
