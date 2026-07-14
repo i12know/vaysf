@@ -163,6 +163,7 @@ function vaysf_format_public_schedule_row($row) {
         'team_b_label' => isset($row['team_b_label']) ? (string) $row['team_b_label'] : '',
         'team_c_label' => isset($row['team_c_label']) ? (string) $row['team_c_label'] : '',
         'scheduled_time' => isset($row['scheduled_time']) ? (string) $row['scheduled_time'] : '',
+        'scheduled_slot' => isset($row['scheduled_slot']) ? (string) $row['scheduled_slot'] : '',
         'scheduled_location' => isset($row['scheduled_location']) ? (string) $row['scheduled_location'] : '',
         'game_status' => isset($row['game_status']) ? (string) $row['game_status'] : 'scheduled',
         'public_status' => $public_status,

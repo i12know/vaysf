@@ -262,11 +262,12 @@ def _friendly_slot(slot: Any) -> str:
     raw = str(slot or "").strip()
     if not raw:
         return "Time TBD"
-    match = re.match(r"^([A-Za-z]+-\d+)-(\d{2}:\d{2})$", raw)
+    match = re.match(r"^([A-Za-z]+-\d+)-(\d{1,2}):(\d{2})$", raw)
     if not match:
         return raw
-    day, clock = match.groups()
-    return f"{DAY_LABELS.get(day, day)} {clock}"
+    day, hour, minute = match.groups()
+    clock = dt.time(int(hour), int(minute)).strftime("%I:%M %p").lstrip("0")
+    return f"{DAY_LABELS.get(day, day)}, {clock}"
 
 
 def _team_code(value: Any) -> str:
@@ -396,16 +397,16 @@ def _draw_roster_table(
 ) -> None:
     x, y = origin
     header_h = 58
-    row_h = 50
+    row_h = 54
     table_h = header_h + row_h * MAX_ROSTER_ROWS
     draw.rectangle((x, y, x + width, y + table_h), outline=COL_BORDER, width=2)
     draw.rectangle((x, y, x + width, y + 30), fill=COL_HEADER, outline=COL_BORDER, width=2)
     _center_text(draw, (x, y, x + width, y + 30), title, _font("bold", 17), COL_BLACK)
 
     col_no = 44
-    col_photo = 52
-    col_age = 38
-    col_foul = 92
+    col_photo = 58
+    col_age = 36
+    col_foul = 86
     no_x = x + col_no
     photo_x = no_x + col_photo
     foul_x = x + width - col_foul
@@ -425,7 +426,7 @@ def _draw_roster_table(
     for idx in range(MAX_ROSTER_ROWS):
         row_y = y + header_h + idx * row_h
         draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
-        photo_box = (no_x + 6, row_y + 5, no_x + 44, row_y + 43)
+        photo_box = (no_x + 4, row_y + 5, no_x + 50, row_y + 51)
         draw.rectangle(photo_box, outline=(185, 193, 203), width=1)
         if idx < len(rows):
             row = rows[idx]
@@ -436,17 +437,17 @@ def _draw_roster_table(
             if photo is not None:
                 _paste_contained(canvas, photo, photo_box)
             draw.line((x + 8, row_y + 30, no_x - 8, row_y + 30), fill=(170, 178, 188), width=1)
-            _draw_wrapped(draw, name, (name_x, row_y + 9), _font("regular", 14), age_x - name_x - 5, COL_BLACK, line_gap=2)
+            _draw_wrapped(draw, name, (name_x, row_y + 9), _font("regular", 15), age_x - name_x - 5, COL_BLACK, line_gap=2)
             if age_text:
                 _center_text(draw, (age_x, row_y, foul_x, row_y + row_h), age_text, _font("regular", 12), COL_BLACK)
         else:
             draw.line((x + 8, row_y + 30, no_x - 8, row_y + 30), fill=(190, 196, 204), width=1)
             draw.line((name_x, row_y + 30, age_x - 8, row_y + 30), fill=(190, 196, 204), width=1)
 
-        foul_start = foul_x + 11
+        foul_start = foul_x + 9
         for foul_idx in range(5):
-            cx = foul_start + foul_idx * 15
-            cy = row_y + 25
+            cx = foul_start + foul_idx * 14
+            cy = row_y + 27
             draw.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), outline=COL_BORDER, width=1)
 
     if len(roster_rows) > MAX_ROSTER_ROWS:
@@ -459,7 +460,7 @@ def _draw_roster_table(
 
 
 def _draw_footer(draw: ImageDraw.ImageDraw) -> None:
-    y = 1405
+    y = 1420
     draw.line((MARGIN, y, PAGE_W - MARGIN, y), fill=COL_BORDER, width=2)
     draw.text((MARGIN, y + 28), "REFEREE COMMENTS", font=_font("bold", 18), fill=COL_BLACK)
     draw.line((MARGIN, y + 78, PAGE_W - MARGIN, y + 78), fill=COL_BORDER, width=1)

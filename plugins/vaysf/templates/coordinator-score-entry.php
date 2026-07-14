@@ -522,11 +522,19 @@ if (!$vaysf_rendering_shortcode) {
                     if ($score_form_type === 'volleyball' && array_key_exists('strict_match_winner_required', $score_payload)) {
                         $volleyball_strict_checked = !empty($score_payload['strict_match_winner_required']);
                     }
+                    $score_schedule_time = vaysf_format_schedule_display_time($score_schedule['scheduled_time'] ?? '', $score_schedule['scheduled_slot'] ?? '', 'D M j, g:i A');
+                    if ($score_schedule_time === __('TBD', 'vaysf')) {
+                        $score_schedule_time = esc_html__('Time TBD', 'vaysf');
+                    }
+                    $score_location_parts = array_filter(array($score_schedule['scheduled_location'] ?? '', $score_schedule['resource_id'] ?? '', $score_schedule['scheduled_slot'] ?? ''));
+                    $score_location_text = $score_location_parts ? implode(' / ', $score_location_parts) : esc_html__('Location TBD', 'vaysf');
                     ?>
                     <div class="vaysf-score-entry-form">
                         <h2><?php echo esc_html($score_schedule['game_key']); ?></h2>
                         <p class="vaysf-score-entry-meta"><?php echo esc_html($score_schedule['event']); ?></p>
                         <p class="vaysf-score-entry-teams"><?php echo esc_html(vaysf_format_schedule_teams($score_schedule)); ?></p>
+                        <p class="vaysf-score-entry-meta"><?php echo esc_html($score_schedule_time); ?></p>
+                        <p class="vaysf-score-entry-meta"><?php echo esc_html($score_location_text); ?></p>
 
                         <form method="post" enctype="multipart/form-data" action="<?php echo esc_url(vaysf_get_simple_score_form_url($score_schedule, $view, $selected_event)); ?>">
                             <?php wp_nonce_field('vaysf_submit_simple_score_' . absint($score_schedule['schedule_id'])); ?>
@@ -704,9 +712,10 @@ if (!$vaysf_rendering_shortcode) {
             <?php else : ?>
                 <?php foreach ($rows as $row) : ?>
                     <?php
-                    $scheduled_time = !empty($row['scheduled_time'])
-                        ? date_i18n('D M j, g:i A', strtotime($row['scheduled_time']))
-                        : esc_html__('Time TBD', 'vaysf');
+                    $scheduled_time = vaysf_format_schedule_display_time($row['scheduled_time'] ?? '', $row['scheduled_slot'] ?? '', 'D M j, g:i A');
+                    if ($scheduled_time === __('TBD', 'vaysf')) {
+                        $scheduled_time = esc_html__('Time TBD', 'vaysf');
+                    }
                     $location_parts = array_filter(array($row['scheduled_location'] ?? '', $row['resource_id'] ?? '', $row['scheduled_slot'] ?? ''));
                     $location_text = $location_parts ? implode(' / ', $location_parts) : esc_html__('Location TBD', 'vaysf');
                     $teams_text = vaysf_format_schedule_teams($row);

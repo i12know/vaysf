@@ -137,7 +137,7 @@ def test_render_basketball_scoresheet_places_logo_upper_left(tmp_path):
     sample_y = LOGO_BOX[1] + 20
     assert page.getpixel((sample_x, sample_y)) == (220, 20, 30)
     # First roster photo sits inside the left team table, below the header.
-    assert page.getpixel((121, 563)) == (30, 120, 220)
+    assert page.getpixel((124, 566)) == (30, 120, 220)
 
 
 def test_basketball_roster_table_capacity_is_15():

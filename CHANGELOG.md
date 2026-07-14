@@ -15,8 +15,14 @@
 - Rendered basketball roster tables with up to 15 athletes per team, including
   profile photos from the roster workbook's Excel `IMAGE()` formulas, names,
   ages, writable jersey-number blanks, and five foul-tracking bubbles.
+- Enlarged basketball roster rows, photo boxes, and player-name text after the
+  first 1.0.29 print review while keeping the one-page, 15-player-per-team
+  layout.
 - Added WordPress score-entry support for `?action=score&game_key=...` links so
   printed QR codes do not depend on unstable database `schedule_id` values.
+- Formatted published schedule slot ids such as `Sat-1-16:00` as visible match
+  times on the public schedule and coordinator score-entry pages when
+  `scheduled_time` is blank.
 - Bumped the WordPress plugin to `1.0.29` and rebuilt `plugins/vaysf.zip`
   together with the protected score-sheet scan upload work.
 

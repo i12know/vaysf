@@ -23,6 +23,73 @@ function vaysf_get_table_name($table) {
 }
 
 /**
+ * Event-day labels for scheduler slot prefixes.
+ *
+ * The approved schedule publisher stores logical slot ids such as
+ * "Sat-1-16:00" even when scheduled_time is intentionally blank.
+ *
+ * @return array<string,string>
+ */
+function vaysf_get_schedule_slot_day_labels() {
+    return array(
+        'Fri-1' => 'Fri 7/24',
+        'Sat-1' => 'Sat 7/18',
+        'Sun-1' => 'Sun 7/19',
+        'Sat-2' => 'Sat 7/25',
+        'Sun-2' => 'Sun 7/26',
+    );
+}
+
+/**
+ * Format a logical schedule slot like "Sat-1-16:00" for display.
+ *
+ * @param string $scheduled_slot Logical scheduler slot id
+ * @return string Display label, or empty string when not recognized
+ */
+function vaysf_format_scheduled_slot_label($scheduled_slot) {
+    $scheduled_slot = trim((string) $scheduled_slot);
+    if ($scheduled_slot === '') {
+        return '';
+    }
+
+    if (!preg_match('/^([A-Za-z]+-\d+)-(\d{1,2}):(\d{2})$/', $scheduled_slot, $matches)) {
+        return $scheduled_slot;
+    }
+
+    $day_labels = vaysf_get_schedule_slot_day_labels();
+    $day_label = isset($day_labels[$matches[1]]) ? $day_labels[$matches[1]] : $matches[1];
+    $timestamp = strtotime($matches[2] . ':' . $matches[3]);
+    $clock_label = $timestamp ? date_i18n('g:i A', $timestamp) : $matches[2] . ':' . $matches[3];
+
+    return $day_label . ', ' . $clock_label;
+}
+
+/**
+ * Format schedule time, falling back to logical slot ids when needed.
+ *
+ * @param string $scheduled_time MySQL datetime string
+ * @param string $scheduled_slot Logical scheduler slot id
+ * @param string $datetime_format date_i18n format for concrete datetimes
+ * @return string Display time or TBD
+ */
+function vaysf_format_schedule_display_time($scheduled_time, $scheduled_slot = '', $datetime_format = 'D g:i A') {
+    $scheduled_time = trim((string) $scheduled_time);
+    if ($scheduled_time !== '') {
+        $timestamp = strtotime($scheduled_time);
+        if ($timestamp) {
+            return date_i18n($datetime_format, $timestamp);
+        }
+    }
+
+    $slot_label = vaysf_format_scheduled_slot_label($scheduled_slot);
+    if ($slot_label !== '') {
+        return $slot_label;
+    }
+
+    return __('TBD', 'vaysf');
+}
+
+/**
  * Log sync request for churches
  * 
  * @return bool Success status
