@@ -944,6 +944,10 @@ The dashboard has three views:
 - **Submitted Today**: assigned games whose result was submitted by this user today.
 - **Assigned Games**: all currently published games assigned to this coordinator.
 
+Use the **Event filter** dropdown below the tabs to show all assigned events or
+one assigned event at a time. This is especially useful for manager/admin
+accounts once they are authorized for several events.
+
 For this first implementation slice, **Enter Score** is intentionally disabled.
 Use the page to confirm that `test_coordinator` sees only their assigned events
 before enabling real result submission forms in the next issue.

@@ -13,6 +13,8 @@
 - Added **Needs Results**, **Submitted Today**, and **Assigned Games** views;
   score entry buttons are present but disabled until the next result-form
   slice.
+- Added an event dropdown below the dashboard tabs so coordinators can filter
+  by all assigned events or one assigned event at a time.
 - Added a coordinator wp-admin Dashboard widget and Profile-page link so
   event-day users can open the score entry dashboard immediately after login.
 - Replaced confusing `My Matches` wording in the event-day results RFC with

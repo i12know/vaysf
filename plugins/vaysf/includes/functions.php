@@ -265,9 +265,10 @@ function vaysf_format_schedule_teams($row) {
  *
  * @param int $user_id WordPress user id
  * @param string $view needs|submitted|assigned
+ * @param string $event_filter Optional event name to filter within authorized events
  * @return array<int,array<string,mixed>> Schedule/result rows for the dashboard
  */
-function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs') {
+function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs', $event_filter = '') {
     global $wpdb;
 
     $user_id = absint($user_id);
@@ -278,6 +279,14 @@ function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs') {
     $authorized_events = vaysf_get_user_authorized_events($user_id);
     if (!$authorized_events) {
         return array();
+    }
+
+    $event_filter = sanitize_text_field($event_filter);
+    if ($event_filter !== '') {
+        if (!in_array($event_filter, $authorized_events, true)) {
+            return array();
+        }
+        $authorized_events = array($event_filter);
     }
 
     $current_version = vaysf_get_current_published_schedule_version();
@@ -345,15 +354,22 @@ function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs') {
  * Build the coordinator score entry URL.
  *
  * @param string $view Dashboard view key
+ * @param string $event_filter Optional event filter
  * @return string URL
  */
-function vaysf_get_coordinator_score_entry_url($view = 'assigned') {
+function vaysf_get_coordinator_score_entry_url($view = 'assigned', $event_filter = '') {
     $view = sanitize_key($view);
     if (!in_array($view, array('needs', 'submitted', 'assigned'), true)) {
         $view = 'assigned';
     }
 
-    return add_query_arg('view', $view, site_url('coordinator-score-entry'));
+    $args = array('view' => $view);
+    $event_filter = sanitize_text_field($event_filter);
+    if ($event_filter !== '') {
+        $args['event'] = $event_filter;
+    }
+
+    return add_query_arg($args, site_url('coordinator-score-entry'));
 }
 
 /**

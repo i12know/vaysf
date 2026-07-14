@@ -18,6 +18,7 @@ if (!$vaysf_rendering_shortcode) {
 }
 
 $view = isset($_GET['view']) ? sanitize_key(wp_unslash($_GET['view'])) : 'needs';
+$requested_event = isset($_GET['event']) ? sanitize_text_field(wp_unslash($_GET['event'])) : '';
 $tabs = array(
     'needs' => esc_html__('Needs Results', 'vaysf'),
     'submitted' => esc_html__('Submitted Today', 'vaysf'),
@@ -76,6 +77,26 @@ $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
             margin: 0 0 20px;
             color: #50575e;
             font-size: 0.95rem;
+        }
+        .vaysf-score-entry-filter {
+            align-items: end;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 0 0 18px;
+        }
+        .vaysf-score-entry-filter label {
+            display: block;
+            font-size: 0.86rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .vaysf-score-entry-filter select {
+            min-width: 260px;
+            padding: 8px;
+        }
+        .vaysf-score-entry-filter button {
+            padding: 9px 14px;
         }
         .vaysf-score-entry-card {
             background: #fff;
@@ -156,10 +177,11 @@ $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
         $user_id = get_current_user_id();
         $authorized_events = vaysf_get_user_authorized_events($user_id);
         $current_version = vaysf_get_current_published_schedule_version();
+        $selected_event = in_array($requested_event, $authorized_events, true) ? $requested_event : '';
         $row_sets = array(
-            'needs' => vaysf_get_coordinator_score_dashboard_rows($user_id, 'needs'),
-            'submitted' => vaysf_get_coordinator_score_dashboard_rows($user_id, 'submitted'),
-            'assigned' => vaysf_get_coordinator_score_dashboard_rows($user_id, 'assigned'),
+            'needs' => vaysf_get_coordinator_score_dashboard_rows($user_id, 'needs', $selected_event),
+            'submitted' => vaysf_get_coordinator_score_dashboard_rows($user_id, 'submitted', $selected_event),
+            'assigned' => vaysf_get_coordinator_score_dashboard_rows($user_id, 'assigned', $selected_event),
         );
         $rows = $row_sets[$view];
         ?>
@@ -176,7 +198,7 @@ $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
             <div class="vaysf-score-entry-tabs" role="tablist" aria-label="<?php echo esc_attr__('Score entry views', 'vaysf'); ?>">
                 <?php foreach ($tabs as $tab_key => $tab_label) : ?>
                     <a
-                        href="<?php echo esc_url(add_query_arg('view', $tab_key)); ?>"
+                        href="<?php echo esc_url(vaysf_get_coordinator_score_entry_url($tab_key, $selected_event)); ?>"
                         class="<?php echo $view === $tab_key ? 'is-active' : ''; ?>"
                         role="tab"
                         aria-selected="<?php echo $view === $tab_key ? 'true' : 'false'; ?>"
@@ -187,13 +209,37 @@ $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
                 <?php endforeach; ?>
             </div>
 
+            <form class="vaysf-score-entry-filter" method="get">
+                <input type="hidden" name="view" value="<?php echo esc_attr($view); ?>">
+                <div>
+                    <label for="vaysf-score-entry-event"><?php esc_html_e('Event filter', 'vaysf'); ?></label>
+                    <select id="vaysf-score-entry-event" name="event">
+                        <option value=""><?php esc_html_e('All assigned events', 'vaysf'); ?></option>
+                        <?php foreach ($authorized_events as $event) : ?>
+                            <option value="<?php echo esc_attr($event); ?>" <?php selected($selected_event, $event); ?>>
+                                <?php echo esc_html($event); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <button type="submit"><?php esc_html_e('Filter', 'vaysf'); ?></button>
+            </form>
+
             <p class="vaysf-score-entry-event-list">
                 <?php
-                printf(
-                    esc_html__('Schedule version %1$d. Assigned events: %2$s', 'vaysf'),
-                    absint($current_version),
-                    esc_html(implode(', ', $authorized_events))
-                );
+                if ($selected_event !== '') {
+                    printf(
+                        esc_html__('Schedule version %1$d. Showing: %2$s', 'vaysf'),
+                        absint($current_version),
+                        esc_html($selected_event)
+                    );
+                } else {
+                    printf(
+                        esc_html__('Schedule version %1$d. Showing all assigned events: %2$s', 'vaysf'),
+                        absint($current_version),
+                        esc_html(implode(', ', $authorized_events))
+                    );
+                }
                 ?>
             </p>
 
