@@ -152,7 +152,7 @@ Scoresheet files, coordinator identities, internal notes, and audit history rema
 
 1. Officials complete the normal paper scoresheet.
 2. The Sport Coordinator verifies that the paper is complete.
-3. The coordinator scans the QR code or selects the match from `Needs Result`.
+3. The coordinator scans the QR code or selects the game from `Needs Results`.
 4. WordPress opens the correct match.
 5. The coordinator enters the required score details.
 6. The coordinator checks a certification statement confirming that the entry matches the official paper scoresheet.
@@ -419,9 +419,9 @@ Provide a front-end, phone-friendly coordinator page rather than requiring norma
 
 Primary views:
 
-1. `Needs Result`
-2. `Reported Today`
-3. `All My Matches`
+1. `Needs Results`
+2. `Submitted Today`
+3. `Assigned Games`
 
 Each match card should show:
 
@@ -578,7 +578,7 @@ Redesign the existing `sf_competitions`, `sf_schedules`, and `sf_results` tables
 
 ### Issue 2 — `results: add coordinator accounts, sport authorization, and mobile submission`
 
-Create restricted WordPress coordinator accounts with per-sport authorization stored in user meta (§11). Build the mobile coordinator interface (§12): `Needs Result`, `Reported Today`, `All My Matches` views. Implement the three MVP result form types (§9.1 simple score, §9.2 set-based, §9.3 multi-team). Each submission records submitter, timestamp, schedule version, certification flag, and creates an append-only revision in `sf_result_revisions` (§4.4). Corrections require a reason and create a new revision without deleting history. A match may be flagged `Under Review` if a correction affects standings.
+Create restricted WordPress coordinator accounts with per-sport authorization stored in user meta (§11). Build the mobile coordinator score entry dashboard (§12): `Needs Results`, `Submitted Today`, and `Assigned Games` views. Implement the three MVP result form types (§9.1 simple score, §9.2 set-based, §9.3 multi-team). Each submission records submitter, timestamp, schedule version, certification flag, and creates an append-only revision in `sf_result_revisions` (§4.4). Corrections require a reason and create a new revision without deleting history. A game may be flagged `Under Review` if a correction affects standings.
 
 **Scope for 2026 MVP:** Basketball (simple score), Soccer (simple score), Volleyball Men/Women (set-based — best of 3 or 5 sets). Bible Challenge (multi-team) may be included if time permits.
 

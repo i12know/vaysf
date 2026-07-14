@@ -2,7 +2,7 @@
 /**
  * File: includes/functions.php
  * Description: Helper functions for VAYSF Integration
- * Version: 1.0.5
+ * Version: 1.0.8
  * Author: Bumble Ho
  */
 
@@ -123,6 +123,45 @@ function vaysf_get_user_authorized_events($user_id) {
 }
 
 /**
+ * Check whether a user should see all published score-entry events.
+ *
+ * @param int $user_id WordPress user id
+ * @return bool True for WordPress admins and Sports Fest admin/manager roles
+ */
+function vaysf_user_has_all_score_entry_events($user_id) {
+    $user_id = absint($user_id);
+    if (!$user_id || !user_can($user_id, 'sf2025_submit_results')) {
+        return false;
+    }
+
+    return user_can($user_id, 'manage_options')
+        || user_can($user_id, 'sf2025_admin')
+        || user_can($user_id, 'sf2025_write');
+}
+
+/**
+ * Get the events a user may see on the score-entry dashboard.
+ *
+ * Coordinators are limited to user meta assignments. Administrators, Sports
+ * Fest Admins, and Sports Fest Managers see all current published events.
+ *
+ * @param int $user_id WordPress user id
+ * @return array<int,string> Event names
+ */
+function vaysf_get_user_score_entry_events($user_id) {
+    $user_id = absint($user_id);
+    if (!$user_id || !user_can($user_id, 'sf2025_submit_results')) {
+        return array();
+    }
+
+    if (vaysf_user_has_all_score_entry_events($user_id)) {
+        return vaysf_get_published_schedule_events();
+    }
+
+    return vaysf_get_user_authorized_events($user_id);
+}
+
+/**
  * Update a user's authorized events, constrained to the published schedule.
  *
  * @param int $user_id WordPress user id
@@ -232,7 +271,274 @@ function vaysf_user_can_submit_schedule_result($user_id, $schedule) {
         return false;
     }
 
+    if (vaysf_user_has_all_score_entry_events($user_id)) {
+        return in_array($event, vaysf_get_published_schedule_events($current_version), true);
+    }
+
     return in_array($event, vaysf_get_user_authorized_events($user_id), true);
+}
+
+/**
+ * Format schedule teams consistently for front-end and admin displays.
+ *
+ * @param array<string,mixed>|object $row Schedule row
+ * @return string Team/participant label
+ */
+function vaysf_format_schedule_teams($row) {
+    if (is_object($row)) {
+        $row = get_object_vars($row);
+    }
+
+    if (!is_array($row)) {
+        return '';
+    }
+
+    $teams = array();
+    foreach (array('team_a_label', 'team_b_label', 'team_c_label') as $field) {
+        if (!empty($row[$field])) {
+            $teams[] = $row[$field];
+        }
+    }
+
+    return implode(' vs ', $teams);
+}
+
+/**
+ * Query current-schedule rows assigned to a coordinator by event authorization.
+ *
+ * @param int $user_id WordPress user id
+ * @param string $view needs|submitted|assigned
+ * @param string $event_filter Optional event name to filter within authorized events
+ * @return array<int,array<string,mixed>> Schedule/result rows for the dashboard
+ */
+function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs', $event_filter = '') {
+    global $wpdb;
+
+    $user_id = absint($user_id);
+    if (!$user_id || !user_can($user_id, 'sf2025_submit_results')) {
+        return array();
+    }
+
+    $authorized_events = vaysf_get_user_score_entry_events($user_id);
+    if (!$authorized_events) {
+        return array();
+    }
+
+    $event_filter = sanitize_text_field($event_filter);
+    if ($event_filter !== '') {
+        if (!in_array($event_filter, $authorized_events, true)) {
+            return array();
+        }
+        $authorized_events = array($event_filter);
+    }
+
+    $current_version = vaysf_get_current_published_schedule_version();
+    if ($current_version === null) {
+        return array();
+    }
+
+    $view = sanitize_key($view);
+    if (!in_array($view, array('needs', 'submitted', 'assigned'), true)) {
+        $view = 'needs';
+    }
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $table_results = vaysf_get_table_name('results');
+    $event_placeholders = implode(', ', array_fill(0, count($authorized_events), '%s'));
+
+    $where = array(
+        's.schedule_version = %d',
+        's.published_at IS NOT NULL',
+        "COALESCE(s.game_status, '') <> 'cancelled'",
+        "s.event IN ($event_placeholders)",
+    );
+    $args = array_merge(array($current_version), $authorized_events);
+
+    $now = current_time('timestamp');
+    $today_start = date('Y-m-d 00:00:00', $now);
+    $tomorrow_start = date('Y-m-d 00:00:00', strtotime('+1 day', $now));
+    $today_end = date('Y-m-d 23:59:59', $now);
+
+    if ($view === 'needs') {
+        $where[] = 'r.result_id IS NULL';
+        $where[] = 's.scheduled_time IS NOT NULL';
+        $where[] = 's.scheduled_time <= %s';
+        $args[] = $today_end;
+    } elseif ($view === 'submitted') {
+        $where[] = 'r.submitted_by_user_id = %d';
+        $where[] = 'r.created_at >= %s';
+        $where[] = 'r.created_at < %s';
+        $args[] = $user_id;
+        $args[] = $today_start;
+        $args[] = $tomorrow_start;
+    }
+
+    $sql = "
+        SELECT
+            s.*,
+            r.result_id,
+            r.public_status,
+            r.scan_status,
+            r.submitted_by_user_id,
+            r.certified_at,
+            r.verified_at,
+            r.created_at AS result_created_at
+        FROM $table_schedules s
+        LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
+        WHERE " . implode(' AND ', $where) . "
+        ORDER BY s.scheduled_time IS NULL, s.scheduled_time, s.event, s.game_key
+    ";
+
+    $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
+    return is_array($rows) ? $rows : array();
+}
+
+/**
+ * Build the coordinator score entry URL.
+ *
+ * @param string $view Dashboard view key
+ * @param string $event_filter Optional event filter
+ * @return string URL
+ */
+function vaysf_get_coordinator_score_entry_url($view = 'assigned', $event_filter = '') {
+    $view = sanitize_key($view);
+    if (!in_array($view, array('needs', 'submitted', 'assigned'), true)) {
+        $view = 'assigned';
+    }
+
+    $args = array('view' => $view);
+    $event_filter = sanitize_text_field($event_filter);
+    if ($event_filter !== '') {
+        $args['event'] = $event_filter;
+    }
+
+    return add_query_arg($args, site_url('coordinator-score-entry'));
+}
+
+/**
+ * Register a wp-admin dashboard widget for coordinator accounts.
+ *
+ * @return void
+ */
+function vaysf_register_coordinator_score_dashboard_widget() {
+    if (!current_user_can('sf2025_submit_results')) {
+        return;
+    }
+
+    wp_add_dashboard_widget(
+        'vaysf_coordinator_score_entry',
+        esc_html__('Sports Fest Score Entry', 'vaysf'),
+        'vaysf_render_coordinator_score_dashboard_widget'
+    );
+
+    global $wp_meta_boxes;
+    if (empty($wp_meta_boxes['dashboard']['normal']['core']['vaysf_coordinator_score_entry'])) {
+        return;
+    }
+
+    $widget = $wp_meta_boxes['dashboard']['normal']['core']['vaysf_coordinator_score_entry'];
+    unset($wp_meta_boxes['dashboard']['normal']['core']['vaysf_coordinator_score_entry']);
+    $wp_meta_boxes['dashboard']['normal']['core'] = array(
+        'vaysf_coordinator_score_entry' => $widget,
+    ) + $wp_meta_boxes['dashboard']['normal']['core'];
+}
+
+/**
+ * Render the coordinator dashboard widget.
+ *
+ * @return void
+ */
+function vaysf_render_coordinator_score_dashboard_widget() {
+    $authorized_events = vaysf_get_user_score_entry_events(get_current_user_id());
+    $dashboard_url = vaysf_get_coordinator_score_entry_url('assigned');
+    ?>
+    <p><?php esc_html_e('Open your assigned Sports Fest games from the coordinator dashboard. Score entry will be enabled in the next release slice.', 'vaysf'); ?></p>
+    <?php if ($authorized_events) : ?>
+        <p>
+            <strong><?php esc_html_e('Assigned events:', 'vaysf'); ?></strong>
+            <?php echo esc_html(implode(', ', $authorized_events)); ?>
+        </p>
+    <?php else : ?>
+        <p><?php esc_html_e('No schedule events have been assigned to your coordinator account yet.', 'vaysf'); ?></p>
+    <?php endif; ?>
+    <p>
+        <a class="button button-primary" href="<?php echo esc_url($dashboard_url); ?>">
+            <?php esc_html_e('Open Score Entry Dashboard', 'vaysf'); ?>
+        </a>
+    </p>
+    <?php
+}
+
+/**
+ * Keep the score-entry dashboard widget first for coordinator-capable users.
+ *
+ * @param mixed $result Dashboard metabox order user option
+ * @param string $option Option name
+ * @param WP_User $user User object
+ * @return mixed Updated option value
+ */
+function vaysf_prepend_coordinator_dashboard_widget_order($result, $option, $user) {
+    if (!is_object($user) || !user_can($user->ID, 'sf2025_submit_results')) {
+        return $result;
+    }
+
+    if (!is_array($result)) {
+        $result = array();
+    }
+
+    $widget_id = 'vaysf_coordinator_score_entry';
+    foreach (array('normal', 'side', 'column3', 'column4') as $column) {
+        $ids = array();
+        if (!empty($result[$column])) {
+            $ids = array_filter(array_map('trim', explode(',', $result[$column])));
+        }
+        $ids = array_values(array_diff($ids, array($widget_id)));
+        $result[$column] = implode(',', $ids);
+    }
+
+    $normal_ids = !empty($result['normal'])
+        ? array_filter(array_map('trim', explode(',', $result['normal'])))
+        : array();
+    array_unshift($normal_ids, $widget_id);
+    $result['normal'] = implode(',', array_values(array_unique($normal_ids)));
+
+    return $result;
+}
+
+/**
+ * Render a coordinator score-entry link on user profile screens.
+ *
+ * @param WP_User $user User being viewed
+ * @return void
+ */
+function vaysf_render_coordinator_score_profile_link($user) {
+    if (!user_can($user->ID, 'sf2025_submit_results')) {
+        return;
+    }
+
+    if ((int) get_current_user_id() !== (int) $user->ID && !current_user_can('edit_user', $user->ID)) {
+        return;
+    }
+
+    $dashboard_url = vaysf_get_coordinator_score_entry_url('assigned');
+    ?>
+    <h2><?php esc_html_e('Sports Fest Score Entry', 'vaysf'); ?></h2>
+    <table class="form-table" role="presentation">
+        <tr>
+            <th scope="row"><?php esc_html_e('Coordinator dashboard', 'vaysf'); ?></th>
+            <td>
+                <p>
+                    <a class="button button-primary" href="<?php echo esc_url($dashboard_url); ?>">
+                        <?php esc_html_e('Open Score Entry Dashboard', 'vaysf'); ?>
+                    </a>
+                </p>
+                <p class="description">
+                    <?php esc_html_e('This page shows the published games assigned to this coordinator account.', 'vaysf'); ?>
+                </p>
+            </td>
+        </tr>
+    </table>
+    <?php
 }
 
 /**

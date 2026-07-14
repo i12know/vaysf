@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Coordinator score entry dashboard - closes [#239](https://github.com/i12know/vaysf/issues/239)
+
+- Added a front-end `/coordinator-score-entry/` route and
+  `[coordinator_score_entry]` shortcode for the coordinator score entry
+  dashboard.
+- The dashboard requires login plus `sf2025_submit_results`, then filters the
+  latest published, non-cancelled schedule rows by the user's
+  `vaysf_authorized_events`.
+- Added **Needs Results**, **Submitted Today**, and **Assigned Games** views;
+  score entry buttons are present but disabled until the next result-form
+  slice.
+- Added an event dropdown below the dashboard tabs so coordinators can filter
+  by all assigned events or one assigned event at a time; the filter now applies
+  immediately when changed.
+- Added a coordinator wp-admin Dashboard widget and Profile-page link so
+  event-day users can open the score entry dashboard immediately after login;
+  the widget is placed first in the normal Dashboard column.
+- Gave WordPress Administrators, Sports Fest Admins, and Sports Fest Managers
+  all published score-entry dashboard events without per-event user-meta
+  assignments; ordinary coordinators remain limited to their assigned events.
+- Replaced confusing `My Matches` wording in the event-day results RFC with
+  coordinator-facing `Assigned Games` language.
+- Bumped plugin header/version to `1.0.22`; database version remains `1.0.6`
+  because #239 adds a read-only front-end dashboard only.
+
 ### Schedule-driven coordinator event authorization - closes [#237](https://github.com/i12know/vaysf/issues/237)
 
 - Added user-meta based coordinator event authorization with schedule-derived
