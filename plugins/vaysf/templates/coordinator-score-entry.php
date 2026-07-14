@@ -47,6 +47,7 @@ if (
     $volleyball_set_2_team_b_raw = isset($_POST['volleyball_set_2_team_b_score']) ? trim((string) wp_unslash($_POST['volleyball_set_2_team_b_score'])) : '';
     $volleyball_tiebreaker_team_a_raw = isset($_POST['volleyball_tiebreaker_team_a_score']) ? trim((string) wp_unslash($_POST['volleyball_tiebreaker_team_a_score'])) : '';
     $volleyball_tiebreaker_team_b_raw = isset($_POST['volleyball_tiebreaker_team_b_score']) ? trim((string) wp_unslash($_POST['volleyball_tiebreaker_team_b_score'])) : '';
+    $volleyball_require_tiebreaker = !empty($_POST['volleyball_require_tiebreaker']);
 
     if (
         empty($_POST['_wpnonce'])
@@ -91,7 +92,8 @@ if (
                 $has_tiebreaker_score ? (int) $volleyball_tiebreaker_team_a_raw : null,
                 $has_tiebreaker_score ? (int) $volleyball_tiebreaker_team_b_raw : null,
                 !empty($_POST['certify_score']),
-                isset($_POST['notes']) ? wp_unslash($_POST['notes']) : ''
+                isset($_POST['notes']) ? wp_unslash($_POST['notes']) : '',
+                $volleyball_require_tiebreaker
             );
         }
     } elseif (
@@ -471,6 +473,12 @@ if (!$vaysf_rendering_shortcode) {
                             $volleyball_set_values[$set_number]['team_b'] = isset($set_payload['team_b_score']) ? (string) absint($set_payload['team_b_score']) : '';
                         }
                     }
+                    $volleyball_strict_default = $score_form_type === 'volleyball'
+                        && !vaysf_volleyball_allows_split_match($score_schedule);
+                    $volleyball_strict_checked = $volleyball_strict_default;
+                    if ($score_form_type === 'volleyball' && array_key_exists('strict_match_winner_required', $score_payload)) {
+                        $volleyball_strict_checked = !empty($score_payload['strict_match_winner_required']);
+                    }
                     ?>
                     <div class="vaysf-score-entry-form">
                         <h2><?php echo esc_html($score_schedule['game_key']); ?></h2>
@@ -513,7 +521,14 @@ if (!$vaysf_rendering_shortcode) {
                                     </tbody>
                                 </table>
                                 <p class="vaysf-score-entry-help">
-                                    <?php esc_html_e('Enter the tiebreaker only when the first two sets are split. Time-capped set scores such as 25-24 or 21-18 are allowed.', 'vaysf'); ?>
+                                    <?php esc_html_e('Time-capped set scores such as 25-24 or 21-18 are allowed. Leave the tiebreaker blank to record a preliminary split match, or enter it when a deciding set is played.', 'vaysf'); ?>
+                                </p>
+                                <label class="vaysf-score-entry-checkbox">
+                                    <input type="checkbox" name="volleyball_require_tiebreaker" value="1" <?php checked($volleyball_strict_checked); ?>>
+                                    <span><?php esc_html_e('Strict rule: require a tiebreaker winner if the first two sets are split.', 'vaysf'); ?></span>
+                                </label>
+                                <p class="vaysf-score-entry-help">
+                                    <?php esc_html_e('House rule note: preliminary/pool volleyball may end as a 1-1 split match. Use the strict checkbox for playoff-style matches or whenever the referee requires one winner.', 'vaysf'); ?>
                                 </p>
                             <?php else : ?>
                                 <div class="vaysf-score-entry-score-grid <?php echo $score_form_type === 'three_team' ? 'vaysf-score-entry-score-grid-three' : ''; ?>">
