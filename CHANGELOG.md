@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Score-sheet roster approval markings - closes [#258](https://github.com/i12know/vaysf/issues/258)
+
+- Kept rostered athletes visible on Basketball, Volleyball, and Soccer score
+  sheets even when they are not currently approved, but marked any
+  non-`approved` roster row with a red strike-through and small status label so
+  referees and coordinators can see who is not cleared to play.
+- Added compact Soccer roster blocks to generated Soccer score sheets so Soccer
+  follows the same roster visibility/approval-marking convention as Basketball
+  and Volleyball.
+- Logged a warning when roster workbook rows do not include approval status
+  values, because those rows are intentionally treated as not approved for
+  printed score-sheet marking.
+
 ### Approval drift acceptance workflow - closes [#252](https://github.com/i12know/vaysf/issues/252)
 
 - Added `approval-drift-history` to audit current `reapproval_required`

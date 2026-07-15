@@ -39,6 +39,7 @@ LOGO_BOX = (72, 58, 182, 168)
 QR_SIZE = 150
 QR_BOX = (PAGE_W - MARGIN - QR_SIZE, 52)
 MAX_ROSTER_ROWS = 15
+MAX_SOCCER_ROSTER_ROWS_PER_TEAM = 12
 MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN = 9
 MAX_VOLLEYBALL_ROSTER_ROWS = MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN * 2
 
@@ -48,6 +49,7 @@ COL_BORDER = (88, 99, 115)
 COL_LIGHT = (242, 246, 250)
 COL_HEADER = (232, 240, 248)
 COL_MUTED = (94, 105, 116)
+COL_STRIKE = (170, 31, 45)
 
 DAY_LABELS = {
     "Fri-1": "Fri 7/24",
@@ -336,7 +338,38 @@ def _event_matches_roster_row(row: dict[str, Any], event: str) -> bool:
         return sport_type == "Volleyball" and sport_gender == "Men" and sport_format == "Team"
     if event == VOLLEYBALL_WOMEN_EVENT:
         return sport_type == "Volleyball" and sport_gender == "Women" and sport_format == "Team"
+    if event == SOCCER_EVENT:
+        return sport_type == "Soccer" and sport_gender == "Coed" and sport_format == "Exhibition"
     return False
+
+
+def _approval_status(row: dict[str, Any]) -> str:
+    for key in ("approval_status", "Approval Status", "Approval_Status", "approval status"):
+        status = str(row.get(key) or "").strip()
+        if status:
+            return status
+    return ""
+
+
+def _is_approved_roster_row(row: dict[str, Any]) -> bool:
+    return _approval_status(row).casefold() == "approved"
+
+
+def _draw_unapproved_roster_mark(
+    draw: ImageDraw.ImageDraw,
+    row_box: tuple[int, int, int, int],
+    name_box: tuple[int, int, int, int],
+    status: str,
+) -> None:
+    x0, y0, x1, y1 = row_box
+    draw.line((x0 + 4, (y0 + y1) // 2, x1 - 4, (y0 + y1) // 2), fill=COL_STRIKE, width=3)
+    status_text = status or "not approved"
+    draw.text(
+        (name_box[0], max(y0 + 2, name_box[3] - 13)),
+        status_text[:24],
+        font=_font("regular", 10),
+        fill=COL_STRIKE,
+    )
 
 
 def _sort_roster_index(indexed: dict[str, list[dict[str, Any]]]) -> None:
@@ -383,6 +416,33 @@ def build_volleyball_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict
     for event_index in indexed.values():
         _sort_roster_index(event_index)
     return indexed
+
+
+def build_soccer_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Index Soccer roster rows by church/team code."""
+
+    indexed: dict[str, list[dict[str, Any]]] = {}
+    for row in roster_rows:
+        if not _event_matches_roster_row(row, SOCCER_EVENT):
+            continue
+        code = _team_code(row.get("Church Team"))
+        if not code:
+            continue
+        indexed.setdefault(code, []).append(row)
+    _sort_roster_index(indexed)
+    return indexed
+
+
+def _warn_if_approval_status_missing(roster_rows: Iterable[dict[str, Any]], sport_label: str) -> None:
+    rows = list(roster_rows)
+    if not rows:
+        return
+    if any(_approval_status(row) for row in rows):
+        return
+    logger.warning(
+        f"{sport_label} score sheets: roster rows have no approval_status/Approval Status values; "
+        "all printed roster rows will be marked not approved."
+    )
 
 
 def _draw_logo(canvas: Image.Image, logo: Optional[Image.Image]) -> None:
@@ -715,6 +775,13 @@ def _draw_volleyball_roster_table(
             _draw_wrapped(draw, name, (name_x, row_y + 10), _font("regular", 14), age_x - name_x - 6, COL_BLACK, line_gap=1)
             if age_text:
                 _center_text(draw, (age_x, row_y, col_x + column_w, row_y + row_h), age_text, _font("regular", 12), COL_BLACK)
+            if not _is_approved_roster_row(row):
+                _draw_unapproved_roster_mark(
+                    draw,
+                    (col_x, row_y, col_x + column_w, row_y + row_h),
+                    (name_x, row_y, age_x - 4, row_y + row_h),
+                    _approval_status(row),
+                )
 
     if len(roster_rows) > MAX_VOLLEYBALL_ROSTER_ROWS:
         draw.text(
@@ -779,6 +846,13 @@ def _draw_roster_table(
             _draw_wrapped(draw, name, (name_x, row_y + 9), _font("regular", 16), age_x - name_x - 5, COL_BLACK, line_gap=2)
             if age_text:
                 _center_text(draw, (age_x, row_y, foul_x, row_y + row_h), age_text, _font("regular", 13), COL_BLACK)
+            if not _is_approved_roster_row(row):
+                _draw_unapproved_roster_mark(
+                    draw,
+                    (x, row_y, foul_x, row_y + row_h),
+                    (name_x, row_y, age_x - 4, row_y + row_h),
+                    _approval_status(row),
+                )
         else:
             draw.line((x + 8, row_y + 30, no_x - 8, row_y + 30), fill=(190, 196, 204), width=1)
             draw.line((name_x, row_y + 30, age_x - 8, row_y + 30), fill=(190, 196, 204), width=1)
@@ -861,6 +935,74 @@ def _draw_soccer_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any], y: 
     return y + height
 
 
+def _draw_soccer_roster_table(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    origin: tuple[int, int],
+    width: int,
+    title: str,
+    roster_rows: list[dict[str, Any]],
+    photo_cache: PhotoCache,
+) -> None:
+    x, y = origin
+    header_h = 48
+    row_h = 46
+    table_h = header_h + row_h * MAX_SOCCER_ROSTER_ROWS_PER_TEAM
+    draw.rectangle((x, y, x + width, y + table_h), outline=COL_BORDER, width=2)
+    draw.rectangle((x, y, x + width, y + 29), fill=COL_HEADER, outline=COL_BORDER, width=2)
+    _center_text(draw, (x, y, x + width, y + 29), title, _font("bold", 16), COL_BLACK)
+
+    col_no = 32
+    col_photo = 48
+    col_age = 36
+    no_x = x + col_no
+    photo_x = no_x + col_photo
+    age_x = x + width - col_age
+    name_x = photo_x + 7
+    for line_x in (no_x, photo_x, age_x):
+        draw.line((line_x, y + 29, line_x, y + table_h), fill=COL_BORDER, width=1)
+    draw.text((x + 9, y + 33), "#", font=_font("bold", 10), fill=COL_BLACK)
+    draw.text((name_x, y + 33), "ATHLETE", font=_font("bold", 10), fill=COL_BLACK)
+    draw.text((age_x + 8, y + 33), "AGE", font=_font("bold", 10), fill=COL_BLACK)
+
+    rows = roster_rows[:MAX_SOCCER_ROSTER_ROWS_PER_TEAM]
+    for idx in range(MAX_SOCCER_ROSTER_ROWS_PER_TEAM):
+        row_y = y + header_h + idx * row_h
+        draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
+        draw.text((x + 9, row_y + 17), str(idx + 1), font=_font("regular", 10), fill=COL_MUTED)
+        photo_box = (no_x + 4, row_y + 4, no_x + 40, row_y + 40)
+        draw.rectangle(photo_box, outline=(185, 193, 203), width=1)
+        if idx >= len(rows):
+            draw.line((name_x, row_y + 24, age_x - 8, row_y + 24), fill=(190, 196, 204), width=1)
+            continue
+
+        row = rows[idx]
+        name = _roster_name(row)
+        age = row.get("Age (at Event)")
+        age_text = f"{int(age)}" if isinstance(age, (int, float)) else str(age or "").strip()
+        photo = photo_cache.load(row.get("Photo"))
+        if photo is not None:
+            _paste_contained(canvas, photo, photo_box)
+        _draw_wrapped(draw, name, (name_x, row_y + 6), _font("regular", 13), age_x - name_x - 6, COL_BLACK, line_gap=1)
+        if age_text:
+            _center_text(draw, (age_x, row_y, x + width, row_y + row_h), age_text, _font("regular", 11), COL_BLACK)
+        if not _is_approved_roster_row(row):
+            _draw_unapproved_roster_mark(
+                draw,
+                (x, row_y, x + width, row_y + row_h),
+                (name_x, row_y, age_x - 4, row_y + row_h),
+                _approval_status(row),
+            )
+
+    if len(roster_rows) > MAX_SOCCER_ROSTER_ROWS_PER_TEAM:
+        draw.text(
+            (x + 12, y + table_h + 4),
+            f"+{len(roster_rows) - MAX_SOCCER_ROSTER_ROWS_PER_TEAM} more",
+            font=_font("regular", 11),
+            fill=COL_MUTED,
+        )
+
+
 def _draw_soccer_event_log(draw: ImageDraw.ImageDraw, y: int) -> int:
     x = MARGIN
     width = PAGE_W - MARGIN * 2
@@ -895,16 +1037,14 @@ def _draw_soccer_event_log(draw: ImageDraw.ImageDraw, y: int) -> int:
     return y + height
 
 
-def _draw_soccer_footer(draw: ImageDraw.ImageDraw) -> None:
-    y = 1288
+def _draw_soccer_footer(draw: ImageDraw.ImageDraw, y: int = 1288) -> None:
     draw.text((MARGIN, y), "REFEREE COMMENTS", font=_font("bold", 18), fill=COL_BLACK)
-    draw.line((MARGIN, y + 50, PAGE_W - MARGIN, y + 50), fill=COL_BORDER, width=1)
-    draw.line((MARGIN, y + 96, PAGE_W - MARGIN, y + 96), fill=COL_BORDER, width=1)
-    draw.line((MARGIN, y + 142, PAGE_W - MARGIN, y + 142), fill=COL_BORDER, width=1)
-    draw.text((MARGIN, y + 190), "REFEREE SIGNATURE:", font=_font("bold", 18), fill=COL_BLACK)
-    draw.line((312, y + 212, 690, y + 212), fill=COL_BORDER, width=2)
-    draw.text((730, y + 190), "SCOREKEEPER:", font=_font("bold", 18), fill=COL_BLACK)
-    draw.line((898, y + 212, PAGE_W - MARGIN, y + 212), fill=COL_BORDER, width=2)
+    draw.line((MARGIN, y + 44, PAGE_W - MARGIN, y + 44), fill=COL_BORDER, width=1)
+    draw.line((MARGIN, y + 82, PAGE_W - MARGIN, y + 82), fill=COL_BORDER, width=1)
+    draw.text((MARGIN, y + 122), "REFEREE SIGNATURE:", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((312, y + 144, 690, y + 144), fill=COL_BORDER, width=2)
+    draw.text((730, y + 122), "SCOREKEEPER:", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((898, y + 144, PAGE_W - MARGIN, y + 144), fill=COL_BORDER, width=2)
 
 
 def render_basketball_scoresheet_page(
@@ -978,11 +1118,15 @@ def render_bible_challenge_scoresheet_page(
 
 def render_soccer_scoresheet_page(
     game: dict[str, Any],
+    roster_index: Optional[dict[str, list[dict[str, Any]]]] = None,
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
+    photo_cache: Optional[PhotoCache] = None,
 ) -> Image.Image:
     """Render one soccer game score sheet as an RGB image."""
 
+    roster_index = roster_index or {}
+    photo_cache = photo_cache or PhotoCache()
     logo = _load_logo(logo_path or default_logo_path())
     page = Image.new("RGB", (PAGE_W, PAGE_H), "white")
     draw = ImageDraw.Draw(page)
@@ -993,8 +1137,29 @@ def render_soccer_scoresheet_page(
     _draw_score_boxes(draw, game)
     _draw_referee_section(draw, y=372)
     next_y = _draw_soccer_score_grid(draw, game, y=520)
-    _draw_soccer_event_log(draw, next_y + 28)
-    _draw_soccer_footer(draw)
+    team_a_code = _team_code(_team_label(game, "a"))
+    team_b_code = _team_code(_team_label(game, "b"))
+    table_y = next_y + 28
+    table_w = (PAGE_W - MARGIN * 2 - 28) // 2
+    _draw_soccer_roster_table(
+        page,
+        draw,
+        (MARGIN, table_y),
+        table_w,
+        _team_label(game, "a"),
+        roster_index.get(team_a_code, []),
+        photo_cache,
+    )
+    _draw_soccer_roster_table(
+        page,
+        draw,
+        (MARGIN + table_w + 28, table_y),
+        table_w,
+        _team_label(game, "b"),
+        roster_index.get(team_b_code, []),
+        photo_cache,
+    )
+    _draw_soccer_footer(draw, y=1450)
     return page
 
 
@@ -1118,7 +1283,9 @@ def write_basketball_scoresheets_pdf(
     if not games:
         raise ScoreSheetError("No scheduled basketball games found in the supplied schedule artifacts.")
 
-    roster_index = build_roster_index(roster_rows or [])
+    roster_rows = list(roster_rows or [])
+    _warn_if_approval_status_missing(roster_rows, "Basketball")
+    roster_index = build_roster_index(roster_rows)
     photo_cache = PhotoCache()
     pages = [
         render_basketball_scoresheet_page(
@@ -1183,18 +1350,23 @@ def write_soccer_scoresheets_pdf(
 ) -> tuple[Path, int]:
     """Write one combined soccer score-sheet PDF and return (path, pages)."""
 
-    del roster_rows  # Soccer sheets do not need roster/foul tracking.
     schedule_input = _load_json(schedule_input_path)
     schedule_output = _load_json(schedule_output_path)
     games = _soccer_games(schedule_input, schedule_output)
     if not games:
         raise ScoreSheetError("No scheduled soccer games found in the supplied schedule artifacts.")
 
+    roster_rows = list(roster_rows or [])
+    _warn_if_approval_status_missing(roster_rows, "Soccer")
+    roster_index = build_soccer_roster_index(roster_rows)
+    photo_cache = PhotoCache()
     pages = [
         render_soccer_scoresheet_page(
             game,
+            roster_index=roster_index,
             logo_path=logo_path,
             score_entry_base_url=score_entry_base_url,
+            photo_cache=photo_cache,
         )
         for game in games
     ]
@@ -1223,7 +1395,9 @@ def write_volleyball_scoresheets_pdf(
     if not games:
         raise ScoreSheetError("No scheduled volleyball games found in the supplied schedule artifacts.")
 
-    roster_index = build_volleyball_roster_index(roster_rows or [])
+    roster_rows = list(roster_rows or [])
+    _warn_if_approval_status_missing(roster_rows, "Volleyball")
+    roster_index = build_volleyball_roster_index(roster_rows)
     photo_cache = PhotoCache()
     pages = [
         render_volleyball_scoresheet_page(

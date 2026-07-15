@@ -14,6 +14,7 @@ from scoresheets import (
     _extract_photo_ref,
     _friendly_location,
     build_roster_index,
+    build_soccer_roster_index,
     build_volleyball_roster_index,
     enrich_roster_photos_from_workbook,
     render_basketball_scoresheet_page,
@@ -184,6 +185,33 @@ def test_build_volleyball_roster_index_keeps_men_and_women_separate():
     assert [row["First Name"] for row in indexed[VOLLEYBALL_WOMEN_EVENT]["RPC"]] == ["Bao"]
 
 
+def test_build_soccer_roster_index_accepts_exported_coed_exhibition_triplet():
+    rows = [
+        {
+            "Church Team": "RPC",
+            "First Name": "An",
+            "Last Name": "Nguyen",
+            "Age (at Event)": 17,
+            "sport_type": "Soccer",
+            "sport_gender": "Coed",
+            "sport_format": "Exhibition",
+        },
+        {
+            "Church Team": "RPC",
+            "First Name": "Nope",
+            "Last Name": "Nguyen",
+            "Age (at Event)": 17,
+            "sport_type": "Soccer",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+        },
+    ]
+
+    indexed = build_soccer_roster_index(rows)
+
+    assert [row["First Name"] for row in indexed["RPC"]] == ["An"]
+
+
 def test_render_basketball_scoresheet_places_logo_upper_left(tmp_path):
     logo = tmp_path / "logo.png"
     _logo(logo)
@@ -200,6 +228,7 @@ def test_render_basketball_scoresheet_places_logo_upper_left(tmp_path):
                 "sport_type": "Basketball",
                 "sport_gender": "Men",
                 "sport_format": "Team",
+                "approval_status": "approved",
             }
         ]
     )
@@ -226,6 +255,41 @@ def test_render_basketball_scoresheet_places_logo_upper_left(tmp_path):
     assert page.getpixel((124, 570)) == (30, 120, 220)
 
 
+def test_render_basketball_scoresheet_strikes_unapproved_roster_row(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    roster_index = build_roster_index(
+        [
+            {
+                "Church Team": "RPC",
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "Age (at Event)": 17,
+                "sport_type": "Basketball",
+                "sport_gender": "Men",
+                "sport_format": "Team",
+                "approval_status": "reapproval_required",
+            }
+        ]
+    )
+
+    page = render_basketball_scoresheet_page(
+        {
+            "game_key": "BBM-01",
+            "event": BASKETBALL_EVENT,
+            "team_a_label": "RPC",
+            "team_b_label": "GAC",
+            "resource_id": "GYM-Sat-1-1",
+            "scheduled_slot": "Sat-1-16:00",
+        },
+        roster_index=roster_index,
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+    )
+
+    assert page.getpixel((250, 586)) == (170, 31, 45)
+
+
 def test_render_volleyball_scoresheet_places_logo_and_roster_photo(tmp_path):
     logo = tmp_path / "logo.png"
     _logo(logo)
@@ -242,6 +306,7 @@ def test_render_volleyball_scoresheet_places_logo_and_roster_photo(tmp_path):
                 "sport_type": "Volleyball",
                 "sport_gender": "Men",
                 "sport_format": "Team",
+                "approval_status": "approved",
             }
         ]
     )
@@ -264,6 +329,41 @@ def test_render_volleyball_scoresheet_places_logo_and_roster_photo(tmp_path):
     assert page.getpixel((111, 804)) == (40, 200, 90)
 
 
+def test_render_volleyball_scoresheet_strikes_unapproved_roster_row(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    roster_index = build_volleyball_roster_index(
+        [
+            {
+                "Church Team": "RPC",
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "Age (at Event)": 17,
+                "sport_type": "Volleyball",
+                "sport_gender": "Men",
+                "sport_format": "Team",
+                "approval_status": "pending",
+            }
+        ]
+    )
+
+    page = render_volleyball_scoresheet_page(
+        {
+            "game_key": "VBM-01",
+            "event": VOLLEYBALL_MEN_EVENT,
+            "team_a_label": "RPC",
+            "team_b_label": "GAC",
+            "resource_id": "GYM-Sat-1-2",
+            "scheduled_slot": "Sat-1-17:00",
+        },
+        roster_index=roster_index,
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+    )
+
+    assert page.getpixel((180, 816)) == (170, 31, 45)
+
+
 def test_render_soccer_scoresheet_places_logo_upper_left(tmp_path):
     logo = tmp_path / "logo.png"
     _logo(logo)
@@ -282,6 +382,41 @@ def test_render_soccer_scoresheet_places_logo_upper_left(tmp_path):
     )
 
     assert page.getpixel((LOGO_BOX[0] + 20, LOGO_BOX[1] + 20)) == (220, 20, 30)
+
+
+def test_render_soccer_scoresheet_prints_and_strikes_unapproved_roster_row(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    roster_index = build_soccer_roster_index(
+        [
+            {
+                "Church Team": "RPC",
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "Age (at Event)": 17,
+                "sport_type": "Soccer",
+                "sport_gender": "Coed",
+                "sport_format": "Exhibition",
+                "approval_status": "validated",
+            }
+        ]
+    )
+
+    page = render_soccer_scoresheet_page(
+        {
+            "game_key": "SOC-G1",
+            "event": SOCCER_EVENT,
+            "team_a_label": "RPC",
+            "team_b_label": "GAC",
+            "resource_id": "SOC-Sat-1-1",
+            "scheduled_slot": "Sat-1-19:00",
+        },
+        roster_index=roster_index,
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+    )
+
+    assert page.getpixel((250, 921)) == (170, 31, 45)
 
 
 def test_render_bible_challenge_scoresheet_places_logo_upper_left(tmp_path):
@@ -381,6 +516,7 @@ def test_write_basketball_scoresheets_pdf_filters_to_basketball(tmp_path):
                 "Last Name": "Nguyen",
                 "Age (at Event)": 17,
                 "sport_type": BASKETBALL_EVENT,
+                "approval_status": "approved",
             }
         ],
         logo_path=logo,
@@ -412,6 +548,7 @@ def test_write_volleyball_scoresheets_pdf_filters_to_volleyball(tmp_path):
                 "Last Name": "Nguyen",
                 "Age (at Event)": 17,
                 "sport_type": VOLLEYBALL_MEN_EVENT,
+                "approval_status": "approved",
             }
         ],
         logo_path=logo,
@@ -436,7 +573,16 @@ def test_write_soccer_scoresheets_pdf_filters_to_soccer(tmp_path):
         input_path,
         output_path,
         tmp_path / "scoresheets",
-        roster_rows=[],
+        roster_rows=[
+            {
+                "Church Team": "RPC",
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "Age (at Event)": 17,
+                "sport_type": SOCCER_EVENT,
+                "approval_status": "approved",
+            }
+        ],
         logo_path=logo,
         score_entry_base_url=SCORE_ENTRY_URL,
         output_filename="soccer.pdf",
