@@ -410,6 +410,38 @@ def test_parse_args_generate_scoresheets_volleyball(monkeypatch):
     assert args.sport == "volleyball"
 
 
+def test_parse_args_generate_scoresheets_soccer(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "generate-scoresheets",
+            "--sport",
+            "soccer",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "generate-scoresheets"
+    assert args.sport == "soccer"
+
+
+def test_parse_args_generate_scoresheets_bible_challenge(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "generate-scoresheets",
+            "--sport",
+            "bible-challenge",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "generate-scoresheets"
+    assert args.sport == "bible-challenge"
+
+
 def test_parse_args_publish_schedule_requires_mode(monkeypatch, capsys):
     monkeypatch.setattr(main.sys, "argv", ["main.py", "publish-schedule"])
     with pytest.raises(SystemExit) as exc:

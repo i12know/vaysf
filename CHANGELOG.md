@@ -16,6 +16,21 @@
   prior-state candidate because it is the problem state being resolved; genuine
   ambiguity still blocks unless the operator passes `--force-approved`.
 
+### Soccer and Bible Challenge score-sheet generators - closes [#254](https://github.com/i12know/vaysf/issues/254), [#255](https://github.com/i12know/vaysf/issues/255)
+
+- Extended `python main.py generate-scoresheets` with `--sport soccer` and
+  `--sport bible-challenge`.
+- Generated Soccer score sheets from approved schedule artifacts with the VAY
+  logo, QR score-entry link, game metadata, final score boxes, referee blanks,
+  half/final/shootout score tracker, event log, and signature lines.
+- Generated Bible Challenge score sheets for the official three-team matchup
+  shape with the VAY logo, QR score-entry link, final score boxes for all three
+  teams, moderator/scorekeeper blanks, three referee/church lines, two-round
+  score tracker, question/appeal notes, and certification/signature space.
+- Added focused tests for the new CLI sport choices, renderers, and PDF
+  filtering while preserving the existing Basketball and Volleyball score-sheet
+  behavior.
+
 ### Public schedule location labels and score-sheet polish
 
 - Joined schedule assignments to `schedule_input.json` resource metadata during

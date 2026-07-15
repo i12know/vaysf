@@ -1,9 +1,10 @@
 """Generate print-ready paper score sheets for event-day games.
 
 Issue #211 starts with Basketball because those sheets need player rosters for
-foul tracking. Issue #250 extends the same print pipeline to Volleyball. The
-renderer intentionally produces an image-backed PDF using Pillow so it can run
-with the existing middleware dependencies.
+foul tracking. Issue #250 extends the same print pipeline to Volleyball. Issue
+#254 adds Soccer, and #255 adds Bible Challenge. The renderer intentionally
+produces an image-backed PDF using Pillow so it can run with the existing
+middleware dependencies.
 """
 
 from __future__ import annotations
@@ -27,6 +28,8 @@ from config import Config
 from schedule_publisher import merge_schedule
 
 BASKETBALL_EVENT = "Basketball - Men Team"
+BIBLE_CHALLENGE_EVENT = "Bible Challenge - Mixed Team"
+SOCCER_EVENT = "Soccer - Coed Exhibition"
 VOLLEYBALL_MEN_EVENT = "Volleyball - Men Team"
 VOLLEYBALL_WOMEN_EVENT = "Volleyball - Women Team"
 VOLLEYBALL_EVENTS = {VOLLEYBALL_MEN_EVENT, VOLLEYBALL_WOMEN_EVENT}
@@ -310,6 +313,10 @@ def _team_label(game: dict[str, Any], side: str) -> str:
     return str(game.get(f"team_{side}_label") or game.get(f"team_{side}_key") or "TBD").strip()
 
 
+def _team_labels(game: dict[str, Any], sides: tuple[str, ...]) -> list[str]:
+    return [_team_label(game, side) for side in sides if _team_label(game, side) != "TBD"]
+
+
 def _roster_name(row: dict[str, Any]) -> str:
     first = str(row.get("First Name") or "").strip()
     last = str(row.get("Last Name") or "").strip()
@@ -431,6 +438,38 @@ def _draw_generic_header(draw: ImageDraw.ImageDraw, game: dict[str, Any], title:
     draw.text((PAGE_W - MARGIN - QR_SIZE, 210), "Scan to enter score", font=_font("regular", 15), fill=COL_MUTED)
 
 
+def _draw_multi_team_header(
+    draw: ImageDraw.ImageDraw,
+    game: dict[str, Any],
+    title: str,
+    sides: tuple[str, ...],
+    line_break_teams: bool = False,
+) -> None:
+    teams = _team_labels(game, sides)
+    game_key = str(game.get("game_key") or "")
+    location = _friendly_location(game)
+    if str(game.get("event") or "").strip() == BIBLE_CHALLENGE_EVENT:
+        location = re.sub(r"\s+-\s+Station\s+\d+\b", "", location, flags=re.IGNORECASE)
+    draw.text((220, 58), "Vietnamese Alliance Youth Sports Festival", font=_font("regular", 25), fill=COL_BLACK)
+    if line_break_teams:
+        draw.text((220, 96), f"{title}:", font=_font("bold", 30), fill=COL_BLACK)
+        draw.text((220, 132), " vs. ".join(teams), font=_font("bold", 26), fill=COL_BLACK)
+        game_id_y = 164
+        detail_y = 198
+    else:
+        draw.text((220, 96), f"{title}: {' vs. '.join(teams)}", font=_font("bold", 31), fill=COL_BLACK)
+        game_id_y = 140
+        detail_y = 174
+    draw.text((220, game_id_y), f"Game ID: {game_key}", font=_font("bold", 23), fill=COL_BLUE)
+    draw.text(
+        (220, detail_y),
+        f"{_friendly_slot(game.get('scheduled_slot'))}     Location: {location}",
+        font=_font("regular", 22),
+        fill=COL_BLACK,
+    )
+    draw.text((PAGE_W - MARGIN - QR_SIZE, 210), "Scan to enter score", font=_font("regular", 15), fill=COL_MUTED)
+
+
 def _draw_score_boxes(draw: ImageDraw.ImageDraw, game: dict[str, Any]) -> None:
     top = 250
     left = MARGIN
@@ -442,6 +481,19 @@ def _draw_score_boxes(draw: ImageDraw.ImageDraw, game: dict[str, Any]) -> None:
         x = left + 190 + idx * (team_w + 28)
         draw.text((x, top + 12), _team_label(game, side), font=_font("bold", 21), fill=COL_BLACK)
         draw.rectangle((x, top + 42, x + team_w, top + 78), outline=COL_BORDER, width=2, fill=(255, 255, 255))
+
+
+def _draw_three_team_score_boxes(draw: ImageDraw.ImageDraw, game: dict[str, Any]) -> None:
+    top = 250
+    left = MARGIN
+    right = PAGE_W - MARGIN
+    draw.rounded_rectangle((left, top, right, top + 104), radius=12, outline=COL_BORDER, width=2, fill=COL_LIGHT)
+    draw.text((left + 24, top + 18), "FINAL SCORE", font=_font("bold", 22), fill=COL_BLUE)
+    team_w = (right - left - 252) // 3
+    for idx, side in enumerate(("a", "b", "c")):
+        x = left + 190 + idx * (team_w + 22)
+        draw.text((x, top + 12), _team_label(game, side), font=_font("bold", 21), fill=COL_BLACK)
+        draw.rectangle((x, top + 48, x + team_w, top + 86), outline=COL_BORDER, width=2, fill=(255, 255, 255))
 
 
 def _draw_referee_section(draw: ImageDraw.ImageDraw, y: int = 370) -> None:
@@ -460,6 +512,114 @@ def _draw_referee_section(draw: ImageDraw.ImageDraw, y: int = 370) -> None:
         font=_font("italic", 15),
         fill=COL_BLACK,
     )
+
+
+def _draw_bible_challenge_official_section(draw: ImageDraw.ImageDraw, y: int = 384) -> None:
+    label_font = _font("bold", 18)
+    text_font = _font("regular", 18)
+    left_y = y
+    for label in ("MODERATOR:", "SCOREKEEPER:"):
+        draw.text((MARGIN, left_y), label, font=label_font, fill=COL_BLACK)
+        draw.line((230, left_y + 22, 520, left_y + 22), fill=COL_BORDER, width=2)
+        left_y += 34
+
+    ref_y = y
+    for label in ("REF 1:", "REF 2:", "REF 3:"):
+        draw.text((610, ref_y), label, font=label_font, fill=COL_BLACK)
+        draw.line((704, ref_y + 22, 870, ref_y + 22), fill=COL_BORDER, width=2)
+        draw.text((900, ref_y), "CHURCH:", font=text_font, fill=COL_BLACK)
+        draw.line((994, ref_y + 22, PAGE_W - MARGIN, ref_y + 22), fill=COL_BORDER, width=2)
+        ref_y += 34
+
+    y = max(left_y, ref_y, 486)
+    draw.text((MARGIN, y + 10), "Opening Prayer Verse:", font=_font("bold", 16), fill=COL_BLACK)
+    draw.text(
+        (270, y + 10),
+        "Your word is a lamp for my feet, a light on my path. (Psalm 119:105)",
+        font=_font("italic", 15),
+        fill=COL_BLACK,
+    )
+
+
+def _draw_bible_challenge_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any], y: int = 520) -> int:
+    teams = [_team_label(game, side) for side in ("a", "b", "c")]
+    x = MARGIN
+    width = PAGE_W - MARGIN * 2
+    label_w = 180
+    team_w = (width - label_w) // 3
+    team_header_h = 48
+    row_h = 56
+    rows = ["Round 1", "Round 2"]
+    height = 40 + team_header_h + row_h * len(rows)
+    draw.rectangle((x, y, x + width, y + height), outline=COL_BORDER, width=2)
+    draw.rectangle((x, y, x + width, y + 40), fill=COL_HEADER, outline=COL_BORDER, width=2)
+    _center_text(draw, (x, y, x + width, y + 40), "BIBLE CHALLENGE SCORE TRACKER", _font("bold", 20), COL_BLACK)
+
+    for idx, team in enumerate(teams):
+        left = x + label_w + idx * team_w
+        right = left + team_w
+        draw.line((left, y + 40, left, y + height), fill=COL_BORDER, width=1)
+        _center_text(draw, (left, y + 40, right, y + 40 + team_header_h), team, _font("bold", 19), COL_BLACK)
+    draw.line((x + width, y + 40, x + width, y + height), fill=COL_BORDER, width=1)
+    draw.line((x, y + 40 + team_header_h, x + width, y + 40 + team_header_h), fill=COL_BORDER, width=1)
+
+    for row_idx, label in enumerate(rows):
+        row_y = y + 40 + team_header_h + row_idx * row_h
+        draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
+        draw.text((x + 16, row_y + 17), label, font=_font("bold", 17), fill=COL_BLACK)
+        for idx in range(3):
+            left = x + label_w + idx * team_w
+            right = left + team_w
+            box_w = 150
+            box_h = 36
+            bx = left + (right - left - box_w) // 2
+            by = row_y + (row_h - box_h) // 2
+            draw.rectangle((bx, by, bx + box_w, by + box_h), outline=COL_BORDER, width=2, fill=(255, 255, 255))
+    return y + height
+
+
+def _draw_bible_challenge_notes_grid(draw: ImageDraw.ImageDraw, y: int) -> int:
+    x = MARGIN
+    width = PAGE_W - MARGIN * 2
+    header_h = 40
+    row_h = 44
+    rows = 8
+    height = header_h + row_h * rows
+    draw.rectangle((x, y, x + width, y + height), outline=COL_BORDER, width=2)
+    draw.rectangle((x, y, x + width, y + header_h), fill=COL_HEADER, outline=COL_BORDER, width=2)
+    _center_text(draw, (x, y, x + width, y + header_h), "QUESTION / APPEAL NOTES", _font("bold", 18), COL_BLACK)
+
+    col_round = x + 110
+    col_team = col_round + 155
+    col_ref = col_team + 250
+    for line_x in (col_round, col_team, col_ref):
+        draw.line((line_x, y + header_h, line_x, y + height), fill=COL_BORDER, width=1)
+    draw.text((x + 18, y + header_h + 11), "ROUND", font=_font("bold", 15), fill=COL_BLACK)
+    draw.text((col_round + 18, y + header_h + 11), "TEAM", font=_font("bold", 15), fill=COL_BLACK)
+    draw.text((col_team + 18, y + header_h + 11), "QUESTION / REF", font=_font("bold", 15), fill=COL_BLACK)
+    draw.text((col_ref + 18, y + header_h + 11), "NOTES", font=_font("bold", 15), fill=COL_BLACK)
+
+    for idx in range(rows):
+        row_y = y + header_h + idx * row_h
+        draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
+        if idx == 0:
+            continue
+        draw.line((x + 18, row_y + 24, col_round - 18, row_y + 24), fill=(190, 196, 204), width=1)
+        draw.line((col_round + 18, row_y + 24, col_team - 18, row_y + 24), fill=(190, 196, 204), width=1)
+        draw.line((col_team + 18, row_y + 24, col_ref - 18, row_y + 24), fill=(190, 196, 204), width=1)
+        draw.line((col_ref + 18, row_y + 24, x + width - 18, row_y + 24), fill=(190, 196, 204), width=1)
+    return y + height
+
+
+def _draw_bible_challenge_footer(draw: ImageDraw.ImageDraw) -> None:
+    y = 1392
+    draw.text((MARGIN, y), "CERTIFICATION / COMMENTS", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((MARGIN, y + 50, PAGE_W - MARGIN, y + 50), fill=COL_BORDER, width=1)
+    draw.line((MARGIN, y + 96, PAGE_W - MARGIN, y + 96), fill=COL_BORDER, width=1)
+    draw.text((MARGIN, y + 148), "MODERATOR SIGNATURE:", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((340, y + 170, 650, y + 170), fill=COL_BORDER, width=2)
+    draw.text((690, y + 148), "SCOREKEEPER:", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((858, y + 170, PAGE_W - MARGIN, y + 170), fill=COL_BORDER, width=2)
 
 
 def _draw_volleyball_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any], y: int = 500) -> None:
@@ -660,6 +820,93 @@ def _draw_volleyball_footer(draw: ImageDraw.ImageDraw) -> None:
     draw.line((650, y + 172, 920, y + 172), fill=COL_BORDER, width=2)
 
 
+def _draw_soccer_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any], y: int = 360) -> int:
+    team_a = _team_label(game, "a")
+    team_b = _team_label(game, "b")
+    x = MARGIN
+    width = PAGE_W - MARGIN * 2
+    label_w = 190
+    team_w = (width - label_w) // 2
+    team_header_h = 46
+    row_h = 54
+    rows = [
+        ("1st Half", team_a, team_b),
+        ("2nd Half", team_a, team_b),
+        ("Final", team_a, team_b),
+        ("Shootout / OT", team_a, team_b),
+    ]
+    height = 40 + team_header_h + row_h * len(rows)
+    draw.rectangle((x, y, x + width, y + height), outline=COL_BORDER, width=2)
+    draw.rectangle((x, y, x + width, y + 40), fill=COL_HEADER, outline=COL_BORDER, width=2)
+    _center_text(draw, (x, y, x + width, y + 40), "SOCCER SCORE TRACKER", _font("bold", 20), COL_BLACK)
+
+    col_a_x = x + label_w
+    col_b_x = col_a_x + team_w
+    draw.line((col_a_x, y + 40, col_a_x, y + height), fill=COL_BORDER, width=1)
+    draw.line((col_b_x, y + 40, col_b_x, y + height), fill=COL_BORDER, width=1)
+    _center_text(draw, (col_a_x, y + 40, col_b_x, y + 40 + team_header_h), team_a, _font("bold", 19), COL_BLACK)
+    _center_text(draw, (col_b_x, y + 40, x + width, y + 40 + team_header_h), team_b, _font("bold", 19), COL_BLACK)
+    draw.line((x, y + 40 + team_header_h, x + width, y + 40 + team_header_h), fill=COL_BORDER, width=1)
+
+    for idx, (label, _team_a, _team_b) in enumerate(rows):
+        row_y = y + 40 + team_header_h + idx * row_h
+        draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
+        draw.text((x + 16, row_y + 16), label, font=_font("bold", 18), fill=COL_BLACK)
+        for left, right in ((col_a_x, col_b_x), (col_b_x, x + width)):
+            box_w = 118
+            box_h = 34
+            bx = left + (right - left - box_w) // 2
+            by = row_y + (row_h - box_h) // 2
+            draw.rectangle((bx, by, bx + box_w, by + box_h), outline=COL_BORDER, width=2, fill=(255, 255, 255))
+    return y + height
+
+
+def _draw_soccer_event_log(draw: ImageDraw.ImageDraw, y: int) -> int:
+    x = MARGIN
+    width = PAGE_W - MARGIN * 2
+    header_h = 40
+    row_h = 44
+    rows = 8
+    height = header_h + row_h * rows
+    draw.rectangle((x, y, x + width, y + height), outline=COL_BORDER, width=2)
+    draw.rectangle((x, y, x + width, y + header_h), fill=COL_HEADER, outline=COL_BORDER, width=2)
+    _center_text(draw, (x, y, x + width, y + header_h), "GOALS / CARDS / MATCH NOTES", _font("bold", 18), COL_BLACK)
+
+    col_minute = x + 95
+    col_team = col_minute + 155
+    col_player = col_team + 365
+    for line_x in (col_minute, col_team, col_player):
+        draw.line((line_x, y + header_h, line_x, y + height), fill=COL_BORDER, width=1)
+
+    draw.text((x + 18, y + header_h + 11), "MIN", font=_font("bold", 15), fill=COL_BLACK)
+    draw.text((col_minute + 18, y + header_h + 11), "TEAM", font=_font("bold", 15), fill=COL_BLACK)
+    draw.text((col_team + 18, y + header_h + 11), "PLAYER / EVENT", font=_font("bold", 15), fill=COL_BLACK)
+    draw.text((col_player + 18, y + header_h + 11), "NOTES", font=_font("bold", 15), fill=COL_BLACK)
+
+    for idx in range(rows):
+        row_y = y + header_h + idx * row_h
+        draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
+        if idx == 0:
+            continue
+        draw.line((x + 18, row_y + 24, col_minute - 18, row_y + 24), fill=(190, 196, 204), width=1)
+        draw.line((col_minute + 18, row_y + 24, col_team - 18, row_y + 24), fill=(190, 196, 204), width=1)
+        draw.line((col_team + 18, row_y + 24, col_player - 18, row_y + 24), fill=(190, 196, 204), width=1)
+        draw.line((col_player + 18, row_y + 24, x + width - 18, row_y + 24), fill=(190, 196, 204), width=1)
+    return y + height
+
+
+def _draw_soccer_footer(draw: ImageDraw.ImageDraw) -> None:
+    y = 1288
+    draw.text((MARGIN, y), "REFEREE COMMENTS", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((MARGIN, y + 50, PAGE_W - MARGIN, y + 50), fill=COL_BORDER, width=1)
+    draw.line((MARGIN, y + 96, PAGE_W - MARGIN, y + 96), fill=COL_BORDER, width=1)
+    draw.line((MARGIN, y + 142, PAGE_W - MARGIN, y + 142), fill=COL_BORDER, width=1)
+    draw.text((MARGIN, y + 190), "REFEREE SIGNATURE:", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((312, y + 212, 690, y + 212), fill=COL_BORDER, width=2)
+    draw.text((730, y + 190), "SCOREKEEPER:", font=_font("bold", 18), fill=COL_BLACK)
+    draw.line((898, y + 212, PAGE_W - MARGIN, y + 212), fill=COL_BORDER, width=2)
+
+
 def render_basketball_scoresheet_page(
     game: dict[str, Any],
     roster_index: Optional[dict[str, list[dict[str, Any]]]] = None,
@@ -704,6 +951,50 @@ def render_basketball_scoresheet_page(
         photo_cache,
     )
     _draw_footer(draw)
+    return page
+
+
+def render_bible_challenge_scoresheet_page(
+    game: dict[str, Any],
+    logo_path: Optional[Path] = None,
+    score_entry_base_url: Optional[str] = None,
+) -> Image.Image:
+    """Render one three-team Bible Challenge score sheet as an RGB image."""
+
+    logo = _load_logo(logo_path or default_logo_path())
+    page = Image.new("RGB", (PAGE_W, PAGE_H), "white")
+    draw = ImageDraw.Draw(page)
+
+    _draw_logo(page, logo)
+    _draw_qr(page, str(game.get("game_key") or ""), score_entry_base_url)
+    _draw_multi_team_header(draw, game, "BIBLE CHALLENGE SCORESHEET", ("a", "b", "c"), line_break_teams=True)
+    _draw_three_team_score_boxes(draw, game)
+    _draw_bible_challenge_official_section(draw, y=386)
+    next_y = _draw_bible_challenge_score_grid(draw, game, y=548)
+    _draw_bible_challenge_notes_grid(draw, next_y + 24)
+    _draw_bible_challenge_footer(draw)
+    return page
+
+
+def render_soccer_scoresheet_page(
+    game: dict[str, Any],
+    logo_path: Optional[Path] = None,
+    score_entry_base_url: Optional[str] = None,
+) -> Image.Image:
+    """Render one soccer game score sheet as an RGB image."""
+
+    logo = _load_logo(logo_path or default_logo_path())
+    page = Image.new("RGB", (PAGE_W, PAGE_H), "white")
+    draw = ImageDraw.Draw(page)
+
+    _draw_logo(page, logo)
+    _draw_qr(page, str(game.get("game_key") or ""), score_entry_base_url)
+    _draw_generic_header(draw, game, "SOCCER SCORESHEET")
+    _draw_score_boxes(draw, game)
+    _draw_referee_section(draw, y=372)
+    next_y = _draw_soccer_score_grid(draw, game, y=520)
+    _draw_soccer_event_log(draw, next_y + 28)
+    _draw_soccer_footer(draw)
     return page
 
 
@@ -777,12 +1068,34 @@ def _basketball_games(schedule_input: dict[str, Any], schedule_output: dict[str,
     return games
 
 
+def _bible_challenge_games(schedule_input: dict[str, Any], schedule_output: dict[str, Any]) -> list[dict[str, Any]]:
+    games = [
+        game
+        for game in merge_schedule(schedule_input, schedule_output)
+        if str(game.get("event") or "").strip() == BIBLE_CHALLENGE_EVENT
+        and str(game.get("game_key") or "").startswith("BC-")
+    ]
+    games.sort(key=lambda game: (str(game.get("scheduled_slot") or ""), str(game.get("resource_id") or ""), str(game.get("game_key") or "")))
+    return games
+
+
 def _volleyball_games(schedule_input: dict[str, Any], schedule_output: dict[str, Any]) -> list[dict[str, Any]]:
     games = [
         game
         for game in merge_schedule(schedule_input, schedule_output)
         if str(game.get("event") or "").strip() in VOLLEYBALL_EVENTS
         and str(game.get("game_key") or "").startswith(("VBM-", "VBW-"))
+    ]
+    games.sort(key=lambda game: (str(game.get("scheduled_slot") or ""), str(game.get("resource_id") or ""), str(game.get("game_key") or "")))
+    return games
+
+
+def _soccer_games(schedule_input: dict[str, Any], schedule_output: dict[str, Any]) -> list[dict[str, Any]]:
+    games = [
+        game
+        for game in merge_schedule(schedule_input, schedule_output)
+        if str(game.get("event") or "").strip() == SOCCER_EVENT
+        and str(game.get("game_key") or "").startswith("SOC-")
     ]
     games.sort(key=lambda game: (str(game.get("scheduled_slot") or ""), str(game.get("resource_id") or ""), str(game.get("game_key") or "")))
     return games
@@ -820,6 +1133,74 @@ def write_basketball_scoresheets_pdf(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = output_filename or f"Basketball_Scoresheets_{dt.date.today().isoformat()}.pdf"
+    output_path = output_dir / filename
+    pages[0].save(output_path, "PDF", save_all=True, append_images=pages[1:], resolution=150.0)
+    return output_path, len(pages)
+
+
+def write_bible_challenge_scoresheets_pdf(
+    schedule_input_path: Path,
+    schedule_output_path: Path,
+    output_dir: Path,
+    roster_rows: Optional[list[dict[str, Any]]] = None,
+    logo_path: Optional[Path] = None,
+    score_entry_base_url: Optional[str] = None,
+    output_filename: Optional[str] = None,
+) -> tuple[Path, int]:
+    """Write one combined Bible Challenge score-sheet PDF and return (path, pages)."""
+
+    del roster_rows  # Bible Challenge sheets are match-score sheets, not roster sheets.
+    schedule_input = _load_json(schedule_input_path)
+    schedule_output = _load_json(schedule_output_path)
+    games = _bible_challenge_games(schedule_input, schedule_output)
+    if not games:
+        raise ScoreSheetError("No scheduled Bible Challenge games found in the supplied schedule artifacts.")
+
+    pages = [
+        render_bible_challenge_scoresheet_page(
+            game,
+            logo_path=logo_path,
+            score_entry_base_url=score_entry_base_url,
+        )
+        for game in games
+    ]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename = output_filename or f"Bible_Challenge_Scoresheets_{dt.date.today().isoformat()}.pdf"
+    output_path = output_dir / filename
+    pages[0].save(output_path, "PDF", save_all=True, append_images=pages[1:], resolution=150.0)
+    return output_path, len(pages)
+
+
+def write_soccer_scoresheets_pdf(
+    schedule_input_path: Path,
+    schedule_output_path: Path,
+    output_dir: Path,
+    roster_rows: Optional[list[dict[str, Any]]] = None,
+    logo_path: Optional[Path] = None,
+    score_entry_base_url: Optional[str] = None,
+    output_filename: Optional[str] = None,
+) -> tuple[Path, int]:
+    """Write one combined soccer score-sheet PDF and return (path, pages)."""
+
+    del roster_rows  # Soccer sheets do not need roster/foul tracking.
+    schedule_input = _load_json(schedule_input_path)
+    schedule_output = _load_json(schedule_output_path)
+    games = _soccer_games(schedule_input, schedule_output)
+    if not games:
+        raise ScoreSheetError("No scheduled soccer games found in the supplied schedule artifacts.")
+
+    pages = [
+        render_soccer_scoresheet_page(
+            game,
+            logo_path=logo_path,
+            score_entry_base_url=score_entry_base_url,
+        )
+        for game in games
+    ]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename = output_filename or f"Soccer_Scoresheets_{dt.date.today().isoformat()}.pdf"
     output_path = output_dir / filename
     pages[0].save(output_path, "PDF", save_all=True, append_images=pages[1:], resolution=150.0)
     return output_path, len(pages)
