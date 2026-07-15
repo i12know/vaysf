@@ -526,6 +526,45 @@ def test_badge_uploader_posts_png_without_json_content_type(tmp_path, monkeypatc
     assert kwargs["files"]["badge"][2] == "image/png"
 
 
+def test_badge_uploader_retries_403_with_reencoded_png(tmp_path, monkeypatch):
+    png_path = tmp_path / "RPC_3139537_abcd1234.png"
+    png_path.write_bytes(_png_bytes(size=(1080, 1920)))
+    retry_path = tmp_path / "retry.png"
+    retry_path.write_bytes(_png_bytes(color=(90, 40, 180), size=(1080, 1920)))
+    monkeypatch.setattr("badges.uploader.Config.WP_URL", "https://sportsfest.example")
+    monkeypatch.setattr("badges.uploader.Config.WP_API_KEY", "secret")
+    monkeypatch.setattr(
+        WordPressBadgeUploader,
+        "_reencode_for_firewall_retry",
+        staticmethod(lambda badge_path: retry_path),
+    )
+
+    forbidden_response = MagicMock()
+    forbidden_response.status_code = 403
+    forbidden_response.text = "Forbidden"
+
+    ok_response = MagicMock()
+    ok_response.status_code = 200
+    ok_response.raise_for_status.return_value = None
+    ok_response.json.return_value = {
+        "filename": png_path.name,
+        "url": "https://sportsfest.example/wp-content/uploads/vaysf/badges/RPC_3139537_abcd1234.png",
+        "size": png_path.stat().st_size,
+        "sha256": "abc123",
+    }
+
+    session = MagicMock()
+    session.headers = {}
+    session.cookies = {}
+    session.post.side_effect = [forbidden_response, ok_response]
+
+    result = WordPressBadgeUploader(session=session).upload_badge(png_path)
+
+    assert result.url.endswith("/RPC_3139537_abcd1234.png")
+    assert session.post.call_count == 2
+    assert not retry_path.exists()
+
+
 def test_badge_uploader_rejects_non_png_filename(tmp_path):
     png_path = tmp_path / "RPC_3139537_abcd1234.jpg"
     png_path.write_bytes(_png_bytes(size=(1080, 1920)))
