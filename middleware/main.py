@@ -210,6 +210,110 @@ def parse_args() -> argparse.Namespace:
         help="Upload the image to ChMeetings and re-read the person to confirm photo presence",
     )
 
+    approval_drift_parser = subparsers.add_parser(
+        "approval-drift-history",
+        help="Audit current reapproval-required participants against local approval drift logs",
+    )
+    approval_drift_parser.add_argument(
+        "--file",
+        default=None,
+        help=(
+            "Path to Church_Team_Status_ALL workbook. Default uses the newest "
+            "Church_Team_Status_ALL_*.xlsx from EXPORT_DIR or data/."
+        ),
+    )
+    approval_drift_parser.add_argument(
+        "--logs-dir",
+        default=os.path.join(current_dir, "logs"),
+        help="Directory containing sportsfest_*.log files",
+    )
+    approval_drift_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output xlsx path. Default: EXPORT_DIR/approval_drift_history.xlsx",
+    )
+    approval_drift_parser.add_argument(
+        "--status",
+        default="reapproval_required",
+        help="Current approval status to audit from Contacts-Status",
+    )
+    approval_drift_parser.add_argument(
+        "--church-code",
+        default=None,
+        help="Optional church code filter, such as GAC",
+    )
+    approval_drift_parser.add_argument(
+        "--since",
+        default=None,
+        help="Optional log date floor in YYYY-MM-DD format, such as 2026-07-11",
+    )
+
+    approval_drift_accept_parser = subparsers.add_parser(
+        "approval-drift-accept",
+        help=(
+            "Accept reviewed approval drift and restore current reapproval-required "
+            "participants to their prior approval status in WordPress"
+        ),
+    )
+    approval_drift_accept_parser.add_argument(
+        "--file",
+        default=None,
+        help=(
+            "Path to Church_Team_Status_ALL workbook. Default uses the newest "
+            "Church_Team_Status_ALL_*.xlsx from EXPORT_DIR or data/."
+        ),
+    )
+    approval_drift_accept_scope = approval_drift_accept_parser.add_mutually_exclusive_group(required=True)
+    approval_drift_accept_scope.add_argument(
+        "--church-code",
+        default=None,
+        help="Accept reviewed drift for all current reapproval-required participants in one church, such as GAC",
+    )
+    approval_drift_accept_scope.add_argument(
+        "--chm-id",
+        default=None,
+        help="Accept reviewed drift for one participant by ChMeetings ID",
+    )
+    approval_drift_accept_parser.add_argument(
+        "--status",
+        default="reapproval_required",
+        help="Current approval status eligible for reset",
+    )
+    approval_drift_accept_parser.add_argument(
+        "--reason",
+        default=None,
+        help="Operator note to append to the restored approval record",
+    )
+    approval_drift_accept_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output xlsx path. Default: EXPORT_DIR/approval_drift_acceptance.xlsx",
+    )
+    approval_drift_accept_parser.add_argument(
+        "--logs-dir",
+        default=os.path.join(current_dir, "logs"),
+        help="Directory containing sportsfest_*.log files used to infer prior approval status",
+    )
+    approval_drift_accept_parser.add_argument(
+        "--force-approved",
+        action="store_true",
+        help=(
+            "Override prior-status inference and mark selected rows approved. "
+            "Use only after the operator confirms approval should not return to a prior pending state."
+        ),
+    )
+    approval_drift_accept_mode = approval_drift_accept_parser.add_mutually_exclusive_group(required=True)
+    approval_drift_accept_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview which WordPress rows would be restored without changing them",
+    )
+    approval_drift_accept_mode.add_argument(
+        "--execute",
+        action="store_true",
+        help="Restore selected current reapproval-required rows in WordPress",
+    )
+
     # Reset-season command
     reset_parser = subparsers.add_parser(
         "reset-season",
@@ -2018,6 +2122,94 @@ def main() -> None:
             success = bool(summary["validated"])
         else:
             success = bool(summary["uploaded"] and summary["confirmed_photo"])
+    elif args.command == "approval-drift-history":
+        from approval_drift_history import find_latest_status_workbook, run as run_drift_history
+
+        workbook_path = Path(args.file) if args.file else find_latest_status_workbook(
+            Path(EXPORT_DIR),
+            DATA_DIR,
+        )
+        if not workbook_path:
+            logger.error(
+                "approval-drift-history: no Church_Team_Status_ALL_*.xlsx workbook found; "
+                "pass --file explicitly."
+            )
+            success = False
+        else:
+            output_path = (
+                Path(args.output)
+                if args.output
+                else Path(EXPORT_DIR) / "approval_drift_history.xlsx"
+            )
+            try:
+                summary = run_drift_history(
+                    workbook_path=workbook_path,
+                    logs_dir=Path(args.logs_dir),
+                    output_path=output_path,
+                    status=args.status,
+                    church_code=args.church_code,
+                    since=args.since,
+                )
+            except Exception as exc:
+                logger.error(f"approval-drift-history failed: {exc}")
+                success = False
+            else:
+                logger.info(
+                    "approval-drift-history: "
+                    f"{summary['participants']} participant(s), "
+                    f"{summary['participants_with_history']} with local drift history, "
+                    f"{summary['rows']} audit row(s)"
+                )
+                logger.info(f"Approval drift history written to: {summary['output']}")
+                success = True
+    elif args.command == "approval-drift-accept":
+        from approval_drift_history import accept_reviewed_drift, find_latest_status_workbook
+
+        workbook_path = Path(args.file) if args.file else find_latest_status_workbook(
+            Path(EXPORT_DIR),
+            DATA_DIR,
+        )
+        if not workbook_path:
+            logger.error(
+                "approval-drift-accept: no Church_Team_Status_ALL_*.xlsx workbook found; "
+                "pass --file explicitly."
+            )
+            success = False
+        else:
+            output_path = (
+                Path(args.output)
+                if args.output
+                else Path(EXPORT_DIR) / "approval_drift_acceptance.xlsx"
+            )
+            try:
+                with WordPressConnector() as wp_conn:
+                    summary = accept_reviewed_drift(
+                        wordpress_connector=wp_conn,
+                        workbook_path=workbook_path,
+                        output_path=output_path,
+                        church_code=args.church_code,
+                        chm_id=args.chm_id,
+                        status=args.status,
+                        reason=args.reason,
+                        execute=args.execute,
+                        logs_dir=Path(args.logs_dir),
+                        force_approved=args.force_approved,
+                    )
+            except Exception as exc:
+                logger.error(f"approval-drift-accept failed: {exc}")
+                success = False
+            else:
+                mode = "execute" if args.execute else "dry-run"
+                logger.info(
+                    f"approval-drift-accept ({mode}): "
+                    f"{summary['targets']} target(s), "
+                    f"{summary['accepted']} accepted, "
+                    f"{summary['would_accept']} would_accept, "
+                    f"{summary['skipped']} skipped/blocked, "
+                    f"{summary['errors']} error(s)"
+                )
+                logger.info(f"Approval drift acceptance audit written to: {summary['output']}")
+                success = summary["errors"] == 0
     elif args.command == "reset-season":
         if args.archive_only and args.reset_only:
             logger.error("--archive-only and --reset-only are mutually exclusive.")
