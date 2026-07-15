@@ -12,6 +12,11 @@
 - Added middleware `WordPressBadgeUploader` plus
   `python main.py generate-badges --upload` so badge generation can remain
   local-only by default or upload to WordPress when explicitly requested.
+- Added opt-in ChMeetings write-back with
+  `python main.py generate-badges --upload --write-chmeetings-badge-url`,
+  storing the hosted badge URL in the `Sports Fest Badge URL` one-line Text
+  custom field rather than writing unsupported profile HTML; closes
+  [#261](https://github.com/i12know/vaysf/issues/261).
 - Bumped the WordPress plugin to `1.0.31`.
 
 ### Score-sheet roster approval markings - closes [#258](https://github.com/i12know/vaysf/issues/258)

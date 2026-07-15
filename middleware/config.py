@@ -215,6 +215,7 @@ CHM_FIELDS = {
     "SECONDARY_PARTNER": "Secondary Racquet Sport Partner (if applied)",
     "OTHER_EVENTS": "Other Events",
     "COMPLETION_CHECKLIST": "Completion Check List",
+    "BADGE_URL": "Sports Fest Badge URL",
     "PARENT_NAME":  "Name of my parents or legal guardian",
     "PARENT_EMAIL": "Email of my parents or legal guardian",
     "PARENT_PHONE": "Cell phone of my parents or legal guardian",
@@ -241,6 +242,7 @@ SF_FIELD_IDS = {
     "PARENT_EMAIL":        1283266,  # text
     "PARENT_PHONE":        1283267,  # text
     "ADDITIONAL_INFO":     1281850,  # multi_line_text
+    "BADGE_URL":           0,        # text; discovered by name when 0
     # Church Rep Verification section (section_id: 116188)
     "CHECKLIST":           1283271,  # checkbox
     "NOTES_PROGRESS":      1283358,  # multi_line_text
@@ -372,6 +374,7 @@ SF_TEXT_FIELD_IDS = {
     SF_FIELD_IDS["PARENT_EMAIL"],
     SF_FIELD_IDS["PARENT_PHONE"],
     SF_FIELD_IDS["ADDITIONAL_INFO"],
+    *(field_id for field_id in [SF_FIELD_IDS["BADGE_URL"]] if field_id),
     SF_FIELD_IDS["NOTES_PROGRESS"],
 }
 # ── End Season Reset constants ───────────────────────────────────────────────
