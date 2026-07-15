@@ -10,15 +10,15 @@ Pipeline per participant:
      generator draws an initials placeholder.
   3. Render the PNG locally via BadgeGenerator.
   4. Optionally upload the PNG to WordPress uploads for public hosting.
-
-ChMeetings write-back remains a future follow-up.
+  5. Optionally write the hosted badge URL back to a dedicated ChMeetings
+     one-line text custom field.
 """
 
 from __future__ import annotations
 
 import io
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from loguru import logger
@@ -27,7 +27,7 @@ from tqdm import tqdm
 
 from badges.generator import BadgeGenerator
 from badges.uploader import WordPressBadgeUploader
-from config import CHECK_BOXES, CHM_FIELDS, SF_CHECKLIST_OPTIONS, Config
+from config import CHECK_BOXES, CHM_FIELDS, SF_CHECKLIST_OPTIONS, SF_FIELD_IDS, Config
 
 # Approval statuses that count as "approved" for badge eligibility.
 APPROVED_STATUSES = {"approved"}
@@ -51,6 +51,7 @@ class BadgeRunner:
         self.generator = generator or BadgeGenerator()
         self.badge_uploader = badge_uploader
         self._church_names: Optional[Dict[str, str]] = None
+        self._badge_url_field: Optional[Tuple[int, str]] = None
 
     # ── Public entry point ─────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ class BadgeRunner:
         dry_run: bool = False,
         force: bool = False,
         upload: bool = False,
+        write_chmeetings_badge_url: bool = False,
     ) -> bool:
         """Generate badges for approved athletes.
 
@@ -71,6 +73,8 @@ class BadgeRunner:
             dry_run: List who would be rendered; write nothing, fetch no photos.
             force: Re-render even when a current PNG already exists.
             upload: Upload each generated PNG to WordPress after local render.
+            write_chmeetings_badge_url: Store the hosted badge URL in the
+                ChMeetings Sports Fest Badge URL text field. Requires upload.
 
         Returns:
             True if the run completed without fatal errors.
@@ -87,6 +91,15 @@ class BadgeRunner:
         if not participants:
             logger.warning("No approved participants matched the requested scope; nothing to do.")
             return True
+        if write_chmeetings_badge_url and not upload:
+            logger.error("--write-chmeetings-badge-url requires --upload so ChMeetings receives a hosted URL.")
+            return False
+        if write_chmeetings_badge_url and not dry_run:
+            try:
+                self._badge_url_field_definition()
+            except ValueError as exc:
+                logger.error(f"Badge URL write-back configuration error: {exc}")
+                return False
 
         logger.info(f"{len(participants)} approved athlete(s) to process "
                     f"(output: {self.generator.output_dir})")
@@ -94,7 +107,7 @@ class BadgeRunner:
         uploader = None if dry_run or not upload else (
             self.badge_uploader or WordPressBadgeUploader(self.wp)
         )
-        rendered = skipped = uploaded = errors = 0
+        rendered = skipped = uploaded = chm_updated = errors = 0
         for p in tqdm(participants, desc="Rendering badges", unit="badge"):
             name = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() or p.get("chmeetings_id")
             if not str(p.get("chmeetings_id") or "").strip():
@@ -109,6 +122,11 @@ class BadgeRunner:
                             f"(chm_id={p.get('chmeetings_id')}) -> {self.generator.filename_for(p)}")
                 if upload:
                     logger.info(f"[DRY RUN] Would upload badge filename={self.generator.filename_for(p)}")
+                if write_chmeetings_badge_url:
+                    logger.info(
+                        f"[DRY RUN] Would write hosted badge URL to ChMeetings "
+                        f"field {CHM_FIELDS['BADGE_URL']!r} for chm_id={p.get('chmeetings_id')}"
+                    )
                 rendered += 1
                 continue
             try:
@@ -120,8 +138,11 @@ class BadgeRunner:
                 else:
                     rendered += 1
                 if uploader is not None:
-                    uploader.upload_badge(out_path)
+                    upload_result = uploader.upload_badge(out_path)
                     uploaded += 1
+                    if write_chmeetings_badge_url:
+                        self._write_badge_url_to_chmeetings(p, upload_result.url)
+                        chm_updated += 1
                 logger.debug(f"Badge ready for {name}: {out_path.name}")
             except Exception as e:  # noqa: BLE001 - one bad record shouldn't abort the batch
                 errors += 1
@@ -130,9 +151,114 @@ class BadgeRunner:
 
         logger.info(f"{mode}Badge generation complete — rendered={rendered}, "
                     f"skipped={skipped}, uploaded={uploaded}, errors={errors}")
+        if write_chmeetings_badge_url:
+            logger.info(f"{mode}ChMeetings badge URL profiles updated={chm_updated}")
         return errors == 0
 
     # ── Data fetching ──────────────────────────────────────────────────────────
+
+    def _badge_url_field_definition(self) -> Tuple[int, str]:
+        """Return the ChMeetings field_id/type for the badge URL text field."""
+        if self._badge_url_field is not None:
+            return self._badge_url_field
+
+        configured_id = int(SF_FIELD_IDS.get("BADGE_URL") or 0)
+        expected_name = CHM_FIELDS["BADGE_URL"]
+        if configured_id:
+            self._badge_url_field = (configured_id, "text")
+            return self._badge_url_field
+
+        fields = self.chm.get_member_fields() or []
+        for field in fields:
+            if str(field.get("field_name") or "").strip() != expected_name:
+                continue
+            field_id = int(field.get("field_id") or field.get("id") or 0)
+            field_type = str(field.get("field_type") or "text").strip() or "text"
+            if not field_id:
+                break
+            if field_type != "text":
+                raise ValueError(
+                    f"ChMeetings field {expected_name!r} must be a one-line Text field; "
+                    f"found field_type={field_type!r}."
+                )
+            self._badge_url_field = (field_id, field_type)
+            logger.info(
+                f"Discovered ChMeetings badge URL field '{expected_name}' "
+                f"field_id={field_id}."
+            )
+            return self._badge_url_field
+
+        raise ValueError(
+            f"Create a one-line Text custom profile field named {expected_name!r} "
+            "or set SF_FIELD_IDS['BADGE_URL'] after running the ChMeetings field inspector."
+        )
+
+    def _write_badge_url_to_chmeetings(self, participant: Dict[str, Any], badge_url: str) -> None:
+        """Write the hosted badge URL to the person's ChMeetings profile."""
+        chm_id = str(participant.get("chmeetings_id") or "").strip()
+        badge_url = str(badge_url or "").strip()
+        if not chm_id:
+            raise ValueError("Cannot write badge URL without chmeetings_id.")
+        if not badge_url.startswith(("http://", "https://")):
+            raise ValueError("Badge URL write-back requires an http(s) URL.")
+
+        person = self.chm.get_person(chm_id)
+        if not person:
+            raise ValueError(f"ChMeetings person {chm_id} was not found.")
+
+        field_id, field_type = self._badge_url_field_definition()
+        additional_fields = self._merged_badge_url_fields(
+            person.get("additional_fields") or [],
+            field_id=field_id,
+            field_type=field_type,
+            badge_url=badge_url,
+        )
+        first_name = str(person.get("first_name") or participant.get("first_name") or "").strip()
+        last_name = str(person.get("last_name") or participant.get("last_name") or "").strip()
+        if not first_name or not last_name:
+            raise ValueError(f"Cannot update ChMeetings person {chm_id} without first and last name.")
+
+        ok = self.chm.update_person(
+            chm_id,
+            first_name,
+            last_name,
+            additional_fields,
+            extra_person_data=person,
+        )
+        if not ok:
+            raise ValueError(f"ChMeetings badge URL update failed for person {chm_id}.")
+        logger.info(f"Badge URL written to ChMeetings chm_id={chm_id}")
+
+    @staticmethod
+    def _merged_badge_url_fields(
+        current_fields: Any,
+        *,
+        field_id: int,
+        field_type: str,
+        badge_url: str,
+    ) -> List[Dict[str, Any]]:
+        """Preserve existing custom fields while replacing/adding badge URL."""
+        badge_field = {
+            "field_id": field_id,
+            "field_type": field_type,
+            "value": badge_url,
+        }
+        if not isinstance(current_fields, list):
+            return [badge_field]
+
+        merged: List[Dict[str, Any]] = []
+        replaced = False
+        for field in current_fields:
+            if not isinstance(field, dict):
+                continue
+            copied = dict(field)
+            if int(copied.get("field_id") or copied.get("id") or 0) == field_id:
+                copied.update(badge_field)
+                replaced = True
+            merged.append(copied)
+        if not replaced:
+            merged.append(badge_field)
+        return merged
 
     def _fetch_approved_participants(
         self, *, church_code: Optional[str], chm_id: Optional[str]

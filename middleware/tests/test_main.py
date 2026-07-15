@@ -189,6 +189,7 @@ def test_parse_args_generate_badges_upload(monkeypatch):
             "RPC",
             "--force",
             "--upload",
+            "--write-chmeetings-badge-url",
         ],
     )
     args = main.parse_args()
@@ -196,6 +197,7 @@ def test_parse_args_generate_badges_upload(monkeypatch):
     assert args.church_code == "RPC"
     assert args.force is True
     assert args.upload is True
+    assert args.write_chmeetings_badge_url is True
 
 
 def test_parse_args_produce_schedule_aliases(monkeypatch):

@@ -34,7 +34,7 @@ from badges.generator import (
     _resolve_font_path,
 )
 from badges.runner import BadgeRunner
-from badges.uploader import WordPressBadgeUploader
+from badges.uploader import BadgeUploadResult, WordPressBadgeUploader
 
 
 # ── Fixtures / helpers ─────────────────────────────────────────────────────────
@@ -437,6 +437,51 @@ def test_runner_uploads_rendered_badge(generator):
     pngs = list(generator.output_dir.glob("*.png"))
     assert len(pngs) == 1
     uploader.upload_badge.assert_called_once_with(pngs[0])
+
+
+def test_runner_requires_upload_for_chmeetings_badge_url(generator):
+    runner, chm, wp = _make_runner([_participant()], generator)
+
+    assert runner.run(write_chmeetings_badge_url=True) is False
+
+    chm.get_member_fields.assert_not_called()
+    chm.update_person.assert_not_called()
+
+
+def test_runner_writes_uploaded_badge_url_to_chmeetings(generator):
+    uploader = MagicMock()
+    uploader.upload_badge.return_value = BadgeUploadResult(
+        filename="RPC_3139537_abcd1234.png",
+        url="https://sportsfest.example/wp-content/uploads/vaysf/badges/RPC_3139537_abcd1234.png",
+        byte_size=12345,
+        sha256_hash="abc123",
+    )
+    runner, chm, wp = _make_runner([_participant()], generator, badge_uploader=uploader)
+    chm.get_member_fields.return_value = [
+        {"field_name": "Sports Fest Badge URL", "field_id": 98765, "field_type": "text"}
+    ]
+    chm.get_person.return_value = {
+        "id": "3139537",
+        "photo": None,
+        "first_name": "An",
+        "last_name": "Le",
+        "additional_fields": [
+            {"field_id": 1281851, "field_type": "dropdown", "selected_option_id": 199354},
+        ],
+    }
+    chm.update_person.return_value = True
+
+    assert runner.run(force=True, upload=True, write_chmeetings_badge_url=True) is True
+
+    chm.update_person.assert_called_once()
+    args, kwargs = chm.update_person.call_args
+    assert args[:3] == ("3139537", "An", "Le")
+    additional_fields = args[3]
+    assert {field["field_id"] for field in additional_fields} == {1281851, 98765}
+    badge_field = next(field for field in additional_fields if field["field_id"] == 98765)
+    assert badge_field["field_type"] == "text"
+    assert badge_field["value"] == uploader.upload_badge.return_value.url
+    assert kwargs["extra_person_data"] == chm.get_person.return_value
 
 
 def test_runner_dry_run_upload_writes_and_uploads_nothing(generator):
