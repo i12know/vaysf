@@ -17,6 +17,9 @@
   storing the hosted badge URL in the `Sports Fest Badge URL` one-line Text
   custom field rather than writing unsupported profile HTML; closes
   [#261](https://github.com/i12know/vaysf/issues/261).
+- Made badge uploads retry once with a re-encoded PNG payload after a
+  WordPress/host 403 response, so one problematic compressed image does not
+  block the rest of the final badge upload run.
 - Bumped the WordPress plugin to `1.0.31`.
 
 ### Score-sheet roster approval markings - closes [#258](https://github.com/i12know/vaysf/issues/258)
