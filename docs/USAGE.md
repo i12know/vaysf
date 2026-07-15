@@ -483,18 +483,20 @@ each approved athlete. The badge shows the athlete's photo, name, church,
 sport(s), and athlete ID, with a reserved QR-code slot. Staff and church reps
 use it for visual identity verification before games (Issue #77).
 
-This is the **v1, local-render** workflow: badges are written under
+By default this is still a local-render workflow: badges are written under
 `EXPORT_DIR/<church-code>/badges/` so each church's folder can be shared from
-Google Drive before WordPress hosting is implemented. With the standard
+Google Drive. Add `--upload` when the generated PNGs should also be hosted by
+WordPress under `wp-content/uploads/vaysf/badges/`. With the standard
 production export directory, an RPC badge path looks like:
 
 ```text
 G:\Shared drives\RP Google Drive\VAY\SportsFest\VAYSF-data\RPC\badges\RPC_3139537_ab12cd34.png
 ```
 
-WordPress hosting and ChMeetings `<img>` write-back are deliberate follow-ups,
-and the QR carries the same ChMeetings person ID payload confirmed by mobile
-scan testing during badge review.
+WordPress hosting is handled by the plugin's authenticated
+`POST /wp-json/vaysf/v1/badges` endpoint. ChMeetings `<img>` write-back remains
+a deliberate follow-up; the QR carries the same ChMeetings person ID payload
+confirmed by mobile scan testing during badge review.
 
 Set a private, stable filename salt in `middleware/.env` before running the
 command. It must be at least 16 characters:
@@ -509,6 +511,12 @@ python main.py generate-badges
 
 # Preview who would be rendered without writing any files
 python main.py generate-badges --dry-run
+
+# Preview local render + WordPress hosting without writing or uploading
+python main.py generate-badges --dry-run --upload
+
+# Render locally and upload/rewrite the public WordPress badge PNGs
+python main.py generate-badges --force --upload
 
 # Limit to a single church
 python main.py generate-badges --church-code RPC

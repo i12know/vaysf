@@ -1,6 +1,6 @@
 # badges/runner.py
 """
-BadgeRunner — orchestrates v1 athlete-badge generation (local render only).
+BadgeRunner orchestrates athlete-badge generation and optional hosting.
 
 Pipeline per participant:
   1. Fetch approved participants from WordPress (canonical source for name,
@@ -9,9 +9,9 @@ Pipeline per participant:
      falling back to the WordPress ``photo_url``; if neither is usable the
      generator draws an initials placeholder.
   3. Render the PNG locally via BadgeGenerator.
+  4. Optionally upload the PNG to WordPress uploads for public hosting.
 
-No WordPress upload or ChMeetings write-back happens in v1 — those are a
-deliberate follow-up (see Issue #77 plan comment).
+ChMeetings write-back remains a future follow-up.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from badges.generator import BadgeGenerator
+from badges.uploader import WordPressBadgeUploader
 from config import CHECK_BOXES, CHM_FIELDS, SF_CHECKLIST_OPTIONS, Config
 
 # Approval statuses that count as "approved" for badge eligibility.
@@ -38,10 +39,17 @@ _PER_PAGE = 100
 class BadgeRunner:
     """Drives badge generation against live (or mocked) connectors."""
 
-    def __init__(self, chm_connector, wp_connector, generator: Optional[BadgeGenerator] = None) -> None:
+    def __init__(
+        self,
+        chm_connector,
+        wp_connector,
+        generator: Optional[BadgeGenerator] = None,
+        badge_uploader: Optional[WordPressBadgeUploader] = None,
+    ) -> None:
         self.chm = chm_connector
         self.wp = wp_connector
         self.generator = generator or BadgeGenerator()
+        self.badge_uploader = badge_uploader
         self._church_names: Optional[Dict[str, str]] = None
 
     # ── Public entry point ─────────────────────────────────────────────────────
@@ -53,6 +61,7 @@ class BadgeRunner:
         chm_id: Optional[str] = None,
         dry_run: bool = False,
         force: bool = False,
+        upload: bool = False,
     ) -> bool:
         """Generate badges for approved athletes.
 
@@ -61,6 +70,7 @@ class BadgeRunner:
             chm_id: Limit to a single ChMeetings person ID.
             dry_run: List who would be rendered; write nothing, fetch no photos.
             force: Re-render even when a current PNG already exists.
+            upload: Upload each generated PNG to WordPress after local render.
 
         Returns:
             True if the run completed without fatal errors.
@@ -81,7 +91,10 @@ class BadgeRunner:
         logger.info(f"{len(participants)} approved athlete(s) to process "
                     f"(output: {self.generator.output_dir})")
 
-        rendered = skipped = errors = 0
+        uploader = None if dry_run or not upload else (
+            self.badge_uploader or WordPressBadgeUploader(self.wp)
+        )
+        rendered = skipped = uploaded = errors = 0
         for p in tqdm(participants, desc="Rendering badges", unit="badge"):
             name = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() or p.get("chmeetings_id")
             if not str(p.get("chmeetings_id") or "").strip():
@@ -94,6 +107,8 @@ class BadgeRunner:
             if dry_run:
                 logger.info(f"[DRY RUN] Would render badge for {name} "
                             f"(chm_id={p.get('chmeetings_id')}) -> {self.generator.filename_for(p)}")
+                if upload:
+                    logger.info(f"[DRY RUN] Would upload badge filename={self.generator.filename_for(p)}")
                 rendered += 1
                 continue
             try:
@@ -104,14 +119,17 @@ class BadgeRunner:
                     skipped += 1
                 else:
                     rendered += 1
+                if uploader is not None:
+                    uploader.upload_badge(out_path)
+                    uploaded += 1
                 logger.debug(f"Badge ready for {name}: {out_path.name}")
             except Exception as e:  # noqa: BLE001 - one bad record shouldn't abort the batch
                 errors += 1
-                logger.error(f"Failed to render badge for {name} "
+                logger.error(f"Failed to process badge for {name} "
                              f"(chm_id={p.get('chmeetings_id')}): {e}")
 
         logger.info(f"{mode}Badge generation complete — rendered={rendered}, "
-                    f"skipped={skipped}, errors={errors}")
+                    f"skipped={skipped}, uploaded={uploaded}, errors={errors}")
         return errors == 0
 
     # ── Data fetching ──────────────────────────────────────────────────────────

@@ -34,6 +34,7 @@ from badges.generator import (
     _resolve_font_path,
 )
 from badges.runner import BadgeRunner
+from badges.uploader import WordPressBadgeUploader
 
 
 # ── Fixtures / helpers ─────────────────────────────────────────────────────────
@@ -371,14 +372,14 @@ def test_ascii_initials_strips_accents():
 
 # ── BadgeRunner: orchestration ──────────────────────────────────────────────────
 
-def _make_runner(participants, generator, person_photo=None):
+def _make_runner(participants, generator, person_photo=None, badge_uploader=None):
     chm = MagicMock()
     wp = MagicMock()
     wp.get_participants.return_value = participants
     wp.get_churches.return_value = [{"church_code": "RPC", "church_name": "Redemption Point"}]
     chm.get_person.return_value = {"id": "3139537", "photo": person_photo,
                                    "first_name": "An", "last_name": "Le"}
-    return BadgeRunner(chm, wp, generator), chm, wp
+    return BadgeRunner(chm, wp, generator, badge_uploader=badge_uploader), chm, wp
 
 
 def test_runner_renders_approved(generator):
@@ -425,6 +426,75 @@ def test_runner_dry_run_writes_nothing(generator):
     assert not generator.output_dir.exists() or not list(generator.output_dir.glob("*.png"))
     # Dry run must not download photos.
     chm.get_person.assert_not_called()
+
+
+def test_runner_uploads_rendered_badge(generator):
+    uploader = MagicMock()
+    runner, chm, wp = _make_runner([_participant()], generator, badge_uploader=uploader)
+
+    assert runner.run(force=True, upload=True) is True
+
+    pngs = list(generator.output_dir.glob("*.png"))
+    assert len(pngs) == 1
+    uploader.upload_badge.assert_called_once_with(pngs[0])
+
+
+def test_runner_dry_run_upload_writes_and_uploads_nothing(generator):
+    uploader = MagicMock()
+    runner, chm, wp = _make_runner([_participant()], generator, badge_uploader=uploader)
+
+    assert runner.run(dry_run=True, upload=True) is True
+
+    assert not generator.output_dir.exists() or not list(generator.output_dir.glob("*.png"))
+    uploader.upload_badge.assert_not_called()
+    chm.get_person.assert_not_called()
+
+
+def test_badge_uploader_posts_png_without_json_content_type(tmp_path, monkeypatch):
+    png_path = tmp_path / "RPC_3139537_abcd1234.png"
+    png_path.write_bytes(_png_bytes(size=(1080, 1920)))
+    monkeypatch.setattr("badges.uploader.Config.WP_URL", "https://sportsfest.example")
+    monkeypatch.setattr("badges.uploader.Config.WP_API_KEY", "secret")
+
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "filename": png_path.name,
+        "url": "https://sportsfest.example/wp-content/uploads/vaysf/badges/RPC_3139537_abcd1234.png",
+        "size": png_path.stat().st_size,
+        "sha256": "abc123",
+    }
+    session = MagicMock()
+    session.headers = {}
+    session.cookies = {}
+    session.post.return_value = response
+
+    result = WordPressBadgeUploader(session=session).upload_badge(png_path)
+
+    assert result.filename == png_path.name
+    assert result.sha256_hash == "abc123"
+    assert "Content-Type" not in session.headers
+    assert session.headers["X-VAYSF-API-Key"] == "secret"
+    kwargs = session.post.call_args.kwargs
+    assert kwargs["data"] == {"filename": png_path.name}
+    assert kwargs["files"]["badge"][0] == png_path.name
+    assert kwargs["files"]["badge"][2] == "image/png"
+
+
+def test_badge_uploader_rejects_non_png_filename(tmp_path):
+    png_path = tmp_path / "RPC_3139537_abcd1234.jpg"
+    png_path.write_bytes(_png_bytes(size=(1080, 1920)))
+
+    with pytest.raises(ValueError, match="safe .png"):
+        WordPressBadgeUploader._validate_local_badge(png_path, png_path.name)
+
+
+def test_badge_uploader_rejects_wrong_dimensions(tmp_path):
+    png_path = tmp_path / "RPC_3139537_abcd1234.png"
+    png_path.write_bytes(_png_bytes(size=(400, 500)))
+
+    with pytest.raises(ValueError, match="1080x1920"):
+        WordPressBadgeUploader._validate_local_badge(png_path, png_path.name)
 
 
 def test_runner_church_filter(generator):

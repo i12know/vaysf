@@ -351,6 +351,8 @@ def parse_args() -> argparse.Namespace:
                                help="List who would be rendered without writing files")
     badges_parser.add_argument("--force", action="store_true",
                                help="Re-render even if a current badge file already exists")
+    badges_parser.add_argument("--upload", action="store_true",
+                               help="Upload generated badge PNGs to WordPress uploads after rendering")
 
     # Generate-scoresheets command (Issues #211, #250, #254, #255)
     scoresheets_parser = subparsers.add_parser(
@@ -2254,6 +2256,7 @@ def main() -> None:
                     chm_id=args.chm_id,
                     dry_run=args.dry_run,
                     force=args.force,
+                    upload=args.upload,
                 )
     elif args.command == "generate-scoresheets":
         from schedule_workbook import ScheduleWorkbookBuilder

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### WordPress-hosted athlete badge uploads - closes [#186](https://github.com/i12know/vaysf/issues/186)
+
+- Added authenticated WordPress REST badge hosting at
+  `POST /wp-json/vaysf/v1/badges`, storing generated 1080x1920 PNGs under
+  `wp-content/uploads/vaysf/badges/` and returning their public URL.
+- Added `DELETE /wp-json/vaysf/v1/badges/{filename}` for cleanup of
+  deterministic badge filenames.
+- Added middleware `WordPressBadgeUploader` plus
+  `python main.py generate-badges --upload` so badge generation can remain
+  local-only by default or upload to WordPress when explicitly requested.
+- Bumped the WordPress plugin to `1.0.31`.
+
 ### Score-sheet roster approval markings - closes [#258](https://github.com/i12know/vaysf/issues/258)
 
 - Kept rostered athletes visible on Basketball, Volleyball, and Soccer score
