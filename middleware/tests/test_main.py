@@ -102,6 +102,82 @@ def test_parse_args_diagnose_schedule_defaults(monkeypatch):
     assert args.output is None
 
 
+def test_parse_args_approval_drift_history(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "approval-drift-history",
+            "--file",
+            "status.xlsx",
+            "--church-code",
+            "GAC",
+            "--since",
+            "2026-07-11",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "approval-drift-history"
+    assert args.file == "status.xlsx"
+    assert args.church_code == "GAC"
+    assert args.since == "2026-07-11"
+    assert args.status == "reapproval_required"
+
+
+def test_parse_args_approval_drift_accept(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "approval-drift-accept",
+            "--file",
+            "status.xlsx",
+            "--church-code",
+            "GAC",
+            "--reason",
+            "GAC confirmed final-week sport changes.",
+            "--logs-dir",
+            "logs",
+            "--dry-run",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "approval-drift-accept"
+    assert args.file == "status.xlsx"
+    assert args.church_code == "GAC"
+    assert args.chm_id is None
+    assert args.reason == "GAC confirmed final-week sport changes."
+    assert args.logs_dir == "logs"
+    assert args.force_approved is False
+    assert args.status == "reapproval_required"
+    assert args.dry_run is True
+    assert args.execute is False
+
+
+def test_parse_args_approval_drift_accept_force_approved(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "approval-drift-accept",
+            "--file",
+            "status.xlsx",
+            "--chm-id",
+            "3636103",
+            "--force-approved",
+            "--execute",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "approval-drift-accept"
+    assert args.chm_id == "3636103"
+    assert args.force_approved is True
+    assert args.execute is True
+
+
 def test_parse_args_produce_schedule_aliases(monkeypatch):
     monkeypatch.setattr(
         main.sys,

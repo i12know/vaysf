@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Approval drift acceptance workflow - closes [#252](https://github.com/i12know/vaysf/issues/252)
+
+- Added `approval-drift-history` to audit current `reapproval_required`
+  participants against local `APPROVAL IDENTITY DRIFT` sync-log entries,
+  including the ChMeetings membership answer for operator review.
+- Added `approval-drift-accept` as an explicit operator action for reviewed
+  final-week sport/event drift. It updates the WordPress participant row,
+  matching approval row, and open drift issue together so the approval trail
+  stays consistent.
+- Made acceptance restore the single prior approval state from local logs
+  instead of always forcing `approved`. `reapproval_required` is ignored as a
+  prior-state candidate because it is the problem state being resolved; genuine
+  ambiguity still blocks unless the operator passes `--force-approved`.
+
 ### Public schedule location labels and score-sheet polish
 
 - Joined schedule assignments to `schedule_input.json` resource metadata during
