@@ -352,14 +352,14 @@ def parse_args() -> argparse.Namespace:
     badges_parser.add_argument("--force", action="store_true",
                                help="Re-render even if a current badge file already exists")
 
-    # Generate-scoresheets command (Issues #211, #250)
+    # Generate-scoresheets command (Issues #211, #250, #254, #255)
     scoresheets_parser = subparsers.add_parser(
         "generate-scoresheets",
         help="Generate blank, print-ready paper score-sheet PDFs",
     )
     scoresheets_parser.add_argument(
         "--sport",
-        choices=["basketball", "volleyball"],
+        choices=["basketball", "bible-challenge", "soccer", "volleyball"],
         default="basketball",
         help="Sport score-sheet type to generate (default: basketball)",
     )
@@ -2261,11 +2261,15 @@ def main() -> None:
             ScoreSheetError,
             enrich_roster_photos_from_workbook,
             write_basketball_scoresheets_pdf,
+            write_bible_challenge_scoresheets_pdf,
+            write_soccer_scoresheets_pdf,
             write_volleyball_scoresheets_pdf,
         )
 
         writer_by_sport = {
             "basketball": write_basketball_scoresheets_pdf,
+            "bible-challenge": write_bible_challenge_scoresheets_pdf,
+            "soccer": write_soccer_scoresheets_pdf,
             "volleyball": write_volleyball_scoresheets_pdf,
         }
         writer = writer_by_sport.get(args.sport)

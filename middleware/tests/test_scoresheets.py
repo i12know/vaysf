@@ -4,9 +4,11 @@ from PIL import Image
 
 from scoresheets import (
     BASKETBALL_EVENT,
+    BIBLE_CHALLENGE_EVENT,
     LOGO_BOX,
     MAX_ROSTER_ROWS,
     MAX_VOLLEYBALL_ROSTER_ROWS,
+    SOCCER_EVENT,
     VOLLEYBALL_MEN_EVENT,
     VOLLEYBALL_WOMEN_EVENT,
     _extract_photo_ref,
@@ -15,9 +17,13 @@ from scoresheets import (
     build_volleyball_roster_index,
     enrich_roster_photos_from_workbook,
     render_basketball_scoresheet_page,
+    render_bible_challenge_scoresheet_page,
+    render_soccer_scoresheet_page,
     render_volleyball_scoresheet_page,
     score_entry_url_for_game,
     write_basketball_scoresheets_pdf,
+    write_bible_challenge_scoresheets_pdf,
+    write_soccer_scoresheets_pdf,
     write_volleyball_scoresheets_pdf,
 )
 
@@ -66,6 +72,34 @@ def _schedule_input():
                 "duration_minutes": 60,
                 "resource_type": "Volleyball Court",
             },
+            {
+                "game_id": "SOC-G1",
+                "event": SOCCER_EVENT,
+                "stage": "Pool",
+                "pool_id": "A",
+                "round": 1,
+                "team_a_id": "SOC::RPC",
+                "team_a_label": "RPC",
+                "team_b_id": "SOC::GAC",
+                "team_b_label": "GAC",
+                "duration_minutes": 60,
+                "resource_type": "Soccer Field",
+            },
+            {
+                "game_id": "BC-RR-01",
+                "event": BIBLE_CHALLENGE_EVENT,
+                "stage": "Pool",
+                "pool_id": "A",
+                "round": 1,
+                "team_a_id": "BC::RPC",
+                "team_a_label": "RPC",
+                "team_b_id": "BC::GAC",
+                "team_b_label": "GAC",
+                "team_c_id": "BC::MWC",
+                "team_c_label": "MWC",
+                "duration_minutes": 60,
+                "resource_type": "Bible Challenge Station",
+            },
         ],
         "resources": [],
     }
@@ -78,6 +112,8 @@ def _schedule_output():
             {"game_id": "BBM-01", "resource_id": "GYM-Sat-1-1", "slot": "Sat-1-16:00"},
             {"game_id": "VBM-01", "resource_id": "GYM-Sat-1-2", "slot": "Sat-1-17:00"},
             {"game_id": "VBW-01", "resource_id": "GYM-Sat-1-3", "slot": "Sat-1-18:00"},
+            {"game_id": "SOC-G1", "resource_id": "SOC-Sat-1-1", "slot": "Sat-1-19:00"},
+            {"game_id": "BC-RR-01", "resource_id": "BC-Sun-1-1", "slot": "Sun-1-18:00"},
         ],
         "unscheduled": [],
     }
@@ -228,6 +264,47 @@ def test_render_volleyball_scoresheet_places_logo_and_roster_photo(tmp_path):
     assert page.getpixel((111, 804)) == (40, 200, 90)
 
 
+def test_render_soccer_scoresheet_places_logo_upper_left(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+
+    page = render_soccer_scoresheet_page(
+        {
+            "game_key": "SOC-G1",
+            "event": SOCCER_EVENT,
+            "team_a_label": "RPC",
+            "team_b_label": "GAC",
+            "resource_id": "SOC-Sat-1-1",
+            "scheduled_slot": "Sat-1-19:00",
+        },
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+    )
+
+    assert page.getpixel((LOGO_BOX[0] + 20, LOGO_BOX[1] + 20)) == (220, 20, 30)
+
+
+def test_render_bible_challenge_scoresheet_places_logo_upper_left(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+
+    page = render_bible_challenge_scoresheet_page(
+        {
+            "game_key": "BC-RR-01",
+            "event": BIBLE_CHALLENGE_EVENT,
+            "team_a_label": "RPC",
+            "team_b_label": "GAC",
+            "team_c_label": "MWC",
+            "resource_id": "BC-Sun-1-1",
+            "scheduled_slot": "Sun-1-18:00",
+        },
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+    )
+
+    assert page.getpixel((LOGO_BOX[0] + 20, LOGO_BOX[1] + 20)) == (220, 20, 30)
+
+
 def test_basketball_roster_table_capacity_is_15():
     assert MAX_ROSTER_ROWS == 15
 
@@ -343,5 +420,51 @@ def test_write_volleyball_scoresheets_pdf_filters_to_volleyball(tmp_path):
     )
 
     assert page_count == 2
+    assert pdf_path.exists()
+    assert pdf_path.read_bytes().startswith(b"%PDF")
+
+
+def test_write_soccer_scoresheets_pdf_filters_to_soccer(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    input_path = tmp_path / "approved_schedule_input.json"
+    output_path = tmp_path / "approved_schedule_output.json"
+    input_path.write_text(json.dumps(_schedule_input()), encoding="utf-8")
+    output_path.write_text(json.dumps(_schedule_output()), encoding="utf-8")
+
+    pdf_path, page_count = write_soccer_scoresheets_pdf(
+        input_path,
+        output_path,
+        tmp_path / "scoresheets",
+        roster_rows=[],
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+        output_filename="soccer.pdf",
+    )
+
+    assert page_count == 1
+    assert pdf_path.exists()
+    assert pdf_path.read_bytes().startswith(b"%PDF")
+
+
+def test_write_bible_challenge_scoresheets_pdf_filters_to_bible_challenge(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    input_path = tmp_path / "approved_schedule_input.json"
+    output_path = tmp_path / "approved_schedule_output.json"
+    input_path.write_text(json.dumps(_schedule_input()), encoding="utf-8")
+    output_path.write_text(json.dumps(_schedule_output()), encoding="utf-8")
+
+    pdf_path, page_count = write_bible_challenge_scoresheets_pdf(
+        input_path,
+        output_path,
+        tmp_path / "scoresheets",
+        roster_rows=[],
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+        output_filename="bible-challenge.pdf",
+    )
+
+    assert page_count == 1
     assert pdf_path.exists()
     assert pdf_path.read_bytes().startswith(b"%PDF")
