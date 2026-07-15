@@ -178,6 +178,26 @@ def test_parse_args_approval_drift_accept_force_approved(monkeypatch):
     assert args.execute is True
 
 
+def test_parse_args_generate_badges_upload(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "generate-badges",
+            "--church-code",
+            "RPC",
+            "--force",
+            "--upload",
+        ],
+    )
+    args = main.parse_args()
+    assert args.command == "generate-badges"
+    assert args.church_code == "RPC"
+    assert args.force is True
+    assert args.upload is True
+
+
 def test_parse_args_produce_schedule_aliases(monkeypatch):
     monkeypatch.setattr(
         main.sys,

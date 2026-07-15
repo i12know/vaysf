@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.30
+ * Version: 1.0.31
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,7 +18,7 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.30';
+    const VERSION = '1.0.31';
 
     /**
      * Database version
@@ -84,6 +84,9 @@ class VAYSF_Integration {
 
                 // Include REST API
                 require_once(plugin_dir_path(__FILE__) . 'includes/rest-api.php');
+
+                // Public badge PNG upload/hosting endpoint (Issue #186)
+                require_once(plugin_dir_path(__FILE__) . 'includes/badge-hosting.php');
 
 		// Include admin interface files
 		require_once(plugin_dir_path(__FILE__) . 'admin/admin.php');
