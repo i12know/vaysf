@@ -39,6 +39,43 @@ function vaysf_sanitize_public_day_filter($value) {
 }
 
 /**
+ * Sanitize a church code supplied by a shortcode or public API request.
+ *
+ * Church codes are stored in their canonical uppercase form at publication
+ * time. Keeping that identity in dedicated schedule columns avoids relying on
+ * opaque team keys or spectator-facing labels for church filtering.
+ *
+ * @param mixed $value Raw church code
+ * @return string Uppercase church code, or '' when absent
+ */
+function vaysf_sanitize_public_church_filter($value) {
+    return strtoupper(vaysf_sanitize_public_filter($value));
+}
+
+/**
+ * Sanitize an optional rolling schedule lookback in whole minutes.
+ *
+ * @param mixed $value Raw minute count
+ * @return int|null Null when the parameter is omitted or invalid
+ */
+function vaysf_sanitize_public_lookback_minutes($value) {
+    if ($value === null || $value === '') {
+        return null;
+    }
+
+    if (!is_scalar($value)) {
+        return null;
+    }
+
+    $value = trim((string) $value);
+    if (!preg_match('/^\d+$/', $value)) {
+        return null;
+    }
+
+    return (int) $value;
+}
+
+/**
  * Distinct scheduled dates (Y-m-d) from the currently published, non-cancelled schedule.
  *
  * @param int|null $schedule_version Optional version; defaults to current published version
@@ -106,6 +143,97 @@ function vaysf_get_public_schedule_venues($schedule_version = null) {
 }
 
 /**
+ * Resolve one schedule-row team slot ('a', 'b', or 'c') to a church code,
+ * falling back to the team key/label when the dedicated team_*_church_code
+ * column is still empty (e.g. a schedule published before that column was
+ * backfilled). Mirrors vaysf_schedule_church_signature()'s per-slot rule so
+ * the public church filter/dropdown and the result-matching fallback in
+ * score-entry.php stay consistent.
+ *
+ * @param array<string,mixed> $row Schedule row (or subset with team_* fields)
+ * @param string $slot One of 'a', 'b', 'c'
+ * @return string Church code, or '' when none could be resolved
+ */
+function vaysf_resolve_row_slot_church_code($row, $slot) {
+    foreach (array("team_{$slot}_church_code", "team_{$slot}_key", "team_{$slot}_label") as $field) {
+        if (!empty($row[$field])) {
+            $church = vaysf_extract_church_code_from_team_value($row[$field]);
+            if ($church !== '') {
+                return $church;
+            }
+        }
+    }
+
+    return '';
+}
+
+/**
+ * Check whether a schedule row's team_a/b/c slots include the given church code.
+ *
+ * @param array<string,mixed> $row Schedule row
+ * @param string $church Uppercase church code to match
+ * @return bool
+ */
+function vaysf_schedule_church_signature_contains($row, $church) {
+    foreach (array('a', 'b', 'c') as $slot) {
+        if (vaysf_resolve_row_slot_church_code($row, $slot) === $church) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Distinct church codes from the currently published, non-cancelled schedule.
+ *
+ * @param int|null $schedule_version Optional version; defaults to current published version
+ * @return array<int,string> Sorted distinct church codes
+ */
+function vaysf_get_public_schedule_churches($schedule_version = null) {
+    global $wpdb;
+
+    if ($schedule_version === null) {
+        $schedule_version = vaysf_get_current_published_schedule_version();
+    }
+    if ($schedule_version === null) {
+        return array();
+    }
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT team_a_key, team_a_label, team_a_church_code,
+                team_b_key, team_b_label, team_b_church_code,
+                team_c_key, team_c_label, team_c_church_code
+            FROM $table_schedules
+            WHERE schedule_version = %d
+                AND published_at IS NOT NULL
+                AND COALESCE(game_status, '') <> 'cancelled'",
+            absint($schedule_version)
+        ),
+        ARRAY_A
+    );
+
+    if (!is_array($rows)) {
+        return array();
+    }
+
+    $churches = array();
+    foreach ($rows as $row) {
+        foreach (array('a', 'b', 'c') as $slot) {
+            $church = vaysf_resolve_row_slot_church_code($row, $slot);
+            if ($church !== '') {
+                $churches[$church] = $church;
+            }
+        }
+    }
+
+    sort($churches, SORT_STRING);
+    return array_values($churches);
+}
+
+/**
  * Reduce a decoded score_json payload to the public headline numbers only.
  *
  * Every score form type (simple_score, three_team_score, volleyball_set_score)
@@ -132,6 +260,23 @@ function vaysf_format_public_score_summary($score_payload) {
 }
 
 /**
+ * Public display should treat a completed score payload as reported even when
+ * an older/manual result row still has the default pending public_status.
+ *
+ * @param string $public_status Raw sf_results.public_status value
+ * @param string $score_json Raw sf_results.score_json value
+ * @return string Spectator-facing result status
+ */
+function vaysf_normalize_public_result_status($public_status, $score_json) {
+    $public_status = trim((string) $public_status);
+    if (($public_status === '' || $public_status === 'pending') && trim((string) $score_json) !== '') {
+        return 'reported';
+    }
+
+    return $public_status;
+}
+
+/**
  * Shape one joined schedule+result row for public consumption.
  *
  * Excludes scoresheet file paths, coordinator/submitter identities, internal
@@ -142,11 +287,12 @@ function vaysf_format_public_score_summary($score_payload) {
  * @return array<string,mixed> Public-safe row
  */
 function vaysf_format_public_schedule_row($row) {
-    $public_status = isset($row['public_status']) ? (string) $row['public_status'] : '';
+    $score_json = isset($row['score_json']) ? (string) $row['score_json'] : '';
+    $public_status = vaysf_normalize_public_result_status($row['public_status'] ?? '', $score_json);
     $score = null;
 
-    if (in_array($public_status, array('reported', 'official', 'under_review'), true) && !empty($row['score_json'])) {
-        $decoded = json_decode($row['score_json'], true);
+    if (in_array($public_status, array('reported', 'official', 'under_review'), true) && $score_json !== '') {
+        $decoded = json_decode($score_json, true);
         if (is_array($decoded)) {
             $score = vaysf_format_public_score_summary($decoded);
         }
@@ -164,6 +310,7 @@ function vaysf_format_public_schedule_row($row) {
         'team_c_label' => isset($row['team_c_label']) ? (string) $row['team_c_label'] : '',
         'scheduled_time' => isset($row['scheduled_time']) ? (string) $row['scheduled_time'] : '',
         'scheduled_slot' => isset($row['scheduled_slot']) ? (string) $row['scheduled_slot'] : '',
+        'display_time' => vaysf_format_schedule_display_time($row['scheduled_time'] ?? '', $row['scheduled_slot'] ?? '', 'D g:i A'),
         'resource_id' => isset($row['resource_id']) ? (string) $row['resource_id'] : '',
         'scheduled_location' => vaysf_format_schedule_display_location($row['scheduled_location'] ?? '', $row['resource_id'] ?? ''),
         'game_status' => isset($row['game_status']) ? (string) $row['game_status'] : 'scheduled',
@@ -174,10 +321,145 @@ function vaysf_format_public_schedule_row($row) {
 }
 
 /**
+ * Load the newest known result row for each requested game_key, regardless of
+ * which historical schedule_id version it was attached to.
+ *
+ * This preserves live/public result status when a schedule is republished and
+ * the current public schedule row no longer has the old schedule_id that the
+ * score submission originally referenced.
+ *
+ * @param array<int,string> $game_keys Stable schedule game keys
+ * @return array<string,array<string,mixed>> Latest result row keyed by game_key
+ */
+function vaysf_get_latest_results_by_game_key($game_keys) {
+    global $wpdb;
+
+    $game_keys = array_values(array_unique(array_filter(array_map('strval', (array) $game_keys))));
+    if (empty($game_keys)) {
+        return array();
+    }
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $table_results = vaysf_get_table_name('results');
+
+    $placeholders = implode(', ', array_fill(0, count($game_keys), '%s'));
+    $sql = "SELECT s_hist.game_key, r.result_id, r.score_json, r.public_status, r.updated_at
+        FROM $table_results r
+        INNER JOIN $table_schedules s_hist ON s_hist.schedule_id = r.schedule_id
+        WHERE s_hist.game_key IN ($placeholders)
+            AND NOT EXISTS (
+                SELECT 1
+                FROM $table_results newer_r
+                INNER JOIN $table_schedules newer_s ON newer_s.schedule_id = newer_r.schedule_id
+                WHERE newer_s.game_key = s_hist.game_key
+                    AND (
+                        newer_r.updated_at > r.updated_at
+                        OR (newer_r.updated_at = r.updated_at AND newer_r.result_id > r.result_id)
+                    )
+            )";
+
+    $rows = $wpdb->get_results($wpdb->prepare($sql, $game_keys), ARRAY_A);
+    if (!is_array($rows)) {
+        return array();
+    }
+
+    $results_by_key = array();
+    foreach ($rows as $row) {
+        $game_key = isset($row['game_key']) ? (string) $row['game_key'] : '';
+        if ($game_key === '') {
+            continue;
+        }
+        $results_by_key[$game_key] = $row;
+    }
+
+    return $results_by_key;
+}
+
+/**
+ * Recover result rows that were saved against the wrong/historical schedule_id
+ * by matching the exact team keys stored inside score_json.
+ *
+ * @param array<int,array<string,mixed>> $schedule_rows Public schedule rows missing direct results
+ * @return array<string,array<string,mixed>> Latest result row keyed by game_key
+ */
+function vaysf_get_latest_results_by_team_keys($schedule_rows) {
+    global $wpdb;
+
+    $expected_by_game_key = array();
+    foreach ((array) $schedule_rows as $row) {
+        $game_key = isset($row['game_key']) ? (string) $row['game_key'] : '';
+        if ($game_key === '') {
+            continue;
+        }
+
+        $team_keys = array();
+        foreach (array('team_a_key', 'team_b_key', 'team_c_key') as $field) {
+            if (!empty($row[$field])) {
+                $team_keys[] = (string) $row[$field];
+            }
+        }
+        sort($team_keys);
+
+        if (!empty($team_keys)) {
+            $expected_by_game_key[$game_key] = $team_keys;
+        }
+    }
+
+    if (empty($expected_by_game_key)) {
+        return array();
+    }
+
+    $table_results = vaysf_get_table_name('results');
+    $candidate_rows = $wpdb->get_results(
+        "SELECT result_id, score_json, public_status, updated_at
+        FROM $table_results
+        WHERE score_json IS NOT NULL AND score_json <> ''
+        ORDER BY updated_at DESC, result_id DESC
+        LIMIT 500",
+        ARRAY_A
+    );
+    if (!is_array($candidate_rows)) {
+        return array();
+    }
+
+    $results_by_key = array();
+    foreach ($candidate_rows as $candidate) {
+        $decoded = json_decode($candidate['score_json'] ?? '', true);
+        if (!is_array($decoded)) {
+            continue;
+        }
+
+        $candidate_keys = array();
+        foreach (array('team_a_key', 'team_b_key', 'team_c_key') as $field) {
+            if (!empty($decoded[$field])) {
+                $candidate_keys[] = (string) $decoded[$field];
+            }
+        }
+        sort($candidate_keys);
+
+        if (empty($candidate_keys)) {
+            continue;
+        }
+
+        foreach ($expected_by_game_key as $game_key => $expected_keys) {
+            if (isset($results_by_key[$game_key])) {
+                continue;
+            }
+            if ($candidate_keys === $expected_keys) {
+                $results_by_key[$game_key] = $candidate;
+            }
+        }
+    }
+
+    return $results_by_key;
+}
+
+/**
  * Fetch the currently published, non-cancelled schedule joined with its
  * current result, filtered for public display.
  *
- * @param array<string,string> $filters Optional 'event', 'day' (Y-m-d), 'venue'
+ * @param array<string,mixed> $filters Optional 'event', 'day' (Y-m-d), 'venue',
+ *                                     'church', and 'lookback_minutes'
  * @return array<int,array<string,mixed>> Public-safe schedule rows
  */
 function vaysf_get_public_schedule_rows($filters = array()) {
@@ -216,8 +498,19 @@ function vaysf_get_public_schedule_rows($filters = array()) {
         $args[] = $venue;
     }
 
+    $church = isset($filters['church']) ? vaysf_sanitize_public_church_filter($filters['church']) : '';
+
+    $lookback_minutes = isset($filters['lookback_minutes'])
+        ? vaysf_sanitize_public_lookback_minutes($filters['lookback_minutes'])
+        : null;
+    if ($lookback_minutes !== null) {
+        $cutoff = current_datetime()->modify('-' . $lookback_minutes . ' minutes');
+        $where[] = 's.scheduled_time IS NOT NULL AND s.scheduled_time >= %s';
+        $args[] = $cutoff->format('Y-m-d H:i:s');
+    }
+
     $where_clause = implode(' AND ', $where);
-    $sql = "SELECT s.*, r.score_json, r.public_status, r.updated_at AS result_updated_at
+    $sql = "SELECT s.*, r.result_id, r.score_json, r.public_status, r.scan_status, r.updated_at AS result_updated_at
         FROM $table_schedules s
         LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
         WHERE $where_clause
@@ -228,8 +521,35 @@ function vaysf_get_public_schedule_rows($filters = array()) {
         return array();
     }
 
+    if ($church !== '') {
+        $rows = array_values(array_filter($rows, function ($row) use ($church) {
+            return vaysf_schedule_church_signature_contains($row, $church);
+        }));
+    }
+
+    $missing_result_rows = array();
+    foreach ($rows as $row) {
+        $has_direct_score = trim((string) ($row['score_json'] ?? '')) !== '';
+        if (!$has_direct_score && !empty($row['schedule_id'])) {
+            $missing_result_rows[] = $row;
+        }
+    }
+    $fallback_results = function_exists('vaysf_get_result_fallbacks_for_schedule_rows')
+        ? vaysf_get_result_fallbacks_for_schedule_rows($missing_result_rows)
+        : array();
+
     $public_rows = array();
     foreach ($rows as $row) {
+        $schedule_id = !empty($row['schedule_id']) ? absint($row['schedule_id']) : 0;
+        if (trim((string) ($row['score_json'] ?? '')) === '' && $schedule_id && !empty($fallback_results[$schedule_id])) {
+            $fallback = $fallback_results[$schedule_id];
+            $row['result_id'] = $fallback['result_id'] ?? '';
+            $row['score_json'] = $fallback['score_json'] ?? '';
+            $row['public_status'] = $fallback['public_status'] ?? '';
+            $row['scan_status'] = $fallback['scan_status'] ?? '';
+            $row['result_updated_at'] = $fallback['updated_at'] ?? '';
+        }
+
         if (!empty($row['result_updated_at'])) {
             $row['updated_at'] = $row['result_updated_at'];
         }

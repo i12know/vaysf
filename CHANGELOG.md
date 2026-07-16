@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Public church filter fallback - part of [#269](https://github.com/i12know/vaysf/issues/269)
+
+- Fixed the public live-schedule church filter never appearing because
+  `vaysf_get_public_schedule_churches()` only read the dedicated
+  `team_a_church_code`/`team_b_church_code`/`team_c_church_code` columns,
+  which are still `NULL` on the currently published schedule (the
+  middleware change that populates them has not been republished yet).
+  The dropdown and the `church` filter in `vaysf_get_public_schedule_rows()`
+  now fall back to extracting a church code from each slot's team key/label,
+  matching the fallback rule `vaysf_schedule_church_signature()` already used
+  for result matching.
+- Confirmed the separate "Scheduled instead of Reported" report was stale
+  test data (a score submitted against a since-reshuffled matchup that no
+  longer exists in the current published schedule), not a code defect.
+
+### Results Desk church filter and review-queue accuracy - part of [#269](https://github.com/i12know/vaysf/issues/269)
+
+- Added a Church filter to the Results Desk toolbar, next to the Event filter,
+  using the same church-code fallback as the public schedule filter so it
+  works even before schedule data is backfilled with `team_*_church_code`.
+  Applied to every Results Desk section, the summary counts, and the CSV
+  manifest export via a new `vaysf_results_desk_add_church_filter()` helper.
+- Moved "Recent Corrections" to display right after "Late / Missing Results".
+- Fixed "Needs Review / Disputed" flagging every reported result forever
+  (nothing ever set `verified_at`, so a single first-time submission never
+  left the queue). A first submission is now accepted immediately; a game
+  only lands in this section once an actual correction has come in
+  (`current_revision > 1`) or is explicitly flagged `in_progress`/
+  `under_review`.
+- Coordinator score-entry submissions now automatically append
+  " - Submitted by {wp_username}" to the result's Notes field in
+  `vaysf_persist_score_result()`, so it's immediately visible who submitted
+  a score without checking `submitted_by_user_id`.
+- Added a "Results Desk" button to the WordPress user profile screen (own
+  profile and admin-edited profiles), right above "Update Profile", for any
+  user who passes `vaysf_user_can_view_results_desk()` (Sports Fest Admin or
+  Manager, or a plain WordPress administrator).
+- Bumped the WordPress plugin to `1.0.39`.
+
 ### WordPress-hosted athlete badge uploads - closes [#186](https://github.com/i12know/vaysf/issues/186)
 
 - Added authenticated WordPress REST badge hosting at

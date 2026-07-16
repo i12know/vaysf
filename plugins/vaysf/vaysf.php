@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.31
+ * Version: 1.0.39
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,16 +18,12 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.31';
+    const VERSION = '1.0.39';
 
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.6';  // Issue #203 — event-day results schema (sf_schedules/sf_results
-                                  // redesign + new sf_result_revisions/sf_result_files tables)
-                                  // Issue #230 — removed the superseded sf_competitions table and
-                                  // sf_schedules.competition_id (never populated, never referenced
-                                  // outside schema definitions; replaced by event/sub_event columns)
+    const DB_VERSION = '1.0.7';  // Issue #264 — published schedule church-code filtering
     
     /**
      * Database version option name
@@ -82,6 +78,9 @@ class VAYSF_Integration {
                 // Spectator-facing live schedule/results/advancement helpers (Issue #206)
                 require_once(plugin_dir_path(__FILE__) . 'includes/public-display.php');
 
+                // Results Desk manager/admin operations view (Issue #208)
+                require_once(plugin_dir_path(__FILE__) . 'includes/results-desk.php');
+
                 // Include REST API
                 require_once(plugin_dir_path(__FILE__) . 'includes/rest-api.php');
 
@@ -96,8 +95,9 @@ class VAYSF_Integration {
 		//	- Customized Statistics [vaysf_stats display="participants" layout="list"]; display=all/churches/participants/approvals/issues; layout=grid/list
 		//	- Churches List [vaysf_churches limit="5" orderby="church_name" order="ASC"]
 		//	- Participants List [vaysf_participants limit="10" church="RPC" status="approved" sport="Basketball"]
-		//	- Live Schedule [vaysf_live_schedule event="Basketball" day="2026-07-18" venue="Small Gym" refresh="25"]
+		//	- Live Schedule [vaysf_live_schedule event="Basketball" day="2026-07-18" church="RPC" refresh="25"]
 		//	- Confirmed Advancement [vaysf_advancement event="Basketball" refresh="60"]
+		//	- Results Desk [vaysf_results_desk]
 		require_once(plugin_dir_path(__FILE__) . 'includes/shortcodes.php');
 		// This is not counting the [pastor_approval] short code in the pastor-approval page for processing the approve/deny token triggered from the approval email.
 	}
@@ -137,12 +137,16 @@ class VAYSF_Integration {
         add_action('edit_user_profile', 'vaysf_render_coordinator_authorization_fields');
         add_action('show_user_profile', 'vaysf_render_coordinator_score_profile_link');
         add_action('edit_user_profile', 'vaysf_render_coordinator_score_profile_link');
+        add_action('show_user_profile', 'vaysf_render_results_desk_profile_link');
+        add_action('edit_user_profile', 'vaysf_render_results_desk_profile_link');
         add_action('personal_options_update', 'vaysf_save_coordinator_authorization_fields');
         add_action('edit_user_profile_update', 'vaysf_save_coordinator_authorization_fields');
         add_action('wp_dashboard_setup', 'vaysf_register_coordinator_score_dashboard_widget');
+        add_action('wp_dashboard_setup', 'vaysf_register_results_desk_dashboard_widget');
         add_filter('get_user_option_meta-box-order_dashboard', 'vaysf_prepend_coordinator_dashboard_widget_order', 10, 3);
         add_filter('get_user_option_metaboxhidden_dashboard', 'vaysf_show_coordinator_dashboard_widget', 10, 3);
         add_action('admin_post_vaysf_download_result_file', 'vaysf_download_result_file');
+        add_action('admin_post_vaysf_download_results_manifest', 'vaysf_download_results_manifest');
 		
 	   // Add hook for rewrite rules (moved this to WordPress 'init' hook)
 		add_action('init', array($this, 'register_rewrite_rules'));
@@ -184,12 +188,19 @@ class VAYSF_Integration {
 			'index.php?vaysf_coordinator_score_entry=1',
 			'top'
 		);
+
+		add_rewrite_rule(
+			'results-desk/?$',
+			'index.php?vaysf_results_desk=1',
+			'top'
+		);
 	}
 
 	public function register_query_vars($vars) {
 		$vars[] = 'vaysf_pastor_approval';
 		$vars[] = 'vaysf_insurance_upload';
 		$vars[] = 'vaysf_coordinator_score_entry';
+		$vars[] = 'vaysf_results_desk';
 		return $vars;
 	}
 
@@ -223,6 +234,16 @@ class VAYSF_Integration {
 				exit;
 			} else {
 				wp_die('Coordinator score entry template not found. Please contact the site administrator.');
+			}
+		}
+
+		if (get_query_var('vaysf_results_desk')) {
+			$template_path = plugin_dir_path(__FILE__) . 'templates/results-desk.php';
+			if (file_exists($template_path)) {
+				include_once($template_path);
+				exit;
+			} else {
+				wp_die('Results Desk template not found. Please contact the site administrator.');
 			}
 		}
 	}
@@ -593,6 +614,9 @@ class VAYSF_Integration {
             team_c_key VARCHAR(64) DEFAULT NULL,
             team_c_label VARCHAR(255) DEFAULT NULL,
             team_ids_json TEXT DEFAULT NULL,
+            team_a_church_code VARCHAR(16) DEFAULT NULL,
+            team_b_church_code VARCHAR(16) DEFAULT NULL,
+            team_c_church_code VARCHAR(16) DEFAULT NULL,
             resource_id VARCHAR(64) DEFAULT NULL,
             scheduled_slot VARCHAR(32) DEFAULT NULL,
             scheduled_time DATETIME DEFAULT NULL,
@@ -608,6 +632,9 @@ class VAYSF_Integration {
             KEY schedule_version (schedule_version),
             KEY game_status (game_status),
             KEY event (event),
+            KEY team_a_church_code (team_a_church_code),
+            KEY team_b_church_code (team_b_church_code),
+            KEY team_c_church_code (team_c_church_code),
             KEY scheduled_time (scheduled_time)
         ) $charset_collate;";
         dbDelta($sql_schedules);
@@ -770,7 +797,10 @@ class VAYSF_Integration {
             'team_c_key'       => "ADD COLUMN team_c_key VARCHAR(64) DEFAULT NULL AFTER team_b_label",
             'team_c_label'     => "ADD COLUMN team_c_label VARCHAR(255) DEFAULT NULL AFTER team_c_key",
             'team_ids_json'    => "ADD COLUMN team_ids_json TEXT DEFAULT NULL AFTER team_c_label",
-            'resource_id'      => "ADD COLUMN resource_id VARCHAR(64) DEFAULT NULL AFTER team_ids_json",
+            'team_a_church_code' => "ADD COLUMN team_a_church_code VARCHAR(16) DEFAULT NULL AFTER team_ids_json",
+            'team_b_church_code' => "ADD COLUMN team_b_church_code VARCHAR(16) DEFAULT NULL AFTER team_a_church_code",
+            'team_c_church_code' => "ADD COLUMN team_c_church_code VARCHAR(16) DEFAULT NULL AFTER team_b_church_code",
+            'resource_id'      => "ADD COLUMN resource_id VARCHAR(64) DEFAULT NULL AFTER team_c_church_code",
             'scheduled_slot'   => "ADD COLUMN scheduled_slot VARCHAR(32) DEFAULT NULL AFTER resource_id",
             'game_status'      => "ADD COLUMN game_status VARCHAR(20) NOT NULL DEFAULT 'scheduled' AFTER scheduled_location",
             'source_hash'      => "ADD COLUMN source_hash CHAR(64) DEFAULT NULL AFTER game_status",
