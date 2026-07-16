@@ -80,6 +80,7 @@ _RENDER_FIELDS = (
     "church_code",
     "church_name",
     "first_name",
+    "display_first_name",
     "last_name",
     "full_name",
     "primary_sport",
@@ -273,7 +274,11 @@ class BadgeGenerator:
         participant: Dict[str, Any],
         photo_bytes: Optional[bytes],
     ) -> None:
-        first = str(participant.get("first_name") or "").strip()
+        first = str(
+            participant.get("display_first_name")
+            or participant.get("first_name")
+            or ""
+        ).strip()
         last = str(participant.get("last_name") or "").strip()
         self._draw_photo(
             canvas,
@@ -334,11 +339,14 @@ class BadgeGenerator:
         self,
         participant: Dict[str, Any],
     ) -> List[Tuple[str, str, bool]]:
-        first = str(participant.get("first_name") or "").strip()
+        display_first_name = str(participant.get("display_first_name") or "").strip()
+        first = display_first_name or str(participant.get("first_name") or "").strip()
         last = str(participant.get("last_name") or "").strip()
-        name = str(
-            participant.get("full_name") or f"{first} {last}"
-        ).strip() or "Unknown Athlete"
+        name = (
+            f"{first} {last}".strip()
+            if display_first_name
+            else str(participant.get("full_name") or f"{first} {last}").strip()
+        ) or "Unknown Athlete"
         rows: List[Tuple[str, str, bool]] = [
             (name, f"#{self._required_chm_id(participant)}", False)
         ]

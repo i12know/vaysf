@@ -76,6 +76,7 @@ def test_fetch_chm_church_team_data_skips_orphaned_memberships(mock_connectors):
     assert "RPC" in data
     assert len(data["RPC"]) == 1
     assert data["RPC"][0]["ChMeetings ID"] == "101"
+    assert data["RPC"][0]["First Name"] == "Alice"
     assert exporter.last_orphaned_memberships_by_church == {"RPC": 1}
 
 

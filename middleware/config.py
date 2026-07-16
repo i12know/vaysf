@@ -202,10 +202,12 @@ CHECK_BOXES = {
     "6-PAID": "6. Paid All Fees"
 }
     
-# ChMeetings custom field names (must match labels in ChMeetings exactly)
-# Used in participants.py _map_chmeetings_participants() to extract data from additional_fields.
+# ChMeetings field names. Custom fields must match their ChMeetings labels exactly;
+# core profile fields map to their API response keys.
+# Used in participants.py _map_chmeetings_participants() to extract source data.
 # To verify these match the live API, run: python main.py test --system chmeetings --test-type api-inspect
 CHM_FIELDS = {
+    "NICK_NAME": "nick_name",
     "CHURCH_TEAM": "Church Team",
     "PRIMARY_SPORT": "Primary Sport",
     "PRIMARY_FORMAT": "Primary Racquet Sport Format",

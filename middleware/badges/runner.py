@@ -313,6 +313,9 @@ class BadgeRunner:
                 for key in ("first_name", "last_name"):
                     if not participant.get(key) and person.get(key):
                         participant[key] = person[key]
+                nickname = str(person.get(CHM_FIELDS["NICK_NAME"]) or "").strip()
+                if nickname:
+                    participant["display_first_name"] = nickname
                 participant["consent_status"] = self._person_has_consent(person)
                 age_at_event = self._age_at_event(person.get("birth_date"))
                 participant["age_at_event"] = age_at_event

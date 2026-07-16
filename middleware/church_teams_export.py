@@ -676,7 +676,6 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 if current_latest_dt is None or updated_on_dt > current_latest_dt:
                     _latest_chm_update_by_church_dt[church_code] = updated_on_dt
 
-
                 mapped_person = {
                     "Church Team": church_code,
                     "ChMeetings ID": chm_id,

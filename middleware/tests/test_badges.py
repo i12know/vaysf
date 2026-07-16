@@ -350,6 +350,19 @@ def test_event_rows_hide_empty(generator):
     assert "Primary" not in tags2
 
 
+def test_badge_name_uses_display_first_name_when_present(generator):
+    rows = generator._card_rows(
+        _participant(
+            first_name="Ngoc",
+            display_first_name="Khoa",
+            full_name="Ngoc Le",
+            last_name="Le",
+        )
+    )
+
+    assert rows[0][0] == "Khoa Le"
+
+
 def test_team_sport_does_not_show_stale_racquet_partner(generator):
     p = _participant(
         primary_sport="Volleyball - Men Team",
@@ -725,6 +738,23 @@ def test_runner_backfills_consent_status_from_chmeetings_value(generator):
     assert participant["consent_status"] is True
     assert participant["age_at_event"] == 18
     assert participant["minor_status"] is False
+
+
+def test_runner_uses_chmeetings_nickname_for_badge_display_name(generator):
+    participant = _participant(first_name="Ngoc", last_name="Le")
+    runner, chm, wp = _make_runner([participant], generator, person_photo=None)
+    chm.get_person.return_value = {
+        "id": "3139537",
+        "nick_name": "Khoa",
+        "photo": None,
+        "birth_date": "2000-01-01",
+        "additional_fields": [],
+    }
+
+    runner._fetch_photo_bytes(participant)
+
+    assert participant["first_name"] == "Ngoc"
+    assert participant["display_first_name"] == "Khoa"
 
 
 def test_runner_backfills_missing_consent_from_chmeetings_options(generator):
