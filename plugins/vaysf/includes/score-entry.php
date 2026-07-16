@@ -332,6 +332,221 @@ function vaysf_format_schedule_teams($row) {
 }
 
 /**
+ * Extract a church code from a schedule/result team value when possible.
+ *
+ * Older score payloads used keys such as BBM::RPC while newer published
+ * schedules may use solver slot ids such as BBM-P1-T1 plus dedicated
+ * team_*_church_code columns. This helper lets event-day displays match the
+ * same church matchup across those formats.
+ *
+ * @param mixed $value Raw team key, church code, or display label
+ * @return string Uppercase church code-ish token, or ''
+ */
+function vaysf_extract_church_code_from_team_value($value) {
+    $value = strtoupper(trim((string) $value));
+    if ($value === '') {
+        return '';
+    }
+
+    if (strpos($value, '::') !== false) {
+        $parts = explode('::', $value);
+        $value = trim((string) end($parts));
+    }
+
+    if (preg_match('/^[A-Z0-9]{2,16}$/', $value)) {
+        return $value;
+    }
+
+    return '';
+}
+
+/**
+ * Extract a sport/team family prefix such as BBM, VBM, VBW, SOC, or BC.
+ *
+ * @param mixed $value Raw team key
+ * @return string Uppercase family token, or ''
+ */
+function vaysf_extract_team_family_from_value($value) {
+    $value = strtoupper(trim((string) $value));
+    if ($value === '') {
+        return '';
+    }
+
+    if (preg_match('/^([A-Z0-9]+)::/', $value, $matches)) {
+        return $matches[1];
+    }
+    if (preg_match('/^([A-Z0-9]+)-/', $value, $matches)) {
+        return $matches[1];
+    }
+
+    return '';
+}
+
+/**
+ * Normalize team-like identifiers into a sorted signature.
+ *
+ * @param array<int,mixed> $values Raw values
+ * @return string Stable pipe-delimited signature
+ */
+function vaysf_build_team_signature($values) {
+    $normalized = array();
+    foreach ((array) $values as $value) {
+        $value = strtoupper(trim((string) $value));
+        if ($value !== '') {
+            $normalized[$value] = $value;
+        }
+    }
+
+    sort($normalized, SORT_STRING);
+    return implode('|', array_values($normalized));
+}
+
+/**
+ * Build an exact team-key signature from a schedule row.
+ *
+ * @param array<string,mixed> $row Schedule row
+ * @return string
+ */
+function vaysf_schedule_team_key_signature($row) {
+    $values = array();
+    foreach (array('team_a_key', 'team_b_key', 'team_c_key') as $field) {
+        if (!empty($row[$field])) {
+            $values[] = $row[$field];
+        }
+    }
+
+    return vaysf_build_team_signature($values);
+}
+
+/**
+ * Build a team-family signature from a schedule row.
+ *
+ * @param array<string,mixed> $row Schedule row
+ * @return string
+ */
+function vaysf_schedule_team_family_signature($row) {
+    $values = array();
+    foreach (array('team_a_key', 'team_b_key', 'team_c_key') as $field) {
+        $family = !empty($row[$field]) ? vaysf_extract_team_family_from_value($row[$field]) : '';
+        if ($family !== '') {
+            $values[] = $family;
+        }
+    }
+
+    return vaysf_build_team_signature($values);
+}
+
+/**
+ * Build a church-code matchup signature from a schedule row.
+ *
+ * @param array<string,mixed> $row Schedule row
+ * @return string
+ */
+function vaysf_schedule_church_signature($row) {
+    $values = array();
+    foreach (array('a', 'b', 'c') as $slot) {
+        $church_field = "team_{$slot}_church_code";
+        $key_field = "team_{$slot}_key";
+        $label_field = "team_{$slot}_label";
+
+        $church = '';
+        if (!empty($row[$church_field])) {
+            $church = vaysf_extract_church_code_from_team_value($row[$church_field]);
+        }
+        if ($church === '' && !empty($row[$key_field])) {
+            $church = vaysf_extract_church_code_from_team_value($row[$key_field]);
+        }
+        if ($church === '' && !empty($row[$label_field])) {
+            $church = vaysf_extract_church_code_from_team_value($row[$label_field]);
+        }
+        if ($church !== '') {
+            $values[] = $church;
+        }
+    }
+
+    return vaysf_build_team_signature($values);
+}
+
+/**
+ * Build an exact team-key signature from a decoded score payload.
+ *
+ * @param array<string,mixed> $payload Decoded score_json
+ * @return string
+ */
+function vaysf_score_payload_team_key_signature($payload) {
+    $values = array();
+    foreach (array('team_a_key', 'team_b_key', 'team_c_key') as $field) {
+        if (!empty($payload[$field])) {
+            $values[] = $payload[$field];
+        }
+    }
+
+    return vaysf_build_team_signature($values);
+}
+
+/**
+ * Build a team-family signature from a decoded score payload.
+ *
+ * @param array<string,mixed> $payload Decoded score_json
+ * @return string
+ */
+function vaysf_score_payload_team_family_signature($payload) {
+    $values = array();
+    foreach (array('team_a_key', 'team_b_key', 'team_c_key') as $field) {
+        $family = !empty($payload[$field]) ? vaysf_extract_team_family_from_value($payload[$field]) : '';
+        if ($family !== '') {
+            $values[] = $family;
+        }
+    }
+
+    return vaysf_build_team_signature($values);
+}
+
+/**
+ * Build a church-code matchup signature from a decoded score payload.
+ *
+ * @param array<string,mixed> $payload Decoded score_json
+ * @return string
+ */
+function vaysf_score_payload_church_signature($payload) {
+    $values = array();
+    foreach (array('a', 'b', 'c') as $slot) {
+        $church = '';
+        $key_field = "team_{$slot}_key";
+        $label_field = "team_{$slot}_label";
+
+        if (!empty($payload[$key_field])) {
+            $church = vaysf_extract_church_code_from_team_value($payload[$key_field]);
+        }
+        if ($church === '' && !empty($payload[$label_field])) {
+            $church = vaysf_extract_church_code_from_team_value($payload[$label_field]);
+        }
+        if ($church !== '') {
+            $values[] = $church;
+        }
+    }
+
+    return vaysf_build_team_signature($values);
+}
+
+/**
+ * Return a normalized public status for a result row across old/new schemas.
+ *
+ * @param array<string,mixed> $result Result row
+ * @return string
+ */
+function vaysf_get_result_public_status_value($result) {
+    if (!empty($result['public_status'])) {
+        return (string) $result['public_status'];
+    }
+    if (!empty($result['result_status'])) {
+        return (string) $result['result_status'];
+    }
+
+    return '';
+}
+
+/**
  * Events supported by the first simple score-entry slice.
  *
  * Racquet sports need sport-specific forms, so keep this intentionally narrow
@@ -501,7 +716,138 @@ function vaysf_get_result_for_schedule($schedule_id) {
         ARRAY_A
     );
 
+    if (is_array($result) && trim((string) ($result['score_json'] ?? '')) !== '') {
+        return $result;
+    }
+
+    $schedule = vaysf_resolve_schedule_row($schedule_id);
+    if (!$schedule) {
+        return is_array($result) ? $result : null;
+    }
+
+    $fallbacks = vaysf_get_result_fallbacks_for_schedule_rows(array($schedule));
+    if (!empty($fallbacks[$schedule_id])) {
+        return $fallbacks[$schedule_id];
+    }
+
     return is_array($result) ? $result : null;
+}
+
+/**
+ * Match historical/orphaned result rows back to current published schedules.
+ *
+ * @param array<int,array<string,mixed>> $schedule_rows Current schedule rows
+ * @return array<int,array<string,mixed>> Result rows keyed by current schedule_id
+ */
+function vaysf_get_result_fallbacks_for_schedule_rows($schedule_rows) {
+    global $wpdb;
+
+    $expected = array();
+    foreach ((array) $schedule_rows as $row) {
+        if (!is_array($row) || empty($row['schedule_id'])) {
+            continue;
+        }
+
+        $schedule_id = absint($row['schedule_id']);
+        $expected[$schedule_id] = array(
+            'schedule_id' => $schedule_id,
+            'game_key' => isset($row['game_key']) ? (string) $row['game_key'] : '',
+            'event' => isset($row['event']) ? (string) $row['event'] : '',
+            'team_key_signature' => vaysf_schedule_team_key_signature($row),
+            'team_family_signature' => vaysf_schedule_team_family_signature($row),
+            'church_signature' => vaysf_schedule_church_signature($row),
+        );
+    }
+
+    if (!$expected) {
+        return array();
+    }
+
+    $table_results = vaysf_get_table_name('results');
+    $table_schedules = vaysf_get_table_name('schedules');
+    $candidate_rows = $wpdb->get_results(
+        "SELECT r.*, s_hist.game_key AS historical_game_key, s_hist.event AS historical_event,
+            s_hist.team_a_key AS historical_team_a_key,
+            s_hist.team_a_label AS historical_team_a_label,
+            s_hist.team_b_key AS historical_team_b_key,
+            s_hist.team_b_label AS historical_team_b_label,
+            s_hist.team_c_key AS historical_team_c_key,
+            s_hist.team_c_label AS historical_team_c_label,
+            s_hist.team_a_church_code AS historical_team_a_church_code,
+            s_hist.team_b_church_code AS historical_team_b_church_code,
+            s_hist.team_c_church_code AS historical_team_c_church_code
+        FROM $table_results r
+        LEFT JOIN $table_schedules s_hist ON s_hist.schedule_id = r.schedule_id
+        WHERE r.score_json IS NOT NULL AND r.score_json <> ''
+        ORDER BY r.updated_at DESC, r.result_id DESC
+        LIMIT 1000",
+        ARRAY_A
+    );
+    if (!is_array($candidate_rows)) {
+        return array();
+    }
+
+    $matches = array();
+    foreach ($candidate_rows as $candidate) {
+        $decoded = json_decode($candidate['score_json'] ?? '', true);
+        if (!is_array($decoded)) {
+            $decoded = array();
+        }
+
+        $candidate_team_signature = vaysf_score_payload_team_key_signature($decoded);
+        $candidate_family_signature = vaysf_score_payload_team_family_signature($decoded);
+        $candidate_church_signature = vaysf_score_payload_church_signature($decoded);
+
+        if ($candidate_church_signature === '') {
+            $candidate_church_signature = vaysf_schedule_church_signature(array(
+                'team_a_key' => $candidate['historical_team_a_key'] ?? '',
+                'team_a_label' => $candidate['historical_team_a_label'] ?? '',
+                'team_a_church_code' => $candidate['historical_team_a_church_code'] ?? '',
+                'team_b_key' => $candidate['historical_team_b_key'] ?? '',
+                'team_b_label' => $candidate['historical_team_b_label'] ?? '',
+                'team_b_church_code' => $candidate['historical_team_b_church_code'] ?? '',
+                'team_c_key' => $candidate['historical_team_c_key'] ?? '',
+                'team_c_label' => $candidate['historical_team_c_label'] ?? '',
+                'team_c_church_code' => $candidate['historical_team_c_church_code'] ?? '',
+            ));
+        }
+
+        foreach ($expected as $schedule_id => $row_expectation) {
+            if (isset($matches[$schedule_id])) {
+                continue;
+            }
+
+            $event_matches = $row_expectation['event'] === ''
+                || empty($candidate['historical_event'])
+                || strcasecmp($row_expectation['event'], (string) $candidate['historical_event']) === 0;
+            $family_matches = $row_expectation['team_family_signature'] === ''
+                || $candidate_family_signature === ''
+                || $row_expectation['team_family_signature'] === $candidate_family_signature;
+
+            $game_key_matches = $row_expectation['game_key'] !== ''
+                && !empty($candidate['historical_game_key'])
+                && $row_expectation['game_key'] === (string) $candidate['historical_game_key'];
+
+            $team_key_matches = $row_expectation['team_key_signature'] !== ''
+                && $candidate_team_signature !== ''
+                && $row_expectation['team_key_signature'] === $candidate_team_signature;
+
+            $church_matches = $event_matches
+                && $family_matches
+                && $row_expectation['church_signature'] !== ''
+                && $candidate_church_signature !== ''
+                && $row_expectation['church_signature'] === $candidate_church_signature;
+
+            if ($game_key_matches || $team_key_matches || $church_matches) {
+                $candidate['public_status'] = vaysf_get_result_public_status_value($candidate);
+                $candidate['result_updated_at'] = $candidate['updated_at'] ?? '';
+                $candidate['result_created_at'] = $candidate['created_at'] ?? '';
+                $matches[$schedule_id] = $candidate;
+            }
+        }
+    }
+
+    return $matches;
 }
 
 /**
@@ -1427,12 +1773,14 @@ function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs', $
         SELECT
             s.*,
             r.result_id,
+            r.score_json,
             r.public_status,
             r.scan_status,
             r.submitted_by_user_id,
             r.certified_at,
             r.verified_at,
-            r.created_at AS result_created_at
+            r.created_at AS result_created_at,
+            r.updated_at AS result_updated_at
         FROM $table_schedules s
         LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
         WHERE " . implode(' AND ', $where) . "
@@ -1440,7 +1788,49 @@ function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs', $
     ";
 
     $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
-    return is_array($rows) ? $rows : array();
+    if (!is_array($rows)) {
+        return array();
+    }
+
+    $missing_result_rows = array();
+    foreach ($rows as $row) {
+        if (trim((string) ($row['score_json'] ?? '')) === '' && !empty($row['schedule_id'])) {
+            $missing_result_rows[] = $row;
+        }
+    }
+
+    $fallback_results = vaysf_get_result_fallbacks_for_schedule_rows($missing_result_rows);
+    $resolved_rows = array();
+    foreach ($rows as $row) {
+        $schedule_id = !empty($row['schedule_id']) ? absint($row['schedule_id']) : 0;
+        if (trim((string) ($row['score_json'] ?? '')) === '' && $schedule_id && !empty($fallback_results[$schedule_id])) {
+            $fallback = $fallback_results[$schedule_id];
+            foreach (array(
+                'result_id', 'score_json', 'public_status', 'scan_status',
+                'submitted_by_user_id', 'certified_at', 'verified_at',
+                'result_created_at', 'result_updated_at',
+            ) as $field) {
+                if (isset($fallback[$field])) {
+                    $row[$field] = $fallback[$field];
+                }
+            }
+        }
+
+        if (
+            trim((string) ($row['score_json'] ?? '')) !== ''
+            && (empty($row['public_status']) || $row['public_status'] === 'pending')
+        ) {
+            $row['public_status'] = 'reported';
+        }
+
+        if ($view === 'needs' && trim((string) ($row['score_json'] ?? '')) !== '') {
+            continue;
+        }
+
+        $resolved_rows[] = $row;
+    }
+
+    return $resolved_rows;
 }
 
 /**

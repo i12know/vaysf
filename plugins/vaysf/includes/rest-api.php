@@ -2914,6 +2914,8 @@ public function update_approval($request) {
             'event' => $request->get_param('event'),
             'day' => $request->get_param('day'),
             'venue' => $request->get_param('venue'),
+            'church' => $request->get_param('church'),
+            'lookback_minutes' => $request->get_param('lookback_minutes'),
         ));
 
         return rest_ensure_response($rows);
@@ -3013,6 +3015,7 @@ public function update_approval($request) {
                 'event', 'stage', 'pool_id', 'sub_event',
                 'team_a_key', 'team_a_label', 'team_b_key', 'team_b_label',
                 'team_c_key', 'team_c_label', 'team_ids_json',
+                'team_a_church_code', 'team_b_church_code', 'team_c_church_code',
                 'resource_id', 'scheduled_slot', 'scheduled_location',
                 'game_status', 'source_hash',
             );

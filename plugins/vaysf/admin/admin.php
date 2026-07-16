@@ -2418,16 +2418,139 @@ public function display_participants_page() {
      * Display settings page
      */
     public function display_settings_page() {
+        $results_reset_notice = null;
+        $vaysf_action = isset($_POST['vaysf_action'])
+            ? sanitize_text_field(wp_unslash($_POST['vaysf_action']))
+            : '';
+
+        if ($vaysf_action === 'clear_results_tables') {
+            $results_reset_notice = $this->clear_results_tables_from_post();
+        }
+
         ?>
         <div class="wrap">
             <h1>Sports Fest Settings</h1>
+
+            <?php $this->print_admin_notice($results_reset_notice, 'Event-day result tables cleared.'); ?>
             
             <form method="post" action="options.php">
                 <?php settings_fields('vaysf_settings'); ?>
                 <?php do_settings_sections('vaysf_settings'); ?>
                 <?php submit_button(); ?>
             </form>
+
+            <?php $this->display_results_reset_section(); ?>
         </div>
+        <?php
+    }
+
+    /**
+     * Result-entry tables that can be cleared before event-day data entry.
+     *
+     * @return array<string,string> Label => table name
+     */
+    private function result_entry_table_names() {
+        return array(
+            'Result files' => vaysf_get_table_name('result_files'),
+            'Result revisions' => vaysf_get_table_name('result_revisions'),
+            'Current results' => vaysf_get_table_name('results'),
+        );
+    }
+
+    /**
+     * Count rows in the event-day result tables.
+     *
+     * @return array<string,int>
+     */
+    private function result_entry_table_counts() {
+        global $wpdb;
+
+        $counts = array();
+        foreach ($this->result_entry_table_names() as $label => $table_name) {
+            $counts[$label] = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table_name}");
+        }
+
+        return $counts;
+    }
+
+    /**
+     * Clear result-entry tables after explicit admin confirmation.
+     *
+     * @return true|WP_Error
+     */
+    private function clear_results_tables_from_post() {
+        global $wpdb;
+
+        if (!current_user_can('sf2025_admin')) {
+            return new WP_Error('vaysf_results_reset_forbidden', 'You are not authorized to clear event-day results.');
+        }
+
+        if (
+            !isset($_POST['_wpnonce'])
+            || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'vaysf_clear_results_tables')
+        ) {
+            return new WP_Error('vaysf_results_reset_nonce', 'Security check failed. Please try again.');
+        }
+
+        $confirmation = isset($_POST['confirm_clear_results'])
+            ? sanitize_text_field(wp_unslash($_POST['confirm_clear_results']))
+            : '';
+        if ($confirmation !== 'CLEAR RESULTS') {
+            return new WP_Error('vaysf_results_reset_confirmation', 'Type CLEAR RESULTS to confirm the reset.');
+        }
+
+        $tables = $this->result_entry_table_names();
+        $wpdb->query('START TRANSACTION');
+        foreach ($tables as $table_name) {
+            $deleted = $wpdb->query("DELETE FROM {$table_name}");
+            if ($deleted === false) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('vaysf_results_reset_failed', 'Could not clear one of the event-day result tables.');
+            }
+        }
+        $wpdb->query('COMMIT');
+
+        return true;
+    }
+
+    /**
+     * Render maintenance controls for event-day result data.
+     */
+    private function display_results_reset_section() {
+        $counts = $this->result_entry_table_counts();
+        ?>
+        <hr>
+        <h2>Event-Day Results Reset</h2>
+        <p>This clears the current score-entry database rows before coordinators begin Saturday data entry.</p>
+        <table class="widefat striped" style="max-width: 520px; margin-bottom: 12px;">
+            <thead>
+                <tr>
+                    <th>Table</th>
+                    <th>Current Rows</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($counts as $label => $count) : ?>
+                    <tr>
+                        <td><?php echo esc_html($label); ?></td>
+                        <td><?php echo esc_html(number_format_i18n($count)); ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <form method="post">
+            <?php wp_nonce_field('vaysf_clear_results_tables'); ?>
+            <input type="hidden" name="vaysf_action" value="clear_results_tables">
+            <p>
+                <label for="confirm_clear_results">
+                    Type <code>CLEAR RESULTS</code> to delete rows from <code>sf_results</code>, <code>sf_result_revisions</code>, and <code>sf_result_files</code>.
+                </label>
+            </p>
+            <p>
+                <input type="text" id="confirm_clear_results" name="confirm_clear_results" class="regular-text" autocomplete="off">
+            </p>
+            <?php submit_button('Clear Event-Day Results Tables', 'delete', 'submit', false); ?>
+        </form>
         <?php
     }
 
