@@ -343,8 +343,17 @@ def _event_matches_roster_row(row: dict[str, Any], event: str) -> bool:
     return False
 
 
+APPROVAL_STATUS_KEYS = (
+    "approval_status",
+    "Approval Status",
+    "Approval_Status",
+    "approval status",
+    "Approval_Status (WP)",
+)
+
+
 def _approval_status(row: dict[str, Any]) -> str:
-    for key in ("approval_status", "Approval Status", "Approval_Status", "approval status"):
+    for key in APPROVAL_STATUS_KEYS:
         status = str(row.get(key) or "").strip()
         if status:
             return status
@@ -440,7 +449,7 @@ def _warn_if_approval_status_missing(roster_rows: Iterable[dict[str, Any]], spor
     if any(_approval_status(row) for row in rows):
         return
     logger.warning(
-        f"{sport_label} score sheets: roster rows have no approval_status/Approval Status values; "
+        f"{sport_label} score sheets: roster rows have no recognized approval-status values; "
         "all printed roster rows will be marked not approved."
     )
 
