@@ -143,6 +143,48 @@ function vaysf_get_public_schedule_venues($schedule_version = null) {
 }
 
 /**
+ * Resolve one schedule-row team slot ('a', 'b', or 'c') to a church code,
+ * falling back to the team key/label when the dedicated team_*_church_code
+ * column is still empty (e.g. a schedule published before that column was
+ * backfilled). Mirrors vaysf_schedule_church_signature()'s per-slot rule so
+ * the public church filter/dropdown and the result-matching fallback in
+ * score-entry.php stay consistent.
+ *
+ * @param array<string,mixed> $row Schedule row (or subset with team_* fields)
+ * @param string $slot One of 'a', 'b', 'c'
+ * @return string Church code, or '' when none could be resolved
+ */
+function vaysf_resolve_row_slot_church_code($row, $slot) {
+    foreach (array("team_{$slot}_church_code", "team_{$slot}_key", "team_{$slot}_label") as $field) {
+        if (!empty($row[$field])) {
+            $church = vaysf_extract_church_code_from_team_value($row[$field]);
+            if ($church !== '') {
+                return $church;
+            }
+        }
+    }
+
+    return '';
+}
+
+/**
+ * Check whether a schedule row's team_a/b/c slots include the given church code.
+ *
+ * @param array<string,mixed> $row Schedule row
+ * @param string $church Uppercase church code to match
+ * @return bool
+ */
+function vaysf_schedule_church_signature_contains($row, $church) {
+    foreach (array('a', 'b', 'c') as $slot) {
+        if (vaysf_resolve_row_slot_church_code($row, $slot) === $church) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
  * Distinct church codes from the currently published, non-cancelled schedule.
  *
  * @param int|null $schedule_version Optional version; defaults to current published version
@@ -159,27 +201,36 @@ function vaysf_get_public_schedule_churches($schedule_version = null) {
     }
 
     $table_schedules = vaysf_get_table_name('schedules');
-    $active_where = "schedule_version = %d
-        AND published_at IS NOT NULL
-        AND COALESCE(game_status, '') <> 'cancelled'";
-    $sql = $wpdb->prepare(
-        "SELECT DISTINCT church_code
-        FROM (
-            SELECT UPPER(team_a_church_code) AS church_code FROM $table_schedules WHERE $active_where
-            UNION
-            SELECT UPPER(team_b_church_code) AS church_code FROM $table_schedules WHERE $active_where
-            UNION
-            SELECT UPPER(team_c_church_code) AS church_code FROM $table_schedules WHERE $active_where
-        ) church_codes
-        WHERE church_code IS NOT NULL AND church_code <> ''
-        ORDER BY church_code",
-        absint($schedule_version),
-        absint($schedule_version),
-        absint($schedule_version)
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT team_a_key, team_a_label, team_a_church_code,
+                team_b_key, team_b_label, team_b_church_code,
+                team_c_key, team_c_label, team_c_church_code
+            FROM $table_schedules
+            WHERE schedule_version = %d
+                AND published_at IS NOT NULL
+                AND COALESCE(game_status, '') <> 'cancelled'",
+            absint($schedule_version)
+        ),
+        ARRAY_A
     );
 
-    $churches = $wpdb->get_col($sql);
-    return is_array($churches) ? array_values(array_filter(array_map('strval', $churches))) : array();
+    if (!is_array($rows)) {
+        return array();
+    }
+
+    $churches = array();
+    foreach ($rows as $row) {
+        foreach (array('a', 'b', 'c') as $slot) {
+            $church = vaysf_resolve_row_slot_church_code($row, $slot);
+            if ($church !== '') {
+                $churches[$church] = $church;
+            }
+        }
+    }
+
+    sort($churches, SORT_STRING);
+    return array_values($churches);
 }
 
 /**
@@ -448,12 +499,6 @@ function vaysf_get_public_schedule_rows($filters = array()) {
     }
 
     $church = isset($filters['church']) ? vaysf_sanitize_public_church_filter($filters['church']) : '';
-    if ($church !== '') {
-        $where[] = '(UPPER(COALESCE(s.team_a_church_code, \'\')) = %s OR UPPER(COALESCE(s.team_b_church_code, \'\')) = %s OR UPPER(COALESCE(s.team_c_church_code, \'\')) = %s)';
-        $args[] = $church;
-        $args[] = $church;
-        $args[] = $church;
-    }
 
     $lookback_minutes = isset($filters['lookback_minutes'])
         ? vaysf_sanitize_public_lookback_minutes($filters['lookback_minutes'])
@@ -474,6 +519,12 @@ function vaysf_get_public_schedule_rows($filters = array()) {
     $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
     if (!is_array($rows)) {
         return array();
+    }
+
+    if ($church !== '') {
+        $rows = array_values(array_filter($rows, function ($row) use ($church) {
+            return vaysf_schedule_church_signature_contains($row, $church);
+        }));
     }
 
     $missing_result_rows = array();

@@ -1261,6 +1261,11 @@ function vaysf_persist_score_result($user_id, $schedule, $score_payload, $winner
         return new WP_Error('vaysf_score_missing_context', __('Score entry is missing the user or schedule row.', 'vaysf'));
     }
 
+    $submitting_user = get_userdata($user_id);
+    if ($submitting_user && !empty($submitting_user->user_login)) {
+        $notes .= ' - Submitted by ' . $submitting_user->user_login;
+    }
+
     $now = current_time('mysql');
     $score_payload['submitted_at'] = $now;
     $score_json = wp_json_encode($score_payload);

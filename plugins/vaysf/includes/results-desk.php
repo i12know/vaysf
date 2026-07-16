@@ -49,6 +49,11 @@ function vaysf_sanitize_results_desk_filters($atts = array()) {
         $event = sanitize_text_field(wp_unslash($_GET['event']));
     }
 
+    $church = isset($atts['church']) ? vaysf_sanitize_public_church_filter($atts['church']) : '';
+    if ($church === '' && isset($_GET['church'])) {
+        $church = vaysf_sanitize_public_church_filter($_GET['church']);
+    }
+
     $late_grace_minutes = isset($atts['late_grace_minutes']) ? absint($atts['late_grace_minutes']) : 75;
     if ($late_grace_minutes < 1) {
         $late_grace_minutes = 75;
@@ -67,6 +72,7 @@ function vaysf_sanitize_results_desk_filters($atts = array()) {
 
     return array(
         'event' => $event,
+        'church' => $church,
         'late_grace_minutes' => $late_grace_minutes,
         'revision_hours' => $revision_hours,
         'limit' => $limit,
@@ -89,6 +95,39 @@ function vaysf_results_desk_add_event_filter(&$where, &$args, $event, $alias = '
 
     $where[] = "{$alias}.event = %s";
     $args[] = $event;
+}
+
+/**
+ * Add a church-code filter clause for Results Desk SQL.
+ *
+ * Matches team_*_church_code directly, falling back to team_*_key/label
+ * (taking the token after a trailing "::", the historical church-code-style
+ * key format) when the dedicated column is empty — the same fallback tiers
+ * as vaysf_resolve_row_slot_church_code() in public-display.php, expressed
+ * in SQL so it works across the GROUP BY aggregate used by complete_pools.
+ *
+ * @param array<int,string> $where SQL WHERE fragments
+ * @param array<int,mixed> $args SQL prepare args
+ * @param string $church Uppercase church code filter
+ * @param string $alias Schedule table alias
+ * @return void
+ */
+function vaysf_results_desk_add_church_filter(&$where, &$args, $church, $alias = 's') {
+    if ($church === '') {
+        return;
+    }
+
+    $conditions = array();
+    foreach (array('a', 'b', 'c') as $slot) {
+        $conditions[] = "UPPER(COALESCE({$alias}.team_{$slot}_church_code, '')) = %s";
+        $args[] = $church;
+        $conditions[] = "UPPER(TRIM(SUBSTRING_INDEX(COALESCE({$alias}.team_{$slot}_key, ''), '::', -1))) = %s";
+        $args[] = $church;
+        $conditions[] = "UPPER(TRIM(SUBSTRING_INDEX(COALESCE({$alias}.team_{$slot}_label, ''), '::', -1))) = %s";
+        $args[] = $church;
+    }
+
+    $where[] = '(' . implode(' OR ', $conditions) . ')';
 }
 
 /**
@@ -120,6 +159,7 @@ function vaysf_get_results_desk_rows($section, $filters = array()) {
     );
     $base_args = array($schedule_version);
     vaysf_results_desk_add_event_filter($base_where, $base_args, $filters['event']);
+    vaysf_results_desk_add_church_filter($base_where, $base_args, $filters['church']);
 
     if ($section === 'late_missing') {
         $where = $base_where;
@@ -142,10 +182,15 @@ function vaysf_get_results_desk_rows($section, $filters = array()) {
     }
 
     if ($section === 'attention') {
+        // A first-time submission is accepted as soon as it's reported — it
+        // does not sit here waiting for a second person to confirm it. Only
+        // a correction (current_revision > 1, i.e. someone submitted a
+        // second, different score for the same game) or an explicit
+        // in_progress/under_review flag counts as needing human review.
         $where = $base_where;
         $args = $base_args;
         $where[] = 'r.result_id IS NOT NULL';
-        $where[] = "(r.verified_at IS NULL OR r.public_status IN ('pending', 'in_progress', 'under_review'))";
+        $where[] = "(r.current_revision > 1 OR r.public_status IN ('in_progress', 'under_review'))";
         $args[] = $limit;
 
         $sql = "SELECT s.*, r.result_id, r.public_status, r.scan_status, r.current_revision,
@@ -273,13 +318,14 @@ function vaysf_get_results_desk_summary($filters = array()) {
     );
     $args = array($schedule_version);
     vaysf_results_desk_add_event_filter($where, $args, $filters['event']);
+    vaysf_results_desk_add_church_filter($where, $args, $filters['church']);
     $where_clause = implode(' AND ', $where);
 
     $summary_sql = "SELECT
             COUNT(*) AS total_games,
             SUM(CASE WHEN r.result_id IS NOT NULL AND COALESCE(r.score_json, '') <> '' THEN 1 ELSE 0 END) AS reported_results,
             SUM(CASE WHEN s.scheduled_time IS NOT NULL AND s.scheduled_time <= %s AND (r.result_id IS NULL OR COALESCE(r.score_json, '') = '') THEN 1 ELSE 0 END) AS late_missing,
-            SUM(CASE WHEN r.result_id IS NOT NULL AND (r.verified_at IS NULL OR r.public_status IN ('pending', 'in_progress', 'under_review')) THEN 1 ELSE 0 END) AS attention,
+            SUM(CASE WHEN r.result_id IS NOT NULL AND (r.current_revision > 1 OR r.public_status IN ('in_progress', 'under_review')) THEN 1 ELSE 0 END) AS attention,
             MAX(s.updated_at) AS last_schedule_update,
             MAX(r.updated_at) AS last_result_update
         FROM $table_schedules s
@@ -469,12 +515,16 @@ function vaysf_render_results_desk($atts = array()) {
             <?php
             $summary = vaysf_get_results_desk_summary($filters);
             $events = vaysf_get_published_schedule_events($summary['schedule_version']);
+            $churches = function_exists('vaysf_get_public_schedule_churches')
+                ? vaysf_get_public_schedule_churches($summary['schedule_version'])
+                : array();
             $manifest_url = wp_nonce_url(
                 add_query_arg(
                     array_filter(
                         array(
                             'action' => 'vaysf_download_results_manifest',
                             'event' => $filters['event'],
+                            'church' => $filters['church'],
                         )
                     ),
                     admin_url('admin-post.php')
@@ -492,6 +542,17 @@ function vaysf_render_results_desk($atts = array()) {
                         <?php endforeach; ?>
                     </select>
                 </label>
+                <?php if (!empty($churches)) : ?>
+                    <label>
+                        <?php esc_html_e('Church', 'vaysf'); ?>
+                        <select name="church">
+                            <option value=""><?php esc_html_e('All churches', 'vaysf'); ?></option>
+                            <?php foreach ($churches as $code) : ?>
+                                <option value="<?php echo esc_attr($code); ?>" <?php selected($filters['church'], $code); ?>><?php echo esc_html($code); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                <?php endif; ?>
                 <button type="submit" class="button button-primary"><?php esc_html_e('Filter', 'vaysf'); ?></button>
                 <a class="button" href="<?php echo esc_url(vaysf_get_results_desk_url()); ?>"><?php esc_html_e('Reset', 'vaysf'); ?></a>
                 <a class="button" href="<?php echo esc_url($manifest_url); ?>"><?php esc_html_e('Download Results Manifest CSV', 'vaysf'); ?></a>
@@ -521,18 +582,18 @@ function vaysf_render_results_desk($atts = array()) {
             );
 
             vaysf_render_results_desk_section(
-                __('Needs Review / Disputed', 'vaysf'),
-                __('Reported results that are unverified, pending, in-progress, or under review.', 'vaysf'),
-                vaysf_get_results_desk_rows('attention', $filters),
-                __('No results currently need review in this filter.', 'vaysf')
-            );
-
-            vaysf_render_results_desk_section(
                 __('Recent Corrections', 'vaysf'),
                 sprintf(__('Revision history from the last %d hours.', 'vaysf'), absint($filters['revision_hours'])),
                 vaysf_get_results_desk_rows('recent_corrections', $filters),
                 __('No recent corrections in this filter.', 'vaysf'),
                 'correction'
+            );
+
+            vaysf_render_results_desk_section(
+                __('Needs Review / Disputed', 'vaysf'),
+                __('A first submission is accepted immediately; a game only lands here once a correction (a second, different score) has come in and needs a human to resolve the mismatch.', 'vaysf'),
+                vaysf_get_results_desk_rows('attention', $filters),
+                __('No results currently need review in this filter.', 'vaysf')
             );
 
             vaysf_render_results_desk_section(
@@ -577,6 +638,42 @@ function vaysf_render_results_desk($atts = array()) {
     <?php
 
     return ob_get_clean();
+}
+
+/**
+ * Render a Results Desk link on user profile screens, for Sports Fest
+ * Managers/Admins, right above the "Update Profile" button.
+ *
+ * @param WP_User $user User being viewed
+ * @return void
+ */
+function vaysf_render_results_desk_profile_link($user) {
+    if (!is_object($user) || !vaysf_user_can_view_results_desk($user->ID)) {
+        return;
+    }
+
+    if ((int) get_current_user_id() !== (int) $user->ID && !current_user_can('edit_user', $user->ID)) {
+        return;
+    }
+
+    ?>
+    <h2><?php esc_html_e('Sports Fest Results Desk', 'vaysf'); ?></h2>
+    <table class="form-table" role="presentation">
+        <tr>
+            <th scope="row"><?php esc_html_e('Results Desk', 'vaysf'); ?></th>
+            <td>
+                <p>
+                    <a class="button button-primary" href="<?php echo esc_url(vaysf_get_results_desk_url()); ?>">
+                        <?php esc_html_e('Open Results Desk', 'vaysf'); ?>
+                    </a>
+                </p>
+                <p class="description">
+                    <?php esc_html_e('Read-only command center for missing, disputed, corrected, and scan-pending event-day results.', 'vaysf'); ?>
+                </p>
+            </td>
+        </tr>
+    </table>
+    <?php
 }
 
 /**
@@ -636,6 +733,7 @@ function vaysf_download_results_manifest() {
     global $wpdb;
     $schedule_version = vaysf_get_current_published_schedule_version();
     $event = isset($_GET['event']) ? sanitize_text_field(wp_unslash($_GET['event'])) : '';
+    $church = isset($_GET['church']) ? vaysf_sanitize_public_church_filter($_GET['church']) : '';
     $table_schedules = vaysf_get_table_name('schedules');
     $table_results = vaysf_get_table_name('results');
     $table_revisions = vaysf_get_table_name('result_revisions');
@@ -648,6 +746,7 @@ function vaysf_download_results_manifest() {
     );
     $args = array($schedule_version);
     vaysf_results_desk_add_event_filter($where, $args, $event);
+    vaysf_results_desk_add_church_filter($where, $args, $church);
 
     $sql = "SELECT s.game_key, s.schedule_version, s.event, s.stage, s.pool_id,
             s.scheduled_time, s.scheduled_location, s.resource_id,
