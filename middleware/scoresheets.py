@@ -40,6 +40,7 @@ QR_SIZE = 150
 QR_BOX = (PAGE_W - MARGIN - QR_SIZE, 52)
 MAX_ROSTER_ROWS = 15
 MAX_SOCCER_ROSTER_ROWS_PER_TEAM = 12
+MAX_BIBLE_CHALLENGE_ROSTER_ROWS_PER_TEAM = 10
 MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN = 9
 MAX_VOLLEYBALL_ROSTER_ROWS = MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN * 2
 
@@ -340,6 +341,8 @@ def _event_matches_roster_row(row: dict[str, Any], event: str) -> bool:
         return sport_type == "Volleyball" and sport_gender == "Women" and sport_format == "Team"
     if event == SOCCER_EVENT:
         return sport_type == "Soccer" and sport_gender == "Coed" and sport_format == "Exhibition"
+    if event == BIBLE_CHALLENGE_EVENT:
+        return sport_type == "Bible Challenge" and sport_format == "Team"
     return False
 
 
@@ -433,6 +436,21 @@ def build_soccer_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict[str
     indexed: dict[str, list[dict[str, Any]]] = {}
     for row in roster_rows:
         if not _event_matches_roster_row(row, SOCCER_EVENT):
+            continue
+        code = _team_code(row.get("Church Team"))
+        if not code:
+            continue
+        indexed.setdefault(code, []).append(row)
+    _sort_roster_index(indexed)
+    return indexed
+
+
+def build_bible_challenge_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Index Bible Challenge roster rows by church/team code."""
+
+    indexed: dict[str, list[dict[str, Any]]] = {}
+    for row in roster_rows:
+        if not _event_matches_roster_row(row, BIBLE_CHALLENGE_EVENT):
             continue
         code = _team_code(row.get("Church Team"))
         if not code:
@@ -644,39 +662,6 @@ def _draw_bible_challenge_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, 
             bx = left + (right - left - box_w) // 2
             by = row_y + (row_h - box_h) // 2
             draw.rectangle((bx, by, bx + box_w, by + box_h), outline=COL_BORDER, width=2, fill=(255, 255, 255))
-    return y + height
-
-
-def _draw_bible_challenge_notes_grid(draw: ImageDraw.ImageDraw, y: int) -> int:
-    x = MARGIN
-    width = PAGE_W - MARGIN * 2
-    header_h = 40
-    row_h = 44
-    rows = 8
-    height = header_h + row_h * rows
-    draw.rectangle((x, y, x + width, y + height), outline=COL_BORDER, width=2)
-    draw.rectangle((x, y, x + width, y + header_h), fill=COL_HEADER, outline=COL_BORDER, width=2)
-    _center_text(draw, (x, y, x + width, y + header_h), "QUESTION / APPEAL NOTES", _font("bold", 18), COL_BLACK)
-
-    col_round = x + 110
-    col_team = col_round + 155
-    col_ref = col_team + 250
-    for line_x in (col_round, col_team, col_ref):
-        draw.line((line_x, y + header_h, line_x, y + height), fill=COL_BORDER, width=1)
-    draw.text((x + 18, y + header_h + 11), "ROUND", font=_font("bold", 15), fill=COL_BLACK)
-    draw.text((col_round + 18, y + header_h + 11), "TEAM", font=_font("bold", 15), fill=COL_BLACK)
-    draw.text((col_team + 18, y + header_h + 11), "QUESTION / REF", font=_font("bold", 15), fill=COL_BLACK)
-    draw.text((col_ref + 18, y + header_h + 11), "NOTES", font=_font("bold", 15), fill=COL_BLACK)
-
-    for idx in range(rows):
-        row_y = y + header_h + idx * row_h
-        draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
-        if idx == 0:
-            continue
-        draw.line((x + 18, row_y + 24, col_round - 18, row_y + 24), fill=(190, 196, 204), width=1)
-        draw.line((col_round + 18, row_y + 24, col_team - 18, row_y + 24), fill=(190, 196, 204), width=1)
-        draw.line((col_team + 18, row_y + 24, col_ref - 18, row_y + 24), fill=(190, 196, 204), width=1)
-        draw.line((col_ref + 18, row_y + 24, x + width - 18, row_y + 24), fill=(190, 196, 204), width=1)
     return y + height
 
 
@@ -944,7 +929,7 @@ def _draw_soccer_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any], y: 
     return y + height
 
 
-def _draw_soccer_roster_table(
+def _draw_compact_roster_table(
     canvas: Image.Image,
     draw: ImageDraw.ImageDraw,
     origin: tuple[int, int],
@@ -952,11 +937,12 @@ def _draw_soccer_roster_table(
     title: str,
     roster_rows: list[dict[str, Any]],
     photo_cache: PhotoCache,
+    max_rows: int = MAX_SOCCER_ROSTER_ROWS_PER_TEAM,
 ) -> None:
     x, y = origin
     header_h = 48
     row_h = 46
-    table_h = header_h + row_h * MAX_SOCCER_ROSTER_ROWS_PER_TEAM
+    table_h = header_h + row_h * max_rows
     draw.rectangle((x, y, x + width, y + table_h), outline=COL_BORDER, width=2)
     draw.rectangle((x, y, x + width, y + 29), fill=COL_HEADER, outline=COL_BORDER, width=2)
     _center_text(draw, (x, y, x + width, y + 29), title, _font("bold", 16), COL_BLACK)
@@ -974,8 +960,8 @@ def _draw_soccer_roster_table(
     draw.text((name_x, y + 33), "ATHLETE", font=_font("bold", 10), fill=COL_BLACK)
     draw.text((age_x + 8, y + 33), "AGE", font=_font("bold", 10), fill=COL_BLACK)
 
-    rows = roster_rows[:MAX_SOCCER_ROSTER_ROWS_PER_TEAM]
-    for idx in range(MAX_SOCCER_ROSTER_ROWS_PER_TEAM):
+    rows = roster_rows[:max_rows]
+    for idx in range(max_rows):
         row_y = y + header_h + idx * row_h
         draw.line((x, row_y, x + width, row_y), fill=COL_BORDER, width=1)
         draw.text((x + 9, row_y + 17), str(idx + 1), font=_font("regular", 10), fill=COL_MUTED)
@@ -1003,10 +989,10 @@ def _draw_soccer_roster_table(
                 _approval_status(row),
             )
 
-    if len(roster_rows) > MAX_SOCCER_ROSTER_ROWS_PER_TEAM:
+    if len(roster_rows) > max_rows:
         draw.text(
             (x + 12, y + table_h + 4),
-            f"+{len(roster_rows) - MAX_SOCCER_ROSTER_ROWS_PER_TEAM} more",
+            f"+{len(roster_rows) - max_rows} more",
             font=_font("regular", 11),
             fill=COL_MUTED,
         )
@@ -1105,11 +1091,15 @@ def render_basketball_scoresheet_page(
 
 def render_bible_challenge_scoresheet_page(
     game: dict[str, Any],
+    roster_index: Optional[dict[str, list[dict[str, Any]]]] = None,
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
+    photo_cache: Optional[PhotoCache] = None,
 ) -> Image.Image:
     """Render one three-team Bible Challenge score sheet as an RGB image."""
 
+    roster_index = roster_index or {}
+    photo_cache = photo_cache or PhotoCache()
     logo = _load_logo(logo_path or default_logo_path())
     page = Image.new("RGB", (PAGE_W, PAGE_H), "white")
     draw = ImageDraw.Draw(page)
@@ -1120,7 +1110,22 @@ def render_bible_challenge_scoresheet_page(
     _draw_three_team_score_boxes(draw, game)
     _draw_bible_challenge_official_section(draw, y=386)
     next_y = _draw_bible_challenge_score_grid(draw, game, y=548)
-    _draw_bible_challenge_notes_grid(draw, next_y + 24)
+
+    roster_y = next_y + 24
+    gap = 24
+    table_w = (PAGE_W - MARGIN * 2 - 2 * gap) // 3
+    for idx, side in enumerate(("a", "b", "c")):
+        team_code = _team_code(_team_label(game, side))
+        _draw_compact_roster_table(
+            page,
+            draw,
+            (MARGIN + idx * (table_w + gap), roster_y),
+            table_w,
+            _team_label(game, side),
+            roster_index.get(team_code, []),
+            photo_cache,
+            max_rows=MAX_BIBLE_CHALLENGE_ROSTER_ROWS_PER_TEAM,
+        )
     _draw_bible_challenge_footer(draw)
     return page
 
@@ -1150,7 +1155,7 @@ def render_soccer_scoresheet_page(
     team_b_code = _team_code(_team_label(game, "b"))
     table_y = next_y + 28
     table_w = (PAGE_W - MARGIN * 2 - 28) // 2
-    _draw_soccer_roster_table(
+    _draw_compact_roster_table(
         page,
         draw,
         (MARGIN, table_y),
@@ -1159,7 +1164,7 @@ def render_soccer_scoresheet_page(
         roster_index.get(team_a_code, []),
         photo_cache,
     )
-    _draw_soccer_roster_table(
+    _draw_compact_roster_table(
         page,
         draw,
         (MARGIN + table_w + 28, table_y),
@@ -1325,18 +1330,23 @@ def write_bible_challenge_scoresheets_pdf(
 ) -> tuple[Path, int]:
     """Write one combined Bible Challenge score-sheet PDF and return (path, pages)."""
 
-    del roster_rows  # Bible Challenge sheets are match-score sheets, not roster sheets.
     schedule_input = _load_json(schedule_input_path)
     schedule_output = _load_json(schedule_output_path)
     games = _bible_challenge_games(schedule_input, schedule_output)
     if not games:
         raise ScoreSheetError("No scheduled Bible Challenge games found in the supplied schedule artifacts.")
 
+    roster_rows = list(roster_rows or [])
+    _warn_if_approval_status_missing(roster_rows, "Bible Challenge")
+    roster_index = build_bible_challenge_roster_index(roster_rows)
+    photo_cache = PhotoCache()
     pages = [
         render_bible_challenge_scoresheet_page(
             game,
+            roster_index=roster_index,
             logo_path=logo_path,
             score_entry_base_url=score_entry_base_url,
+            photo_cache=photo_cache,
         )
         for game in games
     ]

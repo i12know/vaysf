@@ -13,6 +13,7 @@ from scoresheets import (
     VOLLEYBALL_WOMEN_EVENT,
     _extract_photo_ref,
     _friendly_location,
+    build_bible_challenge_roster_index,
     build_roster_index,
     build_soccer_roster_index,
     build_volleyball_roster_index,
@@ -208,6 +209,33 @@ def test_build_soccer_roster_index_accepts_exported_coed_exhibition_triplet():
     ]
 
     indexed = build_soccer_roster_index(rows)
+
+    assert [row["First Name"] for row in indexed["RPC"]] == ["An"]
+
+
+def test_build_bible_challenge_roster_index_accepts_mixed_team_roster():
+    rows = [
+        {
+            "Church Team": "RPC",
+            "First Name": "An",
+            "Last Name": "Nguyen",
+            "Age (at Event)": 17,
+            "sport_type": "Bible Challenge",
+            "sport_gender": "Mixed",
+            "sport_format": "Team",
+        },
+        {
+            "Church Team": "RPC",
+            "First Name": "Nope",
+            "Last Name": "Nguyen",
+            "Age (at Event)": 17,
+            "sport_type": "Basketball",
+            "sport_gender": "Men",
+            "sport_format": "Team",
+        },
+    ]
+
+    indexed = build_bible_challenge_roster_index(rows)
 
     assert [row["First Name"] for row in indexed["RPC"]] == ["An"]
 
@@ -545,6 +573,112 @@ def test_render_bible_challenge_scoresheet_places_logo_upper_left(tmp_path):
     assert page.getpixel((LOGO_BOX[0] + 20, LOGO_BOX[1] + 20)) == (220, 20, 30)
 
 
+def test_render_bible_challenge_scoresheet_prints_roster_photo(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    photo = tmp_path / "player.png"
+    _photo(photo, color=(40, 200, 90, 255))
+    roster_index = build_bible_challenge_roster_index(
+        [
+            {
+                "Church Team": "RPC",
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "Age (at Event)": 17,
+                "Photo": str(photo),
+                "sport_type": "Bible Challenge",
+                "sport_gender": "Mixed",
+                "sport_format": "Team",
+                "approval_status": "approved",
+            }
+        ]
+    )
+
+    page = render_bible_challenge_scoresheet_page(
+        {
+            "game_key": "BC-RR-01",
+            "event": BIBLE_CHALLENGE_EVENT,
+            "team_a_label": "RPC",
+            "team_b_label": "GAC",
+            "team_c_label": "MWC",
+            "resource_id": "BC-Sun-1-1",
+            "scheduled_slot": "Sun-1-18:00",
+        },
+        roster_index=roster_index,
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+    )
+
+    # First roster photo sits inside team A's roster column, below the score tracker.
+    assert page.getpixel((124, 842)) == (40, 200, 90)
+
+
+def test_render_bible_challenge_scoresheet_strikes_unapproved_roster_row():
+    roster_index = build_bible_challenge_roster_index(
+        [
+            {
+                "Church Team": "RPC",
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "Age (at Event)": 17,
+                "sport_type": "Bible Challenge",
+                "sport_gender": "Mixed",
+                "sport_format": "Team",
+                "Approval_Status (WP)": "pending",
+            }
+        ]
+    )
+
+    page = render_bible_challenge_scoresheet_page(
+        {
+            "game_key": "BC-RR-01",
+            "event": BIBLE_CHALLENGE_EVENT,
+            "team_a_label": "RPC",
+            "team_b_label": "GAC",
+            "team_c_label": "MWC",
+            "resource_id": "BC-Sun-1-1",
+            "scheduled_slot": "Sun-1-18:00",
+        },
+        roster_index=roster_index,
+        score_entry_base_url=SCORE_ENTRY_URL,
+    )
+
+    assert page.getpixel((200, 843)) == (170, 31, 45)
+
+
+def test_render_bible_challenge_scoresheet_does_not_strike_wp_approved_roster_row():
+    roster_index = build_bible_challenge_roster_index(
+        [
+            {
+                "Church Team": "RPC",
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "Age (at Event)": 17,
+                "sport_type": "Bible Challenge",
+                "sport_gender": "Mixed",
+                "sport_format": "Team",
+                "Approval_Status (WP)": "approved",
+            }
+        ]
+    )
+
+    page = render_bible_challenge_scoresheet_page(
+        {
+            "game_key": "BC-RR-01",
+            "event": BIBLE_CHALLENGE_EVENT,
+            "team_a_label": "RPC",
+            "team_b_label": "GAC",
+            "team_c_label": "MWC",
+            "resource_id": "BC-Sun-1-1",
+            "scheduled_slot": "Sun-1-18:00",
+        },
+        roster_index=roster_index,
+        score_entry_base_url=SCORE_ENTRY_URL,
+    )
+
+    assert page.getpixel((200, 843)) != (170, 31, 45)
+
+
 def test_basketball_roster_table_capacity_is_15():
     assert MAX_ROSTER_ROWS == 15
 
@@ -710,7 +844,18 @@ def test_write_bible_challenge_scoresheets_pdf_filters_to_bible_challenge(tmp_pa
         input_path,
         output_path,
         tmp_path / "scoresheets",
-        roster_rows=[],
+        roster_rows=[
+            {
+                "Church Team": "RPC",
+                "First Name": "An",
+                "Last Name": "Nguyen",
+                "Age (at Event)": 17,
+                "sport_type": "Bible Challenge",
+                "sport_gender": "Mixed",
+                "sport_format": "Team",
+                "approval_status": "approved",
+            }
+        ],
         logo_path=logo,
         score_entry_base_url=SCORE_ENTRY_URL,
         output_filename="bible-challenge.pdf",
