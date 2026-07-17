@@ -244,7 +244,7 @@ SF_FIELD_IDS = {
     "PARENT_EMAIL":        1283266,  # text
     "PARENT_PHONE":        1283267,  # text
     "ADDITIONAL_INFO":     1281850,  # multi_line_text
-    "BADGE_URL":           0,        # text; discovered by name when 0
+    "BADGE_URL":           0,        # text; discovered by name when 0 (live id was 1808251 per api-inspect 2026-07-17)
     # Church Rep Verification section (section_id: 116188)
     "CHECKLIST":           1283271,  # checkbox
     "NOTES_PROGRESS":      1283358,  # multi_line_text
@@ -283,6 +283,8 @@ SF_CHURCH_TEAM_OPTIONS = {
     227627: "LBC",
     227691: "SBC",
     227692: "SFV",
+    330051: "WAG",
+    330809: "GEC",
 }
 
 # Primary Sport dropdown option_id → label (field_id: 1281847)
