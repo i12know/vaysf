@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Split REST API monolith into domain controllers (#265)
+
+- Refactored `plugins/vaysf/includes/rest-api.php` (~3,130 lines) into nine
+  domain controllers under `plugins/vaysf/includes/rest-api/`, each owning
+  its own routes: churches (incl. insurance link/upload), participants,
+  rosters, approvals (incl. public token processing), validation issues,
+  schedules (incl. publish upsert), public spectator display, send-email,
+  and sync-log stubs.
+- Added shared `VAYSF_REST_Controller` base carrying the `vaysf/v1`
+  namespace, API-key verification, and the common permission callback;
+  `rest-api.php` is now an orchestration-only bootstrap. The
+  `VAYSF_REST_API` class and its `API_NAMESPACE` constant are preserved for
+  external callers (`includes/shortcodes.php`).
+- No route, method, permission, or response-shape changes — verified by a
+  stubbed-WordPress harness that registered both old and new code and
+  diffed the full 23-route table (identical).
+- Fixed two undefined-variable warnings in `process_approval_token()`:
+  `$approval_result` / `$participant_result` debug checks now actually
+  capture the `$wpdb->update()` return values they log.
+
 ### Bible Challenge score-sheet rosters
 
 - Replaced the blank "Question / Appeal Notes" grid on generated Bible
