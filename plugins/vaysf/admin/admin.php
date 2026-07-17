@@ -146,15 +146,26 @@ class VAYSF_Admin {
             array($this->pages['results'], 'display_results_page')
         );
 
-        add_menu_page(
+        add_submenu_page(
+            'vaysf',
             'Bible Verse Editor',
             'Bible Verses',
             VAYSF_BIBLE_VERSE_CAPABILITY,
             'vaysf-bible-verses',
-            array($this->pages['bible_verses'], 'display_bible_verses_page'),
-            'dashicons-book-alt',
-            31
+            array($this->pages['bible_verses'], 'display_bible_verses_page')
         );
+
+        if (current_user_can(VAYSF_BIBLE_VERSE_CAPABILITY) && !current_user_can('sf2025_read')) {
+            add_menu_page(
+                'Bible Verse Editor',
+                'Bible Verses',
+                VAYSF_BIBLE_VERSE_CAPABILITY,
+                'vaysf-bible-verses',
+                array($this->pages['bible_verses'], 'display_bible_verses_page'),
+                'dashicons-book-alt',
+                31
+            );
+        }
         
         add_submenu_page(
             'vaysf',

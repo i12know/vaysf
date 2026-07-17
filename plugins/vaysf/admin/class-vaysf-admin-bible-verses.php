@@ -11,6 +11,59 @@ if (!defined('ABSPATH')) {
 
 class VAYSF_Admin_Bible_Verses extends VAYSF_Admin_Page {
 
+    private function page_url($args = array()) {
+        $query_args = array_merge(array('page' => 'vaysf-bible-verses'), $args);
+        if (empty($query_args['event'])) {
+            unset($query_args['event']);
+        }
+        if (empty($query_args['edit'])) {
+            unset($query_args['edit']);
+        }
+        if (empty($query_args['count'])) {
+            unset($query_args['count']);
+        }
+        if (empty($query_args['notice'])) {
+            unset($query_args['notice']);
+        }
+
+        return add_query_arg($query_args, admin_url('admin.php'));
+    }
+
+    private function action_notice($notice, $count = 0) {
+        return array(
+            'notice' => sanitize_key($notice),
+            'count' => absint($count),
+        );
+    }
+
+    private function notice_message($action_result = null) {
+        $notice = '';
+        $count = 0;
+
+        if (is_array($action_result)) {
+            $notice = isset($action_result['notice']) ? sanitize_key($action_result['notice']) : '';
+            $count = isset($action_result['count']) ? absint($action_result['count']) : 0;
+        } else {
+            $notice = isset($_GET['notice']) ? sanitize_key(wp_unslash($_GET['notice'])) : '';
+            $count = isset($_GET['count']) ? absint($_GET['count']) : 0;
+        }
+
+        switch ($notice) {
+            case 'saved':
+                return __('Bible verse changes saved.', 'vaysf');
+            case 'deactivated':
+                return __('Bible verse row deactivated.', 'vaysf');
+            case 'deleted':
+                return __('Bible verse row deleted.', 'vaysf');
+            case 'imported':
+                return sprintf(__('Imported %d verse row(s).', 'vaysf'), $count);
+            case 'seeded':
+                return sprintf(__('Loaded %d bundled verse row(s).', 'vaysf'), $count);
+            default:
+                return '';
+        }
+    }
+
     private function handle_actions($allowed_events) {
         if (!current_user_can(VAYSF_BIBLE_VERSE_CAPABILITY)) {
             return null;
@@ -30,21 +83,50 @@ class VAYSF_Admin_Bible_Verses extends VAYSF_Admin_Page {
 
         if ($action === 'save') {
             $row_id = isset($_POST['row_id']) ? sanitize_key(wp_unslash($_POST['row_id'])) : '';
-            return vaysf_save_bible_verse_row($_POST, $row_id);
+            $result = vaysf_save_bible_verse_row($_POST, $row_id);
+            if (is_wp_error($result)) {
+                return $result;
+            }
+
+            return $this->action_notice('saved');
         }
 
         if ($action === 'deactivate') {
             $row_id = isset($_POST['row_id']) ? sanitize_key(wp_unslash($_POST['row_id'])) : '';
-            return vaysf_deactivate_bible_verse_row($row_id);
+            $result = vaysf_deactivate_bible_verse_row($row_id);
+            if (is_wp_error($result)) {
+                return $result;
+            }
+
+            return $this->action_notice('deactivated');
         }
 
         if ($action === 'delete') {
             $row_id = isset($_POST['row_id']) ? sanitize_key(wp_unslash($_POST['row_id'])) : '';
-            return vaysf_delete_bible_verse_row($row_id);
+            $result = vaysf_delete_bible_verse_row($row_id);
+            if (is_wp_error($result)) {
+                return $result;
+            }
+
+            return $this->action_notice('deleted');
         }
 
         if ($action === 'import_json') {
-            return $this->import_json($allowed_events);
+            $result = $this->import_json($allowed_events);
+            if (is_wp_error($result)) {
+                return $result;
+            }
+
+            return $this->action_notice('imported', $result);
+        }
+
+        if ($action === 'load_seed') {
+            $result = $this->load_seed($allowed_events);
+            if (is_wp_error($result)) {
+                return $result;
+            }
+
+            return $this->action_notice('seeded', $result);
         }
 
         return null;
@@ -57,39 +139,26 @@ class VAYSF_Admin_Bible_Verses extends VAYSF_Admin_Page {
         }
 
         $payload = json_decode($json, true);
-        if (!is_array($payload) || !isset($payload['verse_sets']) || !is_array($payload['verse_sets'])) {
-            return new WP_Error('vaysf_bible_verse_import_bad_json', __('Import JSON must contain a verse_sets array.', 'vaysf'));
+        return vaysf_import_bible_verse_payload_for_events($payload, $allowed_events);
+    }
+
+    private function load_seed($allowed_events) {
+        $payload = vaysf_get_bundled_bible_verse_payload();
+        if (is_wp_error($payload)) {
+            return $payload;
         }
 
-        $allowed_lookup = array_fill_keys($allowed_events, true);
-        $existing_rows = vaysf_get_bible_verse_rows();
-        $kept_rows = array_values(array_filter($existing_rows, function ($row) use ($allowed_lookup) {
-            return empty($row['event']) || !isset($allowed_lookup[$row['event']]);
-        }));
-
-        $imported_rows = array();
-        foreach ($payload['verse_sets'] as $index => $raw_row) {
-            if (!is_array($raw_row)) {
-                return new WP_Error('vaysf_bible_verse_import_row', sprintf(__('Import row %d must be an object.', 'vaysf'), $index + 1));
-            }
-            $event = isset($raw_row['event']) ? sanitize_text_field((string) $raw_row['event']) : '';
-            if ($event === '' || !isset($allowed_lookup[$event])) {
-                continue;
-            }
-            $row = vaysf_sanitize_bible_verse_payload($raw_row, null);
-            $validation = vaysf_validate_bible_verse_row($row, array_merge($kept_rows, $imported_rows));
-            if (is_wp_error($validation)) {
-                return $validation;
-            }
-            $imported_rows[] = $row;
-        }
-
-        vaysf_update_bible_verse_rows(array_merge($kept_rows, $imported_rows));
-        return count($imported_rows);
+        return vaysf_import_bible_verse_payload_for_events($payload, $allowed_events);
     }
 
     private function selected_event($allowed_events) {
-        $requested = isset($_GET['event']) ? sanitize_text_field(wp_unslash($_GET['event'])) : '';
+        $requested = '';
+        if (isset($_POST['event_filter'])) {
+            $requested = sanitize_text_field(wp_unslash($_POST['event_filter']));
+        } elseif (isset($_GET['event'])) {
+            $requested = sanitize_text_field(wp_unslash($_GET['event']));
+        }
+
         return in_array($requested, $allowed_events, true) ? $requested : '';
     }
 
@@ -131,13 +200,12 @@ class VAYSF_Admin_Bible_Verses extends VAYSF_Admin_Page {
         <div class="wrap">
             <h1><?php esc_html_e('Bible Verse Editor', 'vaysf'); ?></h1>
             <?php
+            $notice_message = $this->notice_message($action_result);
+            if ($notice_message !== '') {
+                echo '<div class="notice notice-success"><p>' . esc_html($notice_message) . '</p></div>';
+            }
             if (is_wp_error($action_result)) {
                 echo '<div class="notice notice-error"><p>' . esc_html($action_result->get_error_message()) . '</p></div>';
-            } elseif ($action_result !== null) {
-                $message = is_int($action_result)
-                    ? sprintf(__('Imported %d verse row(s).', 'vaysf'), $action_result)
-                    : __('Bible verse changes saved.', 'vaysf');
-                echo '<div class="notice notice-success"><p>' . esc_html($message) . '</p></div>';
             }
             ?>
             <?php if (!$allowed_events) : ?>
@@ -163,22 +231,30 @@ class VAYSF_Admin_Bible_Verses extends VAYSF_Admin_Page {
                     <button class="button"><?php esc_html_e('Filter', 'vaysf'); ?></button>
                 </form>
 
-                <?php $this->render_editor_form($edit_row, $allowed_events); ?>
-                <?php $this->render_rows_table($visible_rows); ?>
-                <?php $this->render_json_tools($export_payload); ?>
+                <?php $this->render_editor_form($edit_row, $allowed_events, $selected_event); ?>
+                <?php $this->render_rows_table($visible_rows, $selected_event); ?>
+                <?php $this->render_json_tools($export_payload, $selected_event); ?>
             <?php endif; ?>
         </div>
         <?php
     }
 
-    private function render_editor_form($row, $allowed_events) {
+    private function render_editor_form($row, $allowed_events, $selected_event) {
         $is_edit = is_array($row);
+        $default_event = $this->row_value($row, 'event');
+        if ($default_event === '' && $selected_event !== '' && in_array($selected_event, $allowed_events, true)) {
+            $default_event = $selected_event;
+        }
+        if ($default_event === '' && !empty($allowed_events)) {
+            $default_event = $allowed_events[0];
+        }
         ?>
         <h2><?php echo esc_html($is_edit ? __('Edit Verse Row', 'vaysf') : __('Add Verse Row', 'vaysf')); ?></h2>
         <form method="post">
             <?php wp_nonce_field('vaysf_bible_verse_editor', 'vaysf_bible_verse_nonce'); ?>
             <input type="hidden" name="vaysf_bible_verse_action" value="save">
             <input type="hidden" name="row_id" value="<?php echo esc_attr($this->row_value($row, 'row_id')); ?>">
+            <input type="hidden" name="event_filter" value="<?php echo esc_attr($selected_event); ?>">
             <table class="form-table" role="presentation">
                 <tr>
                     <th scope="row"><label for="set_key"><?php esc_html_e('Set key', 'vaysf'); ?></label></th>
@@ -189,7 +265,7 @@ class VAYSF_Admin_Bible_Verses extends VAYSF_Admin_Page {
                     <td>
                         <select name="event" id="event" required>
                             <?php foreach ($allowed_events as $event) : ?>
-                                <option value="<?php echo esc_attr($event); ?>" <?php selected($this->row_value($row, 'event'), $event); ?>>
+                                <option value="<?php echo esc_attr($event); ?>" <?php selected($default_event, $event); ?>>
                                     <?php echo esc_html($event); ?>
                                 </option>
                             <?php endforeach; ?>
@@ -244,7 +320,7 @@ class VAYSF_Admin_Bible_Verses extends VAYSF_Admin_Page {
         <?php
     }
 
-    private function render_rows_table($rows) {
+    private function render_rows_table($rows, $selected_event) {
         ?>
         <h2><?php esc_html_e('Verse Rows', 'vaysf'); ?></h2>
         <table class="widefat striped">
@@ -272,12 +348,13 @@ class VAYSF_Admin_Bible_Verses extends VAYSF_Admin_Page {
                             <td><?php echo !empty($row['active']) ? esc_html__('Yes', 'vaysf') : esc_html__('No', 'vaysf'); ?></td>
                             <td><?php echo !empty($row['event_locked']) ? esc_html__('Event locked', 'vaysf') : esc_html__('Reusable', 'vaysf'); ?></td>
                             <td>
-                                <a class="button button-small" href="<?php echo esc_url(add_query_arg(array('page' => 'vaysf-bible-verses', 'edit' => $row['row_id'] ?? ''), admin_url('admin.php'))); ?>"><?php esc_html_e('Edit', 'vaysf'); ?></a>
+                                <a class="button button-small" href="<?php echo esc_url($this->page_url(array('edit' => $row['row_id'] ?? '', 'event' => $selected_event))); ?>"><?php esc_html_e('Edit', 'vaysf'); ?></a>
                                 <?php if (!empty($row['active'])) : ?>
                                     <form method="post" style="display:inline;">
                                         <?php wp_nonce_field('vaysf_bible_verse_editor', 'vaysf_bible_verse_nonce'); ?>
                                         <input type="hidden" name="vaysf_bible_verse_action" value="deactivate">
                                         <input type="hidden" name="row_id" value="<?php echo esc_attr($row['row_id'] ?? ''); ?>">
+                                        <input type="hidden" name="event_filter" value="<?php echo esc_attr($selected_event); ?>">
                                         <button class="button button-small"><?php esc_html_e('Deactivate', 'vaysf'); ?></button>
                                     </form>
                                 <?php endif; ?>
@@ -285,6 +362,7 @@ class VAYSF_Admin_Bible_Verses extends VAYSF_Admin_Page {
                                     <?php wp_nonce_field('vaysf_bible_verse_editor', 'vaysf_bible_verse_nonce'); ?>
                                     <input type="hidden" name="vaysf_bible_verse_action" value="delete">
                                     <input type="hidden" name="row_id" value="<?php echo esc_attr($row['row_id'] ?? ''); ?>">
+                                    <input type="hidden" name="event_filter" value="<?php echo esc_attr($selected_event); ?>">
                                     <button class="button button-small button-link-delete"><?php esc_html_e('Delete', 'vaysf'); ?></button>
                                 </form>
                             </td>
@@ -296,16 +374,31 @@ class VAYSF_Admin_Bible_Verses extends VAYSF_Admin_Page {
         <?php
     }
 
-    private function render_json_tools($export_payload) {
+    private function render_json_tools($export_payload, $selected_event) {
         ?>
         <h2><?php esc_html_e('Middleware JSON', 'vaysf'); ?></h2>
         <p class="description"><?php esc_html_e('Export is compatible with middleware/config/bible_verse_sets.json. Import replaces rows only for events this account is authorized to manage.', 'vaysf'); ?></p>
+        <div style="margin: 12px 0;">
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline-block; margin-right:12px;">
+                <?php wp_nonce_field('vaysf_bible_verse_download', 'vaysf_bible_verse_download_nonce'); ?>
+                <input type="hidden" name="action" value="vaysf_download_bible_verses_json">
+                <input type="hidden" name="event_filter" value="<?php echo esc_attr($selected_event); ?>">
+                <button type="submit" class="button button-secondary"><?php esc_html_e('Download JSON', 'vaysf'); ?></button>
+            </form>
+            <form method="post" style="display:inline-block;">
+                <?php wp_nonce_field('vaysf_bible_verse_editor', 'vaysf_bible_verse_nonce'); ?>
+                <input type="hidden" name="vaysf_bible_verse_action" value="load_seed">
+                <input type="hidden" name="event_filter" value="<?php echo esc_attr($selected_event); ?>">
+                <button type="submit" class="button"><?php esc_html_e('Load Bundled Verse Set', 'vaysf'); ?></button>
+            </form>
+        </div>
         <textarea class="large-text code" rows="10" readonly><?php echo esc_textarea(wp_json_encode($export_payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></textarea>
 
         <h3><?php esc_html_e('Import JSON', 'vaysf'); ?></h3>
         <form method="post">
             <?php wp_nonce_field('vaysf_bible_verse_editor', 'vaysf_bible_verse_nonce'); ?>
             <input type="hidden" name="vaysf_bible_verse_action" value="import_json">
+            <input type="hidden" name="event_filter" value="<?php echo esc_attr($selected_event); ?>">
             <textarea name="import_json" class="large-text code" rows="8" placeholder="<?php esc_attr_e('Paste JSON with a verse_sets array', 'vaysf'); ?>"></textarea>
             <?php submit_button(__('Import Authorized Rows', 'vaysf'), 'secondary'); ?>
         </form>

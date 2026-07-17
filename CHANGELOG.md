@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Bible Verse editor follow-up and badge route polish (#289, #294)
+
+- Moved `Bible Verses` under the main `Sports Fest` menu for staff who already
+  have Sports Fest access, while keeping a standalone entry for coordinator-only
+  verse editors.
+- Fixed the editor workflow to preserve the selected event filter, default new
+  rows to the current filtered event, and redirect after save/delete/import so
+  the refreshed row list and success notice appear immediately.
+- Added an explicit `Download JSON` action plus a bundled verse-set loader for
+  the seeded 2026 Bible Challenge rows.
+- Registered a plugin-owned `/badges/` public route and template so the
+  churches shortcode's `Participants` buttons resolve without requiring a
+  manually created WordPress page.
+- Hotfixed the Bible Verse delete/save notice flow to avoid a blank admin page
+  after POST actions, and made automatic bundled verse seeding a one-time
+  fresh-install helper.
+- Bumped plugin header/version to `1.0.46` and rebuilt `plugins/vaysf.zip`.
+
 ### Scoped WordPress Bible Verse Editor (#294)
 
 - Added an option-backed WordPress Bible Verse Editor for score-sheet scripture

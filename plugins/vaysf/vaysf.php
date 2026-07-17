@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.44
+ * Version: 1.0.46
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,7 +18,7 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.44';
+    const VERSION = '1.0.46';
 
     /**
      * Database version
@@ -151,6 +151,10 @@ class VAYSF_Integration {
         add_filter('get_user_option_metaboxhidden_dashboard', 'vaysf_show_coordinator_dashboard_widget', 10, 3);
         add_action('admin_post_vaysf_download_result_file', 'vaysf_download_result_file');
         add_action('admin_post_vaysf_download_results_manifest', 'vaysf_download_results_manifest');
+        add_action('admin_post_vaysf_download_bible_verses_json', 'vaysf_download_bible_verses_json');
+
+        // Seed the option-backed Bible verse store on fresh installs.
+        vaysf_seed_bible_verse_rows_if_empty();
 		
 	   // Add hook for rewrite rules (moved this to WordPress 'init' hook)
 		add_action('init', array($this, 'register_rewrite_rules'));
@@ -198,6 +202,12 @@ class VAYSF_Integration {
 			'index.php?vaysf_results_desk=1',
 			'top'
 		);
+
+		add_rewrite_rule(
+			'badges/?$',
+			'index.php?vaysf_badges_gallery=1',
+			'top'
+		);
 	}
 
 	public function register_query_vars($vars) {
@@ -205,6 +215,7 @@ class VAYSF_Integration {
 		$vars[] = 'vaysf_insurance_upload';
 		$vars[] = 'vaysf_coordinator_score_entry';
 		$vars[] = 'vaysf_results_desk';
+		$vars[] = 'vaysf_badges_gallery';
 		return $vars;
 	}
 
@@ -248,6 +259,16 @@ class VAYSF_Integration {
 				exit;
 			} else {
 				wp_die('Results Desk template not found. Please contact the site administrator.');
+			}
+		}
+
+		if (get_query_var('vaysf_badges_gallery')) {
+			$template_path = plugin_dir_path(__FILE__) . 'templates/badges-gallery.php';
+			if (file_exists($template_path)) {
+				include_once($template_path);
+				exit;
+			} else {
+				wp_die('Badge gallery template not found. Please contact the site administrator.');
 			}
 		}
 	}

@@ -17,6 +17,14 @@ if (!defined('VAYSF_BIBLE_VERSE_OPTION')) {
     define('VAYSF_BIBLE_VERSE_OPTION', 'vaysf_bible_verse_sets');
 }
 
+if (!defined('VAYSF_BIBLE_VERSE_SEEDED_OPTION')) {
+    define('VAYSF_BIBLE_VERSE_SEEDED_OPTION', 'vaysf_bible_verse_seeded');
+}
+
+if (!defined('VAYSF_BIBLE_VERSE_BUNDLED_PATH')) {
+    define('VAYSF_BIBLE_VERSE_BUNDLED_PATH', dirname(__DIR__) . '/data/bible_verse_sets.seed.json');
+}
+
 function vaysf_user_has_all_bible_verse_events($user_id) {
     $user_id = absint($user_id);
     if (!$user_id || !user_can($user_id, VAYSF_BIBLE_VERSE_CAPABILITY)) {
@@ -71,6 +79,92 @@ function vaysf_get_bible_verse_rows() {
 
 function vaysf_update_bible_verse_rows($rows) {
     update_option(VAYSF_BIBLE_VERSE_OPTION, array_values($rows), false);
+    return true;
+}
+
+function vaysf_get_bundled_bible_verse_payload() {
+    if (!file_exists(VAYSF_BIBLE_VERSE_BUNDLED_PATH)) {
+        return new WP_Error('vaysf_bible_verse_seed_missing', __('Bundled Bible verse seed file not found.', 'vaysf'));
+    }
+
+    $json = file_get_contents(VAYSF_BIBLE_VERSE_BUNDLED_PATH);
+    if (!is_string($json) || trim($json) === '') {
+        return new WP_Error('vaysf_bible_verse_seed_empty', __('Bundled Bible verse seed file is empty.', 'vaysf'));
+    }
+
+    $payload = json_decode($json, true);
+    if (!is_array($payload) || !isset($payload['verse_sets']) || !is_array($payload['verse_sets'])) {
+        return new WP_Error('vaysf_bible_verse_seed_invalid', __('Bundled Bible verse seed file is invalid.', 'vaysf'));
+    }
+
+    return $payload;
+}
+
+function vaysf_import_bible_verse_payload_for_events($payload, $allowed_events) {
+    if (!is_array($payload) || !isset($payload['verse_sets']) || !is_array($payload['verse_sets'])) {
+        return new WP_Error('vaysf_bible_verse_import_bad_json', __('Import JSON must contain a verse_sets array.', 'vaysf'));
+    }
+
+    $allowed_lookup = array_fill_keys($allowed_events, true);
+    $existing_rows = vaysf_get_bible_verse_rows();
+    $kept_rows = array_values(array_filter($existing_rows, function ($row) use ($allowed_lookup) {
+        return empty($row['event']) || !isset($allowed_lookup[$row['event']]);
+    }));
+
+    $imported_rows = array();
+    foreach ($payload['verse_sets'] as $index => $raw_row) {
+        if (!is_array($raw_row)) {
+            return new WP_Error('vaysf_bible_verse_import_row', sprintf(__('Import row %d must be an object.', 'vaysf'), $index + 1));
+        }
+
+        $event = isset($raw_row['event']) ? sanitize_text_field((string) $raw_row['event']) : '';
+        if ($event === '' || !isset($allowed_lookup[$event])) {
+            continue;
+        }
+
+        $row = vaysf_sanitize_bible_verse_payload($raw_row, null);
+        $validation = vaysf_validate_bible_verse_row($row, array_merge($kept_rows, $imported_rows));
+        if (is_wp_error($validation)) {
+            return $validation;
+        }
+
+        $imported_rows[] = $row;
+    }
+
+    vaysf_update_bible_verse_rows(array_merge($kept_rows, $imported_rows));
+    return count($imported_rows);
+}
+
+function vaysf_seed_bible_verse_rows_if_empty() {
+    if (get_option(VAYSF_BIBLE_VERSE_SEEDED_OPTION)) {
+        return false;
+    }
+
+    $rows = vaysf_get_bible_verse_rows();
+    if (!empty($rows)) {
+        update_option(VAYSF_BIBLE_VERSE_SEEDED_OPTION, 1, false);
+        return false;
+    }
+
+    $payload = vaysf_get_bundled_bible_verse_payload();
+    if (is_wp_error($payload)) {
+        return $payload;
+    }
+
+    $seed_rows = array();
+    foreach ($payload['verse_sets'] as $raw_row) {
+        if (!is_array($raw_row)) {
+            continue;
+        }
+        $seed_rows[] = vaysf_sanitize_bible_verse_payload($raw_row, null);
+    }
+
+    if (empty($seed_rows)) {
+        return new WP_Error('vaysf_bible_verse_seed_empty', __('Bundled Bible verse seed file did not contain any rows.', 'vaysf'));
+    }
+
+    vaysf_update_bible_verse_rows($seed_rows);
+    update_option(VAYSF_BIBLE_VERSE_SEEDED_OPTION, 1, false);
     return true;
 }
 
@@ -258,4 +352,51 @@ function vaysf_bible_verse_rows_to_export_payload($rows) {
     });
 
     return array('verse_sets' => $verse_sets);
+}
+
+function vaysf_get_bible_verse_export_payload_for_user($user_id, $selected_event = '') {
+    $rows = vaysf_filter_bible_verse_rows_for_user(vaysf_get_bible_verse_rows(), $user_id, false);
+    $selected_event = sanitize_text_field((string) $selected_event);
+    if ($selected_event !== '') {
+        $rows = array_values(array_filter($rows, function ($row) use ($selected_event) {
+            return (string) ($row['event'] ?? '') === $selected_event;
+        }));
+    }
+
+    return vaysf_bible_verse_rows_to_export_payload($rows);
+}
+
+function vaysf_download_bible_verses_json() {
+    if (!current_user_can(VAYSF_BIBLE_VERSE_CAPABILITY)) {
+        wp_die(esc_html__('You are not authorized to export Bible verses.', 'vaysf'));
+    }
+
+    if (
+        empty($_POST['vaysf_bible_verse_download_nonce'])
+        || !wp_verify_nonce(
+            sanitize_text_field(wp_unslash($_POST['vaysf_bible_verse_download_nonce'])),
+            'vaysf_bible_verse_download'
+        )
+    ) {
+        wp_die(esc_html__('Security check failed.', 'vaysf'));
+    }
+
+    $selected_event = isset($_POST['event_filter']) ? sanitize_text_field(wp_unslash($_POST['event_filter'])) : '';
+    $allowed_events = vaysf_get_user_bible_verse_events(get_current_user_id());
+    if ($selected_event !== '' && !in_array($selected_event, $allowed_events, true)) {
+        $selected_event = '';
+    }
+
+    $payload = vaysf_get_bible_verse_export_payload_for_user(get_current_user_id(), $selected_event);
+    $filename = 'vaysf-bible-verses';
+    if ($selected_event !== '') {
+        $filename .= '-' . sanitize_title($selected_event);
+    }
+    $filename .= '.json';
+
+    nocache_headers();
+    header('Content-Type: application/json; charset=' . get_option('blog_charset'));
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    echo wp_json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    exit;
 }
