@@ -43,6 +43,7 @@ QR_BOX = (PAGE_W - MARGIN - QR_SIZE, 52)
 MAX_ROSTER_ROWS = 15
 MAX_SOCCER_ROSTER_ROWS_PER_TEAM = 12
 MAX_BIBLE_CHALLENGE_ROSTER_ROWS_PER_TEAM = 10
+BIBLE_CHALLENGE_VERSE_BANK_HEIGHT = 150
 MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN = 9
 MAX_VOLLEYBALL_ROSTER_ROWS = MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN * 2
 
@@ -121,6 +122,22 @@ def _text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) 
     return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
 
+def _wrapped_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    words = str(text or "").split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if not current or _text_size(draw, candidate, font)[0] <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
 def _center_text(
     draw: ImageDraw.ImageDraw,
     box: tuple[int, int, int, int],
@@ -143,21 +160,7 @@ def _draw_wrapped(
     fill: tuple[int, int, int] = COL_BLACK,
     line_gap: int = 6,
 ) -> int:
-    words = str(text or "").split()
-    lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if not current or _text_size(draw, candidate, font)[0] <= max_width:
-            current = candidate
-        else:
-            lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    if not lines:
-        lines = [""]
-
+    lines = _wrapped_lines(draw, text, font, max_width)
     x, y = xy
     line_h = _text_size(draw, "Ag", font)[1] + line_gap
     for line in lines:
@@ -610,11 +613,101 @@ def _bible_challenge_scripture_summary(verses: list[BibleVerse]) -> str:
     return "; ".join(verse.reference for verse in ordered)
 
 
+def _bible_challenge_verse_text(verse: BibleVerse) -> str:
+    return f"{verse.sort_order}. {verse.reference}: {verse.verse_text}"
+
+
+def _bible_challenge_verse_column_lines(
+    draw: ImageDraw.ImageDraw,
+    verses: list[BibleVerse],
+    font: ImageFont.ImageFont,
+    max_width: int,
+) -> list[list[str]]:
+    return [_wrapped_lines(draw, _bible_challenge_verse_text(verse), font, max_width) for verse in verses]
+
+
+def _bible_challenge_column_height(
+    draw: ImageDraw.ImageDraw,
+    column_lines: list[list[str]],
+    font: ImageFont.ImageFont,
+    line_gap: int,
+    verse_gap: int,
+) -> int:
+    line_h = _text_size(draw, "Ag", font)[1] + line_gap
+    if not column_lines:
+        return line_h
+    return sum(len(lines) * line_h for lines in column_lines) + verse_gap * (len(column_lines) - 1)
+
+
+def _draw_bible_challenge_verse_bank(
+    draw: ImageDraw.ImageDraw,
+    y: int,
+    verses: Optional[list[BibleVerse]],
+    height: int = BIBLE_CHALLENGE_VERSE_BANK_HEIGHT,
+) -> int:
+    """Draw the full Bible Challenge verse bank in a fixed-height two-column block."""
+
+    x = MARGIN
+    width = PAGE_W - MARGIN * 2
+    draw.rectangle((x, y, x + width, y + height), outline=COL_BORDER, width=2)
+    draw.rectangle((x, y, x + width, y + 25), fill=COL_HEADER, outline=COL_BORDER, width=1)
+    _center_text(draw, (x, y, x + width, y + 25), "2026 BIBLE CHALLENGE VERSE BANK", _font("bold", 13), COL_BLACK)
+
+    ordered = sorted(verses or [], key=lambda verse: verse.sort_order)
+    if not ordered:
+        draw.text((x + 12, y + 42), "No verse set loaded.", font=_font("italic", 10), fill=COL_MUTED)
+        return y + height
+
+    midpoint = math.ceil(len(ordered) / 2)
+    columns = (ordered[:midpoint], ordered[midpoint:])
+    gutter = 20
+    pad_x = 12
+    top = y + 33
+    bottom = y + height - 8
+    col_w = (width - pad_x * 2 - gutter) // 2
+    available_h = bottom - top
+
+    selected: tuple[ImageFont.ImageFont, int, int, list[list[list[str]]]] | None = None
+    for size, line_gap, verse_gap in ((8, 0, 2), (7, 0, 1), (6, 0, 1)):
+        font = _font("regular", size)
+        wrapped_columns = [_bible_challenge_verse_column_lines(draw, list(column), font, col_w) for column in columns]
+        if all(
+            _bible_challenge_column_height(draw, column_lines, font, line_gap, verse_gap) <= available_h
+            for column_lines in wrapped_columns
+        ):
+            selected = (font, line_gap, verse_gap, wrapped_columns)
+            break
+
+    if selected is None:
+        font = _font("regular", 6)
+        selected = (
+            font,
+            0,
+            0,
+            [_bible_challenge_verse_column_lines(draw, list(column), font, col_w) for column in columns],
+        )
+
+    font, line_gap, verse_gap, wrapped_columns = selected
+    line_h = _text_size(draw, "Ag", font)[1] + line_gap
+    for col_idx, column_lines in enumerate(wrapped_columns):
+        col_x = x + pad_x + col_idx * (col_w + gutter)
+        text_y = top
+        for verse_lines in column_lines:
+            for line in verse_lines:
+                if text_y + line_h > bottom:
+                    draw.text((col_x, text_y), "...", font=font, fill=COL_BLACK)
+                    return y + height
+                draw.text((col_x, text_y), line, font=font, fill=COL_BLACK)
+                text_y += line_h
+            text_y += verse_gap
+
+    return y + height
+
+
 def _draw_bible_challenge_official_section(
     draw: ImageDraw.ImageDraw,
     y: int = 384,
-    verses: Optional[list[BibleVerse]] = None,
-) -> None:
+) -> int:
     label_font = _font("bold", 18)
     text_font = _font("regular", 18)
     left_y = y
@@ -631,17 +724,7 @@ def _draw_bible_challenge_official_section(
         draw.line((994, ref_y + 22, PAGE_W - MARGIN, ref_y + 22), fill=COL_BORDER, width=2)
         ref_y += 34
 
-    y = max(left_y, ref_y, 486)
-    draw.text((MARGIN, y + 10), "Bible Challenge Verses:", font=_font("bold", 16), fill=COL_BLACK)
-    _draw_wrapped(
-        draw,
-        _bible_challenge_scripture_summary(verses or []),
-        (296, y + 10),
-        _font("italic", 13),
-        PAGE_W - MARGIN - 296,
-        COL_BLACK,
-        line_gap=2,
-    )
+    return max(left_y, ref_y, 486)
 
 
 def _draw_bible_challenge_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any], y: int = 520) -> int:
@@ -1125,8 +1208,9 @@ def render_bible_challenge_scoresheet_page(
     _draw_qr(page, str(game.get("game_key") or ""), score_entry_base_url)
     _draw_multi_team_header(draw, game, "BIBLE CHALLENGE SCORESHEET", ("a", "b", "c"), line_break_teams=True)
     _draw_three_team_score_boxes(draw, game)
-    _draw_bible_challenge_official_section(draw, y=386, verses=bible_verses)
-    next_y = _draw_bible_challenge_score_grid(draw, game, y=548)
+    official_bottom = _draw_bible_challenge_official_section(draw, y=386)
+    verse_bottom = _draw_bible_challenge_verse_bank(draw, official_bottom + 8, bible_verses)
+    next_y = _draw_bible_challenge_score_grid(draw, game, y=verse_bottom + 10)
 
     roster_y = next_y + 24
     gap = 24

@@ -612,7 +612,7 @@ def test_render_bible_challenge_scoresheet_prints_roster_photo(tmp_path):
     )
 
     # First roster photo sits inside team A's roster column, below the score tracker.
-    assert page.getpixel((124, 842)) == (40, 200, 90)
+    assert page.getpixel((124, 942)) == (40, 200, 90)
 
 
 def test_render_bible_challenge_scoresheet_strikes_unapproved_roster_row():
@@ -645,7 +645,7 @@ def test_render_bible_challenge_scoresheet_strikes_unapproved_roster_row():
         score_entry_base_url=SCORE_ENTRY_URL,
     )
 
-    assert page.getpixel((200, 843)) == (170, 31, 45)
+    assert page.getpixel((200, 951)) == (170, 31, 45)
 
 
 def test_render_bible_challenge_scoresheet_does_not_strike_wp_approved_roster_row():
@@ -678,7 +678,7 @@ def test_render_bible_challenge_scoresheet_does_not_strike_wp_approved_roster_ro
         score_entry_base_url=SCORE_ENTRY_URL,
     )
 
-    assert page.getpixel((200, 843)) != (170, 31, 45)
+    assert page.getpixel((200, 951)) != (170, 31, 45)
 
 
 def test_basketball_roster_table_capacity_is_15():
@@ -759,6 +759,15 @@ def test_load_bible_challenge_verse_set_returns_2026_references_in_order():
     ]
     assert all(verse.event_locked for verse in verses)
     assert all(not verse.general_pool for verse in verses)
+    assert all(verse.verse_text != verse.reference for verse in verses)
+    assert verses[3].verse_text.startswith("Blessed is the man who trusts")
+
+
+def test_load_bible_challenge_verse_set_accepts_wordpress_event_label():
+    verses = load_bible_verse_set("bc_2026", event=BIBLE_CHALLENGE_EVENT)
+
+    assert len(verses) == 14
+    assert verses[0].reference == "Matthew 13:23"
 
 
 def test_bible_challenge_verse_set_is_locked_to_bible_challenge():
@@ -768,6 +777,38 @@ def test_bible_challenge_verse_set_is_locked_to_bible_challenge():
         assert "bc_2026" in str(exc)
     else:
         raise AssertionError("Expected locked BC verse set to reject basketball.")
+
+
+def test_bible_challenge_verse_set_rejects_placeholder_text(tmp_path):
+    source = tmp_path / "verses.json"
+    source.write_text(
+        json.dumps(
+            {
+                "verse_sets": [
+                    {
+                        "set_key": "bc_test",
+                        "event": BIBLE_CHALLENGE_EVENT,
+                        "season": 2026,
+                        "sort_order": 1,
+                        "reference": "John 3:16",
+                        "verse_text": "John 3:16",
+                        "active": True,
+                        "event_locked": True,
+                        "general_pool": False,
+                        "allowed_events": [BIBLE_CHALLENGE_EVENT],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        load_bible_verse_set("bc_test", event=BIBLE_CHALLENGE_EVENT, source_path=source)
+    except VerseSetError as exc:
+        assert "placeholder verse_text" in str(exc)
+    else:
+        raise AssertionError("Expected placeholder verse text to be rejected.")
 
 
 def test_bible_challenge_scripture_summary_uses_loaded_set():

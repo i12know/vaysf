@@ -1,18 +1,214 @@
 {
   "verse_sets": [
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 1, "reference": "Matthew 13:23", "verse_text": "\"As for what was sown on good soil, this is the one who hears the word and understands it. He indeed bears fruit and yields, in one case a hundredfold, in another sixty, and in another thirty.\"", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 2, "reference": "Colossians 2:6-7", "verse_text": "\"Therefore, as you received Christ Jesus the Lord, so walk in him, rooted and built up in him and established in the faith, just as you were taught, abounding in thanksgiving.\"", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 3, "reference": "Psalm 1:3", "verse_text": "\"He is like a tree planted by streams of water that yields its fruit in its season, and its leaf does not wither. In all that he does, he prospers.\"", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 4, "reference": "Jeremiah 17:7-8", "verse_text": "Jeremiah 17:7-8", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 5, "reference": "James 1:2-3", "verse_text": "James 1:2-3", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 6, "reference": "Romans 8:37", "verse_text": "Romans 8:37", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 7, "reference": "1 Corinthians 16:13", "verse_text": "1 Corinthians 16:13", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 8, "reference": "2 Corinthians 4:8-9", "verse_text": "2 Corinthians 4:8-9", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 9, "reference": "Matthew 5:14", "verse_text": "Matthew 5:14", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 10, "reference": "Galatians 6:9-10", "verse_text": "Galatians 6:9-10", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 11, "reference": "1 Timothy 4:12", "verse_text": "1 Timothy 4:12", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 12, "reference": "Matthew 13:31-32", "verse_text": "Matthew 13:31-32", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 13, "reference": "2 Timothy 4:7", "verse_text": "2 Timothy 4:7", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]},
-    {"set_key": "bc_2026", "event": "bible-challenge", "season": 2026, "sort_order": 14, "reference": "Philippians 3:14", "verse_text": "Philippians 3:14", "translation": "", "active": true, "event_locked": true, "general_pool": false, "allowed_events": ["bible-challenge"]}
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 1,
+      "reference": "Matthew 13:23",
+      "verse_text": "As for what was sown on good soil, this is the one who hears the word and understands it. He indeed bears fruit and yields, in one case a hundredfold, in another sixty, and in another thirty.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 2,
+      "reference": "Colossians 2:6-7",
+      "verse_text": "Therefore, as you received Christ Jesus the Lord, so walk in him, rooted and built up in him and established in the faith, just as you were taught, abounding in thanksgiving.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 3,
+      "reference": "Psalm 1:3",
+      "verse_text": "He is like a tree planted by streams of water that yields its fruit in its season, and its leaf does not wither. In all that he does, he prospers.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 4,
+      "reference": "Jeremiah 17:7-8",
+      "verse_text": "Blessed is the man who trusts in the Lord, whose trust is the Lord. He is like a tree planted by water, that sends out its roots by the stream, and does not fear when heat comes, for its leaves remain green, and is not anxious in the year of drought, for it does not cease to bear fruit.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 5,
+      "reference": "James 1:2-3",
+      "verse_text": "Count it all joy, my brothers, when you meet trials of various kinds, for you know that the testing of your faith produces steadfastness.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 6,
+      "reference": "Romans 8:37",
+      "verse_text": "In all these things we are more than conquerors through him who loved us.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 7,
+      "reference": "1 Corinthians 16:13",
+      "verse_text": "Be watchful, stand firm in the faith, act like men, be strong.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 8,
+      "reference": "2 Corinthians 4:8-9",
+      "verse_text": "We are afflicted in every way, but not crushed; perplexed, but not driven to despair; persecuted, but not forsaken; struck down, but not destroyed;",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 9,
+      "reference": "Matthew 5:14",
+      "verse_text": "You are the light of the world. A city set on a hill cannot be hidden.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 10,
+      "reference": "Galatians 6:9-10",
+      "verse_text": "And let us not grow weary of doing good, for in due season we will reap, if we do not give up. So then, as we have opportunity, let us do good to everyone, and especially to those who are of the household of faith.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 11,
+      "reference": "1 Timothy 4:12",
+      "verse_text": "Let no one despise you for your youth, but set the believers an example in speech, in conduct, in love, in faith, in purity.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 12,
+      "reference": "Matthew 13:31-32",
+      "verse_text": "The kingdom of heaven is like a grain of mustard seed that a man took and sowed in his field. It is the smallest of all seeds, but when it has grown it is larger than all the garden plants and becomes a tree, so that the birds of the air come and make nests in its branches.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 13,
+      "reference": "2 Timothy 4:7",
+      "verse_text": "I have fought the good fight, I have finished the race, I have kept the faith.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    },
+    {
+      "set_key": "bc_2026",
+      "event": "Bible Challenge - Mixed Team",
+      "season": 2026,
+      "sort_order": 14,
+      "reference": "Philippians 3:14",
+      "verse_text": "I press on toward the goal for the prize of the upward call of God in Christ Jesus.",
+      "translation": "",
+      "active": true,
+      "event_locked": true,
+      "general_pool": false,
+      "allowed_events": [
+        "Bible Challenge - Mixed Team"
+      ]
+    }
   ]
 }
