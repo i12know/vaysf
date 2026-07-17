@@ -778,7 +778,15 @@ class ParticipantSyncer:
         chm_updated_on = datetime.datetime.fromisoformat(chm_updated_on_str)
         chm_updated_on_utc = chm_updated_on.astimezone(pytz.UTC)
         mapped["updated_at"] = chm_updated_on_utc.strftime("%Y-%m-%d %H:%M:%S")
-        
+
+        # Self-heal before the identity drift comparison below so both
+        # sides compare the same primary/secondary sport shape. ChMeetings can leave
+        # primary_sport blank with the sport sitting in secondary_sport; if we healed
+        # only the payload written to WordPress and left `mapped` raw, every later
+        # sync would keep comparing this run's raw shape against last run's healed
+        # WordPress snapshot and re-detect a false "drift" forever.
+        mapped, self_heal_issues = self._self_heal_missing_primary_sport(mapped)
+
         if chm_id == target_chm_id_for_debug:
             logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] ChMeetings updated_on (UTC): {chm_updated_on_utc}, Mapped updated_at: {mapped['updated_at']}")
 
@@ -948,9 +956,8 @@ class ParticipantSyncer:
                 mapped["membership_claim_at_approval"] = int(frozen_raw)
         # --- End membership-flip defence ---
 
-        participant_payload, self_heal_issues = self._self_heal_missing_primary_sport(
-            mapped
-        )
+        # Already self-healed above, before the identity drift comparison.
+        participant_payload = mapped
         participant_payload, cutoff_issues = self._apply_new_registration_racquet_cutoff(
             participant_payload,
             existing_wp_participant=participant_in_wp,

@@ -490,6 +490,53 @@ class TestSyncSingleParticipantDrift:
         payload = call_args[0][1]
         assert payload["approval_status"] == APPROVAL_STATUS["REAPPROVAL_REQUIRED"]
 
+    def test_self_healed_primary_secondary_swap_is_not_treated_as_drift(self, syncer):
+        """Raw primary-blank/secondary-populated data must not false-positive drift
+        against a WordPress snapshot that was self-healed on a prior sync.
+
+        Real-world case: ChMeetings has 'Primary Sport' blank and 'Secondary Sport'
+        populated for a participant whose WordPress row already holds the
+        self-healed shape (promoted into primary) from an earlier sync. Comparing
+        the raw shape against the healed shape looked like a sport change on every
+        single sync and permanently reset approval to reapproval_required.
+        """
+        wp = _wp_participant()  # primary_sport="Basketball - Men Team", secondary unselected
+        chm = _make_chm_person({
+            "first_name": "Matthew",
+            "last_name": "Tran",
+            "birth_date": "2008-04-23",
+            "additional_fields": [
+                {"field_name": "Church Team", "value": "WAG"},
+                {"field_name": "My role is", "value": "Athlete/Participant"},
+                {"field_name": "Primary Sport", "value": ""},
+                {"field_name": "Secondary Sport", "value": "Basketball - Men Team"},
+                {"field_name": "Other Events", "value": ""},
+                {"field_name": "Primary Racquet Sport Format", "value": ""},
+                {"field_name": "Primary Racquet Sport Partner (if applied)", "value": ""},
+                {"field_name": "Secondary Racquet Sport Format", "value": ""},
+                {"field_name": "Secondary Racquet Sport Partner (if applied)", "value": ""},
+                {"field_name": "Completion Check List", "value": ""},
+                {"field_name": "Name of my parents or legal guardian", "value": ""},
+                {"field_name": "Email of my parents or legal guardian", "value": ""},
+                {"field_name": "Cell phone of my parents or legal guardian", "value": ""},
+                {"field_name": "Would the team's Senior Pastor say that you belong to his church?", "value": "No"},
+            ],
+        })
+        _setup_syncer_for_integration(syncer, wp, chm)
+
+        syncer._sync_single_participant("4371570")
+
+        created_issues = [
+            c[0][0] for c in syncer.wordpress_connector.create_validation_issue.call_args_list
+        ]
+        assert not any(i.get("issue_type") == "approval_identity_drift" for i in created_issues)
+
+        call_args = syncer.wordpress_connector.update_participant.call_args
+        payload = call_args[0][1]
+        assert payload["approval_status"] == APPROVAL_STATUS["APPROVED"]
+        assert payload["primary_sport"] == "Basketball - Men Team"
+        assert payload["secondary_sport"] == SPORT_UNSELECTED
+
     def test_pending_participant_no_drift_check(self, syncer):
         """Drift guard must not run for participants who are not yet approved/denied."""
         wp = _wp_participant({"approval_status": APPROVAL_STATUS["PENDING"]})

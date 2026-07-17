@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Fixed permanent false approval-identity-drift for self-healed primary/secondary sport
+
+- `_sync_single_participant()` ran the approval identity-drift comparison
+  (`_detect_identity_drift`) on the raw ChMeetings-mapped record before
+  `_self_heal_missing_primary_sport()` had a chance to promote a populated
+  `secondary_sport` into a blank `primary_sport`. Every sync therefore
+  compared this run's raw shape against last run's already-healed
+  WordPress snapshot, saw a "changed" primary/secondary sport that never
+  actually changed, and permanently reset the participant to
+  `reapproval_required` — no number of manual `approval-drift-accept` runs
+  could make it stick, since the very next sync reintroduced the same
+  false drift.
+- Moved the self-heal call to run immediately after ChMeetings data is
+  mapped, before the drift comparison, so both sides compare the same
+  (healed) shape. Confirmed against real 2026-07-16 sync logs and fixed
+  for the 3 real participants hitting this exact pattern (chm_id
+  3318938, 4387145, 4386750); 2 further `reapproval_required`
+  participants that day (chm_id 3618011, 4464026) were genuine one-time
+  sport-drop drift, not this bug, and were restored via the normal
+  `approval-drift-accept` prior-status inference.
+- Added a regression test reproducing the exact bug (raw primary blank /
+  secondary populated vs. a self-healed WordPress snapshot) that fails
+  without the reorder and passes with it.
+
 ### Public church filter fallback - part of [#269](https://github.com/i12know/vaysf/issues/269)
 
 - Fixed the public live-schedule church filter never appearing because
