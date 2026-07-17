@@ -2,6 +2,7 @@ import json
 
 from PIL import Image
 
+import scoresheets
 from score_sheet_verses import VerseSetError, load_bible_verse_set
 from scoresheets import (
     BASKETBALL_EVENT,
@@ -612,7 +613,7 @@ def test_render_bible_challenge_scoresheet_prints_roster_photo(tmp_path):
     )
 
     # First roster photo sits inside team A's roster column, below the score tracker.
-    assert page.getpixel((124, 942)) == (40, 200, 90)
+    assert page.getpixel((124, 842)) == (40, 200, 90)
 
 
 def test_render_bible_challenge_scoresheet_strikes_unapproved_roster_row():
@@ -645,7 +646,7 @@ def test_render_bible_challenge_scoresheet_strikes_unapproved_roster_row():
         score_entry_base_url=SCORE_ENTRY_URL,
     )
 
-    assert page.getpixel((200, 951)) == (170, 31, 45)
+    assert page.getpixel((200, 843)) == (170, 31, 45)
 
 
 def test_render_bible_challenge_scoresheet_does_not_strike_wp_approved_roster_row():
@@ -678,7 +679,7 @@ def test_render_bible_challenge_scoresheet_does_not_strike_wp_approved_roster_ro
         score_entry_base_url=SCORE_ENTRY_URL,
     )
 
-    assert page.getpixel((200, 951)) != (170, 31, 45)
+    assert page.getpixel((200, 843)) != (170, 31, 45)
 
 
 def test_basketball_roster_table_capacity_is_15():
@@ -946,3 +947,48 @@ def test_write_bible_challenge_scoresheets_pdf_filters_to_bible_challenge(tmp_pa
     assert page_count == 1
     assert pdf_path.exists()
     assert pdf_path.read_bytes().startswith(b"%PDF")
+
+
+def test_write_bible_challenge_scoresheets_assigns_one_verse_per_game(tmp_path, monkeypatch):
+    schedule_input = _schedule_input()
+    schedule_output = _schedule_output()
+    schedule_input["games"].append(
+        {
+            "game_id": "BC-RR-02",
+            "event": BIBLE_CHALLENGE_EVENT,
+            "stage": "Pool",
+            "pool_id": "A",
+            "round": 2,
+            "team_a_id": "BC::WSD",
+            "team_a_label": "WSD",
+            "team_b_id": "BC::ANH",
+            "team_b_label": "ANH",
+            "team_c_id": "BC::LBC",
+            "team_c_label": "LBC",
+            "duration_minutes": 60,
+            "resource_type": "Bible Challenge Station",
+        }
+    )
+    schedule_output["assignments"].append({"game_id": "BC-RR-02", "resource_id": "BC-Sun-1-2", "slot": "Sun-1-19:00"})
+    input_path = tmp_path / "approved_schedule_input.json"
+    output_path = tmp_path / "approved_schedule_output.json"
+    input_path.write_text(json.dumps(schedule_input), encoding="utf-8")
+    output_path.write_text(json.dumps(schedule_output), encoding="utf-8")
+    assigned_references = []
+
+    def fake_render_bible_challenge_scoresheet_page(game, **kwargs):
+        assigned_references.append(kwargs["bible_verse"].reference)
+        return Image.new("RGB", (100, 100), "white")
+
+    monkeypatch.setattr(scoresheets, "render_bible_challenge_scoresheet_page", fake_render_bible_challenge_scoresheet_page)
+
+    _, page_count = write_bible_challenge_scoresheets_pdf(
+        input_path,
+        output_path,
+        tmp_path / "scoresheets",
+        score_entry_base_url=SCORE_ENTRY_URL,
+        output_filename="bible-challenge.pdf",
+    )
+
+    assert page_count == 2
+    assert assigned_references == ["Matthew 13:23", "Colossians 2:6-7"]
