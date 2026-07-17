@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Church badge gallery shortcode (#290)
+
+- Added `[vaysf_badges]` to display approved participant badge PNGs for one
+  church code, using either `church_code="ABC"` or the `?church_code=ABC`
+  query parameter.
+- The shortcode reads approved participants from WordPress and resolves hosted
+  badge images from the existing `wp-content/uploads/vaysf/badges` upload
+  location using the middleware's deterministic badge filename pattern.
+- Bumped plugin header/version to `1.0.42` and rebuilt `plugins/vaysf.zip`
+  for server testing. Database version remains `1.0.8`.
+
 ### WordPress plugin test build 1.0.41
 
 - Bumped plugin header/version to `1.0.41` and rebuilt `plugins/vaysf.zip`
