@@ -24,6 +24,7 @@ require_once(plugin_dir_path(__FILE__) . 'class-vaysf-admin-approvals.php');
 require_once(plugin_dir_path(__FILE__) . 'class-vaysf-admin-validation.php');
 require_once(plugin_dir_path(__FILE__) . 'class-vaysf-admin-schedules.php');
 require_once(plugin_dir_path(__FILE__) . 'class-vaysf-admin-results.php');
+require_once(plugin_dir_path(__FILE__) . 'class-vaysf-admin-bible-verses.php');
 require_once(plugin_dir_path(__FILE__) . 'class-vaysf-admin-settings.php');
 
 class VAYSF_Admin {
@@ -46,6 +47,7 @@ class VAYSF_Admin {
             'validation' => new VAYSF_Admin_Validation(),
             'schedules' => new VAYSF_Admin_Schedules(),
             'results' => new VAYSF_Admin_Results(),
+            'bible_verses' => new VAYSF_Admin_Bible_Verses(),
             'settings' => new VAYSF_Admin_Settings(),
         );
 
@@ -142,6 +144,16 @@ class VAYSF_Admin {
             'sf2025_read',
             'vaysf-results',
             array($this->pages['results'], 'display_results_page')
+        );
+
+        add_menu_page(
+            'Bible Verse Editor',
+            'Bible Verses',
+            VAYSF_BIBLE_VERSE_CAPABILITY,
+            'vaysf-bible-verses',
+            array($this->pages['bible_verses'], 'display_bible_verses_page'),
+            'dashicons-book-alt',
+            31
         );
         
         add_submenu_page(

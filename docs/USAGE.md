@@ -933,6 +933,15 @@ The checkbox list is empty until a schedule has been published into
 schedule first and then review coordinator assignments; saved event names that
 no longer appear in the current schedule are shown as stale authorization.
 
+The same event authorization also scopes the WordPress **Bible Verses** editor.
+Accounts with `sf2025_manage_bible_verses` can create, read, update, deactivate,
+and delete verse rows only for their assigned published events, while Sports
+Fest Admins, Sports Fest Managers, and WordPress Administrators can manage all
+published events. Verse editor data is stored in the `vaysf_bible_verse_sets`
+WordPress option and can be exported as JSON compatible with
+`middleware/config/bible_verse_sets.json`. No revision history is kept for verse
+edits or deletes.
+
 ### Generating Basketball And Volleyball Score Sheets
 
 After the approved schedule artifacts have been created, generate the printable

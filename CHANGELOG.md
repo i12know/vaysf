@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Scoped WordPress Bible Verse Editor (#294)
+
+- Added an option-backed WordPress Bible Verse Editor for score-sheet scripture
+  rows, stored in `vaysf_bible_verse_sets` instead of a new database table.
+- Added `sf2025_manage_bible_verses` and wired it to Sports Fest Admin,
+  Manager, Coordinator, and WordPress Administrator roles.
+- The editor uses the same published-event authorization model as Coordinator
+  Score Entry: admins/managers manage all events, while ordinary coordinators
+  are limited to their assigned `vaysf_authorized_events`.
+- Supports CRUD for verse rows, plus deactivate and middleware-compatible JSON
+  import/export. Deletes are permanent; no revision history is kept.
+
 ### Bible Challenge score-sheet verse source (#292)
 
 - Added a reusable score-sheet Bible verse source at

@@ -87,6 +87,9 @@ class VAYSF_Integration {
                 // Public badge PNG upload/hosting endpoint (Issue #186)
                 require_once(plugin_dir_path(__FILE__) . 'includes/badge-hosting.php');
 
+                // Scoped Bible verse editor helpers (Issue #294)
+                require_once(plugin_dir_path(__FILE__) . 'includes/bible-verses.php');
+
 		// Include admin interface files
 		require_once(plugin_dir_path(__FILE__) . 'admin/admin.php');
 
@@ -290,6 +293,7 @@ class VAYSF_Integration {
                     'sf2025_read' => true,
                     'sf2025_write' => true,
                     'sf2025_submit_results' => true,
+                    'sf2025_manage_bible_verses' => true,
                 ),
             ),
             'sf2025_manager' => array(
@@ -299,6 +303,7 @@ class VAYSF_Integration {
                     'sf2025_read' => true,
                     'sf2025_write' => true,
                     'sf2025_submit_results' => true,
+                    'sf2025_manage_bible_verses' => true,
                 ),
             ),
             'sf2025_viewer' => array(
@@ -313,6 +318,7 @@ class VAYSF_Integration {
                 'capabilities' => array(
                     'read' => true,
                     'sf2025_submit_results' => true,
+                    'sf2025_manage_bible_verses' => true,
                 ),
             ),
         );
@@ -331,6 +337,7 @@ class VAYSF_Integration {
             $admin_role->add_cap('sf2025_read');
             $admin_role->add_cap('sf2025_write');
             $admin_role->add_cap('sf2025_submit_results');
+            $admin_role->add_cap('sf2025_manage_bible_verses');
         }
     }
 
