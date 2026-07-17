@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Church participants badge links (#289)
+
+- Replaced the public churches shortcode's inactive Registration/Pending text
+  with a `Participants` button for each church.
+- Buttons link to the badge gallery page with the row's church code, defaulting
+  to `/badges/?church_code=ABC`; sites can override the base URL with
+  `badges_page_url`.
+- Bumped plugin header/version to `1.0.43` and rebuilt `plugins/vaysf.zip`
+  for combined server testing of #289 and #290. Database version remains
+  `1.0.8`.
+
 ### Church badge gallery shortcode (#290)
 
 - Added `[vaysf_badges]` to display approved participant badge PNGs for one

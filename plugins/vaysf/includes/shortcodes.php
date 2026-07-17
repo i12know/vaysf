@@ -127,6 +127,7 @@ class VAYSF_Shortcodes {
             'insurance_status' => '',
             'show_stats' => 'yes',
             'stats' => 'participants,approval_ratio',
+            'badges_page_url' => '',
         ), $atts);
 
         $church_stat_keys = $this->get_requested_church_stats($atts['stats']);
@@ -135,6 +136,7 @@ class VAYSF_Shortcodes {
         }
 
         $atts['include_stats'] = !empty($church_stat_keys);
+        $badges_page_url = $this->resolve_badges_page_url($atts['badges_page_url']);
         
         // Get churches
         $churches = VAYSF_Statistics::get_churches($atts);
@@ -149,7 +151,7 @@ class VAYSF_Shortcodes {
             echo '<thead><tr>';
             echo '<th>Church</th>';
             echo '<th>Pastor</th>';
-            echo '<th>Registration</th>';
+            echo '<th>Participants</th>';
             echo '<th>Insurance</th>';
             echo '</tr></thead>';
             echo '<tbody>';
@@ -161,7 +163,7 @@ class VAYSF_Shortcodes {
                 $this->render_church_stats($church, $church_stat_keys);
                 echo '</td>';
                 echo '<td>' . esc_html($church['pastor_name']) . '</td>';
-                echo '<td>' . esc_html(ucfirst($church['registration_status'])) . '</td>';
+                echo '<td><a class="vaysf-participants-button" href="' . esc_url($this->build_church_badges_url($badges_page_url, $church['church_code'])) . '">' . esc_html__('Participants', 'vaysf') . '</a></td>';
                 echo '<td>';
                 if (function_exists('vaysf_format_insurance_status')) {
                     echo vaysf_format_insurance_status($church['insurance_status']);
@@ -863,6 +865,37 @@ class VAYSF_Shortcodes {
     }
 
     /**
+     * Resolve the badge gallery page URL used by the churches shortcode.
+     *
+     * @param string $url Shortcode badges_page_url attribute
+     * @return string Base URL for church badge gallery links
+     */
+    private function resolve_badges_page_url($url) {
+        $url = trim((string) $url);
+        if ($url === '') {
+            return home_url('/badges/');
+        }
+
+        return esc_url_raw($url);
+    }
+
+    /**
+     * Build a church-specific badge gallery URL.
+     *
+     * @param string $base_url Base badge gallery page URL
+     * @param string $church_code Church code
+     * @return string URL with church_code query parameter
+     */
+    private function build_church_badges_url($base_url, $church_code) {
+        $church_code = strtoupper(trim((string) $church_code));
+        if (!preg_match('/^[A-Z0-9]{3}$/', $church_code)) {
+            return $base_url;
+        }
+
+        return add_query_arg('church_code', $church_code, $base_url);
+    }
+
+    /**
      * Resolve a badge gallery church code from the shortcode or query string.
      *
      * @param string $attr_code Shortcode church_code attribute
@@ -1180,6 +1213,26 @@ class VAYSF_Shortcodes {
 
                 .vaysf-church-stat-value {
                     font-weight: 700;
+                }
+
+                .vaysf-participants-button {
+                    display: inline-block;
+                    padding: 6px 10px;
+                    border: 1px solid #1d4ed8;
+                    border-radius: 3px;
+                    background: #2563eb;
+                    color: #fff;
+                    font-size: 13px;
+                    font-weight: 700;
+                    line-height: 1.2;
+                    text-decoration: none;
+                }
+
+                .vaysf-participants-button:hover,
+                .vaysf-participants-button:focus {
+                    background: #1d4ed8;
+                    color: #fff;
+                    text-decoration: none;
                 }
                 
                 .approval-status {

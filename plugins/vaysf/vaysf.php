@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.42
+ * Version: 1.0.43
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,7 +18,7 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.42';
+    const VERSION = '1.0.43';
 
     /**
      * Database version
@@ -93,7 +93,7 @@ class VAYSF_Integration {
 		// Include short codes:
 		//	- Overall Statistics [vaysf_stats]
 		//	- Customized Statistics [vaysf_stats display="participants" layout="list"]; display=all/churches/participants/approvals/issues; layout=grid/list
-		//	- Churches List [vaysf_churches limit="5" orderby="church_name" order="ASC" stats="participants,approval_ratio,consent_ratio"]
+		//	- Churches List [vaysf_churches limit="5" orderby="church_name" order="ASC" stats="participants,approval_ratio,consent_ratio" badges_page_url="/badges/"]
 		//	- Participants List [vaysf_participants limit="10" church="RPC" status="approved" sport="Basketball"]
 		//	- Live Schedule [vaysf_live_schedule event="Basketball" day="2026-07-18" church="RPC" refresh="25"]
 		//	- Confirmed Advancement [vaysf_advancement event="Basketball" refresh="60"]
