@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Bible Challenge score-sheet rosters
+
+- Replaced the blank "Question / Appeal Notes" grid on generated Bible
+  Challenge score sheets with three compact roster tables (one per team),
+  matching the photo/age/approval-strike-through treatment Basketball,
+  Volleyball, and Soccer score sheets already use.
+- Added `build_bible_challenge_roster_index()` and wired
+  `generate-scoresheets --sport bible-challenge` to the roster/photo
+  workbook context it already loads for the other sports, instead of
+  discarding `roster_rows`.
+- Generalized the soccer-specific compact roster-table renderer
+  (renamed `_draw_soccer_roster_table` to `_draw_compact_roster_table`) so
+  the same drawing code produces Soccer's two wide columns or Bible
+  Challenge's three narrow columns.
+
 ### Fixed permanent false approval-identity-drift for self-healed primary/secondary sport
 
 - `_sync_single_participant()` ran the approval identity-drift comparison
