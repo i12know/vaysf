@@ -85,6 +85,22 @@ def _minimal_schedule_input() -> dict:
     }
 
 
+@pytest.mark.parametrize("full_sync_success", [True, False])
+def test_run_sync_full_propagates_step_result(full_sync_success):
+    class FakeManager:
+        last_full_sync_success = full_sync_success
+
+        @staticmethod
+        def authenticate():
+            return True
+
+        @staticmethod
+        def run_full_sync():
+            return {"participants": {"errors": 0}}
+
+    assert main.run_sync(FakeManager(), "full") is full_sync_success
+
+
 def test_parse_args_solve_schedule_defaults(monkeypatch):
     monkeypatch.setattr(main.sys, "argv", ["main.py", "solve-schedule"])
     args = main.parse_args()

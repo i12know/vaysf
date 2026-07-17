@@ -1983,6 +1983,34 @@ def test_sync_participants_skips_orphaned_group_membership(sync_manager, mocker)
 # All three tests are pure mock tests (no LIVE_TEST guard needed).
 # ---------------------------------------------------------------------------
 
+def test_run_full_sync_reports_failed_step(sync_manager, mocker):
+    mocker.patch("sync.manager.os.path.exists", return_value=True)
+    mocker.patch.object(sync_manager, "sync_churches_from_excel", return_value=True)
+    mocker.patch.object(sync_manager, "sync_participants", return_value=True)
+    mocker.patch.object(sync_manager, "generate_approvals", return_value=True)
+    mocker.patch.object(
+        sync_manager, "sync_approvals_to_chmeetings", return_value=False
+    )
+
+    sync_manager.run_full_sync()
+
+    assert sync_manager.last_full_sync_success is False
+
+
+def test_run_full_sync_reports_all_steps_successful(sync_manager, mocker):
+    mocker.patch("sync.manager.os.path.exists", return_value=True)
+    mocker.patch.object(sync_manager, "sync_churches_from_excel", return_value=True)
+    mocker.patch.object(sync_manager, "sync_participants", return_value=True)
+    mocker.patch.object(sync_manager, "generate_approvals", return_value=True)
+    mocker.patch.object(
+        sync_manager, "sync_approvals_to_chmeetings", return_value=True
+    )
+
+    sync_manager.run_full_sync()
+
+    assert sync_manager.last_full_sync_success is True
+
+
 def test_sync_approvals_api_happy(sync_manager, mocker):
     """Happy path: 2 approved participants → add_person_to_group called twice,
     both marked synced in WordPress."""

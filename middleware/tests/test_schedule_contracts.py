@@ -602,16 +602,31 @@ def test_resource_fit_is_scoped_to_solver_pool():
     assert "BB-OUTSIDE" not in message
 
 
-def test_resource_type_outside_game_pool_is_a_warning():
+def test_resource_type_outside_game_pool_is_an_error():
     """resource_type exists, but not within the game's solver pool — the
-    solver leaves the game unscheduled (exit 1), so the contract warns."""
+    matching resources are unreachable, so the contract must reject it."""
     data = {
         "games": [_game("BBM-01", solver_pool="Gym Core")],
         "resources": [_resource("BB-OUTSIDE")],  # no solver_pool
     }
+    with pytest.raises(ScheduleContractError) as exc_info:
+        validate_schedule_input(data)
+    message = str(exc_info.value)
+    assert "BBM-01" in message
+    assert "Gym Core" in message
+    assert "no compatible resources" in message
+
+
+def test_resource_type_missing_globally_remains_a_warning():
+    """A globally absent resource type preserves the solver's documented
+    unscheduled/exit-1 behavior."""
+    data = {
+        "games": [_game("BAD-01", resource_type="Badminton Court")],
+        "resources": [_resource()],
+    }
     warnings = validate_schedule_input(data)
     assert len(warnings) == 1
-    assert "Gym Core" in warnings[0]
+    assert "Badminton Court" in warnings[0]
     assert "unscheduled" in warnings[0]
 
 
@@ -686,6 +701,27 @@ def test_output_unknown_unscheduled_id_is_a_warning():
     assert any("GHOST" in w for w in warnings)
 
 
+def test_merged_playoff_assignment_fields_do_not_warn():
+    """solve() copies full playoff rows into assignments, so their documented
+    optional fields are part of the output schema too."""
+    so = _output(assignments=[
+        {
+            "game_id": "BBM-Final",
+            "resource_id": "GYM-Sun-2-5",
+            "slot": "Sun-2-14:00",
+            "event": "Basketball - Men Team",
+            "stage": "Final",
+            "team_a_id": "BBM-P1-T1",
+            "team_b_id": "BBM-P2-T1",
+            "duration_minutes": 60,
+            "gym_name": "Main",
+            "date": "2026-07-26",
+            "start_time": "14:00",
+        },
+    ])
+    assert validate_schedule_output(so) == []
+
+
 # ---------------------------------------------------------------------------
 # Solver self-check and behavioral equivalence (review follow-up)
 # ---------------------------------------------------------------------------
@@ -721,6 +757,12 @@ def test_run_solve_schedule_rejects_corrupt_solver_output(tmp_path, monkeypatch)
 def test_validation_does_not_change_solver_behavior(tmp_path, monkeypatch):
     """Validation passes the same input to the solver and preserves its result."""
     import scheduler
+
+    # CP-SAT's automatic parallel search can choose different equally optimal
+    # assignments across consecutive solves. Pin this test so any difference
+    # reflects validation behavior rather than solver tie-breaking.
+    monkeypatch.setattr(scheduler, "_NUM_SEARCH_WORKERS", 1)
+    monkeypatch.setattr(scheduler, "SCHEDULE_SOLVER_RANDOM_SEED", 1)
 
     si = {
         "games": [
