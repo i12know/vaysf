@@ -427,6 +427,88 @@ class ParticipantSyncer:
         """Return True for warning issues that should not auto-resolve."""
         return issue.get("issue_type") == "approval_birthdate_correction"
 
+    @staticmethod
+    def _approval_drift_scope(drift: Dict[str, Any]) -> str:
+        """Classify approval drift so sport changes are not reported as identity drift."""
+        if drift.get("field") in {"primary_sport", "secondary_sport", "other_events"}:
+            return "registration"
+        return "identity"
+
+    @staticmethod
+    def _format_drift_summary(drifts: List[Dict[str, Any]]) -> str:
+        return "; ".join(
+            f"{d['label']}: '{d['old']}' \u2192 '{d['new']}'" for d in drifts
+        )
+
+    def _build_approval_drift_issues(
+        self,
+        hard_drifts: List[Dict[str, Any]],
+        old_status: str,
+    ) -> List[Dict[str, Any]]:
+        """Build validation issues for approval-invalidating changes."""
+        scoped_drifts = {"identity": [], "registration": []}
+        for drift in hard_drifts:
+            scoped_drifts[self._approval_drift_scope(drift)].append(drift)
+
+        issues: List[Dict[str, Any]] = []
+        if scoped_drifts["identity"]:
+            drift_summary = self._format_drift_summary(scoped_drifts["identity"])
+            issues.append({
+                "type": "approval_identity_drift",
+                "description": (
+                    f"Pastor approval invalidated: participant identity data changed "
+                    f"after the approval request was issued or decided. Changed: "
+                    f"{drift_summary}. Prior status was '{old_status}'. "
+                    "Reapproval required."
+                ),
+                "rule_code": "APPROVAL_IDENTITY_DRIFT",
+                "rule_level": RULE_LEVEL["INDIVIDUAL"],
+                "severity": VALIDATION_SEVERITY["ERROR"],
+                "sport": None,
+                "sport_format": None,
+            })
+
+        if scoped_drifts["registration"]:
+            drift_summary = self._format_drift_summary(scoped_drifts["registration"])
+            issues.append({
+                "type": "approval_registration_drift",
+                "description": (
+                    f"Pastor approval invalidated: participant sport/event registration "
+                    f"changed after the approval request was issued or decided. Changed: "
+                    f"{drift_summary}. Prior status was '{old_status}'. "
+                    "Reapproval required."
+                ),
+                "rule_code": "APPROVAL_REGISTRATION_DRIFT",
+                "rule_level": RULE_LEVEL["INDIVIDUAL"],
+                "severity": VALIDATION_SEVERITY["ERROR"],
+                "sport": None,
+                "sport_format": None,
+            })
+
+        return issues
+
+    @staticmethod
+    def _is_reapproval_reason_issue(issue: Dict[str, Any]) -> bool:
+        return issue.get("issue_type") in {
+            "approval_identity_drift",
+            "approval_registration_drift",
+            "reapproval_required_reason_missing",
+        }
+
+    def _should_keep_stale_issue(
+        self,
+        existing_issue: Dict[str, Any],
+        approval_status: Optional[str] = None,
+        has_current_reapproval_reason: bool = False,
+    ) -> bool:
+        if self._requires_admin_acknowledgement(existing_issue):
+            return True
+        return (
+            approval_status == APPROVAL_STATUS["REAPPROVAL_REQUIRED"]
+            and self._is_reapproval_reason_issue(existing_issue)
+            and not has_current_reapproval_reason
+        )
+
     def _detect_identity_drift(
         self,
         live_mapped: Dict[str, Any],
@@ -511,14 +593,14 @@ class ParticipantSyncer:
         chm_id: str,
         hard_drifts: List[Dict[str, Any]],
     ) -> None:
-        """Reset approval records after identity drift and rotate their tokens."""
+        """Reset approval records after approval data drift and rotate their tokens."""
         try:
             approvals = self.wordpress_connector.get_approvals(
                 params={"participant_id": wp_participant_id}
             )
             if not approvals:
                 logger.warning(
-                    f"[VAY SM] Identity drift for chm_id={chm_id} "
+                    f"[VAY SM] Approval data drift for chm_id={chm_id} "
                     f"(WP participant_id={wp_participant_id}): no approval record found to reset."
                 )
                 return
@@ -547,7 +629,7 @@ class ParticipantSyncer:
                     "pastor_email": pastor_email,
                     "approval_status": APPROVAL_STATUS["PENDING"],
                     "approval_notes": (
-                        "Approval reset by middleware after identity drift. "
+                        "Approval reset by middleware after approval data drift. "
                         f"Drifted fields: {', '.join(field_labels)}."
                     ),
                     "synced_to_chmeetings": False,
@@ -853,7 +935,7 @@ class ParticipantSyncer:
         if chm_id == target_chm_id_for_debug:
             logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] After P1/P2 - current_wp_status: {current_wp_status}, final_status_determined: {final_status_determined}")
 
-        # --- Approval identity drift guard (Issue #171) ---
+        # --- Approval data drift guard (Issue #171) ---
         # Run after the pastor approval surface has been reached. That includes
         # final decisions and pending approval-token records, because the old
         # token must not remain valid for a replaced identity.
@@ -880,27 +962,17 @@ class ParticipantSyncer:
                 current_wp_status = APPROVAL_STATUS["REAPPROVAL_REQUIRED"]
                 final_status_determined = True
                 self._reset_approval_for_drift(wp_participant_id, chm_id, hard_drifts)
-                drift_summary = "; ".join(
-                    f"{d['label']}: '{d['old']}' → '{d['new']}'" for d in hard_drifts
-                )
+                drift_summary = self._format_drift_summary(hard_drifts)
+                # Keep this exact log token: approval_drift_history.py parses
+                # "APPROVAL IDENTITY DRIFT" from historical and current logs.
                 logger.warning(
                     f"[VAY SM] APPROVAL IDENTITY DRIFT for chm_id={chm_id} "
                     f"(WP participant_id={wp_participant_id}): {drift_summary}. "
                     f"Prior '{old_status}' invalidated → 'reapproval_required'."
                 )
-                drift_issues.append({
-                    "type": "approval_identity_drift",
-                    "description": (
-                        f"Pastor approval invalidated: participant identity changed after "
-                        f"approval was granted. Changed: {drift_summary}. "
-                        f"Prior status was '{old_status}'. Reapproval required."
-                    ),
-                    "rule_code": "APPROVAL_IDENTITY_DRIFT",
-                    "rule_level": RULE_LEVEL["INDIVIDUAL"],
-                    "severity": VALIDATION_SEVERITY["ERROR"],
-                    "sport": None,
-                    "sport_format": None,
-                })
+                drift_issues.extend(
+                    self._build_approval_drift_issues(hard_drifts, old_status)
+                )
 
             for soft in soft_drifts:
                 logger.warning(
@@ -922,7 +994,7 @@ class ParticipantSyncer:
                     "sport": None,
                     "sport_format": None,
                 })
-        # --- End approval identity drift guard ---
+        # --- End approval data drift guard ---
 
         # --- Membership-flip defence (Issue #78) ---
         # If the approval token has already been issued, membership_claim_at_approval holds
@@ -1085,6 +1157,7 @@ class ParticipantSyncer:
                     participant_payload["church_code"],
                     validation_issues_list,
                     chm_updated_on_utc_for_issues,
+                    participant_payload.get("approval_status"),
                 )
             else:
                 # This case should ideally be caught by create/update failures above
@@ -1600,7 +1673,14 @@ class ParticipantSyncer:
             self.wordpress_connector.create_validation_issue(issue_data)
             self.stats["validation_issues"]["created"] += 1
 
-    def _sync_validation_issues(self, participant_id: str, church_code: str, issues: List[Dict[str, str]], last_updated: str):
+    def _sync_validation_issues(
+        self,
+        participant_id: str,
+        church_code: str,
+        issues: List[Dict[str, str]],
+        last_updated: str,
+        approval_status: Optional[str] = None,
+    ):
         """Sync validation issues for a participant based on last update time.
         
         Args:
@@ -1628,11 +1708,40 @@ class ParticipantSyncer:
             )
             existing_lookup[key] = issue
         
+        issues_to_sync = list(issues)
+        has_current_reapproval_reason = any(
+            self._is_reapproval_reason_issue({"issue_type": issue.get("type")})
+            for issue in issues_to_sync
+        )
+        has_existing_reapproval_reason = any(
+            self._is_reapproval_reason_issue(issue)
+            for issue in existing_issues
+        )
+        if (
+            approval_status == APPROVAL_STATUS["REAPPROVAL_REQUIRED"]
+            and not has_current_reapproval_reason
+            and not has_existing_reapproval_reason
+        ):
+            issues_to_sync.append({
+                "type": "reapproval_required_reason_missing",
+                "description": (
+                    "Participant is marked reapproval_required, but no open "
+                    "approval drift reason is recorded. Review the participant "
+                    "history and reapproval state."
+                ),
+                "rule_code": "REAPPROVAL_REQUIRED_REASON_MISSING",
+                "rule_level": RULE_LEVEL["INDIVIDUAL"],
+                "severity": VALIDATION_SEVERITY["ERROR"],
+                "sport": None,
+                "sport_format": None,
+            })
+            has_current_reapproval_reason = True
+
         # Set of issue keys we're processing now
         current_issue_keys = set()
         
         # Process each issue
-        for issue in issues:
+        for issue in issues_to_sync:
             issue_type = issue["type"]
             rule_code = issue.get("rule_code", "")
             key = self._validation_issue_key(
@@ -1667,7 +1776,11 @@ class ParticipantSyncer:
         # (This means the issue has been resolved)
         for key, existing_issue in existing_lookup.items():
             if key not in current_issue_keys:
-                if self._requires_admin_acknowledgement(existing_issue):
+                if self._should_keep_stale_issue(
+                    existing_issue,
+                    approval_status,
+                    has_current_reapproval_reason,
+                ):
                     self.stats["validation_issues"]["unchanged"] += 1
                     logger.info(
                         f"Kept validation issue {existing_issue['issue_id']} open for "

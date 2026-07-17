@@ -18,6 +18,38 @@
   change — verified by a stubbed-WordPress harness that fired
   `admin_menu`/`admin_init` against old and new code and diffed all 26
   menu/settings registrations (identical).
+### Reapproval validation issue lifecycle - refs [#212](https://github.com/i12know/vaysf/issues/212)
+
+- Split approval-invalidating participant changes into identity drift and
+  sport/event registration drift so sports changes no longer create
+  `approval_identity_drift` validation issues (they now create
+  `approval_registration_drift`).
+- Kept approval-drift validation reasons open while a participant remains
+  `reapproval_required`, and added a diagnostic issue for orphaned
+  `reapproval_required` rows that have no open reason.
+- Taught `approval-drift-accept` to resolve all three reapproval-reason
+  issue types, and the approval-drift log line stays `APPROVAL IDENTITY
+  DRIFT` so `approval-drift-history` keeps parsing old and new logs alike.
+
+### Split REST API monolith into domain controllers (#265)
+
+- Refactored `plugins/vaysf/includes/rest-api.php` (~3,130 lines) into nine
+  domain controllers under `plugins/vaysf/includes/rest-api/`, each owning
+  its own routes: churches (incl. insurance link/upload), participants,
+  rosters, approvals (incl. public token processing), validation issues,
+  schedules (incl. publish upsert), public spectator display, send-email,
+  and sync-log stubs.
+- Added shared `VAYSF_REST_Controller` base carrying the `vaysf/v1`
+  namespace, API-key verification, and the common permission callback;
+  `rest-api.php` is now an orchestration-only bootstrap. The
+  `VAYSF_REST_API` class and its `API_NAMESPACE` constant are preserved for
+  external callers (`includes/shortcodes.php`).
+- No route, method, permission, or response-shape changes — verified by a
+  stubbed-WordPress harness that registered both old and new code and
+  diffed the full 23-route table (identical).
+- Fixed two undefined-variable warnings in `process_approval_token()`:
+  `$approval_result` / `$participant_result` debug checks now actually
+  capture the `$wpdb->update()` return values they log.
 
 ### Bible Challenge score-sheet rosters
 
