@@ -782,6 +782,9 @@ class VAYSF_Shortcodes {
             'approval_ratio' => array(
                 'label' => 'Approval',
             ),
+            'consent_ratio' => array(
+                'label' => 'Consent',
+            ),
         );
     }
 
@@ -846,6 +849,7 @@ class VAYSF_Shortcodes {
     private function format_church_stat_value($church, $stat_key) {
         $total = isset($church['total_participants']) ? (int) $church['total_participants'] : 0;
         $approved = isset($church['approved_participants']) ? (int) $church['approved_participants'] : 0;
+        $consented = isset($church['consented_participants']) ? (int) $church['consented_participants'] : 0;
 
         switch ($stat_key) {
             case 'participants':
@@ -857,6 +861,14 @@ class VAYSF_Shortcodes {
                 return sprintf(
                     '%s/%s (%s%%)',
                     number_format_i18n($approved),
+                    number_format_i18n($total),
+                    number_format_i18n($percentage)
+                );
+            case 'consent_ratio':
+                $percentage = $total > 0 ? round(($consented / $total) * 100, 1) : 0;
+                return sprintf(
+                    '%s/%s (%s%%)',
+                    number_format_i18n($consented),
                     number_format_i18n($total),
                     number_format_i18n($percentage)
                 );

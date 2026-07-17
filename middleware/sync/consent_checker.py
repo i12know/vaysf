@@ -270,6 +270,19 @@ class ConsentChecker:
             }
         ]
 
+    def _push_consent_to_wordpress(self, participant: Dict[str, Any]) -> None:
+        """Mirror a freshly checked consent box onto the WordPress participant row."""
+        participant_id = participant.get("participant_id")
+        if not participant_id:
+            return
+
+        updated = self.wp.update_participant(int(participant_id), {"consent_status": True})
+        if not updated:
+            logger.warning(
+                f"Could not mirror consent_status to WordPress participant "
+                f"{participant_id}; the next participant sync will repair it"
+            )
+
     def _build_audit_row(
         self,
         consent_row: Dict[str, Any],
@@ -484,6 +497,7 @@ class ConsentChecker:
                     f"Auto-checked consent checkbox for {person.get('first_name', '')} "
                     f"{person.get('last_name', '')} ({chm_id})"
                 )
+                self._push_consent_to_wordpress(participant)
                 audit_rows.append(
                     self._build_audit_row(
                         consent_row,

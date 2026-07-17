@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Consent ratio chip for the churches shortcode (#183)
+
+- Added participant `consent_status` storage to the WordPress plugin schema
+  and REST participant create/update endpoints, with database migration from
+  `1.0.7` to `1.0.8`.
+- `[vaysf_churches stats=participants,approval_ratio,consent_ratio]` now
+  displays a per-church consent count/percentage using synced participant
+  data instead of reading ChMeetings live.
+- `check-consent` now mirrors successful consent matches back to the
+  WordPress participant row immediately; a later participant sync still
+  self-heals the value if that mirror call fails.
+
 ### Completed the schedule_workbook.py decomposition (#152, Steps 5-8)
 
 - Extracted the four remaining method groups from `ScheduleWorkbookBuilder`
