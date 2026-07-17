@@ -26,9 +26,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 from config import Config
 from schedule_publisher import merge_schedule
+from score_sheet_verses import BibleVerse, VerseSetError, load_bible_verse_set
 
 BASKETBALL_EVENT = "Basketball - Men Team"
 BIBLE_CHALLENGE_EVENT = "Bible Challenge - Mixed Team"
+DEFAULT_BIBLE_CHALLENGE_VERSE_SET_KEY = "bc_2026"
 SOCCER_EVENT = "Soccer - Coed Exhibition"
 VOLLEYBALL_MEN_EVENT = "Volleyball - Men Team"
 VOLLEYBALL_WOMEN_EVENT = "Volleyball - Women Team"
@@ -601,7 +603,18 @@ def _draw_referee_section(draw: ImageDraw.ImageDraw, y: int = 370) -> None:
     )
 
 
-def _draw_bible_challenge_official_section(draw: ImageDraw.ImageDraw, y: int = 384) -> None:
+def _bible_challenge_scripture_summary(verses: list[BibleVerse]) -> str:
+    if not verses:
+        return "Psalm 119:105"
+    ordered = sorted(verses, key=lambda verse: verse.sort_order)
+    return "; ".join(verse.reference for verse in ordered)
+
+
+def _draw_bible_challenge_official_section(
+    draw: ImageDraw.ImageDraw,
+    y: int = 384,
+    verses: Optional[list[BibleVerse]] = None,
+) -> None:
     label_font = _font("bold", 18)
     text_font = _font("regular", 18)
     left_y = y
@@ -619,12 +632,15 @@ def _draw_bible_challenge_official_section(draw: ImageDraw.ImageDraw, y: int = 3
         ref_y += 34
 
     y = max(left_y, ref_y, 486)
-    draw.text((MARGIN, y + 10), "Opening Prayer Verse:", font=_font("bold", 16), fill=COL_BLACK)
-    draw.text(
-        (270, y + 10),
-        "Your word is a lamp for my feet, a light on my path. (Psalm 119:105)",
-        font=_font("italic", 15),
-        fill=COL_BLACK,
+    draw.text((MARGIN, y + 10), "Bible Challenge Verses:", font=_font("bold", 16), fill=COL_BLACK)
+    _draw_wrapped(
+        draw,
+        _bible_challenge_scripture_summary(verses or []),
+        (296, y + 10),
+        _font("italic", 13),
+        PAGE_W - MARGIN - 296,
+        COL_BLACK,
+        line_gap=2,
     )
 
 
@@ -1095,6 +1111,7 @@ def render_bible_challenge_scoresheet_page(
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
     photo_cache: Optional[PhotoCache] = None,
+    bible_verses: Optional[list[BibleVerse]] = None,
 ) -> Image.Image:
     """Render one three-team Bible Challenge score sheet as an RGB image."""
 
@@ -1108,7 +1125,7 @@ def render_bible_challenge_scoresheet_page(
     _draw_qr(page, str(game.get("game_key") or ""), score_entry_base_url)
     _draw_multi_team_header(draw, game, "BIBLE CHALLENGE SCORESHEET", ("a", "b", "c"), line_break_teams=True)
     _draw_three_team_score_boxes(draw, game)
-    _draw_bible_challenge_official_section(draw, y=386)
+    _draw_bible_challenge_official_section(draw, y=386, verses=bible_verses)
     next_y = _draw_bible_challenge_score_grid(draw, game, y=548)
 
     roster_y = next_y + 24
@@ -1339,6 +1356,13 @@ def write_bible_challenge_scoresheets_pdf(
     roster_rows = list(roster_rows or [])
     _warn_if_approval_status_missing(roster_rows, "Bible Challenge")
     roster_index = build_bible_challenge_roster_index(roster_rows)
+    try:
+        bible_verses = load_bible_verse_set(
+            DEFAULT_BIBLE_CHALLENGE_VERSE_SET_KEY,
+            event="bible-challenge",
+        )
+    except VerseSetError as exc:
+        raise ScoreSheetError(str(exc)) from exc
     photo_cache = PhotoCache()
     pages = [
         render_bible_challenge_scoresheet_page(
@@ -1347,6 +1371,7 @@ def write_bible_challenge_scoresheets_pdf(
             logo_path=logo_path,
             score_entry_base_url=score_entry_base_url,
             photo_cache=photo_cache,
+            bible_verses=bible_verses,
         )
         for game in games
     ]

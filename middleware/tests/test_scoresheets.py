@@ -2,6 +2,7 @@ import json
 
 from PIL import Image
 
+from score_sheet_verses import VerseSetError, load_bible_verse_set
 from scoresheets import (
     BASKETBALL_EVENT,
     BIBLE_CHALLENGE_EVENT,
@@ -12,6 +13,7 @@ from scoresheets import (
     VOLLEYBALL_MEN_EVENT,
     VOLLEYBALL_WOMEN_EVENT,
     _extract_photo_ref,
+    _bible_challenge_scripture_summary,
     _friendly_location,
     build_bible_challenge_roster_index,
     build_roster_index,
@@ -734,6 +736,45 @@ def test_score_entry_url_uses_stable_game_key():
     assert score_entry_url_for_game("BBM-01", SCORE_ENTRY_URL) == (
         "https://sportsfest.example.test/coordinator-score-entry/?action=score&game_key=BBM-01"
     )
+
+
+def test_load_bible_challenge_verse_set_returns_2026_references_in_order():
+    verses = load_bible_verse_set("bc_2026", event="bible-challenge")
+
+    assert [verse.reference for verse in verses] == [
+        "Matthew 13:23",
+        "Colossians 2:6-7",
+        "Psalm 1:3",
+        "Jeremiah 17:7-8",
+        "James 1:2-3",
+        "Romans 8:37",
+        "1 Corinthians 16:13",
+        "2 Corinthians 4:8-9",
+        "Matthew 5:14",
+        "Galatians 6:9-10",
+        "1 Timothy 4:12",
+        "Matthew 13:31-32",
+        "2 Timothy 4:7",
+        "Philippians 3:14",
+    ]
+    assert all(verse.event_locked for verse in verses)
+    assert all(not verse.general_pool for verse in verses)
+
+
+def test_bible_challenge_verse_set_is_locked_to_bible_challenge():
+    try:
+        load_bible_verse_set("bc_2026", event="basketball")
+    except VerseSetError as exc:
+        assert "bc_2026" in str(exc)
+    else:
+        raise AssertionError("Expected locked BC verse set to reject basketball.")
+
+
+def test_bible_challenge_scripture_summary_uses_loaded_set():
+    summary = _bible_challenge_scripture_summary(load_bible_verse_set("bc_2026", event="bible-challenge"))
+
+    assert summary.startswith("Matthew 13:23; Colossians 2:6-7")
+    assert summary.endswith("2 Timothy 4:7; Philippians 3:14")
 
 
 def test_write_basketball_scoresheets_pdf_filters_to_basketball(tmp_path):

@@ -1032,6 +1032,12 @@ Bible Challenge games use the same page with three score boxes, one for each
 team in the scheduled match. The highest score is recorded as the winner; tied
 highest scores preserve multiple winner keys for later review.
 
+Bible Challenge score sheets load their scripture reference set from
+`middleware/config/bible_verse_sets.json`. The active 2026 set is keyed as
+`bc_2026`, locked to `bible-challenge`, and is intentionally stored outside the
+PDF drawing code so future seasons or sports can add their own verse sets
+without changing the renderer.
+
 Volleyball Men and Women games use the same page with set-based entry. Set 1
 and Set 2 are required for both teams. The tiebreaker row is optional for
 preliminary/pool matches because Sports Fest house rules allow a 1-1 split

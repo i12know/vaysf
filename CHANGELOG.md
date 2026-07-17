@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Bible Challenge score-sheet verse source (#292)
+
+- Added a reusable score-sheet Bible verse source at
+  `middleware/config/bible_verse_sets.json` plus a validating loader for
+  event-locked or reusable verse sets.
+- Seeded the active 2026 Bible Challenge reference set (`bc_2026`) with the
+  14 requested references and locked it to `bible-challenge` so it cannot be
+  accidentally used by other sports.
+- Bible Challenge score-sheet generation now loads `bc_2026` and replaces the
+  old hard-coded prayer verse with a compact reference summary. Full-text
+  one-page layout work remains tracked separately in #293.
+
 ### Church participants badge links (#289)
 
 - Replaced the public churches shortcode's inactive Registration/Pending text
