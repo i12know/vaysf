@@ -12,7 +12,7 @@ from conftest import require_live_mutation_test
 from config import Config
 from wordpress.frontend_connector import Config as WPConfig
 from chmeetings.backend_connector import Config as CHMConfig
-from config import (SPORT_TYPE, SPORT_FORMAT, GENDER, RACQUET_SPORTS, SPORT_UNSELECTED,
+from config import (APPROVAL_STATUS, SPORT_TYPE, SPORT_FORMAT, GENDER, RACQUET_SPORTS, SPORT_UNSELECTED,
                    VALIDATION_SEVERITY, FORMAT_MAPPINGS, CHM_FIELDS)
 
 
@@ -1759,6 +1759,132 @@ def test_sync_validation_issues_resolves_stale_issues_when_current_list_is_empty
     assert payload["status"] == "resolved"
     assert "resolved_at" in payload
     assert sync_manager.stats["validation_issues"]["resolved"] == 1
+
+
+def test_sync_validation_issues_keeps_reapproval_reason_while_pending(sync_manager, mocker):
+    """A reapproval_required participant must keep its approval-drift reason open."""
+
+    from sync.participants import ParticipantSyncer
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    existing_issue = {
+        "issue_id": "101",
+        "participant_id": "42",
+        "issue_type": "approval_registration_drift",
+        "rule_code": "APPROVAL_REGISTRATION_DRIFT",
+        "status": "open",
+    }
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=[existing_issue],
+    )
+    update_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_validation_issue",
+        return_value=True,
+    )
+
+    participant_syncer._sync_validation_issues(
+        "42",
+        "RPC",
+        [],
+        "2025-01-01",
+        APPROVAL_STATUS["REAPPROVAL_REQUIRED"],
+    )
+
+    update_issue.assert_not_called()
+    assert sync_manager.stats["validation_issues"]["unchanged"] == 1
+
+
+def test_sync_validation_issues_resolves_reapproval_reason_after_approval(sync_manager, mocker):
+    """Approval-drift reasons should resolve once reapproval_required is no longer active."""
+
+    from sync.participants import ParticipantSyncer
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+
+    existing_issue = {
+        "issue_id": "102",
+        "participant_id": "42",
+        "issue_type": "approval_registration_drift",
+        "rule_code": "APPROVAL_REGISTRATION_DRIFT",
+        "status": "open",
+    }
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=[existing_issue],
+    )
+    update_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_validation_issue",
+        return_value=True,
+    )
+
+    participant_syncer._sync_validation_issues(
+        "42",
+        "RPC",
+        [],
+        "2025-01-01",
+        APPROVAL_STATUS["APPROVED"],
+    )
+
+    update_issue.assert_called_once()
+    assert update_issue.call_args.args[0] == "102"
+    assert update_issue.call_args.args[1]["status"] == "resolved"
+
+
+def test_sync_validation_issues_creates_reason_for_orphan_reapproval(sync_manager, mocker):
+    """An orphaned reapproval_required status should regain a validation issue."""
+
+    from sync.participants import ParticipantSyncer
+
+    participant_syncer = ParticipantSyncer(
+        sync_manager.chm_connector,
+        sync_manager.wordpress_connector,
+        sync_manager.stats,
+        sync_manager.churches_cache,
+    )
+    sync_manager.churches_cache["RPC"] = {"church_id": 1}
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_validation_issues",
+        return_value=[],
+    )
+    create_issue = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "create_validation_issue",
+        return_value=True,
+    )
+
+    participant_syncer._sync_validation_issues(
+        "42",
+        "RPC",
+        [],
+        "2025-01-01",
+        APPROVAL_STATUS["REAPPROVAL_REQUIRED"],
+    )
+
+    create_issue.assert_called_once()
+    payload = create_issue.call_args.args[0]
+    assert payload["issue_type"] == "reapproval_required_reason_missing"
+    assert payload["rule_code"] == "REAPPROVAL_REQUIRED_REASON_MISSING"
+    assert payload["severity"] == VALIDATION_SEVERITY["ERROR"]
 
 
 def test_sync_validation_issues_distinguishes_same_rule_by_sport_and_format(sync_manager, mocker):

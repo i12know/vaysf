@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Reapproval validation issue lifecycle - refs [#212](https://github.com/i12know/vaysf/issues/212)
+
+- Split approval-invalidating participant changes into identity drift and
+  sport/event registration drift so sports changes no longer create
+  `approval_identity_drift` validation issues (they now create
+  `approval_registration_drift`).
+- Kept approval-drift validation reasons open while a participant remains
+  `reapproval_required`, and added a diagnostic issue for orphaned
+  `reapproval_required` rows that have no open reason.
+- Taught `approval-drift-accept` to resolve all three reapproval-reason
+  issue types, and the approval-drift log line stays `APPROVAL IDENTITY
+  DRIFT` so `approval-drift-history` keeps parsing old and new logs alike.
+
 ### Bible Challenge score-sheet rosters
 
 - Replaced the blank "Question / Appeal Notes" grid on generated Bible
