@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### WordPress plugin test build 1.0.41
+
+- Bumped plugin header/version to `1.0.41` and rebuilt `plugins/vaysf.zip`
+  for server testing of the consent-ratio PR.
+- Database version remains `1.0.8`; this is a packaging/version bump for
+  the current plugin code, not a new schema change beyond Issue #183.
+
 ### Consent ratio chip for the churches shortcode (#183)
 
 - Added participant `consent_status` storage to the WordPress plugin schema
