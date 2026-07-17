@@ -933,6 +933,15 @@ The checkbox list is empty until a schedule has been published into
 schedule first and then review coordinator assignments; saved event names that
 no longer appear in the current schedule are shown as stale authorization.
 
+The same event authorization also scopes the WordPress **Bible Verses** editor.
+Accounts with `sf2025_manage_bible_verses` can create, read, update, deactivate,
+and delete verse rows only for their assigned published events, while Sports
+Fest Admins, Sports Fest Managers, and WordPress Administrators can manage all
+published events. Verse editor data is stored in the `vaysf_bible_verse_sets`
+WordPress option and can be exported as JSON compatible with
+`middleware/config/bible_verse_sets.json`. No revision history is kept for verse
+edits or deletes.
+
 ### Generating Basketball And Volleyball Score Sheets
 
 After the approved schedule artifacts have been created, generate the printable
@@ -1031,6 +1040,12 @@ new revision without deleting the previous one.
 Bible Challenge games use the same page with three score boxes, one for each
 team in the scheduled match. The highest score is recorded as the winner; tied
 highest scores preserve multiple winner keys for later review.
+
+Bible Challenge score sheets load their scripture reference set from
+`middleware/config/bible_verse_sets.json`. The active 2026 set is keyed as
+`bc_2026`, locked to `bible-challenge`, and is intentionally stored outside the
+PDF drawing code so future seasons or sports can add their own verse sets
+without changing the renderer.
 
 Volleyball Men and Women games use the same page with set-based entry. Set 1
 and Set 2 are required for both teams. The tiebreaker row is optional for

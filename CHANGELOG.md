@@ -2,6 +2,73 @@
 
 ## Unreleased
 
+### Bible Verse editor follow-up and badge route polish (#289, #294)
+
+- Moved `Bible Verses` under the main `Sports Fest` menu for staff who already
+  have Sports Fest access, while keeping a standalone entry for coordinator-only
+  verse editors.
+- Fixed the editor workflow to preserve the selected event filter, default new
+  rows to the current filtered event, and redirect after save/delete/import so
+  the refreshed row list and success notice appear immediately.
+- Added an explicit `Download JSON` action plus a bundled verse-set loader for
+  the seeded 2026 Bible Challenge rows.
+- Registered a plugin-owned `/badges/` public route and template so the
+  churches shortcode's `Participants` buttons resolve without requiring a
+  manually created WordPress page.
+- Hotfixed the Bible Verse delete/save notice flow to avoid a blank admin page
+  after POST actions, and made automatic bundled verse seeding a one-time
+  fresh-install helper.
+- Bumped plugin header/version to `1.0.46` and rebuilt `plugins/vaysf.zip`.
+
+### Scoped WordPress Bible Verse Editor (#294)
+
+- Added an option-backed WordPress Bible Verse Editor for score-sheet scripture
+  rows, stored in `vaysf_bible_verse_sets` instead of a new database table.
+- Added `sf2025_manage_bible_verses` and wired it to Sports Fest Admin,
+  Manager, Coordinator, and WordPress Administrator roles.
+- The editor uses the same published-event authorization model as Coordinator
+  Score Entry: admins/managers manage all events, while ordinary coordinators
+  are limited to their assigned `vaysf_authorized_events`.
+- Supports CRUD for verse rows, plus deactivate and middleware-compatible JSON
+  import/export. Deletes are permanent; no revision history is kept.
+- Bumped plugin header/version to `1.0.44` and rebuilt `plugins/vaysf.zip`
+  for combined server testing. Database version remains `1.0.8` because the
+  editor uses an option-backed store and role capabilities, not a schema change.
+
+### Bible Challenge score-sheet verse source (#292)
+
+- Added a reusable score-sheet Bible verse source at
+  `middleware/config/bible_verse_sets.json` plus a validating loader for
+  event-locked or reusable verse sets.
+- Seeded the active 2026 Bible Challenge reference set (`bc_2026`) with the
+  14 requested references and locked it to `bible-challenge` so it cannot be
+  accidentally used by other sports.
+- Bible Challenge score-sheet generation now loads `bc_2026` and replaces the
+  old hard-coded prayer verse with a compact reference summary. Full-text
+  one-page layout work remains tracked separately in #293.
+
+### Church participants badge links (#289)
+
+- Replaced the public churches shortcode's inactive Registration/Pending text
+  with a `Participants` button for each church.
+- Buttons link to the badge gallery page with the row's church code, defaulting
+  to `/badges/?church_code=ABC`; sites can override the base URL with
+  `badges_page_url`.
+- Bumped plugin header/version to `1.0.43` and rebuilt `plugins/vaysf.zip`
+  for combined server testing of #289 and #290. Database version remains
+  `1.0.8`.
+
+### Church badge gallery shortcode (#290)
+
+- Added `[vaysf_badges]` to display approved participant badge PNGs for one
+  church code, using either `church_code="ABC"` or the `?church_code=ABC`
+  query parameter.
+- The shortcode reads approved participants from WordPress and resolves hosted
+  badge images from the existing `wp-content/uploads/vaysf/badges` upload
+  location using the middleware's deterministic badge filename pattern.
+- Bumped plugin header/version to `1.0.42` and rebuilt `plugins/vaysf.zip`
+  for server testing. Database version remains `1.0.8`.
+
 ### WordPress plugin test build 1.0.41
 
 - Bumped plugin header/version to `1.0.41` and rebuilt `plugins/vaysf.zip`

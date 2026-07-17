@@ -27,6 +27,7 @@ class VAYSF_Shortcodes {
         add_shortcode('vaysf_live_schedule', array($this, 'live_schedule_shortcode'));
         add_shortcode('vaysf_advancement', array($this, 'advancement_shortcode'));
         add_shortcode('vaysf_results_desk', array($this, 'results_desk_shortcode'));
+        add_shortcode('vaysf_badges', array($this, 'badges_shortcode'));
     }
     
     /**
@@ -126,6 +127,7 @@ class VAYSF_Shortcodes {
             'insurance_status' => '',
             'show_stats' => 'yes',
             'stats' => 'participants,approval_ratio',
+            'badges_page_url' => '',
         ), $atts);
 
         $church_stat_keys = $this->get_requested_church_stats($atts['stats']);
@@ -134,6 +136,7 @@ class VAYSF_Shortcodes {
         }
 
         $atts['include_stats'] = !empty($church_stat_keys);
+        $badges_page_url = $this->resolve_badges_page_url($atts['badges_page_url']);
         
         // Get churches
         $churches = VAYSF_Statistics::get_churches($atts);
@@ -148,7 +151,7 @@ class VAYSF_Shortcodes {
             echo '<thead><tr>';
             echo '<th>Church</th>';
             echo '<th>Pastor</th>';
-            echo '<th>Registration</th>';
+            echo '<th>Participants</th>';
             echo '<th>Insurance</th>';
             echo '</tr></thead>';
             echo '<tbody>';
@@ -160,7 +163,7 @@ class VAYSF_Shortcodes {
                 $this->render_church_stats($church, $church_stat_keys);
                 echo '</td>';
                 echo '<td>' . esc_html($church['pastor_name']) . '</td>';
-                echo '<td>' . esc_html(ucfirst($church['registration_status'])) . '</td>';
+                echo '<td><a class="vaysf-participants-button" href="' . esc_url($this->build_church_badges_url($badges_page_url, $church['church_code'])) . '">' . esc_html__('Participants', 'vaysf') . '</a></td>';
                 echo '<td>';
                 if (function_exists('vaysf_format_insurance_status')) {
                     echo vaysf_format_insurance_status($church['insurance_status']);
@@ -241,6 +244,101 @@ class VAYSF_Shortcodes {
         $this->include_frontend_styles();
         
         // Return the buffered output
+        return ob_get_clean();
+    }
+
+    /**
+     * Shortcode for approved participant badge gallery by church code (Issue #290).
+     *
+     * @param array $atts Shortcode attributes
+     * @return string Shortcode output
+     */
+    public function badges_shortcode($atts) {
+        $atts = shortcode_atts(array(
+            'church_code' => '',
+            'columns' => 4,
+            'show_names' => 'yes',
+        ), $atts);
+
+        $church_code = $this->resolve_badges_church_code($atts['church_code']);
+        $columns = max(1, min(6, absint($atts['columns'])));
+        $show_names = $this->is_truthy($atts['show_names']);
+
+        ob_start();
+
+        if (empty($church_code)) {
+            echo '<p class="vaysf-badges-empty">' . esc_html__('Choose a church to view participant badges.', 'vaysf') . '</p>';
+            $this->include_frontend_styles();
+            return ob_get_clean();
+        }
+
+        $church = $this->get_badges_church($church_code);
+        if (!$church) {
+            echo '<p class="vaysf-badges-empty">' . esc_html__('Church not found.', 'vaysf') . '</p>';
+            $this->include_frontend_styles();
+            return ob_get_clean();
+        }
+
+        $participants = $this->get_badges_participants($church_code);
+        $badges = array();
+        $missing = 0;
+        foreach ($participants as $participant) {
+            $badge_url = $this->find_badge_url_for_participant($participant);
+            if (empty($badge_url)) {
+                $missing++;
+                continue;
+            }
+
+            $participant['badge_url'] = $badge_url;
+            $badges[] = $participant;
+        }
+
+        echo '<div class="vaysf-badges" style="--vaysf-badge-columns:' . esc_attr((string) $columns) . '">';
+        echo '<div class="vaysf-badges-heading">';
+        echo '<h2>' . esc_html($church['church_name']) . ' (' . esc_html($church_code) . ')</h2>';
+        echo '<p>' . esc_html(sprintf(
+            _n('%d approved badge available', '%d approved badges available', count($badges), 'vaysf'),
+            count($badges)
+        )) . '</p>';
+        echo '</div>';
+
+        if (empty($badges)) {
+            echo '<p class="vaysf-badges-empty">' . esc_html__('No approved badge images are available for this church yet.', 'vaysf') . '</p>';
+        } else {
+            echo '<div class="vaysf-badges-grid">';
+            foreach ($badges as $participant) {
+                $name = trim(($participant['first_name'] ?? '') . ' ' . ($participant['last_name'] ?? ''));
+                echo '<figure class="vaysf-badge-card">';
+                echo '<a href="' . esc_url($participant['badge_url']) . '" target="_blank" rel="noopener noreferrer">';
+                echo '<img src="' . esc_url($participant['badge_url']) . '" alt="' . esc_attr(sprintf(__('Badge for %s', 'vaysf'), $name ?: __('participant', 'vaysf'))) . '" loading="lazy">';
+                echo '</a>';
+                if ($show_names) {
+                    echo '<figcaption>';
+                    echo '<span class="vaysf-badge-name">' . esc_html($name ?: __('Unnamed participant', 'vaysf')) . '</span>';
+                    if (!empty($participant['primary_sport'])) {
+                        echo '<span class="vaysf-badge-meta">' . esc_html($participant['primary_sport']) . '</span>';
+                    }
+                    echo '</figcaption>';
+                }
+                echo '</figure>';
+            }
+            echo '</div>';
+        }
+
+        if ($missing > 0) {
+            echo '<p class="vaysf-badges-note">' . esc_html(sprintf(
+                _n(
+                    '%d approved participant does not have an uploaded badge image yet.',
+                    '%d approved participants do not have uploaded badge images yet.',
+                    $missing,
+                    'vaysf'
+                ),
+                $missing
+            )) . '</p>';
+        }
+        echo '</div>';
+
+        $this->include_frontend_styles();
         return ob_get_clean();
     }
 
@@ -767,6 +865,128 @@ class VAYSF_Shortcodes {
     }
 
     /**
+     * Resolve the badge gallery page URL used by the churches shortcode.
+     *
+     * @param string $url Shortcode badges_page_url attribute
+     * @return string Base URL for church badge gallery links
+     */
+    private function resolve_badges_page_url($url) {
+        $url = trim((string) $url);
+        if ($url === '') {
+            return home_url('/badges/');
+        }
+
+        return esc_url_raw($url);
+    }
+
+    /**
+     * Build a church-specific badge gallery URL.
+     *
+     * @param string $base_url Base badge gallery page URL
+     * @param string $church_code Church code
+     * @return string URL with church_code query parameter
+     */
+    private function build_church_badges_url($base_url, $church_code) {
+        $church_code = strtoupper(trim((string) $church_code));
+        if (!preg_match('/^[A-Z0-9]{3}$/', $church_code)) {
+            return $base_url;
+        }
+
+        return add_query_arg('church_code', $church_code, $base_url);
+    }
+
+    /**
+     * Resolve a badge gallery church code from the shortcode or query string.
+     *
+     * @param string $attr_code Shortcode church_code attribute
+     * @return string Uppercase 3-character church code, or empty string
+     */
+    private function resolve_badges_church_code($attr_code) {
+        $code = trim((string) $attr_code);
+        if ($code === '' && isset($_GET['church_code'])) {
+            $code = sanitize_text_field(wp_unslash($_GET['church_code']));
+        }
+
+        $code = strtoupper(trim($code));
+        return preg_match('/^[A-Z0-9]{3}$/', $code) ? $code : '';
+    }
+
+    /**
+     * Fetch one church row for the badge gallery.
+     *
+     * @param string $church_code Church code
+     * @return array|null Church row
+     */
+    private function get_badges_church($church_code) {
+        global $wpdb;
+
+        return $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT church_code, church_name FROM {$wpdb->prefix}sf_churches WHERE church_code = %s",
+                $church_code
+            ),
+            ARRAY_A
+        );
+    }
+
+    /**
+     * Fetch approved participants for one church.
+     *
+     * @param string $church_code Church code
+     * @return array Participant rows
+     */
+    private function get_badges_participants($church_code) {
+        global $wpdb;
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT participant_id, chmeetings_id, church_code, first_name, last_name, primary_sport
+                FROM {$wpdb->prefix}sf_participants
+                WHERE church_code = %s AND approval_status = %s
+                ORDER BY last_name ASC, first_name ASC, participant_id ASC",
+                $church_code,
+                'approved'
+            ),
+            ARRAY_A
+        );
+    }
+
+    /**
+     * Resolve the hosted badge URL for one approved participant.
+     *
+     * @param array $participant Participant row
+     * @return string Hosted badge URL, or empty string
+     */
+    private function find_badge_url_for_participant($participant) {
+        if (!function_exists('vaysf_badge_upload_target')) {
+            return '';
+        }
+
+        $chmeetings_id = (string) ($participant['chmeetings_id'] ?? '');
+        $church_code = (string) ($participant['church_code'] ?? '');
+        if (!preg_match('/^[A-Za-z0-9_.-]+$/', $chmeetings_id) || !preg_match('/^[A-Za-z0-9]{3}$/', $church_code)) {
+            return '';
+        }
+
+        $target = vaysf_badge_upload_target();
+        if (is_wp_error($target)) {
+            return '';
+        }
+
+        $prefix = strtoupper($church_code) . '_' . $chmeetings_id . '_';
+        $matches = glob(trailingslashit($target['dir']) . $prefix . '*.png') ?: array();
+        if (empty($matches)) {
+            return '';
+        }
+
+        usort($matches, function ($a, $b) {
+            return filemtime($b) <=> filemtime($a);
+        });
+
+        return trailingslashit($target['url']) . rawurlencode(basename($matches[0]));
+    }
+
+    /**
      * Church-level stats available to the churches shortcode.
      *
      * @return array Stat definitions keyed by shortcode stat name
@@ -994,6 +1214,26 @@ class VAYSF_Shortcodes {
                 .vaysf-church-stat-value {
                     font-weight: 700;
                 }
+
+                .vaysf-participants-button {
+                    display: inline-block;
+                    padding: 6px 10px;
+                    border: 1px solid #1d4ed8;
+                    border-radius: 3px;
+                    background: #2563eb;
+                    color: #fff;
+                    font-size: 13px;
+                    font-weight: 700;
+                    line-height: 1.2;
+                    text-decoration: none;
+                }
+
+                .vaysf-participants-button:hover,
+                .vaysf-participants-button:focus {
+                    background: #1d4ed8;
+                    color: #fff;
+                    text-decoration: none;
+                }
                 
                 .approval-status {
                     display: inline-block;
@@ -1100,6 +1340,88 @@ class VAYSF_Shortcodes {
                     font-weight: bold;
                 }
 
+                .vaysf-badges {
+                    margin: 20px 0;
+                }
+
+                .vaysf-badges-heading {
+                    display: flex;
+                    align-items: baseline;
+                    justify-content: space-between;
+                    gap: 12px;
+                    margin-bottom: 16px;
+                    border-bottom: 1px solid #ddd;
+                    padding-bottom: 10px;
+                }
+
+                .vaysf-badges-heading h2 {
+                    margin: 0;
+                    font-size: 22px;
+                }
+
+                .vaysf-badges-heading p,
+                .vaysf-badges-note {
+                    margin: 0;
+                    color: #667085;
+                    font-size: 13px;
+                }
+
+                .vaysf-badges-grid {
+                    display: grid;
+                    grid-template-columns: repeat(var(--vaysf-badge-columns, 4), minmax(0, 1fr));
+                    gap: 18px;
+                }
+
+                .vaysf-badge-card {
+                    margin: 0;
+                    break-inside: avoid;
+                }
+
+                .vaysf-badge-card a {
+                    display: block;
+                    border: 1px solid #d7e3f0;
+                    background: #f8fbff;
+                    padding: 8px;
+                }
+
+                .vaysf-badge-card img {
+                    display: block;
+                    width: 100%;
+                    height: auto;
+                    aspect-ratio: 9 / 16;
+                    object-fit: contain;
+                    background: #fff;
+                }
+
+                .vaysf-badge-card figcaption {
+                    margin-top: 8px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                    font-size: 13px;
+                    line-height: 1.35;
+                }
+
+                .vaysf-badge-name {
+                    font-weight: 700;
+                    color: #34495e;
+                }
+
+                .vaysf-badge-meta {
+                    color: #667085;
+                }
+
+                .vaysf-badges-empty {
+                    padding: 14px;
+                    border: 1px solid #d7e3f0;
+                    background: #f8fbff;
+                    color: #34495e;
+                }
+
+                .vaysf-badges-note {
+                    margin-top: 12px;
+                }
+
                 @media (max-width: 768px) {
                     .vaysf-stats-grid {
                         grid-template-columns: 1fr;
@@ -1111,6 +1433,28 @@ class VAYSF_Shortcodes {
                     .vaysf-advancement-table {
                         display: block;
                         overflow-x: auto;
+                    }
+
+                    .vaysf-badges-heading {
+                        display: block;
+                    }
+
+                    .vaysf-badges-heading p {
+                        margin-top: 4px;
+                    }
+
+                    .vaysf-badges-grid {
+                        grid-template-columns: repeat(2, minmax(0, 1fr));
+                    }
+                }
+
+                @media print {
+                    .vaysf-badges-grid {
+                        grid-template-columns: repeat(3, minmax(0, 1fr));
+                    }
+
+                    .vaysf-badge-card a {
+                        border-color: #999;
                     }
                 }
             </style>';
