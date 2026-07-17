@@ -778,7 +778,28 @@ class ParticipantSyncer:
         chm_updated_on = datetime.datetime.fromisoformat(chm_updated_on_str)
         chm_updated_on_utc = chm_updated_on.astimezone(pytz.UTC)
         mapped["updated_at"] = chm_updated_on_utc.strftime("%Y-%m-%d %H:%M:%S")
-        
+
+        # Fetch the existing WordPress row first: the racquet cutoff below needs
+        # its created_at to compute the season registration date.
+        # Use mapped["chmeetings_id"] as it's directly from the mapped data which is from full_person_data
+        participant_in_wp_list = self.wordpress_connector.get_participants({"chmeetings_id": mapped["chmeetings_id"]})
+        participant_in_wp = (participant_in_wp_list[0] if participant_in_wp_list else None)
+
+        # Normalize `mapped` into its effective shape BEFORE the identity drift
+        # comparison below, in the same order the WordPress payload is built.
+        # WordPress only ever stores the post-cutoff, post-self-heal shape; if the
+        # drift check compared the raw ChMeetings shape against that snapshot, it
+        # would re-detect the same "drift" on every sync forever (Issue #171).
+        # 1. Drop disallowed late racquet selections.
+        # 2. Self-heal a blank primary sport — ChMeetings can leave primary_sport
+        #    blank with the sport sitting in secondary_sport, and the cutoff
+        #    itself can blank the primary while a secondary remains.
+        mapped, cutoff_issues = self._apply_new_registration_racquet_cutoff(
+            mapped,
+            existing_wp_participant=participant_in_wp,
+        )
+        mapped, self_heal_issues = self._self_heal_missing_primary_sport(mapped)
+
         if chm_id == target_chm_id_for_debug:
             logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] ChMeetings updated_on (UTC): {chm_updated_on_utc}, Mapped updated_at: {mapped['updated_at']}")
 
@@ -788,10 +809,6 @@ class ParticipantSyncer:
         drift_issues: List[Dict[str, Any]] = []
         existing_approvals: List[Dict[str, Any]] = []
         approval_record_status = ""
-
-        # Use mapped["chmeetings_id"] as it's directly from the mapped data which is from full_person_data
-        participant_in_wp_list = self.wordpress_connector.get_participants({"chmeetings_id": mapped["chmeetings_id"]})
-        participant_in_wp = (participant_in_wp_list[0] if participant_in_wp_list else None)
 
         if chm_id == target_chm_id_for_debug:
             logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] Participant in WP (direct fetch by chmeetings_id '{mapped['chmeetings_id']}'): {participant_in_wp}")
@@ -948,13 +965,9 @@ class ParticipantSyncer:
                 mapped["membership_claim_at_approval"] = int(frozen_raw)
         # --- End membership-flip defence ---
 
-        participant_payload, self_heal_issues = self._self_heal_missing_primary_sport(
-            mapped
-        )
-        participant_payload, cutoff_issues = self._apply_new_registration_racquet_cutoff(
-            participant_payload,
-            existing_wp_participant=participant_in_wp,
-        )
+        # The racquet cutoff and primary-sport self-heal already ran above,
+        # before the identity drift comparison.
+        participant_payload = mapped
         participant_payload["approval_status"] = current_wp_status
         is_valid, base_validation_issues = self.validate_participant(participant_payload)
         validation_issues_list = (
