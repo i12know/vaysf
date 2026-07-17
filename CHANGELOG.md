@@ -21,6 +21,62 @@
   byte-identical normalized `schedule_input.json` and a cell-identical
   planning workbook on `main` vs the refactor, differing only in the
   `generated_at` wall-clock stamp.
+### WordPress plugin test build 1.0.40
+
+- Bumped plugin header/version to `1.0.40` and rebuilt `plugins/vaysf.zip`
+  for server testing after the REST API and admin PHP refactors.
+- Database version remains `1.0.7`; the refactors do not require a schema
+  migration.
+
+### Split admin monolith into page-owned modules (#284)
+
+- Refactored `plugins/vaysf/admin/admin.php` (~2,575 lines) into nine
+  page modules under `plugins/vaysf/admin/`: dashboard, churches (incl.
+  insurance approve/upload), participants, rosters, approvals, validation
+  issues, schedules (incl. save/cancel handlers and source-hash helpers),
+  results (incl. corrections, revisions, verify/certify), and settings
+  (incl. the event-day results reset section).
+- Added shared `VAYSF_Admin_Page` base holding the schedule/result status
+  vocabularies, `format_game_teams()`, and admin-notice printing so those
+  helpers keep one authoritative implementation; `admin.php` is now an
+  orchestration-only bootstrap (menu registration + delegation).
+- No menu slug, capability, nonce action, POST field name, or rendering
+  change — verified by a stubbed-WordPress harness that fired
+  `admin_menu`/`admin_init` against old and new code and diffed all 26
+  menu/settings registrations (identical).
+
+### Reapproval validation issue lifecycle - refs [#212](https://github.com/i12know/vaysf/issues/212)
+
+- Split approval-invalidating participant changes into identity drift and
+  sport/event registration drift so sports changes no longer create
+  `approval_identity_drift` validation issues (they now create
+  `approval_registration_drift`).
+- Kept approval-drift validation reasons open while a participant remains
+  `reapproval_required`, and added a diagnostic issue for orphaned
+  `reapproval_required` rows that have no open reason.
+- Taught `approval-drift-accept` to resolve all three reapproval-reason
+  issue types, and the approval-drift log line stays `APPROVAL IDENTITY
+  DRIFT` so `approval-drift-history` keeps parsing old and new logs alike.
+
+### Split REST API monolith into domain controllers (#265)
+
+- Refactored `plugins/vaysf/includes/rest-api.php` (~3,130 lines) into nine
+  domain controllers under `plugins/vaysf/includes/rest-api/`, each owning
+  its own routes: churches (incl. insurance link/upload), participants,
+  rosters, approvals (incl. public token processing), validation issues,
+  schedules (incl. publish upsert), public spectator display, send-email,
+  and sync-log stubs.
+- Added shared `VAYSF_REST_Controller` base carrying the `vaysf/v1`
+  namespace, API-key verification, and the common permission callback;
+  `rest-api.php` is now an orchestration-only bootstrap. The
+  `VAYSF_REST_API` class and its `API_NAMESPACE` constant are preserved for
+  external callers (`includes/shortcodes.php`).
+- No route, method, permission, or response-shape changes — verified by a
+  stubbed-WordPress harness that registered both old and new code and
+  diffed the full 23-route table (identical).
+- Fixed two undefined-variable warnings in `process_approval_token()`:
+  `$approval_result` / `$participant_result` debug checks now actually
+  capture the `$wpdb->update()` return values they log.
 
 ### Bible Challenge score-sheet rosters
 
