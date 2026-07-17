@@ -43,6 +43,7 @@ QR_BOX = (PAGE_W - MARGIN - QR_SIZE, 52)
 MAX_ROSTER_ROWS = 15
 MAX_SOCCER_ROSTER_ROWS_PER_TEAM = 12
 MAX_BIBLE_CHALLENGE_ROSTER_ROWS_PER_TEAM = 10
+BIBLE_CHALLENGE_SCORE_GRID_Y = 584
 MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN = 9
 MAX_VOLLEYBALL_ROSTER_ROWS = MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN * 2
 
@@ -121,6 +122,22 @@ def _text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) 
     return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
 
+def _wrapped_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    words = str(text or "").split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if not current or _text_size(draw, candidate, font)[0] <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
 def _center_text(
     draw: ImageDraw.ImageDraw,
     box: tuple[int, int, int, int],
@@ -143,21 +160,7 @@ def _draw_wrapped(
     fill: tuple[int, int, int] = COL_BLACK,
     line_gap: int = 6,
 ) -> int:
-    words = str(text or "").split()
-    lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if not current or _text_size(draw, candidate, font)[0] <= max_width:
-            current = candidate
-        else:
-            lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    if not lines:
-        lines = [""]
-
+    lines = _wrapped_lines(draw, text, font, max_width)
     x, y = xy
     line_h = _text_size(draw, "Ag", font)[1] + line_gap
     for line in lines:
@@ -613,7 +616,8 @@ def _bible_challenge_scripture_summary(verses: list[BibleVerse]) -> str:
 def _draw_bible_challenge_official_section(
     draw: ImageDraw.ImageDraw,
     y: int = 384,
-    verses: Optional[list[BibleVerse]] = None,
+    verse: Optional[BibleVerse] = None,
+    score_grid_y: int = BIBLE_CHALLENGE_SCORE_GRID_Y,
 ) -> None:
     label_font = _font("bold", 18)
     text_font = _font("regular", 18)
@@ -631,17 +635,22 @@ def _draw_bible_challenge_official_section(
         draw.line((994, ref_y + 22, PAGE_W - MARGIN, ref_y + 22), fill=COL_BORDER, width=2)
         ref_y += 34
 
-    y = max(left_y, ref_y, 486)
-    draw.text((MARGIN, y + 10), "Bible Challenge Verses:", font=_font("bold", 16), fill=COL_BLACK)
-    _draw_wrapped(
-        draw,
-        _bible_challenge_scripture_summary(verses or []),
-        (296, y + 10),
-        _font("italic", 13),
-        PAGE_W - MARGIN - 296,
-        COL_BLACK,
-        line_gap=2,
-    )
+    verse_y = max(left_y, ref_y, 486) + 10
+    draw.text((MARGIN, verse_y), "Opening Prayer Verse:", font=_font("bold", 16), fill=COL_BLACK)
+    verse_text = "Your word is a lamp for my feet, a light on my path. (Psalm 119:105)"
+    if verse is not None:
+        verse_text = f"{verse.verse_text} ({verse.reference})"
+
+    verse_x = 270
+    max_width = PAGE_W - MARGIN - verse_x
+    max_height = max(42, score_grid_y - verse_y - 14)
+    for size in (13, 12, 11, 10):
+        font = _font("italic", size)
+        lines = _wrapped_lines(draw, verse_text, font, max_width)
+        line_h = _text_size(draw, "Ag", font)[1] + 2
+        if len(lines) * line_h <= max_height:
+            break
+    _draw_wrapped(draw, verse_text, (verse_x, verse_y), font, max_width, COL_BLACK, line_gap=2)
 
 
 def _draw_bible_challenge_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any], y: int = 520) -> int:
@@ -1111,7 +1120,7 @@ def render_bible_challenge_scoresheet_page(
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
     photo_cache: Optional[PhotoCache] = None,
-    bible_verses: Optional[list[BibleVerse]] = None,
+    bible_verse: Optional[BibleVerse] = None,
 ) -> Image.Image:
     """Render one three-team Bible Challenge score sheet as an RGB image."""
 
@@ -1125,8 +1134,8 @@ def render_bible_challenge_scoresheet_page(
     _draw_qr(page, str(game.get("game_key") or ""), score_entry_base_url)
     _draw_multi_team_header(draw, game, "BIBLE CHALLENGE SCORESHEET", ("a", "b", "c"), line_break_teams=True)
     _draw_three_team_score_boxes(draw, game)
-    _draw_bible_challenge_official_section(draw, y=386, verses=bible_verses)
-    next_y = _draw_bible_challenge_score_grid(draw, game, y=548)
+    _draw_bible_challenge_official_section(draw, y=386, verse=bible_verse)
+    next_y = _draw_bible_challenge_score_grid(draw, game, y=BIBLE_CHALLENGE_SCORE_GRID_Y)
 
     roster_y = next_y + 24
     gap = 24
@@ -1371,9 +1380,9 @@ def write_bible_challenge_scoresheets_pdf(
             logo_path=logo_path,
             score_entry_base_url=score_entry_base_url,
             photo_cache=photo_cache,
-            bible_verses=bible_verses,
+            bible_verse=bible_verses[idx % len(bible_verses)],
         )
-        for game in games
+        for idx, game in enumerate(games)
     ]
 
     output_dir.mkdir(parents=True, exist_ok=True)

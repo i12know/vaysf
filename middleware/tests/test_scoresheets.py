@@ -2,6 +2,7 @@ import json
 
 from PIL import Image
 
+import scoresheets
 from score_sheet_verses import VerseSetError, load_bible_verse_set
 from scoresheets import (
     BASKETBALL_EVENT,
@@ -612,7 +613,7 @@ def test_render_bible_challenge_scoresheet_prints_roster_photo(tmp_path):
     )
 
     # First roster photo sits inside team A's roster column, below the score tracker.
-    assert page.getpixel((124, 842)) == (40, 200, 90)
+    assert page.getpixel((124, 870)) == (40, 200, 90)
 
 
 def test_render_bible_challenge_scoresheet_strikes_unapproved_roster_row():
@@ -645,7 +646,7 @@ def test_render_bible_challenge_scoresheet_strikes_unapproved_roster_row():
         score_entry_base_url=SCORE_ENTRY_URL,
     )
 
-    assert page.getpixel((200, 843)) == (170, 31, 45)
+    assert page.getpixel((200, 879)) == (170, 31, 45)
 
 
 def test_render_bible_challenge_scoresheet_does_not_strike_wp_approved_roster_row():
@@ -678,7 +679,7 @@ def test_render_bible_challenge_scoresheet_does_not_strike_wp_approved_roster_ro
         score_entry_base_url=SCORE_ENTRY_URL,
     )
 
-    assert page.getpixel((200, 843)) != (170, 31, 45)
+    assert page.getpixel((200, 879)) != (170, 31, 45)
 
 
 def test_basketball_roster_table_capacity_is_15():
@@ -759,6 +760,15 @@ def test_load_bible_challenge_verse_set_returns_2026_references_in_order():
     ]
     assert all(verse.event_locked for verse in verses)
     assert all(not verse.general_pool for verse in verses)
+    assert all(verse.verse_text != verse.reference for verse in verses)
+    assert verses[3].verse_text.startswith("Blessed is the man who trusts")
+
+
+def test_load_bible_challenge_verse_set_accepts_wordpress_event_label():
+    verses = load_bible_verse_set("bc_2026", event=BIBLE_CHALLENGE_EVENT)
+
+    assert len(verses) == 14
+    assert verses[0].reference == "Matthew 13:23"
 
 
 def test_bible_challenge_verse_set_is_locked_to_bible_challenge():
@@ -768,6 +778,38 @@ def test_bible_challenge_verse_set_is_locked_to_bible_challenge():
         assert "bc_2026" in str(exc)
     else:
         raise AssertionError("Expected locked BC verse set to reject basketball.")
+
+
+def test_bible_challenge_verse_set_rejects_placeholder_text(tmp_path):
+    source = tmp_path / "verses.json"
+    source.write_text(
+        json.dumps(
+            {
+                "verse_sets": [
+                    {
+                        "set_key": "bc_test",
+                        "event": BIBLE_CHALLENGE_EVENT,
+                        "season": 2026,
+                        "sort_order": 1,
+                        "reference": "John 3:16",
+                        "verse_text": "John 3:16",
+                        "active": True,
+                        "event_locked": True,
+                        "general_pool": False,
+                        "allowed_events": [BIBLE_CHALLENGE_EVENT],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        load_bible_verse_set("bc_test", event=BIBLE_CHALLENGE_EVENT, source_path=source)
+    except VerseSetError as exc:
+        assert "placeholder verse_text" in str(exc)
+    else:
+        raise AssertionError("Expected placeholder verse text to be rejected.")
 
 
 def test_bible_challenge_scripture_summary_uses_loaded_set():
@@ -905,3 +947,54 @@ def test_write_bible_challenge_scoresheets_pdf_filters_to_bible_challenge(tmp_pa
     assert page_count == 1
     assert pdf_path.exists()
     assert pdf_path.read_bytes().startswith(b"%PDF")
+
+
+def test_write_bible_challenge_scoresheets_cycles_one_verse_per_game(tmp_path, monkeypatch):
+    schedule_input = _schedule_input()
+    schedule_output = _schedule_output()
+    for idx in range(2, 16):
+        game_id = f"BC-RR-{idx:02d}"
+        schedule_input["games"].append(
+            {
+                "game_id": game_id,
+                "event": BIBLE_CHALLENGE_EVENT,
+                "stage": "Pool",
+                "pool_id": "A",
+                "round": idx,
+                "team_a_id": "BC::WSD",
+                "team_a_label": "WSD",
+                "team_b_id": "BC::ANH",
+                "team_b_label": "ANH",
+                "team_c_id": "BC::LBC",
+                "team_c_label": "LBC",
+                "duration_minutes": 60,
+                "resource_type": "Bible Challenge Station",
+            }
+        )
+        schedule_output["assignments"].append(
+            {"game_id": game_id, "resource_id": f"BC-Sun-1-{idx}", "slot": f"Sun-1-18:{idx - 1:02d}"}
+        )
+    input_path = tmp_path / "approved_schedule_input.json"
+    output_path = tmp_path / "approved_schedule_output.json"
+    input_path.write_text(json.dumps(schedule_input), encoding="utf-8")
+    output_path.write_text(json.dumps(schedule_output), encoding="utf-8")
+    assigned_references = []
+
+    def fake_render_bible_challenge_scoresheet_page(game, **kwargs):
+        assigned_references.append(kwargs["bible_verse"].reference)
+        return Image.new("RGB", (100, 100), "white")
+
+    monkeypatch.setattr(scoresheets, "render_bible_challenge_scoresheet_page", fake_render_bible_challenge_scoresheet_page)
+
+    _, page_count = write_bible_challenge_scoresheets_pdf(
+        input_path,
+        output_path,
+        tmp_path / "scoresheets",
+        score_entry_base_url=SCORE_ENTRY_URL,
+        output_filename="bible-challenge.pdf",
+    )
+
+    assert page_count == 15
+    assert assigned_references[:2] == ["Matthew 13:23", "Colossians 2:6-7"]
+    assert assigned_references[13] == "Philippians 3:14"
+    assert assigned_references[14] == "Matthew 13:23"

@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 
 DEFAULT_VERSE_SOURCE = Path(__file__).resolve().parent / "config" / "bible_verse_sets.json"
+
+EVENT_ALIASES = {
+    "bible challenge": "bible-challenge",
+    "bible challenge mixed team": "bible-challenge",
+    "bible-challenge": "bible-challenge",
+}
 
 
 class VerseSetError(ValueError):
@@ -31,7 +38,13 @@ class BibleVerse:
 
 
 def _normalize_event(value: Any) -> str:
-    return str(value or "").strip().lower()
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    tokenized = re.sub(r"[^a-z0-9]+", " ", raw).strip()
+    compact = re.sub(r"\s+", " ", tokenized)
+    slug = compact.replace(" ", "-")
+    return EVENT_ALIASES.get(raw) or EVENT_ALIASES.get(compact) or EVENT_ALIASES.get(slug) or slug
 
 
 def _expect_text(row: dict[str, Any], field: str, row_idx: int) -> str:
@@ -105,14 +118,21 @@ def load_bible_verse_set(
             if not allowed_for_event:
                 continue
 
+        reference = _expect_text(row, "reference", row_idx)
+        verse_text = _expect_text(row, "verse_text", row_idx)
+        if verse_text.casefold() == reference.casefold():
+            raise VerseSetError(
+                f"Verse row {row_idx} ({reference}) has placeholder verse_text matching its reference."
+            )
+
         verses.append(
             BibleVerse(
                 set_key=row_set_key,
                 event=row_event,
                 season=_expect_int(row, "season", row_idx),
                 sort_order=_expect_int(row, "sort_order", row_idx),
-                reference=_expect_text(row, "reference", row_idx),
-                verse_text=_expect_text(row, "verse_text", row_idx),
+                reference=reference,
+                verse_text=verse_text,
                 translation=str(row.get("translation") or "").strip(),
                 active=active,
                 event_locked=event_locked,
