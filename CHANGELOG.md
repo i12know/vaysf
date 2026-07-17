@@ -13,6 +13,9 @@
   are limited to their assigned `vaysf_authorized_events`.
 - Supports CRUD for verse rows, plus deactivate and middleware-compatible JSON
   import/export. Deletes are permanent; no revision history is kept.
+- Bumped plugin header/version to `1.0.44` and rebuilt `plugins/vaysf.zip`
+  for combined server testing. Database version remains `1.0.8` because the
+  editor uses an option-backed store and role capabilities, not a schema change.
 
 ### Bible Challenge score-sheet verse source (#292)
 
