@@ -1094,7 +1094,7 @@
           "Events"
         ],
         "summary": "Get events within a date range with pagination",
-        "description": "Get events within a date range with pagination",
+        "description": "Get events within a date range with pagination.\nEach event includes a `visibility` value (\"internal\", \"members\", or \"public\")\nand an `image_url` (CDN URL of the event image, or null when no image is set).",
         "parameters": [
           {
             "name": "from",
@@ -1215,7 +1215,7 @@
           "Organizations - Events"
         ],
         "summary": "Get events in organization within a date range with pagination",
-        "description": "Get events in organization within a date range with pagination",
+        "description": "Get events in organization within a date range with pagination.\nEach event includes a `visibility` value (\"internal\", \"members\", or \"public\")\nand an `image_url` (CDN URL of the event image, or null when no image is set).",
         "parameters": [
           {
             "name": "from",
@@ -1344,7 +1344,7 @@
           "Organizations - Events"
         ],
         "summary": "Get an event by Id for organization",
-        "description": "Returns a single event by its unique identifier within the organization.",
+        "description": "Returns a single event by its unique identifier within the organization.\nResponse includes `visibility` (\"internal\", \"members\", or \"public\") and `image_url`\n(CDN URL of the event image, or null when no image is set).",
         "parameters": [
           {
             "name": "event_id",
@@ -1438,7 +1438,7 @@
           "Events"
         ],
         "summary": "Get an event by Id",
-        "description": "Returns a single event by its unique identifier.",
+        "description": "Returns a single event by its unique identifier.\nResponse includes `visibility` (\"internal\", \"members\", or \"public\") and `image_url`\n(CDN URL of the event image, or null when no image is set).",
         "parameters": [
           {
             "name": "event_id",
@@ -1524,7 +1524,7 @@
           "Events"
         ],
         "summary": "List occurrences of an event within a date range",
-        "description": "Returns both materialized and virtual (computed) occurrences for a given event.",
+        "description": "Returns both materialized and virtual (computed) occurrences for a given event.\nEach occurrence includes an `image_url` (CDN URL of the occurrence image, or null when no image is set).\nFor materialized occurrences the schedule's own image is used when set;\notherwise the parent event's image is returned.\nFor virtual occurrences the parent event's image is always returned.",
         "parameters": [
           {
             "name": "event_id",
@@ -1658,7 +1658,7 @@
           "Organizations - Events"
         ],
         "summary": "List occurrences of an event within a date range for organization",
-        "description": "Returns both materialized and virtual (computed) occurrences for a given event within the organization.",
+        "description": "Returns both materialized and virtual (computed) occurrences for a given event within the organization.\nEach occurrence includes an `image_url` (CDN URL of the occurrence image, or null when no image is set).\nFor materialized occurrences the schedule's own image is used when set;\notherwise the parent event's image is returned.\nFor virtual occurrences the parent event's image is always returned.",
         "parameters": [
           {
             "name": "event_id",
@@ -1773,6 +1773,282 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/{event_id}/statistics": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "Get event attendance statistics across a date range",
+        "description": "Returns a per-occurrence attendance summary plus a period rollup for every materialized occurrence of the event with Day within [from, to]. Pass include=groups to add a per-group breakdown inside each occurrence.",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Range start date (inclusive). Format: yyyy-MM-dd. Maximum range between 'from' and 'to' is 366 days.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Range end date (inclusive). Format: yyyy-MM-dd. Maximum range between 'from' and 'to' is 366 days.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Optional expansions. Pass 'include=groups' to include per-group breakdown inside each occurrence.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseOfEventRangeStatisticsData"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseOfEventRangeStatisticsData"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseOfEventRangeStatisticsData"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{organization_id}/events/{event_id}/statistics": {
+      "get": {
+        "tags": [
+          "Organizations - Events"
+        ],
+        "summary": "Get event attendance statistics across a date range within an organization",
+        "description": "Same as GET /events/{event_id}/statistics, scoped to the given organization.",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Range start date (inclusive). Format: yyyy-MM-dd. Maximum range between 'from' and 'to' is 366 days.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Range end date (inclusive). Format: yyyy-MM-dd. Maximum range between 'from' and 'to' is 366 days.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Optional expansions. Pass 'include=groups' to include per-group breakdown inside each occurrence.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organization_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseOfEventRangeStatisticsData"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseOfEventRangeStatisticsData"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseOfEventRangeStatisticsData"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4115,6 +4391,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Comma-separated list of additional data to include in the response. Use 'groups' to include per-group attendance breakdown.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4213,6 +4497,13 @@
             "name": "occurrence_id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
             "schema": {
               "type": "string"
             }
@@ -4331,6 +4622,27 @@
             "in": "query",
             "schema": {
               "$ref": "#/components/schemas/AttendanceStatusFilter"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "query",
+            "description": "Numeric group ID to filter by group membership. Cannot be combined with ungrouped=true.",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "ungrouped",
+            "in": "query",
+            "description": "If true, returns only ungrouped members. Cannot be combined with group_id.",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -4467,6 +4779,27 @@
             "in": "query",
             "schema": {
               "$ref": "#/components/schemas/AttendanceStatusFilter"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "query",
+            "description": "Numeric group ID to filter by group membership. Cannot be combined with ungrouped=true.",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "ungrouped",
+            "in": "query",
+            "description": "If true, returns only ungrouped members. Cannot be combined with group_id.",
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -5520,22 +5853,22 @@
                           "nick_name": "Em",
                           "native_name": null,
                           "email": "emily.smith@example.com",
-                          "birth_date": "2026-04-04",
+                          "birth_date": "2026-07-17",
                           "mobile": "+1-415-555-0136",
                           "do_not_text": false,
                           "do_not_email": false,
                           "facebook": "https://facebook.com/emily.smith",
                           "gender": "female",
                           "social_status": "single",
-                          "engagement_date": "2026-04-04",
-                          "marriage_date": "2026-04-04",
+                          "engagement_date": "2026-07-17",
+                          "marriage_date": "2026-07-17",
                           "job_title": "Software Engineer",
                           "work_place": "Chmeetings Apps",
                           "qualification": "BSc Computer Science",
                           "education_level": "College",
                           "school": "UC Berkeley",
                           "church": "St. Mary Church",
-                          "baptism_date": "2026-04-04",
+                          "baptism_date": "2026-07-17",
                           "baptism_location": "San Francisco, CA",
                           "grade": null,
                           "graduation_year": 2016,
@@ -5584,7 +5917,7 @@
                             {
                               "field_type": "date",
                               "field_id": 106,
-                              "value": "2026-04-04"
+                              "value": "2026-07-17"
                             },
                             {
                               "field_type": "multiple_choice",
@@ -5628,22 +5961,22 @@
                     "nick_name": "Em",
                     "native_name": null,
                     "email": "emily.smith@example.com",
-                    "birth_date": "2026-04-04",
+                    "birth_date": "2026-07-17",
                     "mobile": "+1-415-555-0136",
                     "do_not_text": false,
                     "do_not_email": false,
                     "facebook": "https://facebook.com/emily.smith",
                     "gender": "female",
                     "social_status": "single",
-                    "engagement_date": "2026-04-04",
-                    "marriage_date": "2026-04-04",
+                    "engagement_date": "2026-07-17",
+                    "marriage_date": "2026-07-17",
                     "job_title": "Software Engineer",
                     "work_place": "Chmeetings Apps",
                     "qualification": "BSc Computer Science",
                     "education_level": "College",
                     "school": "UC Berkeley",
                     "church": "St. Mary Church",
-                    "baptism_date": "2026-04-04",
+                    "baptism_date": "2026-07-17",
                     "baptism_location": "San Francisco, CA",
                     "grade": null,
                     "graduation_year": 2016,
@@ -5692,7 +6025,7 @@
                       {
                         "field_type": "date",
                         "field_id": 106,
-                        "value": "2026-04-04"
+                        "value": "2026-07-17"
                       },
                       {
                         "field_type": "multiple_choice",
@@ -5985,22 +6318,22 @@
                       "nick_name": "Em",
                       "native_name": null,
                       "email": "emily.smith@example.com",
-                      "birth_date": "2026-04-04",
+                      "birth_date": "2026-07-17",
                       "mobile": "+1-415-555-0136",
                       "do_not_text": false,
                       "do_not_email": false,
                       "facebook": "https://facebook.com/emily.smith",
                       "gender": "female",
                       "social_status": "single",
-                      "engagement_date": "2026-04-04",
-                      "marriage_date": "2026-04-04",
+                      "engagement_date": "2026-07-17",
+                      "marriage_date": "2026-07-17",
                       "job_title": "Software Engineer",
                       "work_place": "Chmeetings Apps",
                       "qualification": "BSc Computer Science",
                       "education_level": "College",
                       "school": "UC Berkeley",
                       "church": "St. Mary Church",
-                      "baptism_date": "2026-04-04",
+                      "baptism_date": "2026-07-17",
                       "baptism_location": "San Francisco, CA",
                       "grade": null,
                       "graduation_year": 2016,
@@ -6049,7 +6382,7 @@
                         {
                           "field_type": "date",
                           "field_id": 106,
-                          "value": "2026-04-04"
+                          "value": "2026-07-17"
                         },
                         {
                           "field_type": "multiple_choice",
@@ -6075,7 +6408,7 @@
           "People"
         ],
         "summary": "Update person by Id",
-        "description": "Update person by Id",
+        "description": "Fully updates a person by Id. This is a full replacement — omitted fields will be cleared.",
         "parameters": [
           {
             "name": "id",
@@ -6106,22 +6439,22 @@
                     "nick_name": "Em",
                     "native_name": null,
                     "email": "emily.smith@example.com",
-                    "birth_date": "2026-04-04",
+                    "birth_date": "2026-07-17",
                     "mobile": "+1-415-555-0136",
                     "do_not_text": false,
                     "do_not_email": false,
                     "facebook": "https://facebook.com/emily.smith",
                     "gender": "female",
                     "social_status": "single",
-                    "engagement_date": "2026-04-04",
-                    "marriage_date": "2026-04-04",
+                    "engagement_date": "2026-07-17",
+                    "marriage_date": "2026-07-17",
                     "job_title": "Software Engineer",
                     "work_place": "Chmeetings Apps",
                     "qualification": "BSc Computer Science",
                     "education_level": "College",
                     "school": "UC Berkeley",
                     "church": "St. Mary Church",
-                    "baptism_date": "2026-04-04",
+                    "baptism_date": "2026-07-17",
                     "baptism_location": "San Francisco, CA",
                     "grade": null,
                     "graduation_year": 2016,
@@ -6170,7 +6503,7 @@
                       {
                         "field_type": "date",
                         "field_id": 106,
-                        "value": "2026-04-04"
+                        "value": "2026-07-17"
                       },
                       {
                         "field_type": "multiple_choice",
@@ -6265,6 +6598,111 @@
         "responses": {
           "204": {
             "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoContentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/people/{person_id}/photo": {
+      "post": {
+        "tags": [
+          "People"
+        ],
+        "summary": "Set a person's profile photo",
+        "description": "Uploads a profile photo for the person as multipart/form-data (form field 'file'). Accepted types: jpg, jpeg, png, gif, webp; max size 2 MB. The photo is stored immediately and the response returns the updated person, including the new 'photo' URL. A 'person.updated' webhook is fired.",
+        "parameters": [
+          {
+            "name": "person_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "required": [
+                  "file"
+                ],
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseOfPersonResponseDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseOfPersonResponseDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseOfPersonResponseDto"
+                }
+              }
+            }
           },
           "400": {
             "description": "Bad Request",
@@ -7055,7 +7493,7 @@
           "Posts"
         ],
         "summary": "Get all posts",
-        "description": "Get all posts with paging and filtering options.\nAvailable filters: status (draft/published), start_date, end_date.\nSupports pagination via page and page_size.",
+        "description": "Get all posts with paging and filtering options.\nAvailable filters: status (draft/published), start_date, end_date.\nSupports pagination via page and page_size.\nEach post includes an `image_url` (CDN URL of the post image, or null when no image is set).",
         "parameters": [
           {
             "name": "status",
@@ -7139,7 +7577,7 @@
           "Posts"
         ],
         "summary": "Create a new post",
-        "description": "Create a new post.\nStatus and visibility are required.\nSet notify_members to true to send push notifications to members — only takes effect when status is set to published.",
+        "description": "Create a new post.\nStatus and visibility are required.\nValid `visibility` values: \"internal\", \"members\", \"public\".\nNote: the legacy value \"users\" was renamed to \"internal\" — update any integrations sending \"users\".\nSet notify_members to true to send push notifications to members — only takes effect when status is set to published.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -7210,7 +7648,7 @@
           "Organizations - Posts"
         ],
         "summary": "Get all organization posts",
-        "description": "Get all organization posts with paging and filtering options.\nAvailable filters: status (draft/published), start_date, end_date.\nSupports pagination via page and page_size.",
+        "description": "Get all organization posts with paging and filtering options.\nAvailable filters: status (draft/published), start_date, end_date.\nSupports pagination via page and page_size.\nEach post includes an `image_url` (CDN URL of the post image, or null when no image is set).",
         "parameters": [
           {
             "name": "status",
@@ -7302,7 +7740,7 @@
           "Organizations - Posts"
         ],
         "summary": "Create a new organization post",
-        "description": "Create a new organization post.\nStatus and visibility are required.\nSet notify_members to true to send push notifications to members — only takes effect when status is set to published.",
+        "description": "Create a new organization post.\nStatus and visibility are required.\nValid `visibility` values: \"internal\", \"members\", \"public\".\nNote: the legacy value \"users\" was renamed to \"internal\" — update any integrations sending \"users\".\nSet notify_members to true to send push notifications to members — only takes effect when status is set to published.",
         "parameters": [
           {
             "name": "organization_id",
@@ -7383,7 +7821,7 @@
           "Posts"
         ],
         "summary": "Get post by Id",
-        "description": "Get a single post by its Id",
+        "description": "Get a single post by its Id.\nResponse includes an `image_url` (CDN URL of the post image, or null when no image is set).",
         "operationId": "GetPostById",
         "parameters": [
           {
@@ -7448,7 +7886,7 @@
           "Posts"
         ],
         "summary": "Update post by Id",
-        "description": "Update an existing post. \nSet notify_members to true to send push notifications to members — only takes effect when status is set to published.",
+        "description": "Update an existing post.\nValid `visibility` values: \"internal\", \"members\", \"public\".\nNote: the legacy value \"users\" was renamed to \"internal\" — update any integrations sending \"users\".\nSet notify_members to true to send push notifications to members — only takes effect when status is set to published.",
         "parameters": [
           {
             "name": "id",
@@ -7621,7 +8059,7 @@
           "Organizations - Posts"
         ],
         "summary": "Get organization post by Id",
-        "description": "Get a single organization post by its Id",
+        "description": "Get a single organization post by its Id.\nResponse includes an `image_url` (CDN URL of the post image, or null when no image is set).",
         "operationId": "GetOrganizationPostById",
         "parameters": [
           {
@@ -7694,7 +8132,7 @@
           "Organizations - Posts"
         ],
         "summary": "Update organization post by Id",
-        "description": "Update an existing organization post. \nSet notify_members to true to send push notifications to members — only takes effect when status is set to published.",
+        "description": "Update an existing organization post.\nValid `visibility` values: \"internal\", \"members\", \"public\".\nNote: the legacy value \"users\" was renamed to \"internal\" — update any integrations sending \"users\".\nSet notify_members to true to send push notifications to members — only takes effect when status is set to published.",
         "parameters": [
           {
             "name": "post_id",
@@ -8105,6 +8543,16 @@
           },
           "statistics": {
             "$ref": "#/components/schemas/AttendanceStats"
+          },
+          "groups": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/OccurrenceGroupStats"
+            },
+            "description": "Per-group attendance breakdown. Not present when ?include=groups is not passed. People in multiple groups are counted once per group. Group totals may exceed overall totals."
           }
         }
       },
@@ -8655,6 +9103,7 @@
           },
           "birth_date": {
             "type": "string",
+            "description": "ISO 8601 date (yyyy-MM-dd). Use '1776' if the year is unknown (e.g. '1776-11-10'); otherwise send a full date or null.",
             "format": "date"
           },
           "mobile": {
@@ -8699,6 +9148,7 @@
           },
           "marriage_date": {
             "type": "string",
+            "description": "ISO 8601 date (yyyy-MM-dd). Use '1776' if the year is unknown (e.g. '1776-11-10'); otherwise send a full date or null.",
             "format": "date"
           },
           "job_title": {
@@ -9599,8 +10049,26 @@
           },
           "location": {
             "$ref": "#/components/schemas/EventLocation"
+          },
+          "visibility": {
+            "description": "Who can see this event:\n- \"internal\": visible only to users with permission to access events in this ministry.\n- \"members\": visible in the Member Portal to logged-in members.\n- \"public\":  visible to anyone, no login required.",
+            "$ref": "#/components/schemas/EventApiVisibility"
+          },
+          "image_url": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "CDN URL of the event image, or null if no image was uploaded.\nAppend CDN resize parameters (e.g. ?width=900&quality=80) on the client as needed."
           }
         }
+      },
+      "EventApiVisibility": {
+        "enum": [
+          "internal",
+          "public",
+          "members"
+        ]
       },
       "EventDayOfWeek": {
         "enum": [
@@ -9654,6 +10122,138 @@
               "string"
             ],
             "format": "double"
+          }
+        }
+      },
+      "EventRangeOccurrenceStats": {
+        "type": "object",
+        "properties": {
+          "occurrence_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "start": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "end": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "statistics": {
+            "$ref": "#/components/schemas/AttendanceStats"
+          },
+          "groups": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/OccurrenceGroupStats"
+            },
+            "description": "Per-group attendance breakdown for this occurrence. Not present when ?include=groups is not passed. People in multiple groups are counted once per group. Group totals may exceed overall totals."
+          }
+        }
+      },
+      "EventRangeStatisticsData": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "event_title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "from": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "to": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "summary": {
+            "$ref": "#/components/schemas/EventRangeSummaryStats"
+          },
+          "occurrences": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/EventRangeOccurrenceStats"
+            }
+          }
+        }
+      },
+      "EventRangeSummaryStats": {
+        "type": "object",
+        "properties": {
+          "occurrences_count": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "expected": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "attended": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "absent": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "guests_attended": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "total_attended": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -9944,6 +10544,35 @@
               "string"
             ],
             "format": "int64"
+          }
+        }
+      },
+      "GroupAttendanceStats": {
+        "type": "object",
+        "properties": {
+          "expected": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "attended": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "absent": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -10354,6 +10983,33 @@
           "materialized": {
             "type": "boolean",
             "description": "True when a real record exists.\nFalse when computed on-the-fly from the recurrence rule."
+          },
+          "image_url": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "CDN URL of the occurrence image, or null if no image is available.\nFor materialized occurrences, the schedule's own image is used when set;\notherwise the parent event's image is returned.\nFor virtual occurrences, the parent event's image is always returned.\nAppend CDN resize parameters (e.g. ?width=900&quality=80) on the client as needed."
+          }
+        }
+      },
+      "OccurrenceGroupStats": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "group_name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "statistics": {
+            "$ref": "#/components/schemas/GroupAttendanceStats"
           }
         }
       },
@@ -11520,7 +12176,8 @@
             "type": [
               "null",
               "string"
-            ]
+            ],
+            "description": "ISO 8601 date (yyyy-MM-dd). When the year is unknown, the year component is 1776 (e.g. '1776-11-10' means November 10, year not recorded)."
           },
           "mobile": {
             "type": [
@@ -11564,7 +12221,8 @@
             "type": [
               "null",
               "string"
-            ]
+            ],
+            "description": "ISO 8601 date (yyyy-MM-dd). When the year is unknown, the year component is 1776 (e.g. '1776-11-10' means November 10, year not recorded)."
           },
           "engagement_date": {
             "type": [
@@ -11826,6 +12484,13 @@
               ],
               "format": "int64"
             }
+          },
+          "image_url": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "CDN URL of the post image, or null if no image was uploaded.\nAppend CDN resize parameters (e.g. ?width=900&quality=80) on the client as needed."
           }
         }
       },
@@ -11837,7 +12502,7 @@
       },
       "PostApiVisibility": {
         "enum": [
-          "users",
+          "internal",
           "members",
           "public"
         ]
@@ -11984,6 +12649,31 @@
           },
           "data": {
             "$ref": "#/components/schemas/EventApiDetails"
+          }
+        }
+      },
+      "ResponseOfEventRangeStatisticsData": {
+        "type": "object",
+        "properties": {
+          "status_code": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "errors": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "data": {
+            "$ref": "#/components/schemas/EventRangeStatisticsData"
           }
         }
       },
@@ -12589,6 +13279,7 @@
           },
           "birth_date": {
             "type": "string",
+            "description": "ISO 8601 date (yyyy-MM-dd). Use '1776' if the year is unknown (e.g. '1776-11-10'); otherwise send a full date or null.",
             "format": "date"
           },
           "mobile": {
@@ -12633,6 +13324,7 @@
           },
           "marriage_date": {
             "type": "string",
+            "description": "ISO 8601 date (yyyy-MM-dd). Use '1776' if the year is unknown (e.g. '1776-11-10'); otherwise send a full date or null.",
             "format": "date"
           },
           "job_title": {
