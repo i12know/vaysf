@@ -1368,11 +1368,6 @@ def write_bible_challenge_scoresheets_pdf(
         )
     except VerseSetError as exc:
         raise ScoreSheetError(str(exc)) from exc
-    if len(games) > len(bible_verses):
-        raise ScoreSheetError(
-            f"Bible Challenge schedule has {len(games)} game(s), but verse set "
-            f"{DEFAULT_BIBLE_CHALLENGE_VERSE_SET_KEY!r} only has {len(bible_verses)} verse row(s)."
-        )
     photo_cache = PhotoCache()
     pages = [
         render_bible_challenge_scoresheet_page(
@@ -1381,7 +1376,7 @@ def write_bible_challenge_scoresheets_pdf(
             logo_path=logo_path,
             score_entry_base_url=score_entry_base_url,
             photo_cache=photo_cache,
-            bible_verse=bible_verses[idx],
+            bible_verse=bible_verses[idx % len(bible_verses)],
         )
         for idx, game in enumerate(games)
     ]
