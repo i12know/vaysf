@@ -10,8 +10,8 @@ Pipeline per participant:
      generator draws an initials placeholder.
   3. Render the PNG locally via BadgeGenerator.
   4. Optionally upload the PNG to WordPress uploads for public hosting.
-  5. Optionally write the hosted badge URL back to a dedicated ChMeetings
-     one-line text custom field.
+  5. Optionally write the hosted badge URL plus ChMeetings inline IMG tag
+     back to a dedicated ChMeetings one-line text custom field.
 """
 
 from __future__ import annotations
@@ -194,13 +194,14 @@ class BadgeRunner:
         )
 
     def _write_badge_url_to_chmeetings(self, participant: Dict[str, Any], badge_url: str) -> None:
-        """Write the hosted badge URL to the person's ChMeetings profile."""
+        """Write the hosted badge URL preview value to the person's ChMeetings profile."""
         chm_id = str(participant.get("chmeetings_id") or "").strip()
         badge_url = str(badge_url or "").strip()
         if not chm_id:
             raise ValueError("Cannot write badge URL without chmeetings_id.")
         if not badge_url.startswith(("http://", "https://")):
             raise ValueError("Badge URL write-back requires an http(s) URL.")
+        badge_profile_value = self._badge_url_profile_value(badge_url)
 
         person = self.chm.get_person(chm_id)
         if not person:
@@ -211,7 +212,7 @@ class BadgeRunner:
             person.get("additional_fields") or [],
             field_id=field_id,
             field_type=field_type,
-            badge_url=badge_url,
+            badge_url=badge_profile_value,
         )
         first_name = str(person.get("first_name") or participant.get("first_name") or "").strip()
         last_name = str(person.get("last_name") or participant.get("last_name") or "").strip()
@@ -228,6 +229,12 @@ class BadgeRunner:
         if not ok:
             raise ValueError(f"ChMeetings badge URL update failed for person {chm_id}.")
         logger.info(f"Badge URL written to ChMeetings chm_id={chm_id}")
+
+    @staticmethod
+    def _badge_url_profile_value(badge_url: str) -> str:
+        """Return the ChMeetings text field value that renders a badge preview."""
+        badge_url = str(badge_url or "").strip()
+        return f"{badge_url}<IMG SRC={badge_url}>"
 
     @staticmethod
     def _merged_badge_url_fields(
