@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Completed the schedule_workbook.py decomposition (#152, Steps 5-8)
+
+- Extracted the four remaining method groups from `ScheduleWorkbookBuilder`
+  into the `middleware/scheduling/` package, one step per commit:
+  `pool_assignment.py` (sidecar state, seeding/serpentine draw, tab
+  refresh), `game_builder.py` (BC/Soccer/gym/pod game objects, bracket
+  math, pool-geometry policy, gym resource expansion),
+  `conflict_edges.py` (shared-athlete edge construction), and
+  `input_builder.py` (`schedule_input.json` assembly and venue playoff
+  slot resolution).
+- `schedule_workbook.py` shrinks from 5,051 to 1,971 lines and keeps the
+  established facade pattern: staticmethod aliases and thin wrappers
+  preserve every method name for `church_teams_export.py`'s `__dict__`
+  delegation and for tests.
+- Verified no behavior change: all 875 tests pass unchanged, and a
+  fixed-fixture guard-rail run (per the issue's suggestion) produced a
+  byte-identical normalized `schedule_input.json` and a cell-identical
+  planning workbook on `main` vs the refactor, differing only in the
+  `generated_at` wall-clock stamp.
+
 ### Bible Challenge score-sheet rosters
 
 - Replaced the blank "Question / Appeal Notes" grid on generated Bible

@@ -306,7 +306,7 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 |------|------|-------|
 | `main.py` | CLI entry — all commands | — |
 | `church_teams_export.py` | Live ChMeetings + WP export; writes `schedule_input.json`; delegates scheduling tab rendering to `schedule_workbook.py` | Layer 1 + bridge |
-| `schedule_workbook.py` | `ScheduleWorkbookBuilder` — all scheduling tabs, both workbooks, schedule output renderer | Layer 1 + bridge + Layer 2 output |
+| `schedule_workbook.py` | `ScheduleWorkbookBuilder` — facade for all scheduling tabs, both workbooks, and the schedule output renderer; implementations live in the `scheduling/` package (`xlsx_utils`, `venue_loader`, `output_report`, `planning_tabs`, `pool_assignment`, `game_builder`, `conflict_edges`, `input_builder`, plus the manual-import modules) | Layer 1 + bridge + Layer 2 output |
 | `scheduler.py` | CP-SAT solver (Stage B) | Layer 2 |
 | `config.py` | All configuration constants; `SCHEDULE_SKETCH_*` and `SCHEDULE_SOLVER_GYM_COURTS` are Layer-1 stand-ins | — |
 | `gym_allocator.py` | Stage A greedy mode allocator | Layer 2 (Issue #102, done) |
@@ -1420,7 +1420,9 @@ The general workflow when a new scheduling rule is needed:
 
 1. Decide whether the rule is a **data constraint** (representable in
    `schedule_input.json`) or a **solver constraint** (pure CP-SAT logic).
-2. If data: update `_build_schedule_input()` in `schedule_workbook.py`
+2. If data: update `_build_schedule_input()` in
+   `scheduling/input_builder.py` (reached through the
+   `ScheduleWorkbookBuilder` facade in `schedule_workbook.py`)
    to emit the new field, and update the schema notes above.
 3. Add the CP-SAT constraint in the solver module (Issue #93).
 4. Write or update a test that exercises the new constraint.
