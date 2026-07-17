@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### WordPress plugin test build 1.0.40
+
+- Bumped plugin header/version to `1.0.40` and rebuilt `plugins/vaysf.zip`
+  for server testing after the REST API and admin PHP refactors.
+- Database version remains `1.0.7`; the refactors do not require a schema
+  migration.
+
 ### Split admin monolith into page-owned modules (#284)
 
 - Refactored `plugins/vaysf/admin/admin.php` (~2,575 lines) into nine
