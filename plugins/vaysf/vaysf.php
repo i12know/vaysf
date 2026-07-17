@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.40
+ * Version: 1.0.41
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,12 +18,12 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.40';
+    const VERSION = '1.0.41';
 
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.7';  // Issue #264 — published schedule church-code filtering
+    const DB_VERSION = '1.0.8';  // Issue #183 - participant consent_status for consent_ratio
     
     /**
      * Database version option name
@@ -93,7 +93,7 @@ class VAYSF_Integration {
 		// Include short codes:
 		//	- Overall Statistics [vaysf_stats]
 		//	- Customized Statistics [vaysf_stats display="participants" layout="list"]; display=all/churches/participants/approvals/issues; layout=grid/list
-		//	- Churches List [vaysf_churches limit="5" orderby="church_name" order="ASC"]
+		//	- Churches List [vaysf_churches limit="5" orderby="church_name" order="ASC" stats="participants,approval_ratio,consent_ratio"]
 		//	- Participants List [vaysf_participants limit="10" church="RPC" status="approved" sport="Basketball"]
 		//	- Live Schedule [vaysf_live_schedule event="Basketball" day="2026-07-18" church="RPC" refresh="25"]
 		//	- Confirmed Advancement [vaysf_advancement event="Basketball" refresh="60"]
@@ -502,6 +502,7 @@ class VAYSF_Integration {
 			birthdate DATE DEFAULT NULL,
 			is_church_member TINYINT(1) DEFAULT 0,
 			membership_claim_at_approval TINYINT(1) NULL DEFAULT NULL,
+			consent_status TINYINT(1) NULL DEFAULT NULL,
 			primary_sport VARCHAR(50) DEFAULT NULL,
 			primary_format VARCHAR(50) DEFAULT NULL,
 			primary_partner VARCHAR(255) DEFAULT NULL,
@@ -760,6 +761,19 @@ class VAYSF_Integration {
                 "ADD COLUMN membership_claim_at_approval TINYINT(1) NULL DEFAULT NULL AFTER is_church_member"
             );
             error_log('Added membership_claim_at_approval column to sf_participants table');
+        }
+
+        // Participant consent state synced from the ChMeetings Completion Check
+        // List (Issue #183). NULL = not yet synced, 1 = consent form on file,
+        // 0 = synced and not on file. dbDelta covers fresh installs; ALTER
+        // covers upgrades.
+        $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_participants} LIKE 'consent_status'");
+        if (empty($check_column)) {
+            $wpdb->query(
+                "ALTER TABLE {$table_participants} " .
+                "ADD COLUMN consent_status TINYINT(1) NULL DEFAULT NULL AFTER membership_claim_at_approval"
+            );
+            error_log('Added consent_status column to sf_participants table');
         }
 
         // Insurance upload columns on sf_churches (Issue #154).

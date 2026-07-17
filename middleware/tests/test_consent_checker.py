@@ -487,3 +487,62 @@ def test_check_consent_update_failure_is_reported(consent_checker, mocker):
 
     audit = _read_audit(captured)
     assert audit.loc[0, "Action Taken"] == "api_error"
+
+
+def _self_signed_matching_row():
+    return {
+        "First Name": "Jerry",
+        "Last Name": "Phan",
+        "Athlete Mobile Phone": "5625550101",
+        "Athlete Email": "jerry@example.com",
+        "Athlete Birthdate": "2008-04-15",
+        "Select one:": "I am 18 or older and am signing this Agreement on my own behalf.",
+        "Full Name of the parents or legal guardian": "",
+        "Email of the parents or legal guardian": "",
+        "Cell phone of the parents or legal guardian": "",
+        "Submission Date": "2026-05-08 10:00:00",
+    }
+
+
+def test_check_consent_mirrors_consent_status_to_wordpress(consent_checker, mocker):
+    """A successful ChMeetings check also updates the WP row (Issue #183)."""
+    checker, chm, wp, _ = consent_checker
+    _mock_consent_export(mocker, [_self_signed_matching_row()])
+    wp.get_participants.side_effect = [[_make_wp_participant()], []]
+    chm.get_person.return_value = _make_chm_person()
+
+    summary = checker.run("consent.xlsx")
+
+    assert summary["checked"] == 1
+    wp.update_participant.assert_called_once_with(1, {"consent_status": True})
+
+
+def test_check_consent_wordpress_mirror_failure_does_not_fail_run(
+    consent_checker, mocker
+):
+    """A failed WP mirror is a warning only; the next sync repairs it."""
+    checker, chm, wp, captured = consent_checker
+    _mock_consent_export(mocker, [_self_signed_matching_row()])
+    wp.get_participants.side_effect = [[_make_wp_participant()], []]
+    chm.get_person.return_value = _make_chm_person()
+    wp.update_participant.return_value = None
+
+    summary = checker.run("consent.xlsx")
+
+    assert summary["checked"] == 1
+    assert summary["api_error"] == 0
+    audit = _read_audit(captured)
+    assert audit.loc[0, "Action Taken"] == "checked"
+
+
+def test_check_consent_dry_run_does_not_touch_wordpress(consent_checker, mocker):
+    """Dry run must not mirror consent_status to WordPress."""
+    checker, chm, wp, _ = consent_checker
+    _mock_consent_export(mocker, [_self_signed_matching_row()])
+    wp.get_participants.side_effect = [[_make_wp_participant()], []]
+    chm.get_person.return_value = _make_chm_person()
+
+    summary = checker.run("consent.xlsx", dry_run=True)
+
+    assert summary["dry_run"] == 1
+    wp.update_participant.assert_not_called()

@@ -294,6 +294,10 @@ public function create_participant($request) {
         $data['membership_claim_at_approval'] = (int)$params['membership_claim_at_approval'];
     }
 
+    if (isset($params['consent_status'])) {
+        $data['consent_status'] = (int)(bool)$params['consent_status'];
+    }
+
     // Insert participant
     $result = $wpdb->insert($table_participants, $data);
     
@@ -446,6 +450,13 @@ public function update_participant($request) {
             ? null
             : (int)$params['membership_claim_at_approval'];
         $format[] = is_null($data['membership_claim_at_approval']) ? '%s' : '%d';
+    }
+
+    if (array_key_exists('consent_status', $params)) {
+        $data['consent_status'] = is_null($params['consent_status'])
+            ? null
+            : (int)(bool)$params['consent_status'];
+        $format[] = is_null($data['consent_status']) ? '%s' : '%d';
     }
 
     if (isset($params['primary_sport'])) {

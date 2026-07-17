@@ -93,6 +93,8 @@ class VAYSF_Statistics {
             $allowed_orderby['total_participants'] = 'total_participants';
             $allowed_orderby['approved_participants'] = 'approved_participants';
             $allowed_orderby['approval_percentage'] = 'approval_percentage';
+            $allowed_orderby['consented_participants'] = 'consented_participants';
+            $allowed_orderby['consent_percentage'] = 'consent_percentage';
         }
 
         $orderby = isset($allowed_orderby[$args['orderby']]) ? $allowed_orderby[$args['orderby']] : $allowed_orderby['church_name'];
@@ -109,7 +111,13 @@ class VAYSF_Statistics {
                     WHEN COALESCE(ps.total_participants, 0) > 0
                     THEN ROUND((COALESCE(ps.approved_participants, 0) / ps.total_participants) * 100, 1)
                     ELSE 0
-                END AS approval_percentage";
+                END AS approval_percentage,
+                COALESCE(ps.consented_participants, 0) AS consented_participants,
+                CASE
+                    WHEN COALESCE(ps.total_participants, 0) > 0
+                    THEN ROUND((COALESCE(ps.consented_participants, 0) / ps.total_participants) * 100, 1)
+                    ELSE 0
+                END AS consent_percentage";
         }
 
         $query .= " FROM $table_churches c";
@@ -119,7 +127,8 @@ class VAYSF_Statistics {
                 SELECT
                     church_code,
                     COUNT(*) AS total_participants,
-                    SUM(CASE WHEN approval_status = 'approved' THEN 1 ELSE 0 END) AS approved_participants
+                    SUM(CASE WHEN approval_status = 'approved' THEN 1 ELSE 0 END) AS approved_participants,
+                    SUM(CASE WHEN consent_status = 1 THEN 1 ELSE 0 END) AS consented_participants
                 FROM $table_participants
                 GROUP BY church_code
             ) ps ON ps.church_code = c.church_code";
