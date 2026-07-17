@@ -43,6 +43,7 @@ QR_BOX = (PAGE_W - MARGIN - QR_SIZE, 52)
 MAX_ROSTER_ROWS = 15
 MAX_SOCCER_ROSTER_ROWS_PER_TEAM = 12
 MAX_BIBLE_CHALLENGE_ROSTER_ROWS_PER_TEAM = 10
+BIBLE_CHALLENGE_SCORE_GRID_Y = 584
 MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN = 9
 MAX_VOLLEYBALL_ROSTER_ROWS = MAX_VOLLEYBALL_ROSTER_ROWS_PER_COLUMN * 2
 
@@ -616,6 +617,7 @@ def _draw_bible_challenge_official_section(
     draw: ImageDraw.ImageDraw,
     y: int = 384,
     verse: Optional[BibleVerse] = None,
+    score_grid_y: int = BIBLE_CHALLENGE_SCORE_GRID_Y,
 ) -> None:
     label_font = _font("bold", 18)
     text_font = _font("regular", 18)
@@ -639,14 +641,16 @@ def _draw_bible_challenge_official_section(
     if verse is not None:
         verse_text = f"{verse.verse_text} ({verse.reference})"
 
-    max_width = PAGE_W - MARGIN - 296
-    for size in (12, 11, 10, 9):
+    verse_x = 270
+    max_width = PAGE_W - MARGIN - verse_x
+    max_height = max(42, score_grid_y - verse_y - 14)
+    for size in (13, 12, 11, 10):
         font = _font("italic", size)
         lines = _wrapped_lines(draw, verse_text, font, max_width)
-        line_h = _text_size(draw, "Ag", font)[1] + 1
-        if len(lines) * line_h <= 42:
+        line_h = _text_size(draw, "Ag", font)[1] + 2
+        if len(lines) * line_h <= max_height:
             break
-    _draw_wrapped(draw, verse_text, (296, verse_y), font, max_width, COL_BLACK, line_gap=1)
+    _draw_wrapped(draw, verse_text, (verse_x, verse_y), font, max_width, COL_BLACK, line_gap=2)
 
 
 def _draw_bible_challenge_score_grid(draw: ImageDraw.ImageDraw, game: dict[str, Any], y: int = 520) -> int:
@@ -1131,7 +1135,7 @@ def render_bible_challenge_scoresheet_page(
     _draw_multi_team_header(draw, game, "BIBLE CHALLENGE SCORESHEET", ("a", "b", "c"), line_break_teams=True)
     _draw_three_team_score_boxes(draw, game)
     _draw_bible_challenge_official_section(draw, y=386, verse=bible_verse)
-    next_y = _draw_bible_challenge_score_grid(draw, game, y=548)
+    next_y = _draw_bible_challenge_score_grid(draw, game, y=BIBLE_CHALLENGE_SCORE_GRID_Y)
 
     roster_y = next_y + 24
     gap = 24

@@ -613,7 +613,7 @@ def test_render_bible_challenge_scoresheet_prints_roster_photo(tmp_path):
     )
 
     # First roster photo sits inside team A's roster column, below the score tracker.
-    assert page.getpixel((124, 842)) == (40, 200, 90)
+    assert page.getpixel((124, 870)) == (40, 200, 90)
 
 
 def test_render_bible_challenge_scoresheet_strikes_unapproved_roster_row():
@@ -646,7 +646,7 @@ def test_render_bible_challenge_scoresheet_strikes_unapproved_roster_row():
         score_entry_base_url=SCORE_ENTRY_URL,
     )
 
-    assert page.getpixel((200, 843)) == (170, 31, 45)
+    assert page.getpixel((200, 879)) == (170, 31, 45)
 
 
 def test_render_bible_challenge_scoresheet_does_not_strike_wp_approved_roster_row():
@@ -679,7 +679,7 @@ def test_render_bible_challenge_scoresheet_does_not_strike_wp_approved_roster_ro
         score_entry_base_url=SCORE_ENTRY_URL,
     )
 
-    assert page.getpixel((200, 843)) != (170, 31, 45)
+    assert page.getpixel((200, 879)) != (170, 31, 45)
 
 
 def test_basketball_roster_table_capacity_is_15():
