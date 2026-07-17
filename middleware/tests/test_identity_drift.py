@@ -219,7 +219,7 @@ class TestResetApprovalForDrift:
             "token_expiry": ANY,
             "pastor_email": "pastor@wag.org",
             "approval_status": APPROVAL_STATUS["PENDING"],
-            "approval_notes": "Approval reset by middleware after identity drift. Drifted fields: First name.",
+            "approval_notes": "Approval reset by middleware after approval data drift. Drifted fields: First name.",
             "synced_to_chmeetings": False,
         }
         assert approval_payload["approval_token"]
@@ -404,6 +404,55 @@ class TestSyncSingleParticipantDrift:
         assert len(drift_issues) == 1
         assert drift_issues[0]["severity"] == VALIDATION_SEVERITY["ERROR"]
 
+    def test_sport_drift_creates_registration_validation_issue(self, syncer):
+        """Sport/event drift should not be reported as identity drift."""
+        wp = _wp_participant()
+        chm = _make_chm_person({
+            "first_name": "Matthew",
+            "last_name": "Tran",
+            "birth_date": "2008-04-23",
+            "additional_fields": [
+                {"field_name": "Church Team", "value": "WAG"},
+                {"field_name": "My role is", "value": "Athlete/Participant"},
+                {"field_name": "Primary Sport", "value": "Volleyball - Men Team"},
+                {"field_name": "Secondary Sport", "value": ""},
+                {"field_name": "Other Events", "value": ""},
+                {"field_name": "Primary Racquet Sport Format", "value": ""},
+                {"field_name": "Primary Racquet Sport Partner (if applied)", "value": ""},
+                {"field_name": "Secondary Racquet Sport Format", "value": ""},
+                {"field_name": "Secondary Racquet Sport Partner (if applied)", "value": ""},
+                {"field_name": "Completion Check List", "value": ""},
+                {"field_name": "Name of my parents or legal guardian", "value": ""},
+                {"field_name": "Email of my parents or legal guardian", "value": ""},
+                {"field_name": "Cell phone of my parents or legal guardian", "value": ""},
+                {"field_name": "Would the team's Senior Pastor say that you belong to his church?", "value": "No"},
+            ],
+        })
+        approval = {
+            "approval_id": 182,
+            "church_id": 16,
+            "pastor_email": "pastor@wag.org",
+            "approval_status": "approved",
+        }
+        _setup_syncer_for_integration(syncer, wp, chm, existing_approval=approval)
+        syncer.wordpress_connector.create_approval.return_value = {"approval_id": 182}
+
+        syncer._sync_single_participant("4371570")
+
+        created_issues = [
+            c[0][0] for c in syncer.wordpress_connector.create_validation_issue.call_args_list
+        ]
+        identity_issues = [
+            i for i in created_issues if i.get("issue_type") == "approval_identity_drift"
+        ]
+        registration_issues = [
+            i for i in created_issues if i.get("issue_type") == "approval_registration_drift"
+        ]
+        assert identity_issues == []
+        assert len(registration_issues) == 1
+        assert registration_issues[0]["rule_code"] == "APPROVAL_REGISTRATION_DRIFT"
+        assert registration_issues[0]["severity"] == VALIDATION_SEVERITY["ERROR"]
+
     def test_birthdate_correction_same_age_preserves_approval(self, syncer):
         """Birthdate corrected but age unchanged → approval preserved, warning issued."""
         wp = _wp_participant()
@@ -529,7 +578,10 @@ class TestSyncSingleParticipantDrift:
         created_issues = [
             c[0][0] for c in syncer.wordpress_connector.create_validation_issue.call_args_list
         ]
-        assert not any(i.get("issue_type") == "approval_identity_drift" for i in created_issues)
+        assert not any(
+            i.get("issue_type") in ("approval_identity_drift", "approval_registration_drift")
+            for i in created_issues
+        )
 
         call_args = syncer.wordpress_connector.update_participant.call_args
         payload = call_args[0][1]
@@ -567,7 +619,10 @@ class TestSyncSingleParticipantDrift:
         created_issues = [
             c[0][0] for c in syncer.wordpress_connector.create_validation_issue.call_args_list
         ]
-        assert not any(i.get("issue_type") == "approval_identity_drift" for i in created_issues)
+        assert not any(
+            i.get("issue_type") in ("approval_identity_drift", "approval_registration_drift")
+            for i in created_issues
+        )
         assert any(i.get("issue_type") == "late_racquet_registration" for i in created_issues)
 
         payload = syncer.wordpress_connector.update_participant.call_args[0][1]
@@ -600,7 +655,10 @@ class TestSyncSingleParticipantDrift:
         created_issues = [
             c[0][0] for c in syncer.wordpress_connector.create_validation_issue.call_args_list
         ]
-        assert not any(i.get("issue_type") == "approval_identity_drift" for i in created_issues)
+        assert not any(
+            i.get("issue_type") in ("approval_identity_drift", "approval_registration_drift")
+            for i in created_issues
+        )
 
         payload = syncer.wordpress_connector.update_participant.call_args[0][1]
         assert payload["approval_status"] == APPROVAL_STATUS["APPROVED"]

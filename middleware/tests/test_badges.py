@@ -493,8 +493,20 @@ def test_runner_writes_uploaded_badge_url_to_chmeetings(generator):
     assert {field["field_id"] for field in additional_fields} == {1281851, 98765}
     badge_field = next(field for field in additional_fields if field["field_id"] == 98765)
     assert badge_field["field_type"] == "text"
-    assert badge_field["value"] == uploader.upload_badge.return_value.url
+    assert badge_field["value"] == (
+        "https://sportsfest.example/wp-content/uploads/vaysf/badges/RPC_3139537_abcd1234.png"
+        "<IMG SRC=https://sportsfest.example/wp-content/uploads/vaysf/badges/RPC_3139537_abcd1234.png>"
+    )
     assert kwargs["extra_person_data"] == chm.get_person.return_value
+
+
+def test_badge_url_profile_value_appends_chmeetings_img_tag():
+    url = "https://sportsfest.example/wp-content/uploads/vaysf/badges/RPC_3139537_abcd1234.png"
+
+    assert BadgeRunner._badge_url_profile_value(url) == (
+        "https://sportsfest.example/wp-content/uploads/vaysf/badges/RPC_3139537_abcd1234.png"
+        "<IMG SRC=https://sportsfest.example/wp-content/uploads/vaysf/badges/RPC_3139537_abcd1234.png>"
+    )
 
 
 def test_runner_dry_run_upload_writes_and_uploads_nothing(generator):
