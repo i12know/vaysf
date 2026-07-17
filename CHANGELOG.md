@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Split admin monolith into page-owned modules (#284)
+
+- Refactored `plugins/vaysf/admin/admin.php` (~2,575 lines) into nine
+  page modules under `plugins/vaysf/admin/`: dashboard, churches (incl.
+  insurance approve/upload), participants, rosters, approvals, validation
+  issues, schedules (incl. save/cancel handlers and source-hash helpers),
+  results (incl. corrections, revisions, verify/certify), and settings
+  (incl. the event-day results reset section).
+- Added shared `VAYSF_Admin_Page` base holding the schedule/result status
+  vocabularies, `format_game_teams()`, and admin-notice printing so those
+  helpers keep one authoritative implementation; `admin.php` is now an
+  orchestration-only bootstrap (menu registration + delegation).
+- No menu slug, capability, nonce action, POST field name, or rendering
+  change — verified by a stubbed-WordPress harness that fired
+  `admin_menu`/`admin_init` against old and new code and diffed all 26
+  menu/settings registrations (identical).
+
 ### Bible Challenge score-sheet rosters
 
 - Replaced the blank "Question / Appeal Notes" grid on generated Bible
