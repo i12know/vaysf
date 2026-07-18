@@ -137,6 +137,41 @@ function vaysf_get_upcoming_schedule_window($day = '') {
 }
 
 /**
+ * Sort public schedule rows by the same resolved competition time used for display.
+ *
+ * @param array<int,array<string,mixed>> $rows Schedule rows
+ * @return array<int,array<string,mixed>> Rows sorted by competition time
+ */
+function vaysf_sort_public_schedule_rows_by_competition_time($rows) {
+    usort($rows, function ($a, $b) {
+        $a_at = vaysf_get_schedule_competition_datetime($a);
+        $b_at = vaysf_get_schedule_competition_datetime($b);
+
+        if ($a_at instanceof DateTimeImmutable && $b_at instanceof DateTimeImmutable) {
+            $a_ts = $a_at->getTimestamp();
+            $b_ts = $b_at->getTimestamp();
+            if ($a_ts !== $b_ts) {
+                return $a_ts < $b_ts ? -1 : 1;
+            }
+        } elseif ($a_at instanceof DateTimeImmutable) {
+            return -1;
+        } elseif ($b_at instanceof DateTimeImmutable) {
+            return 1;
+        }
+
+        $a_id = isset($a['schedule_id']) ? (int) $a['schedule_id'] : 0;
+        $b_id = isset($b['schedule_id']) ? (int) $b['schedule_id'] : 0;
+        if ($a_id === $b_id) {
+            return 0;
+        }
+
+        return $a_id < $b_id ? -1 : 1;
+    });
+
+    return $rows;
+}
+
+/**
  * Distinct scheduled dates (Y-m-d) from the currently published, non-cancelled schedule.
  *
  * @param int|null $schedule_version Optional version; defaults to current published version
@@ -626,6 +661,8 @@ function vaysf_get_public_schedule_rows($filters = array()) {
             return true;
         }));
     }
+
+    $rows = vaysf_sort_public_schedule_rows_by_competition_time($rows);
 
     $missing_result_rows = array();
     foreach ($rows as $row) {

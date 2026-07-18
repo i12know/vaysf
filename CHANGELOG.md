@@ -23,6 +23,9 @@
 - Public scoreboard visits using the query-routed `?vaysf_event` URL now jump
   straight to the live schedule section, with a stable `#vaysf-scoreboard`
   anchor available for explicit links.
+- Hotfix 2: public schedule rows now sort by the resolved Sports Fest
+  competition datetime used for the visible Time column, so `scheduled_slot`
+  rows appear in chronological order even when `scheduled_time` is blank.
 - `[vaysf_live_schedule]`'s public filter form now includes an "Upcoming
   games only" checkbox, in addition to the existing sport/day/church
   dropdowns. Checking it filters the table to games between 60 minutes ago
@@ -50,7 +53,7 @@
   (it listed "sport, day, venue"; the form actually renders sport, day,
   church, and now upcoming-only) and documented the new checkbox/cookie
   behavior.
-- Bumped plugin header/version to `1.0.52` and rebuilt `plugins/vaysf.zip`.
+- Bumped plugin header/version to `1.0.53` and rebuilt `plugins/vaysf.zip`.
 
 ## Version 1.12 (2026-07-18) — Sports Fest 2026 event release
 
