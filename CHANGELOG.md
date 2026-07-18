@@ -16,6 +16,13 @@
 
 ### Public live schedule: "Upcoming games only" checkbox and filter-preference cookie (#303)
 
+- Hotfix: when visitors select a specific Sports Fest day and check
+  "Upcoming games only", the schedule now shows upcoming games for that
+  selected day. Future selected days include the full day instead of being
+  incorrectly excluded by the current-day cutoff.
+- Public scoreboard visits using the query-routed `?vaysf_event` URL now jump
+  straight to the live schedule section, with a stable `#vaysf-scoreboard`
+  anchor available for explicit links.
 - `[vaysf_live_schedule]`'s public filter form now includes an "Upcoming
   games only" checkbox, in addition to the existing sport/day/church
   dropdowns. Checking it filters the table to games between 60 minutes ago
@@ -43,7 +50,7 @@
   (it listed "sport, day, venue"; the form actually renders sport, day,
   church, and now upcoming-only) and documented the new checkbox/cookie
   behavior.
-- Bumped plugin header/version to `1.0.51` and rebuilt `plugins/vaysf.zip`.
+- Bumped plugin header/version to `1.0.52` and rebuilt `plugins/vaysf.zip`.
 
 ## Version 1.12 (2026-07-18) — Sports Fest 2026 event release
 
