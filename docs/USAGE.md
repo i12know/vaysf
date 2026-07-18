@@ -1098,9 +1098,23 @@ set it to `0` to disable auto-refresh and render a static table.
 in time order with the current status (`Scheduled`, `Reported`, `Official`, or
 `Under Review`) and, once a coordinator has submitted a result, the score.
 Scores never appear before a result exists. A GET-based filter form (sport,
-day, venue) sits above the table and works without JavaScript; a small polling
-script refreshes the status/score cells in place for spectators who leave the
-page open.
+day, church, and an "Upcoming games only" checkbox) sits above the table and
+works without JavaScript; a small polling script re-fetches and reconciles the
+full row set (adding/removing rows, not just patching status/score cells) for
+spectators who leave the page open.
+
+Checking "Upcoming games only" restricts the table to games with
+`scheduled_time` at or after 60 minutes before the current site time —
+equivalent to setting `lookback_minutes="60"` for that visitor — so a delayed
+or currently-running game doesn't disappear the moment its scheduled start
+time passes. It overrides an embed's `lookback_minutes` attribute when
+checked. Unchecking it restores the embed's configured behavior. The form
+also writes the visitor's sport/day/church/
+upcoming-only selections to a first-party `vaysf_schedule_prefs` browser
+cookie (JSON, 30-day expiry, `SameSite=Lax`) so a later visit to the same page
+with no query string restores their last view. The cookie holds only filter
+selections — no participant data, scores, or identifiers — and is functional/
+preference-only, not analytics or cross-site tracking.
 
 `[vaysf_advancement]` shows confirmed Semifinal/Final matchups: a game appears
 here once an admin has filled in at least one team slot on that Semifinal/Final

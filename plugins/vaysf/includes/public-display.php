@@ -53,6 +53,19 @@ function vaysf_sanitize_public_church_filter($value) {
 }
 
 /**
+ * Sanitize the "upcoming games only" checkbox submitted by the public filter form.
+ *
+ * The checkbox posts '1' when checked; any other value (including absence)
+ * means unchecked.
+ *
+ * @param mixed $value Raw checkbox value
+ * @return bool True when the checkbox was checked
+ */
+function vaysf_sanitize_public_upcoming_filter($value) {
+    return vaysf_sanitize_public_filter($value) === '1';
+}
+
+/**
  * Sanitize an optional rolling schedule lookback in whole minutes.
  *
  * @param mixed $value Raw minute count
