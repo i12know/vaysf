@@ -328,9 +328,50 @@ becoming its first migration source. Nothing in this design has to be
 undone to get there. But that is a decision for a future off-season,
 made from experience rather than anticipation.
 
+## 11. Implementation issues (Track A)
+
+*To be created as sub-issues of the Identity & Registrant Trust epic, in
+the dependency order below. Each is independently shippable and testable
+in mock mode. Issue numbers backfilled after filing.*
+
+### A1 — `middleware: person alias map + resolution at sync choke point`
+Phase 1 (§4.1–§4.2): `person_aliases.py` loader (late-racquet pattern;
+committed example + git-ignored `.local.json` per G5), transitive
+`resolve_chm_id` with cycle hard-fail (G2), resolution as the first
+statement of `_sync_single_participant()` before `get_person()` (G1).
+Tests: loader edge cases, empty-map regression guard, stale-ID-404s path.
+**Dependencies:** none. The foundation issue — must land first.
+
+### A2 — `middleware/wordpress: verify merged-status tolerance across consumers`
+The G4 sweep: audit every consumer of `approval_status` — dashboards,
+shortcodes, pastor UI, `process-token` (`class-vaysf-rest-approvals.php`),
+badge generation, approval sync, pending queues, exports — for tolerance of
+the `merged` value; add tests for anything that whitelists statuses.
+**Dependencies:** none (parallel with A1). Gates A3.
+
+### A3 — `middleware: apply-aliases reconciliation command`
+Phase 2 (§4.3): report-only default + `--execute`; delete stale roster
+rows, tombstone participant + approval as `merged`, resolve open validation
+issues, loud warning on stale-approved/canonical-unapproved (§8 decision 1).
+Idempotent. **Dependencies:** A1, A2, §8 decisions.
+
+### A4 — `middleware: find-duplicates proposal command + shared identity_scoring`
+Phase 3 (§4.4): extract consent-404 scoring into `identity_scoring.py`
+(investigator behavior unchanged), all-participants pair scan with the
+family-share anchor rule, Excel audit with paste-ready alias snippets.
+Never writes the alias map (G3). **Dependencies:** A1.
+
+### A5 — `middleware: duplicate warning tripwires in scoresheets/badges/exports`
+Phase 4 (§4.5): warning-only detectors (same team + normalized name +
+birthdate) in scoresheet, badge, and church-team-export generation.
+Addresses issue #40's symptom directly. **Dependencies:** none (any time
+after A1 merges its test fixtures).
+
 ---
 
 *Companion reading: `docs/ARCHITECTURE_REVIEW_2026.md` (state of the
-system at v1.12), `docs/TROUBLESHOOTING.md` §"Approval Sync Returns 404"
-(today's manual classification of stale IDs), issue #40 (duplicate names
-in exports), issue #171 (identity drift).*
+system at v1.12), `docs/REGISTRANT_TRUST_RFC.md` (upstream prevention:
+explicit roles, verified contacts, minor consent — Track T of the same
+epic), `docs/TROUBLESHOOTING.md` §"Approval Sync Returns 404" (today's
+manual classification of stale IDs), issue #40 (duplicate names in
+exports), issue #171 (identity drift).*
