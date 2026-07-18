@@ -11,6 +11,16 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+if (!defined('VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES')) {
+    /**
+     * Grace period, in minutes, applied when a visitor checks the public
+     * "Upcoming games only" filter checkbox, so a delayed/running-late game
+     * doesn't vanish from the "upcoming" view the moment its scheduled start
+     * time passes (#303).
+     */
+    define('VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES', 60);
+}
+
 /**
  * Sanitize a public schedule/venue filter value.
  *
@@ -53,6 +63,19 @@ function vaysf_sanitize_public_church_filter($value) {
 }
 
 /**
+ * Sanitize the "upcoming games only" checkbox submitted by the public filter form.
+ *
+ * The checkbox posts '1' when checked; any other value (including absence)
+ * means unchecked.
+ *
+ * @param mixed $value Raw checkbox value
+ * @return bool True when the checkbox was checked
+ */
+function vaysf_sanitize_public_upcoming_filter($value) {
+    return vaysf_sanitize_public_filter($value) === '1';
+}
+
+/**
  * Sanitize an optional rolling schedule lookback in whole minutes.
  *
  * @param mixed $value Raw minute count
@@ -92,20 +115,31 @@ function vaysf_get_public_schedule_days($schedule_version = null) {
     }
 
     $table_schedules = vaysf_get_table_name('schedules');
-    $days = $wpdb->get_col(
+    $rows = $wpdb->get_results(
         $wpdb->prepare(
-            "SELECT DISTINCT DATE(scheduled_time) AS game_day
+            "SELECT scheduled_time, scheduled_slot
             FROM $table_schedules
             WHERE schedule_version = %d
-                AND scheduled_time IS NOT NULL
                 AND published_at IS NOT NULL
-                AND COALESCE(game_status, '') <> 'cancelled'
-            ORDER BY game_day",
+                AND COALESCE(game_status, '') <> 'cancelled'",
             absint($schedule_version)
-        )
+        ),
+        ARRAY_A
     );
+    if (!is_array($rows)) {
+        return array();
+    }
 
-    return is_array($days) ? array_values(array_filter(array_map('strval', $days))) : array();
+    $days = array();
+    foreach ($rows as $row) {
+        $competition_at = vaysf_get_schedule_competition_datetime($row);
+        if ($competition_at instanceof DateTimeImmutable) {
+            $days[$competition_at->format('Y-m-d')] = $competition_at->format('Y-m-d');
+        }
+    }
+
+    sort($days, SORT_STRING);
+    return array_values($days);
 }
 
 /**
@@ -459,7 +493,9 @@ function vaysf_get_latest_results_by_team_keys($schedule_rows) {
  * current result, filtered for public display.
  *
  * @param array<string,mixed> $filters Optional 'event', 'day' (Y-m-d), 'venue',
- *                                     'church', and 'lookback_minutes'
+ *                                     'church', 'lookback_minutes', and
+ *                                     'upcoming_only' ('1' to enable; takes
+ *                                     precedence over 'lookback_minutes')
  * @return array<int,array<string,mixed>> Public-safe schedule rows
  */
 function vaysf_get_public_schedule_rows($filters = array()) {
@@ -487,10 +523,6 @@ function vaysf_get_public_schedule_rows($filters = array()) {
     }
 
     $day = isset($filters['day']) ? vaysf_sanitize_public_day_filter($filters['day']) : '';
-    if ($day !== '') {
-        $where[] = 'DATE(s.scheduled_time) = %s';
-        $args[] = $day;
-    }
 
     $venue = isset($filters['venue']) ? vaysf_sanitize_public_filter($filters['venue']) : '';
     if ($venue !== '') {
@@ -500,13 +532,24 @@ function vaysf_get_public_schedule_rows($filters = array()) {
 
     $church = isset($filters['church']) ? vaysf_sanitize_public_church_filter($filters['church']) : '';
 
-    $lookback_minutes = isset($filters['lookback_minutes'])
-        ? vaysf_sanitize_public_lookback_minutes($filters['lookback_minutes'])
-        : null;
-    if ($lookback_minutes !== null) {
-        $cutoff = current_datetime()->modify('-' . $lookback_minutes . ' minutes');
-        $where[] = 's.scheduled_time IS NOT NULL AND s.scheduled_time >= %s';
-        $args[] = $cutoff->format('Y-m-d H:i:s');
+    // "Upcoming games only" (visitor checkbox, #303): a short grace period
+    // back to today, capped at the end of today — not open-ended into future
+    // days. Takes precedence over the embed-configured 'lookback_minutes',
+    // which remains open-ended for admins who want that instead.
+    $upcoming_only = isset($filters['upcoming_only']) && vaysf_sanitize_public_filter($filters['upcoming_only']) === '1';
+    $competition_cutoff_start = null;
+    $competition_cutoff_end = null;
+    if ($upcoming_only) {
+        $sports_fest_now = vaysf_get_sports_fest_now();
+        $competition_cutoff_start = $sports_fest_now->modify('-' . VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES . ' minutes');
+        $competition_cutoff_end = $sports_fest_now->setTime(23, 59, 59);
+    } else {
+        $lookback_minutes = isset($filters['lookback_minutes'])
+            ? vaysf_sanitize_public_lookback_minutes($filters['lookback_minutes'])
+            : null;
+        if ($lookback_minutes !== null) {
+            $competition_cutoff_start = vaysf_get_sports_fest_now()->modify('-' . $lookback_minutes . ' minutes');
+        }
     }
 
     $where_clause = implode(' AND ', $where);
@@ -524,6 +567,27 @@ function vaysf_get_public_schedule_rows($filters = array()) {
     if ($church !== '') {
         $rows = array_values(array_filter($rows, function ($row) use ($church) {
             return vaysf_schedule_church_signature_contains($row, $church);
+        }));
+    }
+
+    if ($day !== '' || $competition_cutoff_start instanceof DateTimeImmutable || $competition_cutoff_end instanceof DateTimeImmutable) {
+        $rows = array_values(array_filter($rows, function ($row) use ($day, $competition_cutoff_start, $competition_cutoff_end) {
+            $competition_at = vaysf_get_schedule_competition_datetime($row);
+            if (!$competition_at instanceof DateTimeImmutable) {
+                return false;
+            }
+
+            if ($day !== '' && $competition_at->format('Y-m-d') !== $day) {
+                return false;
+            }
+            if ($competition_cutoff_start instanceof DateTimeImmutable && $competition_at < $competition_cutoff_start) {
+                return false;
+            }
+            if ($competition_cutoff_end instanceof DateTimeImmutable && $competition_at > $competition_cutoff_end) {
+                return false;
+            }
+
+            return true;
         }));
     }
 

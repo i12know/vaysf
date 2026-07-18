@@ -11,6 +11,169 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+if (!defined('VAYSF_SPORTS_FEST_TIMEZONE')) {
+    /**
+     * Sports Fest schedule rows are stored as local Southern California wall
+     * time. Keep event-day comparisons on that clock instead of the host/server
+     * timezone so public filters behave correctly during the event (#303).
+     */
+    define('VAYSF_SPORTS_FEST_TIMEZONE', 'America/Los_Angeles');
+}
+
+if (!defined('VAYSF_SCHEDULE_SLOT_BASE_DATE')) {
+    /**
+     * First day represented by the 2026 slot labels. This guards event-day
+     * public schedule filtering when an older persisted settings option still
+     * points at a previous Sports Fest date.
+     */
+    define('VAYSF_SCHEDULE_SLOT_BASE_DATE', '2026-07-18');
+}
+
+/**
+ * Return the timezone used for Sports Fest schedule wall-clock comparisons.
+ *
+ * @return DateTimeZone
+ */
+function vaysf_get_sports_fest_timezone() {
+    try {
+        return new DateTimeZone(VAYSF_SPORTS_FEST_TIMEZONE);
+    } catch (Exception $e) {
+        return wp_timezone();
+    }
+}
+
+/**
+ * Return the current Sports Fest local time.
+ *
+ * @return DateTimeImmutable
+ */
+function vaysf_get_sports_fest_now() {
+    return new DateTimeImmutable('now', vaysf_get_sports_fest_timezone());
+}
+
+/**
+ * Return calendar dates for scheduler day labels used by the 2026 event.
+ *
+ * @return array<string,DateTimeImmutable>
+ */
+function vaysf_get_schedule_slot_day_dates() {
+    $base_date = get_option('vaysf_sports_fest_date', '2026-07-18');
+    $base = vaysf_parse_sports_fest_datetime($base_date . ' 00:00:00');
+    $minimum_base = vaysf_parse_sports_fest_datetime(VAYSF_SCHEDULE_SLOT_BASE_DATE . ' 00:00:00');
+    if (!$base instanceof DateTimeImmutable) {
+        $base = $minimum_base;
+    }
+    if ($minimum_base instanceof DateTimeImmutable && $base < $minimum_base) {
+        $base = $minimum_base;
+    }
+
+    return array(
+        'Sat-1' => $base,
+        'Sun-1' => $base->modify('+1 day'),
+        'Fri-1' => $base->modify('+6 days'),
+        'Sat-2' => $base->modify('+7 days'),
+        'Sun-2' => $base->modify('+8 days'),
+    );
+}
+
+/**
+ * Parse a schedule datetime as Sports Fest local wall-clock time.
+ *
+ * @param string $datetime MySQL-style datetime string
+ * @return DateTimeImmutable|null
+ */
+function vaysf_parse_sports_fest_datetime($datetime) {
+    $datetime = trim((string) $datetime);
+    if ($datetime === '') {
+        return null;
+    }
+
+    $timezone = vaysf_get_sports_fest_timezone();
+    foreach (array('Y-m-d H:i:s', 'Y-m-d H:i') as $format) {
+        $parsed = DateTimeImmutable::createFromFormat($format, $datetime, $timezone);
+        if ($parsed instanceof DateTimeImmutable) {
+            return $parsed;
+        }
+    }
+
+    try {
+        return new DateTimeImmutable($datetime, $timezone);
+    } catch (Exception $e) {
+        return null;
+    }
+}
+
+/**
+ * Parse a logical schedule slot like "Sat-1-14:00" as competition local time.
+ *
+ * @param string $scheduled_slot Logical scheduler slot id
+ * @return DateTimeImmutable|null
+ */
+function vaysf_parse_schedule_slot_datetime($scheduled_slot) {
+    $scheduled_slot = trim((string) $scheduled_slot);
+    if ($scheduled_slot === '') {
+        return null;
+    }
+
+    if (!preg_match('/^([A-Za-z]+-\d+)-(\d{1,2}):(\d{2})/', $scheduled_slot, $matches)) {
+        return null;
+    }
+
+    $day_dates = vaysf_get_schedule_slot_day_dates();
+    if (empty($day_dates[$matches[1]])) {
+        return null;
+    }
+
+    return $day_dates[$matches[1]]->setTime((int) $matches[2], (int) $matches[3], 0);
+}
+
+/**
+ * Return a row's competition datetime from scheduled_time or scheduled_slot.
+ *
+ * @param array<string,mixed> $row Schedule row
+ * @return DateTimeImmutable|null
+ */
+function vaysf_get_schedule_competition_datetime($row) {
+    if (!is_array($row)) {
+        return null;
+    }
+
+    if (!empty($row['scheduled_time'])) {
+        $scheduled_at = vaysf_parse_sports_fest_datetime($row['scheduled_time']);
+        if ($scheduled_at instanceof DateTimeImmutable) {
+            return $scheduled_at;
+        }
+    }
+
+    if (!empty($row['scheduled_slot'])) {
+        return vaysf_parse_schedule_slot_datetime($row['scheduled_slot']);
+    }
+
+    return null;
+}
+
+/**
+ * Format a timestamp or DateTimeImmutable in Sports Fest local time.
+ *
+ * @param DateTimeImmutable|int $time Time to format
+ * @param string $format PHP date format
+ * @return string
+ */
+function vaysf_format_sports_fest_time($time, $format = 'g:i:s a') {
+    $timezone = vaysf_get_sports_fest_timezone();
+    $timestamp = $time instanceof DateTimeImmutable ? $time->getTimestamp() : (int) $time;
+
+    if (function_exists('wp_date')) {
+        return wp_date($format, $timestamp, $timezone);
+    }
+
+    if ($time instanceof DateTimeImmutable) {
+        return $time->setTimezone($timezone)->format($format);
+    }
+
+    return (new DateTimeImmutable('@' . $timestamp))->setTimezone($timezone)->format($format);
+}
+
 /**
  * Get table name
  * 
@@ -31,13 +194,12 @@ function vaysf_get_table_name($table) {
  * @return array<string,string>
  */
 function vaysf_get_schedule_slot_day_labels() {
-    return array(
-        'Fri-1' => 'Fri 7/24',
-        'Sat-1' => 'Sat 7/18',
-        'Sun-1' => 'Sun 7/19',
-        'Sat-2' => 'Sat 7/25',
-        'Sun-2' => 'Sun 7/26',
-    );
+    $labels = array();
+    foreach (vaysf_get_schedule_slot_day_dates() as $day_key => $day_date) {
+        $labels[$day_key] = vaysf_format_sports_fest_time($day_date, 'D n/j');
+    }
+
+    return $labels;
 }
 
 /**
@@ -52,16 +214,16 @@ function vaysf_format_scheduled_slot_label($scheduled_slot) {
         return '';
     }
 
-    if (!preg_match('/^([A-Za-z]+-\d+)-(\d{1,2}):(\d{2})$/', $scheduled_slot, $matches)) {
+    if (!preg_match('/^([A-Za-z]+-\d+)-(\d{1,2}):(\d{2})/', $scheduled_slot, $matches)) {
         return $scheduled_slot;
     }
 
-    $day_labels = vaysf_get_schedule_slot_day_labels();
-    $day_label = isset($day_labels[$matches[1]]) ? $day_labels[$matches[1]] : $matches[1];
-    $timestamp = strtotime($matches[2] . ':' . $matches[3]);
-    $clock_label = $timestamp ? date_i18n('g:i A', $timestamp) : $matches[2] . ':' . $matches[3];
+    $slot_at = vaysf_parse_schedule_slot_datetime($scheduled_slot);
+    if ($slot_at instanceof DateTimeImmutable) {
+        return vaysf_format_sports_fest_time($slot_at, 'D n/j, g:i A');
+    }
 
-    return $day_label . ', ' . $clock_label;
+    return $scheduled_slot;
 }
 
 /**
@@ -75,9 +237,9 @@ function vaysf_format_scheduled_slot_label($scheduled_slot) {
 function vaysf_format_schedule_display_time($scheduled_time, $scheduled_slot = '', $datetime_format = 'D g:i A') {
     $scheduled_time = trim((string) $scheduled_time);
     if ($scheduled_time !== '') {
-        $timestamp = strtotime($scheduled_time);
-        if ($timestamp) {
-            return date_i18n($datetime_format, $timestamp);
+        $scheduled_at = vaysf_parse_sports_fest_datetime($scheduled_time);
+        if ($scheduled_at instanceof DateTimeImmutable) {
+            return vaysf_format_sports_fest_time($scheduled_at, $datetime_format);
         }
     }
 

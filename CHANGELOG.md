@@ -2,7 +2,48 @@
 
 ## Unreleased
 
-_Nothing yet — the next changes land here._
+### Event-day results reset status cleanup (#304)
+
+- Fixed the Event-Day Results Reset control so clearing `sf_results`,
+  `sf_result_revisions`, and `sf_result_files` also resets result-derived
+  schedule statuses (`in_progress`, `reported`, `official`, `under_review`)
+  back to `scheduled`; `cancelled` rows remain untouched. This prevents the
+  public live schedule from showing `Reported` with an empty score after admins
+  clear score-entry data before Sports Fest starts.
+- The reset screen now counts result-marked schedule rows alongside result-table
+  rows, and the confirmation copy explicitly says those schedule statuses will
+  be reset.
+
+### Public live schedule: "Upcoming games only" checkbox and filter-preference cookie (#303)
+
+- `[vaysf_live_schedule]`'s public filter form now includes an "Upcoming
+  games only" checkbox, in addition to the existing sport/day/church
+  dropdowns. Checking it filters the table to games between 60 minutes ago
+  and the end of today in Sports Fest local time (`America/Los_Angeles`) — the grace period keeps a
+  delayed/running-late game from disappearing the moment its scheduled start
+  passes, and the end-of-day cap keeps it from spilling into future days
+  (unlike the open-ended `lookback_minutes` shortcode attribute from #264,
+  which this checkbox overrides when checked).
+- Fixed the #303 rolling time window, schedule time labels, day dropdown
+  labels, and auto-refresh "Last updated" clock to use Sports Fest local time
+  instead of the WordPress/server timezone.
+- Fixed the actual competition-time filter source: rows that display time from
+  `scheduled_slot` (for example `Sat-1-14:00`) now participate in day,
+  upcoming-only, and lookback filtering even when `scheduled_time` is blank.
+  This keeps the checked "Upcoming games only" view aligned with the visible
+  Time column.
+- Guarded the 2026 slot-date map against a stale persisted
+  `vaysf_sports_fest_date` option from a previous season, which could map
+  `Sat-1` to the wrong calendar date and make every current game look expired.
+- The filter form now writes the visitor's sport/day/church/upcoming-only
+  selections to a first-party `vaysf_schedule_prefs` cookie (JSON, 30-day
+  expiry, `SameSite=Lax`, no PII). A later visit to the same page with no
+  query string restores that saved view automatically.
+- Corrected `docs/USAGE.md`'s stale description of the visible public filters
+  (it listed "sport, day, venue"; the form actually renders sport, day,
+  church, and now upcoming-only) and documented the new checkbox/cookie
+  behavior.
+- Bumped plugin header/version to `1.0.51` and rebuilt `plugins/vaysf.zip`.
 
 ## Version 1.12 (2026-07-18) — Sports Fest 2026 event release
 

@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 require_once plugin_dir_path(__FILE__) . 'class-vaysf-statistics.php';
 
 class VAYSF_Shortcodes {
-    
+
     /**
      * Constructor
      */
@@ -391,6 +391,10 @@ class VAYSF_Shortcodes {
         $church = isset($_GET['vaysf_church'])
             ? vaysf_sanitize_public_church_filter($_GET['vaysf_church'])
             : vaysf_sanitize_public_church_filter($atts['church']);
+        // Visitor-facing "upcoming games only" checkbox; when checked it takes
+        // precedence over an embed's lookback_minutes attribute and caps the
+        // window at the end of today, unlike lookback_minutes (see #303).
+        $upcoming_only = isset($_GET['vaysf_upcoming']) && vaysf_sanitize_public_upcoming_filter($_GET['vaysf_upcoming']);
         $lookback_minutes = vaysf_sanitize_public_lookback_minutes($atts['lookback_minutes']);
         $refresh_seconds = max(0, (int) $atts['refresh']);
 
@@ -400,6 +404,7 @@ class VAYSF_Shortcodes {
             'venue' => $venue,
             'church' => $church,
             'lookback_minutes' => $lookback_minutes,
+            'upcoming_only' => $upcoming_only ? '1' : '',
         );
         $rows = vaysf_get_public_schedule_rows($filters);
 
@@ -407,7 +412,7 @@ class VAYSF_Shortcodes {
         $instance_id = wp_unique_id('vaysf-live-schedule-');
         ?>
         <div class="vaysf-live-schedule" id="<?php echo esc_attr($instance_id); ?>" data-refresh-seconds="<?php echo esc_attr($refresh_seconds); ?>">
-            <?php $this->render_public_filter_form($event, $day, $church); ?>
+            <?php $this->render_public_filter_form($event, $day, $church, $upcoming_only); ?>
 
             <p class="vaysf-live-schedule-empty"<?php echo empty($rows) ? '' : ' hidden'; ?>><?php echo esc_html__('No published schedule yet.', 'vaysf'); ?></p>
             <table class="vaysf-live-schedule-table"<?php echo empty($rows) ? ' hidden' : ''; ?>>
@@ -427,7 +432,7 @@ class VAYSF_Shortcodes {
             </table>
             <p class="vaysf-live-schedule-updated">
                 <?php echo esc_html__('Last updated:', 'vaysf'); ?>
-                <span class="vaysf-last-updated"><?php echo esc_html(date_i18n('g:i:s a')); ?></span>
+                <span class="vaysf-last-updated"><?php echo esc_html(vaysf_format_sports_fest_time(vaysf_get_sports_fest_now(), 'g:i:s a')); ?></span>
             </p>
         </div>
         <?php
@@ -493,16 +498,21 @@ class VAYSF_Shortcodes {
     }
 
     /**
-     * Render the GET-based sport/day/church filter form shared by public shortcodes.
+     * Render the GET-based sport/day/church/upcoming filter form shared by
+     * public shortcodes.
      *
      * A plain GET form works without JavaScript; the auto-refresh script layers
-     * on top for spectators who leave the page open.
+     * on top for spectators who leave the page open. A small inline script
+     * additionally remembers the visitor's selections in a first-party,
+     * preference-only cookie (no PII, no tracking) so a later visit with no
+     * query string restores the same view (#303).
      *
      * @param string $event Selected event filter
      * @param string $day Selected day filter (Y-m-d)
      * @param string $church Selected church code filter
+     * @param bool $upcoming_only Whether the "upcoming games only" checkbox is checked
      */
-    private function render_public_filter_form($event, $day, $church) {
+    private function render_public_filter_form($event, $day, $church, $upcoming_only = false) {
         $events = vaysf_get_published_schedule_events();
         $days = vaysf_get_public_schedule_days();
         $churches = function_exists('vaysf_get_public_schedule_churches')
@@ -512,10 +522,11 @@ class VAYSF_Shortcodes {
         if (empty($events) && empty($days) && empty($churches)) {
             return;
         }
+        $onchange = 'vaysfSaveScheduleFilterPrefs(this.form); this.form.submit();';
         ?>
         <form method="get" class="vaysf-live-schedule-filters">
             <?php if (!empty($events)) : ?>
-                <select name="vaysf_event" onchange="this.form.submit()">
+                <select name="vaysf_event" onchange="<?php echo esc_attr($onchange); ?>">
                     <option value=""><?php echo esc_html__('All Sports', 'vaysf'); ?></option>
                     <?php foreach ($events as $evt) : ?>
                         <option value="<?php echo esc_attr($evt); ?>" <?php selected($event, $evt); ?>><?php echo esc_html($evt); ?></option>
@@ -523,23 +534,109 @@ class VAYSF_Shortcodes {
                 </select>
             <?php endif; ?>
             <?php if (!empty($days)) : ?>
-                <select name="vaysf_day" onchange="this.form.submit()">
+                <select name="vaysf_day" onchange="<?php echo esc_attr($onchange); ?>">
                     <option value=""><?php echo esc_html__('All Days', 'vaysf'); ?></option>
                     <?php foreach ($days as $d) : ?>
-                        <option value="<?php echo esc_attr($d); ?>" <?php selected($day, $d); ?>><?php echo esc_html(date_i18n('D, M j', strtotime($d))); ?></option>
+                        <?php $day_at = vaysf_parse_sports_fest_datetime($d . ' 00:00:00'); ?>
+                        <option value="<?php echo esc_attr($d); ?>" <?php selected($day, $d); ?>><?php echo esc_html($day_at ? vaysf_format_sports_fest_time($day_at, 'D, M j') : $d); ?></option>
                     <?php endforeach; ?>
                 </select>
             <?php endif; ?>
             <?php if (!empty($churches)) : ?>
-                <select name="vaysf_church" onchange="this.form.submit()">
+                <select name="vaysf_church" onchange="<?php echo esc_attr($onchange); ?>">
                     <option value=""><?php echo esc_html__('All Churches', 'vaysf'); ?></option>
                     <?php foreach ($churches as $code) : ?>
                         <option value="<?php echo esc_attr($code); ?>" <?php selected($church, $code); ?>><?php echo esc_html($code); ?></option>
                     <?php endforeach; ?>
                 </select>
             <?php endif; ?>
+            <label class="vaysf-live-schedule-upcoming-toggle">
+                <input type="checkbox" name="vaysf_upcoming" value="1" <?php checked($upcoming_only); ?> onchange="<?php echo esc_attr($onchange); ?>">
+                <?php echo esc_html__('Upcoming games only', 'vaysf'); ?>
+            </label>
             <noscript><button type="submit"><?php echo esc_html__('Filter', 'vaysf'); ?></button></noscript>
         </form>
+        <?php
+        $this->render_public_filter_cookie_script();
+    }
+
+    /**
+     * Echo the shared cookie-persistence script for the public filter form.
+     *
+     * Stores the visitor's sport/day/church/upcoming-only selections in a
+     * first-party `vaysf_schedule_prefs` cookie (JSON, 30-day expiry,
+     * SameSite=Lax). On a page load with no `vaysf_*` query args, it restores
+     * the last saved selections by redirecting to the same URL with those
+     * values appended — the server then renders the filtered view exactly as
+     * it would for a visitor who picked those filters directly, so no
+     * duplicate client-side rendering logic is needed. The cookie carries only
+     * filter selections, never participant data, scores, or identifiers.
+     *
+     * Safe to emit once per page even with multiple `[vaysf_live_schedule]`
+     * instances: the global-function guard skips re-registering, and the
+     * restore check is idempotent (it no-ops once the URL carries filter args).
+     */
+    private function render_public_filter_cookie_script() {
+        ?>
+        <script>
+        (function () {
+            if (window.vaysfSaveScheduleFilterPrefs) { return; }
+
+            var COOKIE_NAME = 'vaysf_schedule_prefs';
+            var COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+            var FIELDS = ['vaysf_event', 'vaysf_day', 'vaysf_church', 'vaysf_upcoming'];
+
+            function readCookie(name) {
+                var match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+                return match ? decodeURIComponent(match[1]) : null;
+            }
+
+            function writeCookie(name, value) {
+                document.cookie = name + '=' + encodeURIComponent(value) + '; max-age=' + COOKIE_MAX_AGE + '; path=/; SameSite=Lax';
+            }
+
+            window.vaysfSaveScheduleFilterPrefs = function (form) {
+                var prefs = {};
+                FIELDS.forEach(function (key) {
+                    var field = form.elements[key];
+                    if (!field) { return; }
+                    if (field.type === 'checkbox') {
+                        if (field.checked) { prefs[key] = '1'; }
+                    } else if (field.value) {
+                        prefs[key] = field.value;
+                    }
+                });
+                writeCookie(COOKIE_NAME, JSON.stringify(prefs));
+            };
+
+            var params = new URLSearchParams(window.location.search);
+            var hasFilterParams = FIELDS.some(function (key) { return params.has(key); });
+            if (hasFilterParams) { return; }
+
+            var raw = readCookie(COOKIE_NAME);
+            if (!raw) { return; }
+
+            var prefs;
+            try {
+                prefs = JSON.parse(raw);
+            } catch (e) {
+                return;
+            }
+            if (!prefs || typeof prefs !== 'object') { return; }
+
+            var url = new URL(window.location.href);
+            var changed = false;
+            FIELDS.forEach(function (key) {
+                if (prefs[key]) {
+                    url.searchParams.set(key, prefs[key]);
+                    changed = true;
+                }
+            });
+            if (changed) {
+                window.location.replace(url.toString());
+            }
+        })();
+        </script>
         <?php
     }
 
@@ -661,6 +758,7 @@ class VAYSF_Shortcodes {
             var endpoint = <?php echo wp_json_encode($endpoint); ?>;
             var filters = <?php echo wp_json_encode($filters); ?>;
             var refreshMs = <?php echo (int) $refresh_seconds; ?> * 1000;
+            var sportsFestTimeZone = <?php echo wp_json_encode(VAYSF_SPORTS_FEST_TIMEZONE); ?>;
 
             function buildUrl() {
                 var url = new URL(endpoint);
@@ -687,6 +785,19 @@ class VAYSF_Shortcodes {
 
             function statusClass(status) {
                 return String(status || 'scheduled').replace(/[^a-z0-9_-]/gi, '-');
+            }
+
+            function sportsFestClockLabel() {
+                try {
+                    return new Date().toLocaleTimeString([], {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        timeZone: sportsFestTimeZone
+                    });
+                } catch (e) {
+                    return new Date().toLocaleTimeString();
+                }
             }
 
             function matchupLabel(row) {
@@ -744,7 +855,7 @@ class VAYSF_Shortcodes {
                         reconcileRows(rows);
                         var updated = root.querySelector('.vaysf-last-updated');
                         if (updated) {
-                            updated.textContent = new Date().toLocaleTimeString();
+                            updated.textContent = sportsFestClockLabel();
                         }
                     })
                     .catch(function () {});
@@ -1278,6 +1389,14 @@ class VAYSF_Shortcodes {
                 .vaysf-live-schedule-filters select,
                 .vaysf-live-schedule-filters button {
                     padding: 6px 10px;
+                }
+
+                .vaysf-live-schedule-upcoming-toggle {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 6px 4px;
+                    font-size: 14px;
                 }
 
                 .vaysf-live-schedule-table,
