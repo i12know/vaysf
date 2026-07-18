@@ -6,12 +6,12 @@
 
 - `[vaysf_live_schedule]`'s public filter form now includes an "Upcoming
   games only" checkbox, in addition to the existing sport/day/church
-  dropdowns. Checking it filters the table to games starting within the last
-  60 minutes or later (site timezone) — equivalent to the
-  `lookback_minutes="60"` shortcode attribute added in #264, using a 60-minute
-  grace period so a delayed/running-late game doesn't disappear the moment
-  its scheduled start passes — and it overrides an embed's `lookback_minutes`
-  attribute when checked.
+  dropdowns. Checking it filters the table to games between 60 minutes ago
+  and the end of today (site timezone) — the grace period keeps a
+  delayed/running-late game from disappearing the moment its scheduled start
+  passes, and the end-of-day cap keeps it from spilling into future days
+  (unlike the open-ended `lookback_minutes` shortcode attribute from #264,
+  which this checkbox overrides when checked).
 - The filter form now writes the visitor's sport/day/church/upcoming-only
   selections to a first-party `vaysf_schedule_prefs` cookie (JSON, 30-day
   expiry, `SameSite=Lax`, no PII). A later visit to the same page with no

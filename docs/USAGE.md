@@ -1104,12 +1104,13 @@ full row set (adding/removing rows, not just patching status/score cells) for
 spectators who leave the page open.
 
 Checking "Upcoming games only" restricts the table to games with
-`scheduled_time` at or after 60 minutes before the current site time —
-equivalent to setting `lookback_minutes="60"` for that visitor — so a delayed
-or currently-running game doesn't disappear the moment its scheduled start
-time passes. It overrides an embed's `lookback_minutes` attribute when
-checked. Unchecking it restores the embed's configured behavior. The form
-also writes the visitor's sport/day/church/
+`scheduled_time` between 60 minutes before the current site time and the end
+of the current day (site timezone) — the 60-minute grace period keeps a
+delayed or currently-running game from disappearing the moment its scheduled
+start time passes, and the end-of-day cap keeps the view from spilling into
+tomorrow's or later games. It overrides an embed's `lookback_minutes`
+attribute (which has no upper bound) when checked. Unchecking it restores the
+embed's configured behavior. The form also writes the visitor's sport/day/church/
 upcoming-only selections to a first-party `vaysf_schedule_prefs` browser
 cookie (JSON, 30-day expiry, `SameSite=Lax`) so a later visit to the same page
 with no query string restores their last view. The cookie holds only filter

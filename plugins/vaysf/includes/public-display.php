@@ -11,6 +11,16 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+if (!defined('VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES')) {
+    /**
+     * Grace period, in minutes, applied when a visitor checks the public
+     * "Upcoming games only" filter checkbox, so a delayed/running-late game
+     * doesn't vanish from the "upcoming" view the moment its scheduled start
+     * time passes (#303).
+     */
+    define('VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES', 60);
+}
+
 /**
  * Sanitize a public schedule/venue filter value.
  *
@@ -472,7 +482,9 @@ function vaysf_get_latest_results_by_team_keys($schedule_rows) {
  * current result, filtered for public display.
  *
  * @param array<string,mixed> $filters Optional 'event', 'day' (Y-m-d), 'venue',
- *                                     'church', and 'lookback_minutes'
+ *                                     'church', 'lookback_minutes', and
+ *                                     'upcoming_only' ('1' to enable; takes
+ *                                     precedence over 'lookback_minutes')
  * @return array<int,array<string,mixed>> Public-safe schedule rows
  */
 function vaysf_get_public_schedule_rows($filters = array()) {
@@ -513,13 +525,26 @@ function vaysf_get_public_schedule_rows($filters = array()) {
 
     $church = isset($filters['church']) ? vaysf_sanitize_public_church_filter($filters['church']) : '';
 
-    $lookback_minutes = isset($filters['lookback_minutes'])
-        ? vaysf_sanitize_public_lookback_minutes($filters['lookback_minutes'])
-        : null;
-    if ($lookback_minutes !== null) {
-        $cutoff = current_datetime()->modify('-' . $lookback_minutes . ' minutes');
-        $where[] = 's.scheduled_time IS NOT NULL AND s.scheduled_time >= %s';
-        $args[] = $cutoff->format('Y-m-d H:i:s');
+    // "Upcoming games only" (visitor checkbox, #303): a short grace period
+    // back to today, capped at the end of today — not open-ended into future
+    // days. Takes precedence over the embed-configured 'lookback_minutes',
+    // which remains open-ended for admins who want that instead.
+    $upcoming_only = isset($filters['upcoming_only']) && vaysf_sanitize_public_filter($filters['upcoming_only']) === '1';
+    if ($upcoming_only) {
+        $cutoff_start = current_datetime()->modify('-' . VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES . ' minutes');
+        $cutoff_end = current_datetime()->setTime(23, 59, 59);
+        $where[] = 's.scheduled_time IS NOT NULL AND s.scheduled_time >= %s AND s.scheduled_time <= %s';
+        $args[] = $cutoff_start->format('Y-m-d H:i:s');
+        $args[] = $cutoff_end->format('Y-m-d H:i:s');
+    } else {
+        $lookback_minutes = isset($filters['lookback_minutes'])
+            ? vaysf_sanitize_public_lookback_minutes($filters['lookback_minutes'])
+            : null;
+        if ($lookback_minutes !== null) {
+            $cutoff = current_datetime()->modify('-' . $lookback_minutes . ' minutes');
+            $where[] = 's.scheduled_time IS NOT NULL AND s.scheduled_time >= %s';
+            $args[] = $cutoff->format('Y-m-d H:i:s');
+        }
     }
 
     $where_clause = implode(' AND ', $where);

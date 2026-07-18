@@ -17,15 +17,6 @@ require_once plugin_dir_path(__FILE__) . 'class-vaysf-statistics.php';
 class VAYSF_Shortcodes {
 
     /**
-     * Grace period, in minutes, applied when a visitor checks the public
-     * "Upcoming games only" filter checkbox. Games that started within this
-     * many minutes of the current site time still show, so a delayed/running
-     * game doesn't vanish from the "upcoming" view the moment its scheduled
-     * start time passes (#303).
-     */
-    const UPCOMING_ONLY_LOOKBACK_MINUTES = 60;
-
-    /**
      * Constructor
      */
     public function __construct() {
@@ -401,11 +392,10 @@ class VAYSF_Shortcodes {
             ? vaysf_sanitize_public_church_filter($_GET['vaysf_church'])
             : vaysf_sanitize_public_church_filter($atts['church']);
         // Visitor-facing "upcoming games only" checkbox; when checked it takes
-        // precedence over an embed's lookback_minutes attribute (see #303).
+        // precedence over an embed's lookback_minutes attribute and caps the
+        // window at the end of today, unlike lookback_minutes (see #303).
         $upcoming_only = isset($_GET['vaysf_upcoming']) && vaysf_sanitize_public_upcoming_filter($_GET['vaysf_upcoming']);
-        $lookback_minutes = $upcoming_only
-            ? self::UPCOMING_ONLY_LOOKBACK_MINUTES
-            : vaysf_sanitize_public_lookback_minutes($atts['lookback_minutes']);
+        $lookback_minutes = vaysf_sanitize_public_lookback_minutes($atts['lookback_minutes']);
         $refresh_seconds = max(0, (int) $atts['refresh']);
 
         $filters = array(
@@ -414,6 +404,7 @@ class VAYSF_Shortcodes {
             'venue' => $venue,
             'church' => $church,
             'lookback_minutes' => $lookback_minutes,
+            'upcoming_only' => $upcoming_only ? '1' : '',
         );
         $rows = vaysf_get_public_schedule_rows($filters);
 

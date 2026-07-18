@@ -51,6 +51,7 @@ class VAYSF_REST_Public_Display extends VAYSF_REST_Controller {
             'venue' => $request->get_param('venue'),
             'church' => $request->get_param('church'),
             'lookback_minutes' => $request->get_param('lookback_minutes'),
+            'upcoming_only' => $request->get_param('upcoming_only'),
         ));
 
         return rest_ensure_response($rows);
