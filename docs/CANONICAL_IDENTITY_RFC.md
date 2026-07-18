@@ -1,10 +1,16 @@
-# RFC: Canonical Person Identity — untangling the duplicate-people problem
+# RFC: Canonical ChMeetings Identity — untangling the duplicate-people problem
 
 *Written the night before Sports Fest 2026, after two seasons of living with
 duplicate "Justin Nguyen" scoresheets and twin "Ngoc Le / Khoa Le" badges.
 This is a design document, not code. Nothing described here exists yet.
-Read it with coffee; decide at leisure. The event-day workaround in §6 is
-the only part relevant before Monday.*
+The event-day workaround in §7 is the only part relevant before Monday.*
+
+**Status: Approved** — maintainer review, the morning of the event.
+Approved as the post-event architecture direction, with one precision
+(this is a canonical *ChMeetings-ID* layer, not yet a full person entity —
+see §3.1 and §10) and five binding guardrails (§5). In the maintainer's
+words: *"a pragmatic canonical-ID layer, not the final theology of
+personhood."*
 
 ---
 
@@ -30,8 +36,9 @@ Every tier of vaysf treats the identifier as if it were the person:
   the lookup inside `_sync_single_participant`).
 - **WordPress** enforces `UNIQUE KEY chmeetings_id`
   (`plugins/vaysf/vaysf.php`) — which *sounds* like duplicate prevention
-  but is actually duplicate *manufacturing*: a second ID for the same
-  human sails through the uniqueness check as a brand-new person.
+  but is actually duplicate *manufacturing*: it prevents two rows for the
+  same ChMeetings ID while giving the system a clean excuse to treat a
+  second ID for the same human as a brand-new person.
 - **Rosters** hang off the participant row; **badges** are one PNG per
   `chmeetings_id`; **scoresheets** append every roster row with no dedup.
 
@@ -92,6 +99,18 @@ Three properties make this elegant rather than clever:
 3. **The empty map is today's system.** With no alias entries, behavior
    is byte-for-byte unchanged. Risk of landing it: near zero.
 
+### 3.1 Naming precision (maintainer review)
+
+To be exact about what this is: the map resolves **one ChMeetings ID to
+another ChMeetings ID**. It is a *canonical ChMeetings identity* layer,
+not yet a true *person* entity. A fuller future version would introduce
+something like an `sf_person_id` that owns many ChMeetings IDs and
+WordPress submissions over the years — that is the cathedral. This RFC
+builds the strong bridge instead, which is the right trade-off for the
+real situation: it solves this year's haunting with one JSON file and
+three lines of code, and it does not preclude the cathedral later
+(§10). **Do not build a cathedral when a strong bridge will do.**
+
 ## 4. The design, in five parts
 
 ### 4.1 The alias map — `person_aliases.json`
@@ -121,7 +140,8 @@ human hands, permanently.
 ### 4.2 Resolution at the choke point
 
 At the top of `_sync_single_participant()` in
-`middleware/sync/participants.py`:
+`middleware/sync/participants.py`, **before anything else — including the
+`get_person(chm_id)` fetch** (see guardrail G1):
 
 ```python
 canonical_id = resolve_chm_id(chm_id, self.person_aliases)
@@ -150,7 +170,8 @@ retires each aliased row in place:
 2. Set its `approval_status` to `merged` — a tombstone. The status column
    is a plain VARCHAR, so this needs **zero plugin changes**, and every
    consumer that filters (badges: approved-only; approval sync:
-   approved-only; pending queues) now ignores the row.
+   approved-only; pending queues) now ignores the row. (Subject to
+   guardrail G4: verify every consumer tolerates the unfamiliar status.)
 3. Tombstone its approval row the same way, so an old email token can't
    resurrect it.
 4. Resolve its open validation issues.
@@ -159,9 +180,10 @@ retires each aliased row in place:
    invalidates approval — the same philosophy as the drift guard (#171).
 
 Why not just delete the row? Because there is no participant DELETE
-route in the plugin, and — more importantly — `sf_approvals` and
-`sf_validation_issues` have **no cascading foreign keys** to
-participants. A hard delete would strand orphaned rows pointing at a dead
+route in the plugin, and — more importantly — while `sf_rosters` has an
+`ON DELETE CASCADE` foreign key to participants, `sf_approvals` and
+`sf_validation_issues` have **no cascading participant foreign keys at
+all**. A hard delete would strand orphaned rows pointing at a dead
 `participant_id`: a brand-new species of ghost. The tombstone keeps
 referential integrity, keeps the audit trail, and is reversible if an
 alias entry turns out to be a mistake.
@@ -193,21 +215,51 @@ team sharing a normalized name and birthdate logs a WARNING. That catches
 them on paper at 7 a.m. This is also the honest fix for issue #40
 ("duplicate names in export-church-teams").
 
-## 5. What this deliberately does not do
+## 5. Guardrails (binding, from maintainer review)
+
+These are conditions of the approval, not suggestions:
+
+- **G1 — Resolve before `get_person()`.** The alias lookup is the *first*
+  statement of `_sync_single_participant()`, ahead of the ChMeetings
+  fetch. A stale ID that has already been merged/deleted in ChMeetings
+  404s on fetch — resolution after the fetch would arrive too late to
+  help. Tests must cover the "stale ID 404s, canonical resolves" path.
+- **G2 — Alias chains resolve; cycles hard-fail.** `A → B` then later
+  `B → C` must end at `C` (transitive resolution with a visited set).
+  But `A → B → A` is a **hard failure with a loud error** — not a
+  warn-and-drop. A cyclic map is operator error and the sync must refuse
+  to run on it rather than guess.
+- **G3 — Never auto-merge.** The duplicate finder proposes; Bumble
+  decides. No code path ever writes the alias map or merges rows on its
+  own initiative. A duplicate badge is annoying; auto-merging two
+  *actual different* Justin Nguyens is a nightmare.
+- **G4 — Verify `merged` everywhere before relying on it.** The VARCHAR
+  column accepts the value, but every consumer must be checked for
+  tolerance of an unfamiliar status before Phase 2 ships: WordPress
+  dashboards, shortcodes, pastor approval UI, `process-token` handling
+  (`class-vaysf-rest-approvals.php`), badge generation, approval sync,
+  pending queues, and exports. Anything that whitelists statuses gets a
+  test.
+- **G5 — The real alias map stays private.** Committed example file only;
+  real entries live in the git-ignored `person_aliases.local.json`. Real
+  entries carry names, birth years, reasons, and pastoral judgment — that
+  is not casual commit material. (This resolves what was previously an
+  open question.)
+
+## 6. What this deliberately does not do
 
 - **No ChMeetings-side writes** beyond what already exists. The diocese
   data stays under human control.
 - **No WordPress plugin changes, no schema migration.** The tombstone
   rides an existing VARCHAR column.
-- **No auto-merge, ever.** The code proposes; you decide. A wrong
-  automatic merge of two *actual* different people named Justin Nguyen
-  would be far worse than a duplicate badge.
+- **No auto-merge, ever** (guardrail G3).
 - **No new database, no new service.** One JSON file, four small Python
   modules, three lines in the syncer.
 
-## 6. The event-day playbook (usable tomorrow, no new code)
+## 7. The event-day playbook (usable today, no new code)
 
-For tonight's Justin Nguyen and Ngoc/Khoa Le — with existing tools only:
+For the Justin Nguyen and Ngoc/Khoa Le twins — with existing tools only.
+This, and only this, is in scope during the event:
 
 1. `python main.py inspect-person <id>` on both IDs to confirm which is
    the stale twin (the one with no live ChMeetings record, or the older
@@ -225,36 +277,38 @@ For tonight's Justin Nguyen and Ngoc/Khoa Le — with existing tools only:
 Ten minutes per ghost. §4 is how we make it the last ten minutes you ever
 spend this way.
 
-## 7. Decisions that are yours
+## 8. Remaining open decisions
+
+Resolved by the maintainer review: the alias map lives in the git-ignored
+`.local.json` (G5), and the `merged` status is acceptable *pending* the
+G4 verification sweep.
+
+Still open, to settle before Phase 2:
 
 1. **Re-approval policy.** When an alias retires a pastor-approved row
-   and the canonical row isn't approved: force re-approval (my
-   recommendation, consistent with #171) or carry the approval over?
+   and the canonical row isn't approved: force re-approval
+   (recommendation, consistent with #171) or carry the approval over?
 2. **Scope of `apply-aliases`.** WordPress-only, or also remove the stale
    person from ChMeetings Team groups via the existing membership API?
-3. **Where real alias entries live.** Git-ignored `.local.json` (my
-   lean — the notes column carries names) or committed to the repo?
-4. **The `merged` status value.** Confirm no WordPress dashboard or
-   pastor UI chokes on an unfamiliar status string (to be verified
-   against `class-vaysf-rest-approvals.php` during implementation).
 
-## 8. Implementation sketch (post-event, one focused week)
+## 9. Implementation sketch (post-event, one focused week)
 
 | Phase | What | New files |
 |---|---|---|
-| 1 | Alias map + loader + resolution at choke point | `middleware/sync/person_aliases.py`, `middleware/data/person_aliases.json` (example) |
-| 2 | `apply-aliases` reconciliation command | `middleware/sync/alias_reconciler.py` |
-| 3 | `find-duplicates` proposal command; extract shared scoring | `middleware/sync/duplicate_finder.py`, `middleware/sync/identity_scoring.py` |
+| 1 | Alias map + loader + resolution at choke point (G1, G2) | `middleware/sync/person_aliases.py`, `middleware/data/person_aliases.json` (example) |
+| 2 | `apply-aliases` reconciliation command (after G4 sweep) | `middleware/sync/alias_reconciler.py` |
+| 3 | `find-duplicates` proposal command; extract shared scoring (G3) | `middleware/sync/duplicate_finder.py`, `middleware/sync/identity_scoring.py` |
 | 4 | Downstream warning tripwires (#40) | — (edits to scoresheets/badges/export) |
 
 Config lands beside the late-racquet precedent in `middleware/config.py`;
-CLI subcommands in `middleware/main.py`; mock-mode tests for the loader,
-sync resolution (including the empty-map regression guard), reconciler
+CLI subcommands in `middleware/main.py`; mock-mode tests for the loader
+(chains, cycle hard-fail, empty-map identity), sync resolution (including
+the empty-map regression guard and the G1 404 path), reconciler
 idempotency, and finder scoring; docs in `USAGE.md` and a "duplicate
 person" playbook in `TROUBLESHOOTING.md`. Phase 1 alone stops the
 bleeding; each later phase is independently shippable.
 
-## 9. The verge of something great
+## 10. The verge of something great — and the road past the bridge
 
 What you sensed is real, and it's this: **the entanglement was never many
 problems.** Two seasons of scattered symptoms — 404s, ghosts, twins,
@@ -262,7 +316,17 @@ re-approval confusion — trace to a single missing abstraction, and that
 abstraction costs one JSON file and three lines at a door the data
 already walks through. The system underneath is sound; it has been
 faithfully amplifying an identity error it was never given the vocabulary
-to express. Give it the word *person*, and the haunting ends.
+to express.
+
+The bridge built here gives it a first word for *person*: "these IDs are
+one human." If, after a season of use, the alias map proves too light —
+if you find yourself wanting year-over-year continuity, one lifetime
+Sports Fest identity across registrations, churches, and seasons — the
+cathedral version is a natural extension, not a rewrite: an
+`sf_person_id` entity that owns many ChMeetings IDs, with the alias map
+becoming its first migration source. Nothing in this design has to be
+undone to get there. But that is a decision for a future off-season,
+made from experience rather than anticipation.
 
 ---
 
