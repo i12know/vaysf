@@ -18,6 +18,11 @@ The Sports Fest ChMeetings Integration is a comprehensive system for managing th
 - API-based approval sync to ChMeetings groups (with Excel fallback)
 - Centralized field mapping configuration (`CHM_FIELDS`) for easy maintenance
 - API field inspector to detect ChMeetings field name changes
+- Game scheduling pipeline: roster export → `schedule_input.json` → OR-Tools CP-SAT solver → Excel timetable workbooks (see [docs/SCHEDULING.md](docs/SCHEDULING.md))
+- Athlete badge generation with a public WordPress badge gallery (`[vaysf_badges]`)
+- Score-sheet generation, including the Bible Challenge verse bank and a scoped WordPress Bible Verse editor
+- Proof-of-insurance upload workflow with token-protected church-rep links
+- Season reset tooling for year-over-year transitions
 
 ## System Architecture
 
@@ -107,7 +112,18 @@ python main.py export-church-teams
 
 # Export Excel reports for a specific church
 python main.py export-church-teams --church-code ABC
+
+# Scheduling pipeline (see docs/SCHEDULING.md for the full workflow)
+python main.py build-schedule-workbook
+python main.py solve-schedule
+python main.py produce-schedule
+
+# Generate athlete badges and score sheets
+python main.py generate-badges
+python main.py generate-scoresheets
 ```
+
+`main.py` exposes many more subcommands (group assignment, pool assignment, schedule publishing, consent checks, season reset, and more) — run `python main.py --help` or see the [Usage Guide](docs/USAGE.md) for the complete reference.
 
 For detailed setup and usage instructions, see the [Installation Guide](docs/INSTALLATION.md) and [Usage Guide](docs/USAGE.md).
 
@@ -117,26 +133,28 @@ For detailed setup and usage instructions, see the [Installation Guide](docs/INS
 - [Installation Guide](docs/INSTALLATION.md)
 - [Architecture Overview](docs/ARCHITECTURE.md)
 - [Usage Guide](docs/USAGE.md)
+- [Scheduling Pipeline](docs/SCHEDULING.md) and [Schedule How-To](docs/SCHEDULE-HOW-TO.md)
 - [Season Transition Guide](docs/SEASON_TRANSITION.md)
 - [ChMeetings API Migration](docs/CHMEETINGS_API_MIGRATION.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Contributing](docs/CONTRIBUTING.md)
+- [2026 Architecture Review](docs/ARCHITECTURE_REVIEW_2026.md)
 
 ## Project Status
 
-The system is actively maintained and ready for production use for Sports Fest 2026. All core functionality is fully implemented and tested, including recent improvements:
+The system is actively maintained and in production for Sports Fest 2026. Current release: **v1.12** (2026-07-18), with WordPress plugin **1.0.46** — see [CHANGELOG.md](CHANGELOG.md) for the full history. All core functionality is implemented and tested (889 tests in mock mode):
 
 - Church synchronization from Excel to WordPress
-- Participant synchronization from ChMeetings to WordPress (v1.05: robust pagination via `total_count`)
+- Participant synchronization from ChMeetings to WordPress with robust `total_count` pagination
 - Validation system with JSON rules
-- Pastor approval workflow
-- WordPress admin interface
-- Enhanced reporting capabilities for church representatives
-- API-based approval sync (v1.05) - eliminates manual Excel import to ChMeetings
-- Direct ChMeetings group membership management via API (v1.05/v1.06)
-- Centralized field mapping and API field inspector (v1.05)
+- Pastor approval workflow and API-based approval sync to ChMeetings groups
+- WordPress admin interface, public church/badge shortcodes, and REST API
+- Game scheduling via OR-Tools CP-SAT with Excel timetable workbooks (v1.10–v1.12)
+- Athlete badges, score sheets, and the Bible Challenge verse bank (v1.12)
+- Proof-of-insurance upload workflow (v1.12)
+- Centralized field mapping (`CHM_FIELDS`) and API field inspector
 
-The functionality covers the complete operational workflow from registration to participation, with robust error handling and recovery mechanisms. The v1.05/v1.06 releases modernize the ChMeetings integration by removing Selenium in favor of a pure API approach, add tools for easier field mapping maintenance, and eliminate all manual Excel import steps.
+The integration is API-first: the v1.05/v1.06 releases removed Selenium in favor of pure ChMeetings API calls and eliminated manual Excel import steps, and later releases have kept that principle. The one sanctioned exception is a diagnostic-only Playwright helper for exporting ChMeetings form spreadsheets (`middleware/chrome_export_vaysf_forms.py`); production sync paths never use browser automation.
 
 ## License
 

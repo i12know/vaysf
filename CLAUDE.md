@@ -45,6 +45,12 @@ vaysf/
 │   ├── INSTALLATION.md
 │   ├── USAGE.md
 │   ├── ARCHITECTURE.md
+│   ├── ARCHITECTURE_REVIEW_2026.md  # 2026 system review, debt register, roadmap
+│   ├── SCHEDULING.md                # scheduling pipeline reference (read before touching scheduling)
+│   ├── SCHEDULE-HOW-TO.md           # operator how-to for schedule production
+│   ├── PRD.md
+│   ├── PRD_SCHEDULING_HELPER.md     # 2027 Scheduling Helper GUI PRD (epic #272)
+│   ├── EVENT_DAY_RESULTS_WORKFLOW_RFC.md
 │   ├── SEASON_TRANSITION.md
 │   ├── CHMEETINGS_API_MIGRATION.md
 │   ├── TROUBLESHOOTING.md
@@ -56,11 +62,16 @@ vaysf/
 │   ├── church_teams_export.py       # live ChMeetings/WP export; delegates scheduling
 │   ├── schedule_workbook.py         # ScheduleWorkbookBuilder: scheduling tabs + workbooks
 │   ├── scheduler.py                 # OR-Tools CP-SAT pool-play solver
+│   ├── chrome_export_vaysf_forms.py # sanctioned diagnostic-only Playwright form export (see Conventions)
+│   ├── *.bat                        # Windows operator launchers (daily-run, run-schedule, …)
+│   ├── scratch/                     # OR-Tools POC referenced by docs/SCHEDULING.md
 │   ├── tests/                       # pytest; mock by default, LIVE_TEST=true for real API
 │   └── ...
 ├── plugins/                         # WordPress plugin (PHP)
+│   ├── vaysf/                       # plugin source tree
 │   └── vaysf.zip                    # distributable plugin (kept in repo)
 ├── chmeetings_openapi_v1.json       # snapshot of the ChMeetings OpenAPI spec
+├── AGENTS.md                        # agent-tool guidance (kept in sync with this file)
 ├── CHANGELOG.md
 ├── LICENSE                          # MIT
 └── README.md
@@ -111,11 +122,11 @@ pytest tests/ -v
 set LIVE_TEST=true && pytest tests/ -v -s
 ```
 
-Mock mode is the default and is what CI runs. Live tests are run locally before a release. Fixtures under `tests/fixtures/` are real ChMeetings responses with PII redacted; when the schema shifts, re-record and commit new fixtures rather than patching around stale ones.
+Mock mode is the default and is what CI runs. Live tests are run locally before a release. Fixtures are the `mock_chm_people*.json` files directly under `middleware/tests/` — synthetic ChMeetings responses shaped like the real API with PII redacted; when the schema shifts, re-record and commit new fixtures rather than patching around stale ones.
 
 ## Conventions specific to this repo
 
-**API-first, always.** The v1.05/v1.06 releases specifically removed Selenium in favor of pure API calls and eliminated all manual Excel import steps. Do not reintroduce browser automation. Do not reintroduce manual Excel as a primary path — Excel export is a diagnostic fallback only (`--excel-fallback`).
+**API-first, always.** The v1.05/v1.06 releases specifically removed Selenium in favor of pure API calls and eliminated all manual Excel import steps. Do not reintroduce browser automation in any production sync path. Do not reintroduce manual Excel as a primary path — Excel export is a diagnostic fallback only (`--excel-fallback`). One sanctioned exception exists: `middleware/chrome_export_vaysf_forms.py` is a diagnostic-only Playwright helper that attaches to an operator's authenticated Chrome session to export ChMeetings form spreadsheets (used by the consent-404 investigation and `daily-run.bat`). Treat it like `--excel-fallback`: an operator tool, never a dependency of sync/validation/approval logic, and not a precedent for adding browser automation elsewhere.
 
 **`CHM_FIELDS` is the only way to reference ChMeetings field names.** If you see a literal ChMeetings field string anywhere in middleware business logic, treat it as a bug. Update `CHM_FIELDS` and route through it. See the shared skill's §6 for the full pattern.
 
