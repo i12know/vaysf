@@ -30,7 +30,6 @@ wp-content/upgrade/
 wp-content/backup-db/
 wp-content/backups/
 wp-content/blogs.dir/
-wp-content/upgrade/
 wp-content/ai1wm-backups/
 
 # Environment files and keys
@@ -49,7 +48,6 @@ middleware/data/consent_forms.xlsx
 middleware/data/individual_application_forms.xlsx
 middleware/data/consent_forms-bkup.xlsx
 middleware/data/individual_application_forms-bkup.xlsx
-middleware/consent_404_investigator.py
 middleware/data/Venue_Input-backup.xlsx
 middleware/data/consent_404_investigation.xlsx
 middleware/data/schedule_diagnostics.json
@@ -116,7 +114,6 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -187,8 +184,7 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
-# Environments
-.env
+# Environments (.env is covered in the project section above)
 .venv
 env/
 venv/
