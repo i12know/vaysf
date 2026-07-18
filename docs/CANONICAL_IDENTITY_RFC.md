@@ -330,38 +330,37 @@ made from experience rather than anticipation.
 
 ## 11. Implementation issues (Track A)
 
-*To be created as sub-issues of the Identity & Registrant Trust epic, in
-the dependency order below. Each is independently shippable and testable
-in mock mode. Issue numbers backfilled after filing.*
+*Sub-issues of epic #307, in the dependency order below. Each is
+independently shippable and testable in mock mode.*
 
-### A1 — `middleware: person alias map + resolution at sync choke point`
+### A1 (#308) — `middleware: person alias map + resolution at sync choke point`
 Phase 1 (§4.1–§4.2): `person_aliases.py` loader (late-racquet pattern;
 committed example + git-ignored `.local.json` per G5), transitive
 `resolve_chm_id` with cycle hard-fail (G2), resolution as the first
 statement of `_sync_single_participant()` before `get_person()` (G1).
 Tests: loader edge cases, empty-map regression guard, stale-ID-404s path.
-**Dependencies:** none. The foundation issue — must land first.
+**Dependencies:** none. The foundation issue — must land first. (#308)
 
-### A2 — `middleware/wordpress: verify merged-status tolerance across consumers`
+### A2 (#309) — `middleware/wordpress: verify merged-status tolerance across consumers`
 The G4 sweep: audit every consumer of `approval_status` — dashboards,
 shortcodes, pastor UI, `process-token` (`class-vaysf-rest-approvals.php`),
 badge generation, approval sync, pending queues, exports — for tolerance of
 the `merged` value; add tests for anything that whitelists statuses.
 **Dependencies:** none (parallel with A1). Gates A3.
 
-### A3 — `middleware: apply-aliases reconciliation command`
+### A3 (#310) — `middleware: apply-aliases reconciliation command`
 Phase 2 (§4.3): report-only default + `--execute`; delete stale roster
 rows, tombstone participant + approval as `merged`, resolve open validation
 issues, loud warning on stale-approved/canonical-unapproved (§8 decision 1).
 Idempotent. **Dependencies:** A1, A2, §8 decisions.
 
-### A4 — `middleware: find-duplicates proposal command + shared identity_scoring`
+### A4 (#311) — `middleware: find-duplicates proposal command + shared identity_scoring`
 Phase 3 (§4.4): extract consent-404 scoring into `identity_scoring.py`
 (investigator behavior unchanged), all-participants pair scan with the
 family-share anchor rule, Excel audit with paste-ready alias snippets.
 Never writes the alias map (G3). **Dependencies:** A1.
 
-### A5 — `middleware: duplicate warning tripwires in scoresheets/badges/exports`
+### A5 (#312) — `middleware: duplicate warning tripwires in scoresheets/badges/exports`
 Phase 4 (§4.5): warning-only detectors (same team + normalized name +
 birthdate) in scoresheet, badge, and church-team-export generation.
 Addresses issue #40's symptom directly. **Dependencies:** none (any time

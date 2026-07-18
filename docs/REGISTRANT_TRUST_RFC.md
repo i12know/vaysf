@@ -204,44 +204,43 @@ Nothing in this RFC starts from zero:
 
 ## 7. Implementation issues (Track T)
 
-*To be created as sub-issues of the Identity & Registrant Trust epic.
-Spikes are discovery: their deliverable is a written recommendation, not
-production code. Issue numbers backfilled after filing.*
+*Sub-issues of epic #307. Spikes are discovery: their deliverable is a
+written recommendation, not production code.*
 
-### T1 — `spike: SMS/notification gateway evaluation`
+### T1 (#313) — `spike: SMS/notification gateway evaluation`
 Evaluate Twilio and alternatives for cost, nonprofit A2P 10DLC registration
 lead time (weeks — a start-early item), sender identity, and operational
 ownership; define the email fallback that works with zero gateway setup.
 Deliverable: recommendation + cost model. **Dependencies:** none.
 
-### T2 — `spike: contact verification page (token-page pattern)`
+### T2 (#314) — `spike: contact verification page (token-page pattern)`
 Prototype a `[contact_verify]`-style page on the insurance-upload pattern:
 request-code → token → verified; verified contact stored on the participant.
 Answers Q2 with a working prototype; feeds `find-duplicates` a strong
 anchor. **Dependencies:** T1 (channel).
 
-### T3 — `spike: minor registration → parent notification & consent capture`
+### T3 (#315) — `spike: minor registration → parent notification & consent capture`
 Design the trigger (sync-time, `age_at_event < 18`, new registration), the
 guardian notification (T1 channel), and the consent-capture page (token-page
 pattern) as complement or replacement for the ChMeetings consent form.
 Answers Q3, informs Q4. **Dependencies:** T1, T2.
 
-### T4 — `spike: ChMeetings /families API evaluation`
+### T4 (#316) — `spike: ChMeetings /families API evaluation`
 Determine whether households are reliably populated for VAY SM families and
 whether the API supports a guardian link worth trusting; recommend family
 model (ChMeetings households vs WordPress-side guardian link vs flat text).
 **Dependencies:** none.
 
-### T5 — `middleware: flag minor + self-signed consent mismatch`
+### T5 (#317) — `middleware: flag minor + self-signed consent mismatch`
 Buildable now: cross-check signer-type against `age_at_event` during consent
 processing; WARNING-severity validation issue first, severity revisited with
 T6. **Dependencies:** none.
 
-### T6 — `validation: consent enforcement level for minors`
+### T6 (#318) — `validation: consent enforcement level for minors`
 Rules-JSON change raising missing/self-signed consent for minors to ERROR
 (Handbook-aligned), adults stay WARNING. **Dependencies:** §8 decision, T5.
 
-### T7 — `middleware: consent drift — changes that invalidate consent`
+### T7 (#319) — `middleware: consent drift — changes that invalidate consent`
 Extend the drift framework with consent-drift for minors per Q4/Q5
 (registration+sports attachment). **Dependencies:** T3 outcome, T6.
 
