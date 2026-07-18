@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+_Nothing yet — the next changes land here._
+
+## Version 1.12 (2026-07-18) — Sports Fest 2026 event release
+
+Consolidates all middleware and WordPress-plugin work since v1.11 (2026-05-23):
+badge generation and public badge galleries, score-sheet generation with the
+Bible Challenge verse bank and the scoped WordPress Bible Verse editor,
+schedule production and publishing refinements, the proof-of-insurance upload
+workflow, consent-404 investigation tooling, season-reset support, and the
+WordPress plugin's progression from 1.0.14 to 1.0.46 (plugin source and the
+committed `plugins/vaysf.zip` are both at 1.0.46). Subsections below are kept
+in reverse-chronological order as originally logged.
+
 ### Bible Verse editor follow-up and badge route polish (#289, #294)
 
 - Moved `Bible Verses` under the main `Sports Fest` menu for staff who already
@@ -1434,12 +1447,12 @@ scheduling.
 - Chrome form exports now append progress, success, and traceback-backed failure
   messages to the normal daily `middleware/logs/sportsfest_YYYYMMDD.log` file.
 
-## WordPress Plugin 1.0.14 (2026-05-30)
+### WordPress Plugin 1.0.14 (2026-05-30)
 
 - **Admin insurance approval email**: clicking **Approve Insurance** now automatically emails the Church Rep that staff reviewed and approved the church's COI.
 - Rebuilt `plugins/vaysf.zip` with plugin header/version `1.0.14`; database version remains `1.0.4`.
 
-## WordPress Plugin 1.0.13 (2026-05-30)
+### WordPress Plugin 1.0.13 (2026-05-30)
 
 - **Admin Churches table**: added a nonce-protected **Approve Insurance** button for submitted PDFs, restricted to users with `manage_options`.
 - Rebuilt `plugins/vaysf.zip` with plugin header/version `1.0.13`; database version remains `1.0.4`.
@@ -1470,59 +1483,13 @@ scheduling.
 
 - **C3x — cross-pool conflict constraint** (scheduler.py): pools are now solved in priority order (BC Station → Soccer Field → Tennis/Badminton/Pickleball/Table Tennis → Gym Core). After each pool is solved, team slot occupancies are collected. Cross-sport conflict edges in `team_conflicts` are used to identify gym-sport partner teams; those teams are forbidden from being assigned to any slot already claimed by their BC/Soccer counterpart in the same time window. This hard constraint eliminates the cross-sport pink rows (BBM/VBM/VBW vs BC, BBM/VBM/VBW vs Soccer) that the within-pool penalty alone could not fix. `max_games_per_day` is reported per pool in solver logs.
 
-## Version 1.11 (2026-05-23)
+### Post-v1.11 backlog (landed 2026-05-23 → 2026-05-25)
 
-### New Features
-- Added Master-Schedule tab to `VAYSF_Schedule_*.xlsx` workbook
-  - New `Master-Schedule` tab shows all sports side-by-side with one row per time slot and one column per court/field/table
-  - Column headers are natural-sorted (Court-1 before Court-2) with `Other` gym grouped before `Orange` gym
-  - Empty columns (courts with no assigned games) are hidden automatically; empty time-slot rows are suppressed
-  - Cell text is compacted to a single line showing game ID, teams, and venue name
-  - `produce-schedule` wires the tab in automatically when `VAYSF_Schedule` workbook is built
+_This block was previously a second "Unreleased" section stranded below the_
+_v1.11 entry; it is post-v1.11 work and belongs to the v1.12 era._
 
-- Redesigned Bible Challenge pool-play to a single global pool with no repeated opponents
-  - Replaced the previous multi-pool + cross-pool rotation with a single flat pool using backtracking constraint solver
-  - New `_bc_no_repeat_triplets()` generates Jeopardy-format triplets (3 teams per game) where no pair of teams ever meets more than once in the preliminary round
-  - Each team plays exactly `COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM` games (currently 3), matching the 2025 season format
-  - For n ≥ 7 teams the no-repeat constraint is always satisfiable; solver warns and omits BC games if the constraint cannot be met
-  - Game IDs changed from pool-qualified (`BC-P1-RR-1`) to flat global (`BC-RR-1`, `BC-RR-2`, …)
 
-- Seeded Bible Challenge teams are guaranteed different preliminary games
-  - Teams with a non-empty non-zero `Seed` field in `Pool-Assignment` are tracked as seeded
-  - Backtracking solver enforces that at most one seeded team appears in any single triplet, so TLC (seed 1) and SFV (seed 2) will never meet in pool play
-
-- Documented the five-tier lexicographic solver objective in `docs/SCHEDULING.md` and `scheduler.py`
-  - Tier 1: minimize same-slot shared-athlete conflicts (weighted by primary/secondary sport penalty)
-  - Tier 2: minimize same-slot volleyball net-height switches on shared courts
-  - Tier 3: minimize latest finish slot index across all games (end the event as early as possible)
-  - Tier 4: minimize sum of all assigned slot indices (pack games toward earlier slots)
-  - Tier 5: minimize same-court sport-type switches for non-volleyball courts
-  - Table of all five tiers with player-facing examples and weight-construction code added to SCHEDULING.md
-
-- Added chronological day ordering and sum-of-slots slot-packing to solver objective — closes [#134](https://github.com/i12know/vaysf/issues/134)
-  - Solver now fills earlier date slots first (Fri-1 → Sat-1 → Sun-1) before overflowing to later days
-  - Tier 4 weight construction uses the slot's date-index multiplied by a large constant so cross-day preference dominates within-day ordering
-
-- Standardized schedule colors and category prefixes for all sports — closes [#131](https://github.com/i12know/vaysf/issues/131)
-  - All schedule tabs now share a single color palette defined in `schedule_workbook.py`
-  - Sport category prefixes (BB, VBM, VBW, BC, SOC, TT, TEN, BAD, PCK) are applied consistently across Pool-Assignment, Court-Schedule-Sketch, and Master-Schedule
-
-- Extended Gym-Modes support to Tennis Court and Table Tennis Table resource types
-  - `_build_gym_resources_from_allocator()` now maps Tennis and Table Tennis through the allocator so these surfaces participate in Stage-A allocation rather than falling through to the constant fallback
-
-- Added retry logic for `get_validation_issues()` on transient WordPress disconnect — closes [#115](https://github.com/i12know/vaysf/issues/115)
-  - Up to 3 retries with exponential back-off when the connection resets mid-read during a church export
-
-- Guardian consent self-healing: accept name+birthdate fuzzy match at score ≥ 49
-  - Consent check now falls through to a name+birthdate fuzzy match when a direct ID lookup returns no record, covering re-registered participants whose ChMeetings ID changed between seasons
-
-### Bug Fixes
-- Fixed BC cross-pool repeat opponents: under the old 4–5 team sub-pool design, TLC and MWC appeared in both `BC-P1-RR-1` and `BC-P1-RR-2`, violating the "play every opponent only once" rule; the global no-repeat redesign eliminates this entirely
-- Fixed seeded teams appearing in the same BC pool-play game: TLC (seed 1) and SFV (seed 2) were placed in the same triplet because the backtracking pivot selected index-0 (TLC) first and tried the `{0,1,2}` triple; the new seed-count guard breaks this
-
-## Unreleased
-
-### New Features
+#### New Features
 - Auto-generate gym playoff game objects (QF/Semi/Final/3rd) for Basketball, VB Men, VB Women — closes [#132](https://github.com/i12know/vaysf/issues/132)
   - `_build_assigned_gym_game_objects()` now returns pool games AND auto-generated single-elimination playoff games sized to the estimating-team count (4-team → Semi/Final/3rd; 8-team → QF/Semi/Final/3rd), matching the existing Soccer pattern
   - Playoff games carry standard seed/winner/loser references (`BBM-Seed-1`, `WIN-BBM-QF-1`, `LOS-BBM-Semi-2`, etc.) so they appear in `schedule_input.json` without requiring any `Playoff-Slots` entries
@@ -1622,13 +1589,13 @@ scheduling.
   - Graceful on demand > capacity: `mode_shortfall` carries the per-mode gap, no crash
   - 32 unit tests in `tests/test_gym_allocator.py` covering: block extraction, demand aggregation, demand-fits, demand-exceeds-capacity, priority ordering, structural exclusivity, switch minimization, and preferred-gym selection
 
-### Removed
+#### Removed
 - Dropped 6 scheduling tabs (`Venue-Estimator`, `Pod-Divisions`, `Pod-Entries-Review`, `Court-Schedule-Sketch`, `Pod-Resource-Estimate`, `Schedule-Input`) from `Church_Team_Status_ALL_*.xlsx` — closes [#101](https://github.com/i12know/vaysf/issues/101)
   - `export-church-teams` still writes `schedule_input.json` alongside the ALL workbook for `solve-schedule` and `build-schedule-workbook`
   - All 6 tabs remain available via `python main.py build-schedule-workbook` → `Schedule_Workbook_*.xlsx`
   - `docs/SCHEDULING.md` and `docs/SCHEDULE-HOW-TO.md` updated: transition note removed; Step 1 description and resource-ID lookup instructions updated to point operators to `build-schedule-workbook`
 
-### Breaking Changes / Refactor
+#### Breaking Changes / Refactor
 - Solver now handles **pool play only**; playoffs managed via Playoff-Slots tab in `venue_input.xlsx`
   - Gym sport playoff games (QF/Semi/Final/3rd) removed from `schedule_input.json` `games` array — `_build_gym_game_objects()` now emits pool-play games only
   - New `Playoff-Slots` tab in `venue_input.xlsx`: coordinators fill in one row per playoff game with columns `game_id`, `event`, `stage`, `resource_id`, `slot`; optional `team_a_id`, `team_b_id`, `duration_minutes`
@@ -1641,7 +1608,7 @@ scheduling.
   - Updated `_write_schedule_input_tab()`: Precedence section replaced with Playoff-Slots section
   - 8 solver tests removed (C5/C8/C9); 1 new test added (`test_solve_playoff_slots_passed_through`); 22 tests total
 
-### Bug Fixes
+#### Bug Fixes
 - Pinned `Playoff-Slots` rows now replace modeled assignments with the same `game_id` instead of duplicating finals in `schedule_output.json` / `VAYSF_Schedule_*.xlsx`
   - Fixes cases like `BC-Final` appearing once from the solver and a second time from a pinned Sunday finals row
   - Solver summary logging now separates modeled scheduled games from manual playoff-only rows so the output count is easier to audit
@@ -1654,7 +1621,7 @@ scheduling.
   - Added `global_to_day` map in `_solve_one_pool()`; C6 `AddBoolOr` is now skipped when the two adjacent global indices belong to different days
   - Added regression test `test_solve_c6_min_rest_does_not_span_day_boundary`
 
-### New Features
+#### New Features
 - Split the scheduling workbook pipeline out of `church_teams_export.py` into a dedicated module — closes [#98](https://github.com/i12know/vaysf/issues/98)
   - New `middleware/schedule_workbook.py` with a `ScheduleWorkbookBuilder` class that owns all scheduling logic: `schedule_input.json` builders, pool planning, the six planning tabs, and the `produce-schedule` renderer
   - `church_teams_export.py` delegates the moved methods to `ScheduleWorkbookBuilder` under a strict one-way dependency (`church_teams_export.py` → `schedule_workbook.py`, never the reverse); `export-church-teams` and `produce-schedule` behavior is unchanged
@@ -1796,7 +1763,7 @@ scheduling.
   - `TeamValidator` now reads sport-specific TEAM non-member limits from `middleware/validation/summer_2026.json`
   - `TeamValidator` now enforces JSON-driven minimum team sizes for team/exhibition events, including `other_events` selections such as soccer
 
-### Bug Fixes
+#### Bug Fixes
 - Fixed consolidated ALL-export workbook generation when `middleware/data/venue_input.xlsx` contains blank or partially filled rows
   - Venue-input parsing now treats blank/`NaN` spreadsheet cells as empty instead of converting them into a literal `"nan"` resource type or crashing on `int(float(NaN))`
   - `Pod-Resource-Estimate`, `Schedule-Input`, and `schedule_input.json` now continue to generate when staff leave trailing blank rows in the venue workbook
@@ -1806,12 +1773,63 @@ scheduling.
   - `sync --type validation` now self-resolves open `INDIVIDUAL` validation issues when the linked WordPress participant's `chmeetings_id` returns `404 Not Found` from ChMeetings
   - This prevents deleted/re-registered people from showing contradictory state such as receiving a fresh pastor approval email while still appearing on the church workbook's `Validation-Issues` tab under an older orphaned participant record
 
-### Documentation
+#### Documentation
 - Documented the new live-test safety rail requiring `LIVE_MUTATION_TESTS=true` for tests that write to real ChMeetings or WordPress data
   - Added a prominent warning to the README and test docs that `LIVE_TEST=true` points pytest at real systems
   - Updated contributor guidance so future live write tests must call `require_live_mutation_test(...)`
 - Added `EXPORT_DIR` to `middleware/.env.template` with the shared Google Drive example used for church-team report exports
 - Updated `docs/USAGE.md` and `docs/TROUBLESHOOTING.md` with operator guidance for `inspect-person`, `audit-team-groups`, orphaned Team-group memberships, and shared-drive export configuration
+
+
+## Version 1.11 (2026-05-23)
+
+### New Features
+- Added Master-Schedule tab to `VAYSF_Schedule_*.xlsx` workbook
+  - New `Master-Schedule` tab shows all sports side-by-side with one row per time slot and one column per court/field/table
+  - Column headers are natural-sorted (Court-1 before Court-2) with `Other` gym grouped before `Orange` gym
+  - Empty columns (courts with no assigned games) are hidden automatically; empty time-slot rows are suppressed
+  - Cell text is compacted to a single line showing game ID, teams, and venue name
+  - `produce-schedule` wires the tab in automatically when `VAYSF_Schedule` workbook is built
+
+- Redesigned Bible Challenge pool-play to a single global pool with no repeated opponents
+  - Replaced the previous multi-pool + cross-pool rotation with a single flat pool using backtracking constraint solver
+  - New `_bc_no_repeat_triplets()` generates Jeopardy-format triplets (3 teams per game) where no pair of teams ever meets more than once in the preliminary round
+  - Each team plays exactly `COURT_ESTIMATE_BC_RR_GAMES_PER_TEAM` games (currently 3), matching the 2025 season format
+  - For n ≥ 7 teams the no-repeat constraint is always satisfiable; solver warns and omits BC games if the constraint cannot be met
+  - Game IDs changed from pool-qualified (`BC-P1-RR-1`) to flat global (`BC-RR-1`, `BC-RR-2`, …)
+
+- Seeded Bible Challenge teams are guaranteed different preliminary games
+  - Teams with a non-empty non-zero `Seed` field in `Pool-Assignment` are tracked as seeded
+  - Backtracking solver enforces that at most one seeded team appears in any single triplet, so TLC (seed 1) and SFV (seed 2) will never meet in pool play
+
+- Documented the five-tier lexicographic solver objective in `docs/SCHEDULING.md` and `scheduler.py`
+  - Tier 1: minimize same-slot shared-athlete conflicts (weighted by primary/secondary sport penalty)
+  - Tier 2: minimize same-slot volleyball net-height switches on shared courts
+  - Tier 3: minimize latest finish slot index across all games (end the event as early as possible)
+  - Tier 4: minimize sum of all assigned slot indices (pack games toward earlier slots)
+  - Tier 5: minimize same-court sport-type switches for non-volleyball courts
+  - Table of all five tiers with player-facing examples and weight-construction code added to SCHEDULING.md
+
+- Added chronological day ordering and sum-of-slots slot-packing to solver objective — closes [#134](https://github.com/i12know/vaysf/issues/134)
+  - Solver now fills earlier date slots first (Fri-1 → Sat-1 → Sun-1) before overflowing to later days
+  - Tier 4 weight construction uses the slot's date-index multiplied by a large constant so cross-day preference dominates within-day ordering
+
+- Standardized schedule colors and category prefixes for all sports — closes [#131](https://github.com/i12know/vaysf/issues/131)
+  - All schedule tabs now share a single color palette defined in `schedule_workbook.py`
+  - Sport category prefixes (BB, VBM, VBW, BC, SOC, TT, TEN, BAD, PCK) are applied consistently across Pool-Assignment, Court-Schedule-Sketch, and Master-Schedule
+
+- Extended Gym-Modes support to Tennis Court and Table Tennis Table resource types
+  - `_build_gym_resources_from_allocator()` now maps Tennis and Table Tennis through the allocator so these surfaces participate in Stage-A allocation rather than falling through to the constant fallback
+
+- Added retry logic for `get_validation_issues()` on transient WordPress disconnect — closes [#115](https://github.com/i12know/vaysf/issues/115)
+  - Up to 3 retries with exponential back-off when the connection resets mid-read during a church export
+
+- Guardian consent self-healing: accept name+birthdate fuzzy match at score ≥ 49
+  - Consent check now falls through to a name+birthdate fuzzy match when a direct ID lookup returns no record, covering re-registered participants whose ChMeetings ID changed between seasons
+
+### Bug Fixes
+- Fixed BC cross-pool repeat opponents: under the old 4–5 team sub-pool design, TLC and MWC appeared in both `BC-P1-RR-1` and `BC-P1-RR-2`, violating the "play every opponent only once" rule; the global no-repeat redesign eliminates this entirely
+- Fixed seeded teams appearing in the same BC pool-play game: TLC (seed 1) and SFV (seed 2) were placed in the same triplet because the backtracking pivot selected index-0 (TLC) first and tried the `{0,1,2}` triple; the new seed-count guard breaks this
 
 ## Version 1.10 (2026-05-12)
 
