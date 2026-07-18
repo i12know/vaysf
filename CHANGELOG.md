@@ -20,7 +20,7 @@
   (it listed "sport, day, venue"; the form actually renders sport, day,
   church, and now upcoming-only) and documented the new checkbox/cookie
   behavior.
-- Bumped plugin header/version to `1.0.47` and rebuilt `plugins/vaysf.zip`.
+- Bumped plugin header/version to `1.0.48` and rebuilt `plugins/vaysf.zip`.
 
 ## Version 1.12 (2026-07-18) — Sports Fest 2026 event release
 
