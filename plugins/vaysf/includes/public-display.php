@@ -115,20 +115,31 @@ function vaysf_get_public_schedule_days($schedule_version = null) {
     }
 
     $table_schedules = vaysf_get_table_name('schedules');
-    $days = $wpdb->get_col(
+    $rows = $wpdb->get_results(
         $wpdb->prepare(
-            "SELECT DISTINCT DATE(scheduled_time) AS game_day
+            "SELECT scheduled_time, scheduled_slot
             FROM $table_schedules
             WHERE schedule_version = %d
-                AND scheduled_time IS NOT NULL
                 AND published_at IS NOT NULL
-                AND COALESCE(game_status, '') <> 'cancelled'
-            ORDER BY game_day",
+                AND COALESCE(game_status, '') <> 'cancelled'",
             absint($schedule_version)
-        )
+        ),
+        ARRAY_A
     );
+    if (!is_array($rows)) {
+        return array();
+    }
 
-    return is_array($days) ? array_values(array_filter(array_map('strval', $days))) : array();
+    $days = array();
+    foreach ($rows as $row) {
+        $competition_at = vaysf_get_schedule_competition_datetime($row);
+        if ($competition_at instanceof DateTimeImmutable) {
+            $days[$competition_at->format('Y-m-d')] = $competition_at->format('Y-m-d');
+        }
+    }
+
+    sort($days, SORT_STRING);
+    return array_values($days);
 }
 
 /**
@@ -512,10 +523,6 @@ function vaysf_get_public_schedule_rows($filters = array()) {
     }
 
     $day = isset($filters['day']) ? vaysf_sanitize_public_day_filter($filters['day']) : '';
-    if ($day !== '') {
-        $where[] = 'DATE(s.scheduled_time) = %s';
-        $args[] = $day;
-    }
 
     $venue = isset($filters['venue']) ? vaysf_sanitize_public_filter($filters['venue']) : '';
     if ($venue !== '') {
@@ -530,20 +537,18 @@ function vaysf_get_public_schedule_rows($filters = array()) {
     // days. Takes precedence over the embed-configured 'lookback_minutes',
     // which remains open-ended for admins who want that instead.
     $upcoming_only = isset($filters['upcoming_only']) && vaysf_sanitize_public_filter($filters['upcoming_only']) === '1';
+    $competition_cutoff_start = null;
+    $competition_cutoff_end = null;
     if ($upcoming_only) {
-        $cutoff_start = current_datetime()->modify('-' . VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES . ' minutes');
-        $cutoff_end = current_datetime()->setTime(23, 59, 59);
-        $where[] = 's.scheduled_time IS NOT NULL AND s.scheduled_time >= %s AND s.scheduled_time <= %s';
-        $args[] = $cutoff_start->format('Y-m-d H:i:s');
-        $args[] = $cutoff_end->format('Y-m-d H:i:s');
+        $sports_fest_now = vaysf_get_sports_fest_now();
+        $competition_cutoff_start = $sports_fest_now->modify('-' . VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES . ' minutes');
+        $competition_cutoff_end = $sports_fest_now->setTime(23, 59, 59);
     } else {
         $lookback_minutes = isset($filters['lookback_minutes'])
             ? vaysf_sanitize_public_lookback_minutes($filters['lookback_minutes'])
             : null;
         if ($lookback_minutes !== null) {
-            $cutoff = current_datetime()->modify('-' . $lookback_minutes . ' minutes');
-            $where[] = 's.scheduled_time IS NOT NULL AND s.scheduled_time >= %s';
-            $args[] = $cutoff->format('Y-m-d H:i:s');
+            $competition_cutoff_start = vaysf_get_sports_fest_now()->modify('-' . $lookback_minutes . ' minutes');
         }
     }
 
@@ -562,6 +567,27 @@ function vaysf_get_public_schedule_rows($filters = array()) {
     if ($church !== '') {
         $rows = array_values(array_filter($rows, function ($row) use ($church) {
             return vaysf_schedule_church_signature_contains($row, $church);
+        }));
+    }
+
+    if ($day !== '' || $competition_cutoff_start instanceof DateTimeImmutable || $competition_cutoff_end instanceof DateTimeImmutable) {
+        $rows = array_values(array_filter($rows, function ($row) use ($day, $competition_cutoff_start, $competition_cutoff_end) {
+            $competition_at = vaysf_get_schedule_competition_datetime($row);
+            if (!$competition_at instanceof DateTimeImmutable) {
+                return false;
+            }
+
+            if ($day !== '' && $competition_at->format('Y-m-d') !== $day) {
+                return false;
+            }
+            if ($competition_cutoff_start instanceof DateTimeImmutable && $competition_at < $competition_cutoff_start) {
+                return false;
+            }
+            if ($competition_cutoff_end instanceof DateTimeImmutable && $competition_at > $competition_cutoff_end) {
+                return false;
+            }
+
+            return true;
         }));
     }
 

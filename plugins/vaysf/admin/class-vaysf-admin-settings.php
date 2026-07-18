@@ -248,8 +248,25 @@ class VAYSF_Admin_Settings extends VAYSF_Admin_Page {
         foreach ($this->result_entry_table_names() as $label => $table_name) {
             $counts[$label] = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table_name}");
         }
+        $counts['Result-marked schedule rows'] = $this->result_marked_schedule_count();
 
         return $counts;
+    }
+
+    /**
+     * Count schedule rows carrying result-derived statuses.
+     *
+     * @return int
+     */
+    private function result_marked_schedule_count() {
+        global $wpdb;
+
+        $table_schedules = vaysf_get_table_name('schedules');
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*)
+            FROM {$table_schedules}
+            WHERE game_status IN ('in_progress', 'reported', 'official', 'under_review')"
+        );
     }
 
     /**
@@ -287,6 +304,20 @@ class VAYSF_Admin_Settings extends VAYSF_Admin_Page {
                 return new WP_Error('vaysf_results_reset_failed', 'Could not clear one of the event-day result tables.');
             }
         }
+        $table_schedules = vaysf_get_table_name('schedules');
+        $schedule_reset = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$table_schedules}
+                SET game_status = %s, updated_at = %s
+                WHERE game_status IN ('in_progress', 'reported', 'official', 'under_review')",
+                'scheduled',
+                current_time('mysql')
+            )
+        );
+        if ($schedule_reset === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vaysf_results_reset_failed', 'Could not reset schedule result statuses.');
+        }
         $wpdb->query('COMMIT');
 
         return true;
@@ -300,7 +331,7 @@ class VAYSF_Admin_Settings extends VAYSF_Admin_Page {
         ?>
         <hr>
         <h2>Event-Day Results Reset</h2>
-        <p>This clears the current score-entry database rows before coordinators begin Saturday data entry.</p>
+        <p>This clears the current score-entry database rows and resets result-marked schedule statuses before coordinators begin Saturday data entry.</p>
         <table class="widefat striped" style="max-width: 520px; margin-bottom: 12px;">
             <thead>
                 <tr>
@@ -322,7 +353,7 @@ class VAYSF_Admin_Settings extends VAYSF_Admin_Page {
             <input type="hidden" name="vaysf_action" value="clear_results_tables">
             <p>
                 <label for="confirm_clear_results">
-                    Type <code>CLEAR RESULTS</code> to delete rows from <code>sf_results</code>, <code>sf_result_revisions</code>, and <code>sf_result_files</code>.
+                    Type <code>CLEAR RESULTS</code> to delete rows from <code>sf_results</code>, <code>sf_result_revisions</code>, and <code>sf_result_files</code>, then reset result-marked schedule rows to <code>scheduled</code>.
                 </label>
             </p>
             <p>

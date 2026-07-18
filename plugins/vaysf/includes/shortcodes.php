@@ -432,7 +432,7 @@ class VAYSF_Shortcodes {
             </table>
             <p class="vaysf-live-schedule-updated">
                 <?php echo esc_html__('Last updated:', 'vaysf'); ?>
-                <span class="vaysf-last-updated"><?php echo esc_html(date_i18n('g:i:s a')); ?></span>
+                <span class="vaysf-last-updated"><?php echo esc_html(vaysf_format_sports_fest_time(vaysf_get_sports_fest_now(), 'g:i:s a')); ?></span>
             </p>
         </div>
         <?php
@@ -537,7 +537,8 @@ class VAYSF_Shortcodes {
                 <select name="vaysf_day" onchange="<?php echo esc_attr($onchange); ?>">
                     <option value=""><?php echo esc_html__('All Days', 'vaysf'); ?></option>
                     <?php foreach ($days as $d) : ?>
-                        <option value="<?php echo esc_attr($d); ?>" <?php selected($day, $d); ?>><?php echo esc_html(date_i18n('D, M j', strtotime($d))); ?></option>
+                        <?php $day_at = vaysf_parse_sports_fest_datetime($d . ' 00:00:00'); ?>
+                        <option value="<?php echo esc_attr($d); ?>" <?php selected($day, $d); ?>><?php echo esc_html($day_at ? vaysf_format_sports_fest_time($day_at, 'D, M j') : $d); ?></option>
                     <?php endforeach; ?>
                 </select>
             <?php endif; ?>
@@ -757,6 +758,7 @@ class VAYSF_Shortcodes {
             var endpoint = <?php echo wp_json_encode($endpoint); ?>;
             var filters = <?php echo wp_json_encode($filters); ?>;
             var refreshMs = <?php echo (int) $refresh_seconds; ?> * 1000;
+            var sportsFestTimeZone = <?php echo wp_json_encode(VAYSF_SPORTS_FEST_TIMEZONE); ?>;
 
             function buildUrl() {
                 var url = new URL(endpoint);
@@ -783,6 +785,19 @@ class VAYSF_Shortcodes {
 
             function statusClass(status) {
                 return String(status || 'scheduled').replace(/[^a-z0-9_-]/gi, '-');
+            }
+
+            function sportsFestClockLabel() {
+                try {
+                    return new Date().toLocaleTimeString([], {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        timeZone: sportsFestTimeZone
+                    });
+                } catch (e) {
+                    return new Date().toLocaleTimeString();
+                }
             }
 
             function matchupLabel(row) {
@@ -840,7 +855,7 @@ class VAYSF_Shortcodes {
                         reconcileRows(rows);
                         var updated = root.querySelector('.vaysf-last-updated');
                         if (updated) {
-                            updated.textContent = new Date().toLocaleTimeString();
+                            updated.textContent = sportsFestClockLabel();
                         }
                     })
                     .catch(function () {});
