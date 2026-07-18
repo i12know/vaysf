@@ -33,7 +33,7 @@ if errorlevel 1 goto failed
 "%PYTHON_EXE%" main.py sync --type participants
 if errorlevel 1 echo [WARN] Initial participant sync reported errors; the full sync will retry them.
 "%PYTHON_EXE%" main.py check-consent --file "S:\MyPrj\vay\vaysf\middleware\data\consent_forms.xlsx"
-if errorlevel 1 goto failed
+if errorlevel 1 echo [WARN] check-consent reported errors (e.g. known ChMeetings 404s); continuing.
 "%PYTHON_EXE%" main.py sync --type full
 if errorlevel 1 goto failed
 "%PYTHON_EXE%" main.py sync --type validation
