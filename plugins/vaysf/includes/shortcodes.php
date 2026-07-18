@@ -410,7 +410,17 @@ class VAYSF_Shortcodes {
 
         ob_start();
         $instance_id = wp_unique_id('vaysf-live-schedule-');
+        $should_autoscroll = isset($_GET['vaysf_event']);
+        static $scoreboard_anchor_rendered = false;
+        $anchor_id = '';
+        if ($should_autoscroll && !$scoreboard_anchor_rendered) {
+            $anchor_id = 'vaysf-scoreboard';
+            $scoreboard_anchor_rendered = true;
+        }
         ?>
+        <?php if ($anchor_id !== '') : ?>
+            <span id="<?php echo esc_attr($anchor_id); ?>" class="vaysf-scoreboard-anchor" aria-hidden="true"></span>
+        <?php endif; ?>
         <div class="vaysf-live-schedule" id="<?php echo esc_attr($instance_id); ?>" data-refresh-seconds="<?php echo esc_attr($refresh_seconds); ?>">
             <?php $this->render_public_filter_form($event, $day, $church, $upcoming_only); ?>
 
@@ -437,6 +447,9 @@ class VAYSF_Shortcodes {
         </div>
         <?php
         $this->include_frontend_styles();
+        if ($should_autoscroll) {
+            $this->render_live_schedule_autoscroll_script($instance_id);
+        }
         if ($refresh_seconds > 0) {
             $this->render_live_schedule_script($instance_id, $filters, $refresh_seconds);
         }
@@ -736,6 +749,32 @@ class VAYSF_Shortcodes {
         }
 
         return implode(' - ', $parts);
+    }
+
+    /**
+     * Jump query-routed public scoreboard visits straight to the live schedule.
+     *
+     * @param string $instance_id DOM id of the shortcode's wrapper element
+     */
+    private function render_live_schedule_autoscroll_script($instance_id) {
+        ?>
+        <script>
+        (function () {
+            var root = document.getElementById(<?php echo wp_json_encode($instance_id); ?>);
+            if (!root || window.location.hash) { return; }
+
+            function scrollToSchedule() {
+                root.scrollIntoView({ block: 'start' });
+            }
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', scrollToSchedule, { once: true });
+            } else {
+                window.setTimeout(scrollToSchedule, 0);
+            }
+        })();
+        </script>
+        <?php
     }
 
     /**
@@ -1397,6 +1436,11 @@ class VAYSF_Shortcodes {
                     gap: 6px;
                     padding: 6px 4px;
                     font-size: 14px;
+                }
+
+                .vaysf-scoreboard-anchor,
+                .vaysf-live-schedule {
+                    scroll-margin-top: 85px;
                 }
 
                 .vaysf-live-schedule-table,

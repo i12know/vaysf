@@ -99,6 +99,44 @@ function vaysf_sanitize_public_lookback_minutes($value) {
 }
 
 /**
+ * Resolve the public "Upcoming games only" time window in Sports Fest time.
+ *
+ * @param string $day Optional selected schedule day (Y-m-d)
+ * @return array{0:DateTimeImmutable,1:DateTimeImmutable} Start/end cutoffs
+ */
+function vaysf_get_upcoming_schedule_window($day = '') {
+    $sports_fest_now = vaysf_get_sports_fest_now();
+    $today = $sports_fest_now->format('Y-m-d');
+    $day = vaysf_sanitize_public_day_filter($day);
+
+    if ($day !== '') {
+        $selected_day_start = vaysf_parse_sports_fest_datetime($day . ' 00:00:00');
+        if ($selected_day_start instanceof DateTimeImmutable) {
+            $selected_day_start = $selected_day_start->setTime(0, 0, 0);
+            $selected_day_end = $selected_day_start->setTime(23, 59, 59);
+
+            if ($day === $today) {
+                return array(
+                    $sports_fest_now->modify('-' . VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES . ' minutes'),
+                    $selected_day_end,
+                );
+            }
+
+            if ($selected_day_start > $sports_fest_now) {
+                return array($selected_day_start, $selected_day_end);
+            }
+
+            return array($selected_day_end->modify('+1 second'), $selected_day_end);
+        }
+    }
+
+    return array(
+        $sports_fest_now->modify('-' . VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES . ' minutes'),
+        $sports_fest_now->setTime(23, 59, 59),
+    );
+}
+
+/**
  * Distinct scheduled dates (Y-m-d) from the currently published, non-cancelled schedule.
  *
  * @param int|null $schedule_version Optional version; defaults to current published version
@@ -532,17 +570,15 @@ function vaysf_get_public_schedule_rows($filters = array()) {
 
     $church = isset($filters['church']) ? vaysf_sanitize_public_church_filter($filters['church']) : '';
 
-    // "Upcoming games only" (visitor checkbox, #303): a short grace period
-    // back to today, capped at the end of today — not open-ended into future
-    // days. Takes precedence over the embed-configured 'lookback_minutes',
-    // which remains open-ended for admins who want that instead.
+    // "Upcoming games only" (visitor checkbox, #303): when a day is selected,
+    // visitors mean upcoming games on that Sports Fest day. Without a selected
+    // day, keep the current-day rolling window. This takes precedence over the
+    // embed-configured 'lookback_minutes', which remains open-ended for admins.
     $upcoming_only = isset($filters['upcoming_only']) && vaysf_sanitize_public_filter($filters['upcoming_only']) === '1';
     $competition_cutoff_start = null;
     $competition_cutoff_end = null;
     if ($upcoming_only) {
-        $sports_fest_now = vaysf_get_sports_fest_now();
-        $competition_cutoff_start = $sports_fest_now->modify('-' . VAYSF_UPCOMING_ONLY_LOOKBACK_MINUTES . ' minutes');
-        $competition_cutoff_end = $sports_fest_now->setTime(23, 59, 59);
+        list($competition_cutoff_start, $competition_cutoff_end) = vaysf_get_upcoming_schedule_window($day);
     } else {
         $lookback_minutes = isset($filters['lookback_minutes'])
             ? vaysf_sanitize_public_lookback_minutes($filters['lookback_minutes'])
