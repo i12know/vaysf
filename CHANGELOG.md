@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Results Desk Pools Progress For Review (#321)
+
+- Replaced the complete-pools review table with a Pools Progress For Review
+  section that shows scored-vs-total progress, provisional rankings, and
+  hover tooltip explanations for Results Desk operators.
+- Added conservative ranking helpers for pool/prelim score payloads across
+  simple scores, three-team Bible Challenge style scores, and volleyball
+  set-score payloads; rankings remain review-only and do not auto-confirm
+  advancement.
+- Church filtering now keeps full-pool context for the displayed rankings
+  while limiting the list to pools involving the selected church.
+- Bumped plugin header/version to `1.0.57` and rebuilt `plugins/vaysf.zip`.
+
 ### Results Desk Sports Fest timezone and slot fallback (#320)
 
 - Fixed the Results Desk Late / Missing count and table to resolve each
