@@ -50,6 +50,8 @@ vaysf/
 │   ├── SCHEDULE-HOW-TO.md           # operator how-to for schedule production
 │   ├── PRD.md
 │   ├── PRD_SCHEDULING_HELPER.md     # 2027 Scheduling Helper GUI PRD (epic #272)
+│   ├── CANONICAL_IDENTITY_RFC.md    # duplicate-people repair layer (epic #307, Track A)
+│   ├── REGISTRANT_TRUST_RFC.md      # roles/verification/minor-consent (epic #307, Track T)
 │   ├── EVENT_DAY_RESULTS_WORKFLOW_RFC.md
 │   ├── SEASON_TRANSITION.md
 │   ├── CHMEETINGS_API_MIGRATION.md
