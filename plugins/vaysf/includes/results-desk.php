@@ -131,6 +131,108 @@ function vaysf_results_desk_add_church_filter(&$where, &$args, $church, $alias =
 }
 
 /**
+ * Format a DateTimeImmutable as a MySQL DATETIME string.
+ *
+ * @param DateTimeImmutable $datetime Date/time to format
+ * @return string
+ */
+function vaysf_results_desk_mysql_datetime($datetime) {
+    return $datetime->format('Y-m-d H:i:s');
+}
+
+/**
+ * Return the DateTime cutoff for schedule wall-clock comparisons.
+ *
+ * Schedule rows are stored as Sports Fest local wall-clock time, so overdue
+ * game comparisons must use that same clock rather than the WordPress/server
+ * timezone.
+ *
+ * @param int $minutes Grace period in minutes
+ * @return DateTimeImmutable
+ */
+function vaysf_results_desk_schedule_cutoff_datetime($minutes) {
+    return vaysf_get_sports_fest_now()->modify('-' . absint($minutes) . ' minutes');
+}
+
+/**
+ * Return a cutoff for WordPress-stored activity timestamps.
+ *
+ * Result revisions and update timestamps are written with current_time('mysql'),
+ * so rolling activity windows should stay in the WordPress timezone used for
+ * those stored DATETIME values.
+ *
+ * @param int $hours Lookback window in hours
+ * @return string MySQL DATETIME string in the WordPress timezone
+ */
+function vaysf_results_desk_activity_cutoff($hours) {
+    return vaysf_results_desk_mysql_datetime(
+        (new DateTimeImmutable('now', wp_timezone()))->modify('-' . absint($hours) . ' hours')
+    );
+}
+
+/**
+ * Return late/missing schedule rows, honoring scheduled_slot fallbacks.
+ *
+ * @param array<string,mixed> $filters Sanitized filters
+ * @param int|null $limit Maximum rows; null uses filter limit, 0 means no limit
+ * @return array<int,array<string,mixed>>
+ */
+function vaysf_get_results_desk_late_missing_rows($filters = array(), $limit = null) {
+    global $wpdb;
+
+    $schedule_version = vaysf_get_current_published_schedule_version();
+    if ($schedule_version === null) {
+        return array();
+    }
+
+    $filters = vaysf_sanitize_results_desk_filters($filters);
+    if ($limit === null) {
+        $limit = absint($filters['limit']);
+    } else {
+        $limit = absint($limit);
+    }
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $table_results = vaysf_get_table_name('results');
+    $where = array(
+        's.schedule_version = %d',
+        's.published_at IS NOT NULL',
+        "COALESCE(s.game_status, '') <> 'cancelled'",
+        "(r.result_id IS NULL OR COALESCE(r.score_json, '') = '')",
+    );
+    $args = array($schedule_version);
+    vaysf_results_desk_add_event_filter($where, $args, $filters['event']);
+    vaysf_results_desk_add_church_filter($where, $args, $filters['church']);
+
+    $sql = "SELECT s.*, r.result_id, r.public_status, r.scan_status, r.updated_at AS result_updated_at
+        FROM $table_schedules s
+        LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
+        WHERE " . implode(' AND ', $where);
+
+    $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
+    if (!is_array($rows)) {
+        return array();
+    }
+
+    $cutoff = vaysf_results_desk_schedule_cutoff_datetime($filters['late_grace_minutes']);
+    $late_rows = array();
+    foreach ($rows as $row) {
+        $competition_at = vaysf_get_schedule_competition_datetime($row);
+        if ($competition_at instanceof DateTimeImmutable && $competition_at <= $cutoff) {
+            $late_rows[] = $row;
+        }
+    }
+
+    $late_rows = vaysf_sort_public_schedule_rows_by_competition_time($late_rows);
+
+    if ($limit > 0) {
+        return array_slice($late_rows, 0, $limit);
+    }
+
+    return $late_rows;
+}
+
+/**
  * Fetch one Results Desk dataset.
  *
  * @param string $section Section key
@@ -162,23 +264,7 @@ function vaysf_get_results_desk_rows($section, $filters = array()) {
     vaysf_results_desk_add_church_filter($base_where, $base_args, $filters['church']);
 
     if ($section === 'late_missing') {
-        $where = $base_where;
-        $args = $base_args;
-        $where[] = 's.scheduled_time IS NOT NULL';
-        $where[] = 's.scheduled_time <= %s';
-        $where[] = "(r.result_id IS NULL OR COALESCE(r.score_json, '') = '')";
-        $args[] = date('Y-m-d H:i:s', current_time('timestamp') - (absint($filters['late_grace_minutes']) * MINUTE_IN_SECONDS));
-        $args[] = $limit;
-
-        $sql = "SELECT s.*, r.result_id, r.public_status, r.scan_status, r.updated_at AS result_updated_at
-            FROM $table_schedules s
-            LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
-            WHERE " . implode(' AND ', $where) . "
-            ORDER BY s.scheduled_time, s.event, s.game_key
-            LIMIT %d";
-
-        $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
-        return is_array($rows) ? $rows : array();
+        return vaysf_get_results_desk_late_missing_rows($filters, $limit);
     }
 
     if ($section === 'attention') {
@@ -210,7 +296,7 @@ function vaysf_get_results_desk_rows($section, $filters = array()) {
         $args = $base_args;
         $where[] = 'rr.revision_number > 1';
         $where[] = 'rr.submitted_at >= %s';
-        $args[] = date('Y-m-d H:i:s', current_time('timestamp') - (absint($filters['revision_hours']) * HOUR_IN_SECONDS));
+        $args[] = vaysf_results_desk_activity_cutoff($filters['revision_hours']);
         $args[] = $limit;
 
         $sql = "SELECT s.*, r.result_id, r.public_status, r.scan_status, r.current_revision,
@@ -300,7 +386,7 @@ function vaysf_get_results_desk_summary($filters = array()) {
         'last_schedule_update' => '',
         'last_result_update' => '',
         'public_data_updated_at' => '',
-        'server_time' => current_time('mysql'),
+        'sports_fest_time' => vaysf_results_desk_mysql_datetime(vaysf_get_sports_fest_now()),
     );
 
     if ($schedule_version === null) {
@@ -324,7 +410,6 @@ function vaysf_get_results_desk_summary($filters = array()) {
     $summary_sql = "SELECT
             COUNT(*) AS total_games,
             SUM(CASE WHEN r.result_id IS NOT NULL AND COALESCE(r.score_json, '') <> '' THEN 1 ELSE 0 END) AS reported_results,
-            SUM(CASE WHEN s.scheduled_time IS NOT NULL AND s.scheduled_time <= %s AND (r.result_id IS NULL OR COALESCE(r.score_json, '') = '') THEN 1 ELSE 0 END) AS late_missing,
             SUM(CASE WHEN r.result_id IS NOT NULL AND (r.current_revision > 1 OR r.public_status IN ('in_progress', 'under_review')) THEN 1 ELSE 0 END) AS attention,
             MAX(s.updated_at) AS last_schedule_update,
             MAX(r.updated_at) AS last_result_update
@@ -332,11 +417,7 @@ function vaysf_get_results_desk_summary($filters = array()) {
         LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
         WHERE $where_clause";
 
-    $summary_args = array_merge(
-        array(date('Y-m-d H:i:s', current_time('timestamp') - (absint($filters['late_grace_minutes']) * MINUTE_IN_SECONDS))),
-        $args
-    );
-    $summary = $wpdb->get_row($wpdb->prepare($summary_sql, $summary_args), ARRAY_A);
+    $summary = $wpdb->get_row($wpdb->prepare($summary_sql, $args), ARRAY_A);
     if (!is_array($summary)) {
         $summary = array();
     }
@@ -349,7 +430,7 @@ function vaysf_get_results_desk_summary($filters = array()) {
         'schedule_version' => $schedule_version,
         'total_games' => isset($summary['total_games']) ? (int) $summary['total_games'] : 0,
         'reported_results' => isset($summary['reported_results']) ? (int) $summary['reported_results'] : 0,
-        'late_missing' => isset($summary['late_missing']) ? (int) $summary['late_missing'] : 0,
+        'late_missing' => count(vaysf_get_results_desk_late_missing_rows($filters, 0)),
         'attention' => isset($summary['attention']) ? (int) $summary['attention'] : 0,
         'missing_scans' => count(vaysf_get_results_desk_rows('missing_scans', array_merge($filters, array('limit' => 200)))),
         'recent_corrections' => count(vaysf_get_results_desk_rows('recent_corrections', array_merge($filters, array('limit' => 200)))),
@@ -361,23 +442,55 @@ function vaysf_get_results_desk_summary($filters = array()) {
 }
 
 /**
- * Format a Results Desk timestamp for display.
+ * Parse a stored Results Desk timestamp.
  *
  * @param string $mysql_datetime MySQL datetime
+ * @param DateTimeZone|null $source_timezone Timezone of the stored value
+ * @return DateTimeImmutable|null
+ */
+function vaysf_parse_results_desk_datetime($mysql_datetime, $source_timezone = null) {
+    $mysql_datetime = trim((string) $mysql_datetime);
+    if ($mysql_datetime === '') {
+        return null;
+    }
+
+    if (!$source_timezone instanceof DateTimeZone) {
+        $source_timezone = wp_timezone();
+    }
+
+    foreach (array('Y-m-d H:i:s', 'Y-m-d H:i') as $format) {
+        $parsed = DateTimeImmutable::createFromFormat($format, $mysql_datetime, $source_timezone);
+        if ($parsed instanceof DateTimeImmutable) {
+            return $parsed;
+        }
+    }
+
+    try {
+        return new DateTimeImmutable($mysql_datetime, $source_timezone);
+    } catch (Exception $e) {
+        return null;
+    }
+}
+
+/**
+ * Format a Results Desk timestamp for display in Sports Fest local time.
+ *
+ * @param string $mysql_datetime MySQL datetime
+ * @param DateTimeZone|null $source_timezone Timezone of the stored value
  * @return string
  */
-function vaysf_format_results_desk_datetime($mysql_datetime) {
+function vaysf_format_results_desk_datetime($mysql_datetime, $source_timezone = null) {
     $mysql_datetime = trim((string) $mysql_datetime);
     if ($mysql_datetime === '') {
         return '-';
     }
 
-    $timestamp = strtotime($mysql_datetime);
-    if (!$timestamp) {
+    $datetime = vaysf_parse_results_desk_datetime($mysql_datetime, $source_timezone);
+    if (!$datetime instanceof DateTimeImmutable) {
         return $mysql_datetime;
     }
 
-    return date_i18n('D M j, g:i A', $timestamp);
+    return vaysf_format_sports_fest_time($datetime, 'D M j, g:i A T');
 }
 
 /**
@@ -570,7 +683,7 @@ function vaysf_render_results_desk($atts = array()) {
             <div class="vaysf-results-desk-heartbeat">
                 <div><strong><?php esc_html_e('Schedule version:', 'vaysf'); ?></strong> <?php echo esc_html($summary['schedule_version'] ?: '-'); ?></div>
                 <div><strong><?php esc_html_e('Public data updated:', 'vaysf'); ?></strong> <?php echo esc_html(vaysf_format_results_desk_datetime($summary['public_data_updated_at'])); ?></div>
-                <div><strong><?php esc_html_e('Server time:', 'vaysf'); ?></strong> <?php echo esc_html(vaysf_format_results_desk_datetime($summary['server_time'])); ?></div>
+                <div><strong><?php esc_html_e('Sports Fest time:', 'vaysf'); ?></strong> <?php echo esc_html(vaysf_format_results_desk_datetime($summary['sports_fest_time'], vaysf_get_sports_fest_timezone())); ?></div>
             </div>
 
             <?php

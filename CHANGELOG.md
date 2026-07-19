@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Results Desk Sports Fest timezone and slot fallback (#320)
+
+- Fixed the Results Desk Late / Missing count and table to resolve each
+  game's competition datetime from `scheduled_time` or `scheduled_slot`, then
+  compare it against the Sports Fest local clock (`America/Los_Angeles`).
+  Slot-only published games such as `Sun-1-08:00` now appear as overdue once
+  their local scheduled time plus the grace period has passed.
+- Replaced the misleading "Server time" heartbeat with "Sports Fest time" and
+  formatted Results Desk heartbeat timestamps in the event timezone.
+- Bumped plugin header/version to `1.0.56` and rebuilt `plugins/vaysf.zip`.
+
 ### Event-day results reset status cleanup (#304)
 
 - Fixed the Event-Day Results Reset control so clearing `sf_results`,
