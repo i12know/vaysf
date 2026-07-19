@@ -1471,9 +1471,8 @@ function vaysf_submit_simple_score_result($user_id, $schedule_id, $team_a_score,
 function vaysf_submit_three_team_score_result($user_id, $schedule_id, $team_a_score, $team_b_score, $team_c_score, $certified, $notes = '') {
     if (
         !is_int($team_a_score) || !is_int($team_b_score) || !is_int($team_c_score)
-        || $team_a_score < 0 || $team_b_score < 0 || $team_c_score < 0
     ) {
-        return new WP_Error('vaysf_three_team_score_invalid_score', __('Scores must be whole numbers zero or greater.', 'vaysf'));
+        return new WP_Error('vaysf_three_team_score_invalid_score', __('Scores must be whole numbers. Negative scores are allowed for Bible Challenge.', 'vaysf'));
     }
 
     $schedule = vaysf_resolve_schedule_row($schedule_id);
@@ -1836,6 +1835,68 @@ function vaysf_get_coordinator_score_dashboard_rows($user_id, $view = 'needs', $
     }
 
     return $resolved_rows;
+}
+
+/**
+ * Get pool/prelim progress rows visible to one score-entry user.
+ *
+ * Reuses the Results Desk provisional ranking helper, but keeps ordinary
+ * coordinators limited to their authorized schedule events.
+ *
+ * @param int $user_id WordPress user id
+ * @param string $event_filter Optional event name to filter within authorized events
+ * @param int $limit Maximum pool groups
+ * @return array<int,array<string,mixed>>
+ */
+function vaysf_get_coordinator_score_pool_progress_rows($user_id, $event_filter = '', $limit = 200) {
+    $user_id = absint($user_id);
+    if (
+        !$user_id
+        || !user_can($user_id, 'sf2025_submit_results')
+        || !function_exists('vaysf_get_results_desk_pool_progress_rows')
+    ) {
+        return array();
+    }
+
+    $authorized_events = vaysf_get_user_score_entry_events($user_id);
+    if (!$authorized_events) {
+        return array();
+    }
+
+    $event_filter = sanitize_text_field($event_filter);
+    if ($event_filter !== '') {
+        if (!in_array($event_filter, $authorized_events, true)) {
+            return array();
+        }
+
+        return vaysf_get_results_desk_pool_progress_rows(
+            array(
+                'event' => $event_filter,
+                'limit' => $limit,
+            ),
+            $limit
+        );
+    }
+
+    if (vaysf_user_has_all_score_entry_events($user_id)) {
+        return vaysf_get_results_desk_pool_progress_rows(array('limit' => $limit), $limit);
+    }
+
+    $pool_rows = array();
+    foreach ($authorized_events as $authorized_event) {
+        $pool_rows = array_merge(
+            $pool_rows,
+            vaysf_get_results_desk_pool_progress_rows(
+                array(
+                    'event' => $authorized_event,
+                    'limit' => $limit,
+                ),
+                $limit
+            )
+        );
+    }
+
+    return array_slice($pool_rows, 0, max(1, min(absint($limit), 200)));
 }
 
 /**

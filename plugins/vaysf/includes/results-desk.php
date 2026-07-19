@@ -345,20 +345,20 @@ function vaysf_get_results_desk_rows($section, $filters = array()) {
     if ($section === 'complete_pools') {
         $where = $base_where;
         $args = $base_args;
-        $where[] = "COALESCE(s.pool_id, '') <> ''";
         $where[] = "LOWER(COALESCE(s.stage, '')) IN ('pool', 'prelim', 'preliminary')";
         $args[] = $limit;
+        $pool_id_expr = "COALESCE(NULLIF(TRIM(s.pool_id), ''), 'P1')";
 
-        $sql = "SELECT s.event, s.stage, s.pool_id,
+        $sql = "SELECT s.event, s.stage, $pool_id_expr AS pool_id,
                 COUNT(*) AS game_count,
                 SUM(CASE WHEN r.result_id IS NULL OR COALESCE(r.score_json, '') = '' THEN 1 ELSE 0 END) AS missing_count,
                 MAX(COALESCE(r.updated_at, s.updated_at)) AS last_updated_at
             FROM $table_schedules s
             LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
             WHERE " . implode(' AND ', $where) . "
-            GROUP BY s.event, s.stage, s.pool_id
+            GROUP BY s.event, s.stage, $pool_id_expr
             HAVING game_count > 0 AND missing_count = 0
-            ORDER BY last_updated_at DESC, s.event, s.pool_id
+            ORDER BY last_updated_at DESC, s.event, pool_id
             LIMIT %d";
 
         $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
@@ -775,7 +775,6 @@ function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 
         's.schedule_version = %d',
         's.published_at IS NOT NULL',
         "COALESCE(s.game_status, '') <> 'cancelled'",
-        "COALESCE(s.pool_id, '') <> ''",
         "LOWER(COALESCE(s.stage, '')) IN ('pool', 'prelim', 'preliminary')",
     );
     $args = array($schedule_version);
@@ -796,17 +795,20 @@ function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 
     $pools = array();
     $pool_teams = array();
     foreach ($rows as $row) {
+        $pool_id = trim((string) ($row['pool_id'] ?? ''));
+        $pool_display_id = $pool_id !== '' ? $pool_id : 'P1';
         $key = implode('|', array(
             (string) ($row['event'] ?? ''),
             (string) ($row['stage'] ?? ''),
-            (string) ($row['pool_id'] ?? ''),
+            $pool_display_id,
         ));
 
         if (empty($pools[$key])) {
             $pools[$key] = array(
                 'event' => (string) ($row['event'] ?? ''),
                 'stage' => (string) ($row['stage'] ?? ''),
-                'pool_id' => (string) ($row['pool_id'] ?? ''),
+                'pool_id' => $pool_display_id,
+                'synthetic_pool' => $pool_id === '',
                 'game_count' => 0,
                 'reported_count' => 0,
                 'missing_count' => 0,

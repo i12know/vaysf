@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Bible Challenge negative scores
+
+- Coordinator Score Entry now accepts signed whole-number scores for
+  three-team Bible Challenge results, while keeping other score forms
+  non-negative.
+- Existing Bible Challenge score edits now preserve negative values in the
+  input fields instead of coercing them to positive values.
+- Bumped plugin header/version to `1.0.60` and rebuilt `plugins/vaysf.zip`.
+
+### Single-pool preliminary progress
+
+- Pool/prelim progress and readiness counts now include events with a blank
+  `pool_id`, treating each event/stage as one displayed `P1` pool for
+  provisional ranking.
+- This brings no-pool events such as Bible Challenge into the Results Desk and
+  Coordinator Score Entry progress tables as one ranked list.
+- Bumped plugin header/version to `1.0.59` and rebuilt `plugins/vaysf.zip`.
+
+### Coordinator Score Entry pool progress
+
+- Added the Results Desk pool/prelim progress and provisional ranking table to
+  the Coordinator Score Entry dashboard, scoped to the coordinator's authorized
+  events and the selected event filter.
+- Reused the Results Desk pool ranking helper so coordinators and managers see
+  the same scored-vs-total progress, review status, and provisional ranking
+  signals while scores are being entered.
+- Bumped plugin header/version to `1.0.58` and rebuilt `plugins/vaysf.zip`.
+
 ### Results Desk Pools Progress For Review (#321)
 
 - Replaced the complete-pools review table with a Pools Progress For Review
