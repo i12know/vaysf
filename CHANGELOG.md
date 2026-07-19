@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Results Desk dead-code cleanup
+
+- Removed the unreachable `complete_pools` query branch from
+  `vaysf_get_results_desk_rows()` — both call sites were migrated to the
+  `pool_progress` section in the Pools Progress For Review work and no
+  longer referenced it.
+- Bumped plugin header/version to `1.0.61` and rebuilt `plugins/vaysf.zip`.
+
 ### Bible Challenge negative scores
 
 - Coordinator Score Entry now accepts signed whole-number scores for

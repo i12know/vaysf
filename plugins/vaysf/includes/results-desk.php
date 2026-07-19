@@ -104,7 +104,7 @@ function vaysf_results_desk_add_event_filter(&$where, &$args, $event, $alias = '
  * (taking the token after a trailing "::", the historical church-code-style
  * key format) when the dedicated column is empty — the same fallback tiers
  * as vaysf_resolve_row_slot_church_code() in public-display.php, expressed
- * in SQL so it works across the GROUP BY aggregate used by complete_pools.
+ * in SQL so it works across GROUP BY aggregates in Results Desk queries.
  *
  * @param array<int,string> $where SQL WHERE fragments
  * @param array<int,mixed> $args SQL prepare args
@@ -340,29 +340,6 @@ function vaysf_get_results_desk_rows($section, $filters = array()) {
 
     if ($section === 'pool_progress') {
         return vaysf_get_results_desk_pool_progress_rows($filters, $limit);
-    }
-
-    if ($section === 'complete_pools') {
-        $where = $base_where;
-        $args = $base_args;
-        $where[] = "LOWER(COALESCE(s.stage, '')) IN ('pool', 'prelim', 'preliminary')";
-        $args[] = $limit;
-        $pool_id_expr = "COALESCE(NULLIF(TRIM(s.pool_id), ''), 'P1')";
-
-        $sql = "SELECT s.event, s.stage, $pool_id_expr AS pool_id,
-                COUNT(*) AS game_count,
-                SUM(CASE WHEN r.result_id IS NULL OR COALESCE(r.score_json, '') = '' THEN 1 ELSE 0 END) AS missing_count,
-                MAX(COALESCE(r.updated_at, s.updated_at)) AS last_updated_at
-            FROM $table_schedules s
-            LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
-            WHERE " . implode(' AND ', $where) . "
-            GROUP BY s.event, s.stage, $pool_id_expr
-            HAVING game_count > 0 AND missing_count = 0
-            ORDER BY last_updated_at DESC, s.event, pool_id
-            LIMIT %d";
-
-        $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
-        return is_array($rows) ? $rows : array();
     }
 
     return array();
