@@ -107,17 +107,28 @@ if (
                 $volleyball_require_tiebreaker
             );
         }
-    } elseif (
-        $team_a_score_raw === ''
-        || $team_b_score_raw === ''
-        || !ctype_digit($team_a_score_raw)
-        || !ctype_digit($team_b_score_raw)
-        || ($score_form_type === 'three_team' && ($team_c_score_raw === '' || !ctype_digit($team_c_score_raw)))
-    ) {
-        $notice_message = __('Scores must be whole numbers zero or greater.', 'vaysf');
-        $notice_is_error = true;
     } else {
+        $score_values_valid = false;
         if ($score_form_type === 'three_team') {
+            $score_values_valid = $team_a_score_raw !== ''
+                && $team_b_score_raw !== ''
+                && $team_c_score_raw !== ''
+                && preg_match('/^-?\d+$/', $team_a_score_raw)
+                && preg_match('/^-?\d+$/', $team_b_score_raw)
+                && preg_match('/^-?\d+$/', $team_c_score_raw);
+        } else {
+            $score_values_valid = $team_a_score_raw !== ''
+                && $team_b_score_raw !== ''
+                && ctype_digit($team_a_score_raw)
+                && ctype_digit($team_b_score_raw);
+        }
+
+        if (!$score_values_valid) {
+            $notice_message = $score_form_type === 'three_team'
+                ? __('Scores must be whole numbers. Negative scores are allowed for Bible Challenge.', 'vaysf')
+                : __('Scores must be whole numbers zero or greater.', 'vaysf');
+            $notice_is_error = true;
+        } elseif ($score_form_type === 'three_team') {
             $submit_result = vaysf_submit_three_team_score_result(
                 get_current_user_id(),
                 $posted_schedule_id,
@@ -240,6 +251,93 @@ if (!$vaysf_rendering_shortcode) {
             margin: 0 0 20px;
             color: #50575e;
             font-size: 0.95rem;
+        }
+        .vaysf-score-entry-pool-section {
+            margin: 0 0 24px;
+        }
+        .vaysf-score-entry-pool-section h2 {
+            font-size: 1.35rem;
+            margin: 0 0 4px;
+        }
+        .vaysf-score-entry-pool-section p {
+            color: #50575e;
+            margin: 0 0 10px;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-table {
+            background: #fff;
+            border: 1px solid #dcdcde;
+            border-collapse: collapse;
+            width: 100%;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-table th,
+        .vaysf-score-entry-pool-section .vaysf-results-desk-table td {
+            border-bottom: 1px solid #dcdcde;
+            padding: 10px;
+            text-align: left;
+            vertical-align: top;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-table th {
+            background: #f6f7f7;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-help {
+            align-items: center;
+            background: #dcdcde;
+            border-radius: 50%;
+            color: #1d2327;
+            cursor: help;
+            display: inline-flex;
+            font-size: 12px;
+            font-weight: 700;
+            height: 18px;
+            justify-content: center;
+            width: 18px;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-muted {
+            color: #646970;
+            font-size: .9em;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-warning {
+            background: #fff8e5;
+            border: 1px solid #dba617;
+            border-radius: 4px;
+            color: #674e00;
+            cursor: help;
+            display: inline-block;
+            padding: 2px 6px;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-pill {
+            background: #ecf7ed;
+            border: 1px solid #c3d9c8;
+            border-radius: 4px;
+            color: #1d5727;
+            cursor: help;
+            display: inline-block;
+            padding: 2px 6px;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-progress {
+            background: #dcdcde;
+            border-radius: 999px;
+            cursor: help;
+            height: 10px;
+            margin: 0 0 6px;
+            max-width: 100%;
+            overflow: hidden;
+            width: 160px;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-progress span {
+            background: #46b450;
+            display: block;
+            height: 100%;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-rankings {
+            margin: 0;
+            padding-left: 26px;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-rankings li {
+            margin: 0 0 6px;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-rankings li:last-child {
+            margin-bottom: 0;
         }
         .vaysf-score-entry-filter {
             align-items: end;
@@ -400,6 +498,10 @@ if (!$vaysf_rendering_shortcode) {
                 margin: 16px auto !important;
                 padding: 14px !important;
             }
+            .vaysf-score-entry-pool-section .vaysf-results-desk-table {
+                display: block;
+                overflow-x: auto;
+            }
             .vaysf-score-entry-card-header {
                 display: block;
             }
@@ -449,6 +551,9 @@ if (!$vaysf_rendering_shortcode) {
             'submitted' => vaysf_get_coordinator_score_dashboard_rows($user_id, 'submitted', $selected_event),
             'assigned' => vaysf_get_coordinator_score_dashboard_rows($user_id, 'assigned', $selected_event),
         );
+        $pool_progress_rows = ($page_action === 'score' && $schedule_id)
+            ? array()
+            : vaysf_get_coordinator_score_pool_progress_rows($user_id, $selected_event);
         $rows = $row_sets[$view];
         ?>
 
@@ -489,9 +594,9 @@ if (!$vaysf_rendering_shortcode) {
                     $team_a_label = $score_schedule['team_a_label'] ?: $score_schedule['team_a_key'];
                     $team_b_label = $score_schedule['team_b_label'] ?: $score_schedule['team_b_key'];
                     $team_c_label = $score_schedule['team_c_label'] ?: $score_schedule['team_c_key'];
-                    $team_a_value = isset($score_payload['team_a_score']) ? (string) absint($score_payload['team_a_score']) : '';
-                    $team_b_value = isset($score_payload['team_b_score']) ? (string) absint($score_payload['team_b_score']) : '';
-                    $team_c_value = isset($score_payload['team_c_score']) ? (string) absint($score_payload['team_c_score']) : '';
+                    $team_a_value = isset($score_payload['team_a_score']) ? (string) intval($score_payload['team_a_score']) : '';
+                    $team_b_value = isset($score_payload['team_b_score']) ? (string) intval($score_payload['team_b_score']) : '';
+                    $team_c_value = isset($score_payload['team_c_score']) ? (string) intval($score_payload['team_c_score']) : '';
                     $score_form_type = 'simple';
                     if (vaysf_is_three_team_score_schedule($score_schedule)) {
                         $score_form_type = 'three_team';
@@ -585,16 +690,16 @@ if (!$vaysf_rendering_shortcode) {
                                 <div class="vaysf-score-entry-score-grid <?php echo $score_form_type === 'three_team' ? 'vaysf-score-entry-score-grid-three' : ''; ?>">
                                     <div>
                                         <label for="team-a-score"><?php echo esc_html($team_a_label); ?></label>
-                                        <input id="team-a-score" name="team_a_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_a_value); ?>">
+                                        <input id="team-a-score" name="team_a_score" type="number"<?php echo $score_form_type === 'three_team' ? '' : ' min="0" inputmode="numeric"'; ?> step="1" required value="<?php echo esc_attr($team_a_value); ?>">
                                     </div>
                                     <div>
                                         <label for="team-b-score"><?php echo esc_html($team_b_label); ?></label>
-                                        <input id="team-b-score" name="team_b_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_b_value); ?>">
+                                        <input id="team-b-score" name="team_b_score" type="number"<?php echo $score_form_type === 'three_team' ? '' : ' min="0" inputmode="numeric"'; ?> step="1" required value="<?php echo esc_attr($team_b_value); ?>">
                                     </div>
                                     <?php if ($score_form_type === 'three_team') : ?>
                                         <div>
                                             <label for="team-c-score"><?php echo esc_html($team_c_label); ?></label>
-                                            <input id="team-c-score" name="team_c_score" type="number" min="0" step="1" inputmode="numeric" required value="<?php echo esc_attr($team_c_value); ?>">
+                                            <input id="team-c-score" name="team_c_score" type="number" step="1" required value="<?php echo esc_attr($team_c_value); ?>">
                                         </div>
                                     <?php endif; ?>
                                 </div>
@@ -704,6 +809,38 @@ if (!$vaysf_rendering_shortcode) {
                 }
                 ?>
             </p>
+
+            <section class="vaysf-score-entry-pool-section">
+                <h2>
+                    <?php esc_html_e('Pools Progress For Review', 'vaysf'); ?>
+                    <?php if (function_exists('vaysf_render_results_desk_tooltip')) : ?>
+                        <?php vaysf_render_results_desk_tooltip('?', __('This section summarizes pool/prelim progress and provisional ranking signals for your score-entry events. It does not confirm advancement automatically.', 'vaysf')); ?>
+                    <?php endif; ?>
+                </h2>
+                <p><?php esc_html_e('Use this as a quick review aid while entering or checking pool scores.', 'vaysf'); ?></p>
+                <?php if (!$pool_progress_rows) : ?>
+                    <div class="vaysf-score-entry-notice">
+                        <p><?php esc_html_e('No pool progress is available for these assigned events.', 'vaysf'); ?></p>
+                    </div>
+                <?php elseif (function_exists('vaysf_render_results_desk_pool_progress_row')) : ?>
+                    <table class="vaysf-results-desk-table">
+                        <thead>
+                            <tr>
+                                <th><?php esc_html_e('Pool', 'vaysf'); ?></th>
+                                <th><?php esc_html_e('Progress', 'vaysf'); ?></th>
+                                <th><?php esc_html_e('Provisional Rankings', 'vaysf'); ?></th>
+                                <th><?php esc_html_e('Review Status', 'vaysf'); ?></th>
+                                <th><?php esc_html_e('Last Updated', 'vaysf'); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($pool_progress_rows as $pool) : ?>
+                                <?php vaysf_render_results_desk_pool_progress_row($pool); ?>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+            </section>
 
             <?php if (!$rows) : ?>
                 <div class="vaysf-score-entry-notice">

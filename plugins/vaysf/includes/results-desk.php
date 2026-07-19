@@ -104,7 +104,7 @@ function vaysf_results_desk_add_event_filter(&$where, &$args, $event, $alias = '
  * (taking the token after a trailing "::", the historical church-code-style
  * key format) when the dedicated column is empty — the same fallback tiers
  * as vaysf_resolve_row_slot_church_code() in public-display.php, expressed
- * in SQL so it works across the GROUP BY aggregate used by complete_pools.
+ * in SQL so it works across GROUP BY aggregates in Results Desk queries.
  *
  * @param array<int,string> $where SQL WHERE fragments
  * @param array<int,mixed> $args SQL prepare args
@@ -338,27 +338,8 @@ function vaysf_get_results_desk_rows($section, $filters = array()) {
         return is_array($rows) ? $rows : array();
     }
 
-    if ($section === 'complete_pools') {
-        $where = $base_where;
-        $args = $base_args;
-        $where[] = "COALESCE(s.pool_id, '') <> ''";
-        $where[] = "LOWER(COALESCE(s.stage, '')) IN ('pool', 'prelim', 'preliminary')";
-        $args[] = $limit;
-
-        $sql = "SELECT s.event, s.stage, s.pool_id,
-                COUNT(*) AS game_count,
-                SUM(CASE WHEN r.result_id IS NULL OR COALESCE(r.score_json, '') = '' THEN 1 ELSE 0 END) AS missing_count,
-                MAX(COALESCE(r.updated_at, s.updated_at)) AS last_updated_at
-            FROM $table_schedules s
-            LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
-            WHERE " . implode(' AND ', $where) . "
-            GROUP BY s.event, s.stage, s.pool_id
-            HAVING game_count > 0 AND missing_count = 0
-            ORDER BY last_updated_at DESC, s.event, s.pool_id
-            LIMIT %d";
-
-        $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
-        return is_array($rows) ? $rows : array();
+    if ($section === 'pool_progress') {
+        return vaysf_get_results_desk_pool_progress_rows($filters, $limit);
     }
 
     return array();
@@ -425,6 +406,13 @@ function vaysf_get_results_desk_summary($filters = array()) {
     $last_schedule_update = isset($summary['last_schedule_update']) ? (string) $summary['last_schedule_update'] : '';
     $last_result_update = isset($summary['last_result_update']) ? (string) $summary['last_result_update'] : '';
     $public_data_updated_at = max($last_schedule_update, $last_result_update);
+    $pool_progress_rows = vaysf_get_results_desk_rows('pool_progress', array_merge($filters, array('limit' => 200)));
+    $complete_pool_count = 0;
+    foreach ($pool_progress_rows as $pool_progress_row) {
+        if (!empty($pool_progress_row['complete'])) {
+            $complete_pool_count++;
+        }
+    }
 
     return array_merge($empty, array(
         'schedule_version' => $schedule_version,
@@ -434,7 +422,7 @@ function vaysf_get_results_desk_summary($filters = array()) {
         'attention' => isset($summary['attention']) ? (int) $summary['attention'] : 0,
         'missing_scans' => count(vaysf_get_results_desk_rows('missing_scans', array_merge($filters, array('limit' => 200)))),
         'recent_corrections' => count(vaysf_get_results_desk_rows('recent_corrections', array_merge($filters, array('limit' => 200)))),
-        'complete_pools' => count(vaysf_get_results_desk_rows('complete_pools', array_merge($filters, array('limit' => 200)))),
+        'complete_pools' => $complete_pool_count,
         'last_schedule_update' => $last_schedule_update,
         'last_result_update' => $last_result_update,
         'public_data_updated_at' => $public_data_updated_at,
@@ -491,6 +479,474 @@ function vaysf_format_results_desk_datetime($mysql_datetime, $source_timezone = 
     }
 
     return vaysf_format_sports_fest_time($datetime, 'D M j, g:i A T');
+}
+
+/**
+ * Decode a JSON field into an array.
+ *
+ * @param mixed $json Raw JSON
+ * @return array<int|string,mixed>
+ */
+function vaysf_results_desk_decode_json_array($json) {
+    $json = trim((string) $json);
+    if ($json === '') {
+        return array();
+    }
+
+    $decoded = json_decode($json, true);
+    return is_array($decoded) ? $decoded : array();
+}
+
+/**
+ * Add or update one team in a provisional pool ranking map.
+ *
+ * @param array<string,array<string,mixed>> $teams Ranking map, by team key
+ * @param string $key Team key
+ * @param string $label Team label
+ * @return void
+ */
+function vaysf_results_desk_ensure_pool_team(&$teams, $key, $label = '') {
+    $key = trim((string) $key);
+    if ($key === '') {
+        return;
+    }
+
+    if (empty($teams[$key])) {
+        $teams[$key] = array(
+            'team_key' => $key,
+            'label' => trim((string) $label) !== '' ? trim((string) $label) : $key,
+            'played' => 0,
+            'wins' => 0,
+            'losses' => 0,
+            'ties' => 0,
+            'for' => 0,
+            'against' => 0,
+            'diff' => 0,
+            'notes' => array(),
+        );
+    } elseif (trim((string) $label) !== '') {
+        $teams[$key]['label'] = trim((string) $label);
+    }
+}
+
+/**
+ * Return schedule team slots present on a row.
+ *
+ * @param array<string,mixed> $row Schedule/result row
+ * @return array<int,array{slot:string,key:string,label:string}>
+ */
+function vaysf_results_desk_pool_team_slots($row) {
+    $slots = array();
+    foreach (array('a', 'b', 'c') as $slot) {
+        $key = trim((string) ($row["team_{$slot}_key"] ?? ''));
+        if ($key === '') {
+            continue;
+        }
+
+        $label = trim((string) ($row["team_{$slot}_label"] ?? ''));
+        $slots[] = array(
+            'slot' => $slot,
+            'key' => $key,
+            'label' => $label !== '' ? $label : $key,
+        );
+    }
+
+    return $slots;
+}
+
+/**
+ * Check whether a schedule row includes the selected church.
+ *
+ * @param array<string,mixed> $row Schedule/result row
+ * @param string $church Uppercase church code filter
+ * @return bool
+ */
+function vaysf_results_desk_pool_row_matches_church($row, $church) {
+    $church = strtoupper(trim((string) $church));
+    if ($church === '') {
+        return true;
+    }
+
+    foreach (array('a', 'b', 'c') as $slot) {
+        foreach (array("team_{$slot}_church_code", "team_{$slot}_key", "team_{$slot}_label") as $field) {
+            if (!empty($row[$field]) && vaysf_extract_church_code_from_team_value($row[$field]) === $church) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Add a note to a ranking row without duplication.
+ *
+ * @param array<string,mixed> $team Ranking row
+ * @param string $note Note text
+ * @return void
+ */
+function vaysf_results_desk_add_pool_team_note(&$team, $note) {
+    $note = trim((string) $note);
+    if ($note === '') {
+        return;
+    }
+
+    if (!in_array($note, $team['notes'], true)) {
+        $team['notes'][] = $note;
+    }
+}
+
+/**
+ * Build score totals by team key for a result payload.
+ *
+ * @param array<string,mixed> $payload Decoded score_json
+ * @param array<int,array{slot:string,key:string,label:string}> $slots Schedule slots
+ * @return array<string,int>
+ */
+function vaysf_results_desk_pool_score_by_team($payload, $slots) {
+    $scores = array();
+    foreach ($slots as $slot) {
+        $field = 'team_' . $slot['slot'] . '_score';
+        if (array_key_exists($field, $payload) && is_numeric($payload[$field])) {
+            $scores[$slot['key']] = (int) $payload[$field];
+        }
+    }
+
+    return $scores;
+}
+
+/**
+ * Apply one scored game to a provisional pool ranking map.
+ *
+ * @param array<string,array<string,mixed>> $teams Ranking map, by team key
+ * @param array<string,string> $flags Pool-level flags
+ * @param array<string,mixed> $row Schedule/result row
+ * @return void
+ */
+function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row) {
+    $slots = vaysf_results_desk_pool_team_slots($row);
+    foreach ($slots as $slot) {
+        vaysf_results_desk_ensure_pool_team($teams, $slot['key'], $slot['label']);
+    }
+
+    $score_json = trim((string) ($row['score_json'] ?? ''));
+    if ($score_json === '') {
+        $flags['missing_results'] = __('Missing score payloads remain.', 'vaysf');
+        return;
+    }
+
+    $payload = vaysf_results_desk_decode_json_array($score_json);
+    if (!$payload) {
+        $flags['invalid_payload'] = __('At least one score payload could not be read.', 'vaysf');
+        return;
+    }
+
+    $scores = vaysf_results_desk_pool_score_by_team($payload, $slots);
+    if (!$scores) {
+        $flags['unsupported_payload'] = __('At least one score payload has no ranking-friendly score fields.', 'vaysf');
+        return;
+    }
+
+    $winner_keys = vaysf_results_desk_decode_json_array($row['winner_keys_json'] ?? '');
+    $winner_keys = array_values(array_filter(array_map('strval', $winner_keys)));
+    $winner_lookup = array_fill_keys($winner_keys, true);
+    $is_tie = !empty($payload['is_tie']) || count($winner_keys) > 1 || !empty($payload['split_match']);
+
+    if (!empty($payload['split_match'])) {
+        $flags['split_match'] = __('At least one volleyball match was recorded as a split/tie.', 'vaysf');
+    }
+    if ($is_tie) {
+        $flags['tie'] = __('At least one result is tied or has multiple winners; review tiebreak rules manually.', 'vaysf');
+    }
+
+    foreach ($slots as $slot) {
+        $key = $slot['key'];
+        if (!isset($scores[$key])) {
+            vaysf_results_desk_add_pool_team_note($teams[$key], __('Score missing', 'vaysf'));
+            continue;
+        }
+
+        $teams[$key]['played']++;
+        $teams[$key]['for'] += (int) $scores[$key];
+        foreach ($scores as $opponent_key => $opponent_score) {
+            if ($opponent_key !== $key) {
+                $teams[$key]['against'] += (int) $opponent_score;
+            }
+        }
+        $teams[$key]['diff'] = $teams[$key]['for'] - $teams[$key]['against'];
+
+        if ($is_tie) {
+            if (!$winner_keys || isset($winner_lookup[$key])) {
+                $teams[$key]['ties']++;
+            } else {
+                $teams[$key]['losses']++;
+            }
+        } elseif (isset($winner_lookup[$key])) {
+            $teams[$key]['wins']++;
+        } else {
+            $teams[$key]['losses']++;
+        }
+    }
+}
+
+/**
+ * Sort provisional pool rankings with conservative shared metrics.
+ *
+ * @param array<string,array<string,mixed>> $teams Ranking map
+ * @return array<int,array<string,mixed>>
+ */
+function vaysf_results_desk_sort_pool_rankings($teams) {
+    $rankings = array_values($teams);
+    usort($rankings, function ($a, $b) {
+        foreach (array('wins', 'ties', 'diff', 'for') as $metric) {
+            $a_value = isset($a[$metric]) ? (int) $a[$metric] : 0;
+            $b_value = isset($b[$metric]) ? (int) $b[$metric] : 0;
+            if ($a_value !== $b_value) {
+                return $a_value > $b_value ? -1 : 1;
+            }
+        }
+
+        return strcasecmp((string) ($a['label'] ?? ''), (string) ($b['label'] ?? ''));
+    });
+
+    $rank = 1;
+    $previous = null;
+    foreach ($rankings as $index => $team) {
+        $signature = array(
+            (int) $team['wins'],
+            (int) $team['ties'],
+            (int) $team['diff'],
+            (int) $team['for'],
+        );
+        if ($previous !== null && $signature !== $previous) {
+            $rank = $index + 1;
+        }
+        $rankings[$index]['rank'] = $rank;
+        $previous = $signature;
+    }
+
+    return $rankings;
+}
+
+/**
+ * Fetch pool progress and provisional rankings for Results Desk review.
+ *
+ * @param array<string,mixed> $filters Sanitized filters
+ * @param int $limit Maximum pool groups
+ * @return array<int,array<string,mixed>>
+ */
+function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 50) {
+    global $wpdb;
+
+    $schedule_version = vaysf_get_current_published_schedule_version();
+    if ($schedule_version === null) {
+        return array();
+    }
+
+    $filters = vaysf_sanitize_results_desk_filters($filters);
+    $limit = max(1, min(absint($limit), 200));
+    $table_schedules = vaysf_get_table_name('schedules');
+    $table_results = vaysf_get_table_name('results');
+
+    $where = array(
+        's.schedule_version = %d',
+        's.published_at IS NOT NULL',
+        "COALESCE(s.game_status, '') <> 'cancelled'",
+        "LOWER(COALESCE(s.stage, '')) IN ('pool', 'prelim', 'preliminary')",
+    );
+    $args = array($schedule_version);
+    vaysf_results_desk_add_event_filter($where, $args, $filters['event']);
+
+    $sql = "SELECT s.*, r.result_id, r.score_json, r.winner_keys_json, r.public_status,
+            r.current_revision, r.updated_at AS result_updated_at
+        FROM $table_schedules s
+        LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
+        WHERE " . implode(' AND ', $where) . "
+        ORDER BY s.event, s.stage, s.pool_id, s.scheduled_time IS NULL, s.scheduled_time, s.game_key";
+
+    $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
+    if (!is_array($rows)) {
+        return array();
+    }
+
+    $pools = array();
+    $pool_teams = array();
+    foreach ($rows as $row) {
+        $pool_id = trim((string) ($row['pool_id'] ?? ''));
+        $pool_display_id = $pool_id !== '' ? $pool_id : 'P1';
+        $key = implode('|', array(
+            (string) ($row['event'] ?? ''),
+            (string) ($row['stage'] ?? ''),
+            $pool_display_id,
+        ));
+
+        if (empty($pools[$key])) {
+            $pools[$key] = array(
+                'event' => (string) ($row['event'] ?? ''),
+                'stage' => (string) ($row['stage'] ?? ''),
+                'pool_id' => $pool_display_id,
+                'synthetic_pool' => $pool_id === '',
+                'game_count' => 0,
+                'reported_count' => 0,
+                'missing_count' => 0,
+                'last_updated_at' => '',
+                'rankings' => array(),
+                'flags' => array(),
+                'matches_church_filter' => false,
+            );
+            $pool_teams[$key] = array();
+        }
+
+        $pools[$key]['game_count']++;
+        $has_score = trim((string) ($row['score_json'] ?? '')) !== '';
+        if ($has_score) {
+            $pools[$key]['reported_count']++;
+        } else {
+            $pools[$key]['missing_count']++;
+        }
+
+        $updated_at = trim((string) ($row['result_updated_at'] ?? '')) ?: trim((string) ($row['updated_at'] ?? ''));
+        if ($updated_at !== '' && $updated_at > $pools[$key]['last_updated_at']) {
+            $pools[$key]['last_updated_at'] = $updated_at;
+        }
+        if (vaysf_results_desk_pool_row_matches_church($row, $filters['church'])) {
+            $pools[$key]['matches_church_filter'] = true;
+        }
+
+        vaysf_results_desk_apply_pool_result($pool_teams[$key], $pools[$key]['flags'], $row);
+    }
+
+    foreach ($pools as $key => $pool) {
+        if ($filters['church'] !== '' && empty($pool['matches_church_filter'])) {
+            unset($pools[$key], $pool_teams[$key]);
+            continue;
+        }
+
+        $pools[$key]['complete'] = ((int) $pool['game_count'] > 0 && (int) $pool['missing_count'] === 0);
+        $pools[$key]['rankings'] = vaysf_results_desk_sort_pool_rankings($pool_teams[$key] ?? array());
+        if (!$pools[$key]['complete']) {
+            $pools[$key]['flags']['incomplete'] = __('Pool is still incomplete; ranking is provisional.', 'vaysf');
+        }
+    }
+
+    $pool_rows = array_values($pools);
+    usort($pool_rows, function ($a, $b) {
+        if (!empty($a['complete']) !== !empty($b['complete'])) {
+            return !empty($a['complete']) ? -1 : 1;
+        }
+        $a_progress = (int) ($a['reported_count'] ?? 0) / max(1, (int) ($a['game_count'] ?? 1));
+        $b_progress = (int) ($b['reported_count'] ?? 0) / max(1, (int) ($b['game_count'] ?? 1));
+        if ($a_progress !== $b_progress) {
+            return $a_progress > $b_progress ? -1 : 1;
+        }
+        return strcmp(
+            implode('|', array($a['event'] ?? '', $a['stage'] ?? '', $a['pool_id'] ?? '')),
+            implode('|', array($b['event'] ?? '', $b['stage'] ?? '', $b['pool_id'] ?? ''))
+        );
+    });
+
+    return array_slice($pool_rows, 0, $limit);
+}
+
+/**
+ * Render a tiny help marker using the browser's native hover tooltip.
+ *
+ * @param string $label Visible marker text
+ * @param string $tooltip Tooltip text
+ * @return void
+ */
+function vaysf_render_results_desk_tooltip($label, $tooltip) {
+    ?>
+    <span class="vaysf-results-desk-help" title="<?php echo esc_attr($tooltip); ?>"><?php echo esc_html($label); ?></span>
+    <?php
+}
+
+/**
+ * Render compact provisional rankings for one pool.
+ *
+ * @param array<int,array<string,mixed>> $rankings Ranking rows
+ * @return void
+ */
+function vaysf_render_results_desk_pool_rankings($rankings) {
+    if (!$rankings) {
+        echo '<span class="vaysf-results-desk-muted">' . esc_html__('No scored games yet.', 'vaysf') . '</span>';
+        return;
+    }
+    ?>
+    <ol class="vaysf-results-desk-rankings">
+        <?php foreach ($rankings as $team) : ?>
+            <?php
+            $record = sprintf(
+                '%d-%d-%d',
+                (int) ($team['wins'] ?? 0),
+                (int) ($team['losses'] ?? 0),
+                (int) ($team['ties'] ?? 0)
+            );
+            $metric = sprintf(
+                'PF %d / PA %d / %+d',
+                (int) ($team['for'] ?? 0),
+                (int) ($team['against'] ?? 0),
+                (int) ($team['diff'] ?? 0)
+            );
+            $notes = !empty($team['notes']) && is_array($team['notes']) ? implode('; ', $team['notes']) : '';
+            ?>
+            <li value="<?php echo esc_attr((string) ($team['rank'] ?? 1)); ?>">
+                <strong><?php echo esc_html($team['label'] ?? $team['team_key'] ?? ''); ?></strong>
+                <span class="vaysf-results-desk-pill" title="<?php echo esc_attr__('Record is wins-losses-ties from scored pool games.', 'vaysf'); ?>"><?php echo esc_html($record); ?></span>
+                <span class="vaysf-results-desk-muted" title="<?php echo esc_attr__('PF/PA are points for and points against from the score payload. For volleyball this uses match score units, usually sets won/lost.', 'vaysf'); ?>"><?php echo esc_html($metric); ?></span>
+                <?php if ($notes !== '') : ?>
+                    <span class="vaysf-results-desk-warning" title="<?php echo esc_attr($notes); ?>"><?php echo esc_html__('note', 'vaysf'); ?></span>
+                <?php endif; ?>
+            </li>
+        <?php endforeach; ?>
+    </ol>
+    <?php
+}
+
+/**
+ * Render one pool progress row.
+ *
+ * @param array<string,mixed> $pool Pool progress row
+ * @return void
+ */
+function vaysf_render_results_desk_pool_progress_row($pool) {
+    $game_count = max(0, (int) ($pool['game_count'] ?? 0));
+    $reported_count = max(0, (int) ($pool['reported_count'] ?? 0));
+    $missing_count = max(0, (int) ($pool['missing_count'] ?? 0));
+    $percent = $game_count > 0 ? round(($reported_count / $game_count) * 100) : 0;
+    $flags = !empty($pool['flags']) && is_array($pool['flags']) ? array_values($pool['flags']) : array();
+    $flag_tooltip = $flags ? implode(' ', $flags) : __('No ranking flags for this pool.', 'vaysf');
+    ?>
+    <tr>
+        <td>
+            <strong><?php echo esc_html($pool['event'] ?? ''); ?></strong><br>
+            <small><?php echo esc_html(trim(($pool['stage'] ?? '') . ' ' . ($pool['pool_id'] ?? ''))); ?></small>
+        </td>
+        <td>
+            <div class="vaysf-results-desk-progress" title="<?php echo esc_attr__('Reported games divided by total published pool/prelim games. A complete pool is ready for human advancement review, not automatic advancement.', 'vaysf'); ?>">
+                <span style="width: <?php echo esc_attr((string) $percent); ?>%;"></span>
+            </div>
+            <strong><?php echo esc_html(sprintf(__('%1$d / %2$d scored', 'vaysf'), $reported_count, $game_count)); ?></strong>
+            <?php if ($missing_count > 0) : ?>
+                <br><small><?php echo esc_html(sprintf(_n('%d missing result', '%d missing results', $missing_count, 'vaysf'), $missing_count)); ?></small>
+            <?php else : ?>
+                <br><small><?php echo esc_html__('complete', 'vaysf'); ?></small>
+            <?php endif; ?>
+        </td>
+        <td>
+            <?php vaysf_render_results_desk_pool_rankings($pool['rankings'] ?? array()); ?>
+        </td>
+        <td>
+            <span class="<?php echo esc_attr(!empty($pool['complete']) ? 'vaysf-results-desk-pill' : 'vaysf-results-desk-warning'); ?>" title="<?php echo esc_attr($flag_tooltip); ?>">
+                <?php echo !empty($pool['complete']) ? esc_html__('Ready', 'vaysf') : esc_html__('In progress', 'vaysf'); ?>
+            </span>
+            <?php if ($flags) : ?>
+                <br><small><?php echo esc_html(implode(' ', array_keys($pool['flags']))); ?></small>
+            <?php endif; ?>
+        </td>
+        <td><?php echo esc_html(vaysf_format_results_desk_datetime($pool['last_updated_at'] ?? '')); ?></td>
+    </tr>
+    <?php
 }
 
 /**
@@ -607,6 +1063,15 @@ function vaysf_render_results_desk($atts = array()) {
             .vaysf-results-desk-table th { background: #f6f7f7; }
             .vaysf-results-desk-ok { background: #ecf7ed; border-left: 4px solid #46b450; padding: 12px 14px; }
             .vaysf-results-desk-heartbeat { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin: 14px 0 24px; color: #50575e; }
+            .vaysf-results-desk-help { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: #dcdcde; color: #1d2327; font-size: 12px; font-weight: 700; cursor: help; }
+            .vaysf-results-desk-muted { color: #646970; font-size: .9em; }
+            .vaysf-results-desk-warning { display: inline-block; border: 1px solid #dba617; border-radius: 4px; background: #fff8e5; color: #674e00; padding: 2px 6px; cursor: help; }
+            .vaysf-results-desk-pill { display: inline-block; border: 1px solid #c3d9c8; border-radius: 4px; background: #ecf7ed; color: #1d5727; padding: 2px 6px; cursor: help; }
+            .vaysf-results-desk-progress { width: 160px; max-width: 100%; height: 10px; margin: 0 0 6px; overflow: hidden; border-radius: 999px; background: #dcdcde; cursor: help; }
+            .vaysf-results-desk-progress span { display: block; height: 100%; background: #46b450; }
+            .vaysf-results-desk-rankings { margin: 0; padding-left: 26px; }
+            .vaysf-results-desk-rankings li { margin: 0 0 6px; }
+            .vaysf-results-desk-rankings li:last-child { margin-bottom: 0; }
             @media (max-width: 768px) {
                 .vaysf-results-desk-table { display: block; overflow-x: auto; }
             }
@@ -677,7 +1142,7 @@ function vaysf_render_results_desk($atts = array()) {
                 <div class="vaysf-results-desk-card"><strong><?php echo esc_html($summary['late_missing']); ?></strong><span><?php esc_html_e('Late / missing', 'vaysf'); ?></span></div>
                 <div class="vaysf-results-desk-card"><strong><?php echo esc_html($summary['attention']); ?></strong><span><?php esc_html_e('Need review', 'vaysf'); ?></span></div>
                 <div class="vaysf-results-desk-card"><strong><?php echo esc_html($summary['missing_scans']); ?></strong><span><?php esc_html_e('Missing scans', 'vaysf'); ?></span></div>
-                <div class="vaysf-results-desk-card"><strong><?php echo esc_html($summary['complete_pools']); ?></strong><span><?php esc_html_e('Complete pools', 'vaysf'); ?></span></div>
+                <div class="vaysf-results-desk-card"><strong><?php echo esc_html($summary['complete_pools']); ?></strong><span><?php esc_html_e('Ready pools', 'vaysf'); ?></span></div>
             </div>
 
             <div class="vaysf-results-desk-heartbeat">
@@ -718,29 +1183,37 @@ function vaysf_render_results_desk($atts = array()) {
             ?>
 
             <section class="vaysf-results-desk-section">
-                <h2><?php esc_html_e('Complete Pools Ready For Human Review', 'vaysf'); ?></h2>
-                <p><?php esc_html_e('Pools where every published pool/prelim game has a score payload. This does not auto-confirm advancement.', 'vaysf'); ?></p>
-                <?php $complete_pools = vaysf_get_results_desk_rows('complete_pools', $filters); ?>
-                <?php if (!$complete_pools) : ?>
-                    <div class="vaysf-results-desk-ok"><?php esc_html_e('No complete pools are waiting in this filter.', 'vaysf'); ?></div>
+                <h2>
+                    <?php esc_html_e('Pools Progress For Review', 'vaysf'); ?>
+                    <?php vaysf_render_results_desk_tooltip('?', __('This section is a review aid. It summarizes pool/prelim progress and provisional ranking signals from submitted score payloads, but it does not confirm advancement automatically.', 'vaysf')); ?>
+                </h2>
+                <p><?php esc_html_e('Pool/prelim progress and provisional ranking signals from current score payloads. Use this to decide advancement manually.', 'vaysf'); ?></p>
+                <?php $pool_progress = vaysf_get_results_desk_rows('pool_progress', $filters); ?>
+                <?php if (!$pool_progress) : ?>
+                    <div class="vaysf-results-desk-ok"><?php esc_html_e('No pool progress is available in this filter.', 'vaysf'); ?></div>
                 <?php else : ?>
                     <table class="vaysf-results-desk-table">
                         <thead>
                             <tr>
-                                <th><?php esc_html_e('Event', 'vaysf'); ?></th>
-                                <th><?php esc_html_e('Stage / Pool', 'vaysf'); ?></th>
-                                <th><?php esc_html_e('Games', 'vaysf'); ?></th>
+                                <th><?php esc_html_e('Pool', 'vaysf'); ?></th>
+                                <th>
+                                    <?php esc_html_e('Progress', 'vaysf'); ?>
+                                    <?php vaysf_render_results_desk_tooltip('?', __('Reported games divided by total published pool/prelim games.', 'vaysf')); ?>
+                                </th>
+                                <th>
+                                    <?php esc_html_e('Provisional Rankings', 'vaysf'); ?>
+                                    <?php vaysf_render_results_desk_tooltip('?', __('Rankings sort by wins, then ties, point differential, and points for. Ties and sport-specific tiebreakers still require human review.', 'vaysf')); ?>
+                                </th>
+                                <th>
+                                    <?php esc_html_e('Review Status', 'vaysf'); ?>
+                                    <?php vaysf_render_results_desk_tooltip('?', __('Ready means all games in this pool have a score payload. It does not mean semifinal/final slots were confirmed.', 'vaysf')); ?>
+                                </th>
                                 <th><?php esc_html_e('Last Updated', 'vaysf'); ?></th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($complete_pools as $pool) : ?>
-                                <tr>
-                                    <td><?php echo esc_html($pool['event']); ?></td>
-                                    <td><?php echo esc_html(trim(($pool['stage'] ?? '') . ' ' . ($pool['pool_id'] ?? ''))); ?></td>
-                                    <td><?php echo esc_html($pool['game_count']); ?></td>
-                                    <td><?php echo esc_html(vaysf_format_results_desk_datetime($pool['last_updated_at'] ?? '')); ?></td>
-                                </tr>
+                            <?php foreach ($pool_progress as $pool) : ?>
+                                <?php vaysf_render_results_desk_pool_progress_row($pool); ?>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
@@ -819,7 +1292,7 @@ function vaysf_render_results_desk_dashboard_widget() {
         <li><strong><?php echo esc_html($summary['late_missing']); ?></strong> <?php esc_html_e('late/missing results', 'vaysf'); ?></li>
         <li><strong><?php echo esc_html($summary['attention']); ?></strong> <?php esc_html_e('results needing review', 'vaysf'); ?></li>
         <li><strong><?php echo esc_html($summary['missing_scans']); ?></strong> <?php esc_html_e('missing score sheet scans', 'vaysf'); ?></li>
-        <li><strong><?php echo esc_html($summary['complete_pools']); ?></strong> <?php esc_html_e('complete pools ready for human review', 'vaysf'); ?></li>
+        <li><strong><?php echo esc_html($summary['complete_pools']); ?></strong> <?php esc_html_e('pools ready for human advancement review', 'vaysf'); ?></li>
     </ul>
     <p>
         <a class="button button-primary" href="<?php echo esc_url(vaysf_get_results_desk_url()); ?>">

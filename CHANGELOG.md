@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Results Desk dead-code cleanup
+
+- Removed the unreachable `complete_pools` query branch from
+  `vaysf_get_results_desk_rows()` — both call sites were migrated to the
+  `pool_progress` section in the Pools Progress For Review work and no
+  longer referenced it.
+- Bumped plugin header/version to `1.0.61` and rebuilt `plugins/vaysf.zip`.
+
+### Bible Challenge negative scores
+
+- Coordinator Score Entry now accepts signed whole-number scores for
+  three-team Bible Challenge results, while keeping other score forms
+  non-negative.
+- Existing Bible Challenge score edits now preserve negative values in the
+  input fields instead of coercing them to positive values.
+- Bumped plugin header/version to `1.0.60` and rebuilt `plugins/vaysf.zip`.
+
+### Single-pool preliminary progress
+
+- Pool/prelim progress and readiness counts now include events with a blank
+  `pool_id`, treating each event/stage as one displayed `P1` pool for
+  provisional ranking.
+- This brings no-pool events such as Bible Challenge into the Results Desk and
+  Coordinator Score Entry progress tables as one ranked list.
+- Bumped plugin header/version to `1.0.59` and rebuilt `plugins/vaysf.zip`.
+
+### Coordinator Score Entry pool progress
+
+- Added the Results Desk pool/prelim progress and provisional ranking table to
+  the Coordinator Score Entry dashboard, scoped to the coordinator's authorized
+  events and the selected event filter.
+- Reused the Results Desk pool ranking helper so coordinators and managers see
+  the same scored-vs-total progress, review status, and provisional ranking
+  signals while scores are being entered.
+- Bumped plugin header/version to `1.0.58` and rebuilt `plugins/vaysf.zip`.
+
+### Results Desk Pools Progress For Review (#321)
+
+- Replaced the complete-pools review table with a Pools Progress For Review
+  section that shows scored-vs-total progress, provisional rankings, and
+  hover tooltip explanations for Results Desk operators.
+- Added conservative ranking helpers for pool/prelim score payloads across
+  simple scores, three-team Bible Challenge style scores, and volleyball
+  set-score payloads; rankings remain review-only and do not auto-confirm
+  advancement.
+- Church filtering now keeps full-pool context for the displayed rankings
+  while limiting the list to pools involving the selected church.
+- Bumped plugin header/version to `1.0.57` and rebuilt `plugins/vaysf.zip`.
+
 ### Results Desk Sports Fest timezone and slot fallback (#320)
 
 - Fixed the Results Desk Late / Missing count and table to resolve each
