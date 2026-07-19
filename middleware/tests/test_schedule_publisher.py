@@ -217,14 +217,15 @@ def test_build_publish_diff_completed_conflict_refused():
     assert diff["changed"] == diff["new"] == []
 
 
-def test_build_publish_diff_protected_unchanged_is_silent():
-    """A protected game whose content is unchanged appears in none of the
-    buckets — nothing to report, nothing to do."""
+def test_build_publish_diff_protected_unchanged_is_carried_forward():
+    """A protected game whose content is unchanged is carried forward by
+    schedule_version without overwriting score/result state."""
     game = _merged_game(game_key="BBM-01")
     published = {"game_key": "BBM-01", "game_status": "reported", "source_hash": game["source_hash"]}
     diff = build_publish_diff([game], [published])
-    for bucket in diff.values():
-        assert bucket == []
+    assert [g["game_key"] for g in diff["protected_unchanged"]] == ["BBM-01"]
+    assert diff["new"] == diff["changed"] == diff["unchanged"] == []
+    assert diff["completed_conflicts"] == diff["missing_completed"] == []
 
 
 def test_build_publish_diff_missing_completed_is_separate_from_cancelled():
@@ -323,6 +324,32 @@ def test_run_publish_schedule_execute_sends_only_new_and_changed(tmp_path):
     # BBM-01 is a completed_conflict (protected + changed) and must never be
     # sent; BC-01 is new and must be sent.
     assert upserted_keys == {"BC-01"}
+
+
+def test_run_publish_schedule_execute_carries_forward_protected_unchanged(tmp_path):
+    input_path, output_path = _write_fixtures(tmp_path)
+    game = merge_schedule(_schedule_input_2team_3team(), _schedule_output_2team_3team())[0]
+    published = [
+        {
+            "game_key": "BBM-01",
+            "game_status": "reported",
+            "source_hash": game["source_hash"],
+            "schedule_version": 2,
+        }
+    ]
+    connector = _FakeConnector(published_rows=published)
+
+    exit_code = run_publish_schedule(
+        schedule_input_path=input_path,
+        schedule_output_path=output_path,
+        wp_connector=connector,
+        dry_run=False,
+    )
+
+    assert exit_code == 0
+    assert len(connector.upsert_calls) == 1
+    upserted_keys = {g["game_key"] for g in connector.upsert_calls[0]["games"]}
+    assert upserted_keys == {"BBM-01", "BC-01"}
 
 
 def test_run_publish_schedule_force_cancel_includes_cancellations(tmp_path):

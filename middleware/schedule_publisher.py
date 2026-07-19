@@ -5,9 +5,9 @@ Design rules (RFC docs/EVENT_DAY_RESULTS_WORKFLOW_RFC.md §7):
   - The generated schedule is diffed against the currently published
     WordPress schedule; nothing is written until --execute is passed.
   - A game whose current WordPress status is "protected" (reported, official,
-    under_review) is never overwritten, even in --execute mode — those rows
-    are simply excluded from the upsert payload. The REST endpoint enforces
-    the same rule server-side as a second line of defense.
+    under_review) is never overwritten, even in --execute mode. If its
+    source_hash still matches, the REST endpoint may carry it forward to the
+    new schedule_version by updating only version/bookkeeping fields.
   - A game that disappears from the newly generated schedule is only ever
     marked cancelled (never deleted), and only when --force-cancel is passed.
   - A protected game disappearing from the newly generated schedule is a
@@ -149,8 +149,9 @@ def build_publish_diff(
 ) -> dict[str, list[dict[str, Any]]]:
     """Bucket merged games against the currently published WordPress schedule.
 
-    Returns a dict with six lists: new, changed, unchanged, cancelled_candidates,
-    completed_conflicts, missing_completed.
+    Returns a dict with seven lists: new, changed, unchanged,
+    protected_unchanged, cancelled_candidates, completed_conflicts,
+    missing_completed.
     """
     published_by_key = {
         str(row.get("game_key")): row for row in published_rows if row.get("game_key")
@@ -161,6 +162,7 @@ def build_publish_diff(
         "new": [],
         "changed": [],
         "unchanged": [],
+        "protected_unchanged": [],
         "cancelled_candidates": [],
         "completed_conflicts": [],
         "missing_completed": [],
@@ -179,8 +181,8 @@ def build_publish_diff(
         if protected:
             if changed:
                 diff["completed_conflicts"].append(game)
-            # else: unchanged and protected — nothing to do, not even
-            # reported as "unchanged" noise since it's not touchable anyway.
+            if not changed:
+                diff["protected_unchanged"].append(game)
             continue
 
         if changed:
@@ -213,6 +215,7 @@ def format_publish_report(
     cancel_note = "" if force_cancel else "   (pass --force-cancel with --execute to apply)"
     lines.append(f"Cancelled candidates:   {len(diff['cancelled_candidates'])}{cancel_note}")
     lines.append(f"Unchanged games:        {len(diff['unchanged'])}")
+    lines.append(f"Protected unchanged:    {len(diff['protected_unchanged'])}   (carry forward version only)")
     conflict_note = "   (refused — would overwrite a completed match)" if diff["completed_conflicts"] else ""
     lines.append(f"Completed conflicts:    {len(diff['completed_conflicts'])}{conflict_note}")
     missing_note = "   (refused — completed game absent from new schedule; investigate)" if diff["missing_completed"] else ""
@@ -337,7 +340,12 @@ def run_publish_schedule(
     if dry_run:
         return 0
 
-    upsert_games = list(diff["new"]) + list(diff["changed"])
+    upsert_games = (
+        list(diff["new"])
+        + list(diff["changed"])
+        + list(diff["unchanged"])
+        + list(diff["protected_unchanged"])
+    )
     if force_cancel:
         for row in diff["cancelled_candidates"]:
             upsert_games.append({**row, "game_status": "cancelled"})

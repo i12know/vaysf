@@ -29,6 +29,11 @@
 - Hotfix 3: plugin activation and version upgrades now register VAYSF rewrite
   routes before flushing rules, preventing coordinator score-entry/results-desk
   pages from returning 404 until an admin manually saves Permalinks.
+- Hotfix 4: schedule publishing now carries unchanged games into each new
+  current schedule version, including protected `reported`/`official` rows by
+  updating only version/bookkeeping fields when `source_hash` still matches.
+  This prevents games such as BBM-01 from disappearing from public and
+  coordinator views after results are cleared or schedules are republished.
 - `[vaysf_live_schedule]`'s public filter form now includes an "Upcoming
   games only" checkbox, in addition to the existing sport/day/church
   dropdowns. Checking it filters the table to games between 60 minutes ago
@@ -56,7 +61,7 @@
   (it listed "sport, day, venue"; the form actually renders sport, day,
   church, and now upcoming-only) and documented the new checkbox/cookie
   behavior.
-- Bumped plugin header/version to `1.0.54` and rebuilt `plugins/vaysf.zip`.
+- Bumped plugin header/version to `1.0.55` and rebuilt `plugins/vaysf.zip`.
 
 ## Version 1.12 (2026-07-18) — Sports Fest 2026 event release
 

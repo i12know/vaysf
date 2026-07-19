@@ -157,6 +157,38 @@ class VAYSF_REST_Schedules extends VAYSF_REST_Controller {
             );
 
             if ($existing && in_array($existing['game_status'], $protected_statuses, true)) {
+                $incoming_hash = isset($game['source_hash']) ? sanitize_text_field($game['source_hash']) : '';
+                $existing_hash = isset($existing['source_hash']) ? (string) $existing['source_hash'] : '';
+                if ($incoming_hash !== '' && $incoming_hash === $existing_hash) {
+                    $result = $wpdb->update(
+                        $table_schedules,
+                        array(
+                            'schedule_version' => $schedule_version,
+                            'published_at' => current_time('mysql'),
+                            'updated_at' => current_time('mysql'),
+                        ),
+                        array('game_key' => $game_key),
+                        array('%d', '%s', '%s'),
+                        array('%s')
+                    );
+                    if (false === $result) {
+                        $skipped_count++;
+                        $results[] = array(
+                            'game_key' => $game_key,
+                            'action' => 'error',
+                            'message' => esc_html__('Failed to carry forward protected schedule row.', 'vaysf'),
+                        );
+                        continue;
+                    }
+                    $updated_count++;
+                    $results[] = array(
+                        'game_key' => $game_key,
+                        'action' => 'carried_forward_protected',
+                        'schedule_id' => (int) $existing['schedule_id'],
+                    );
+                    continue;
+                }
+
                 $skipped_count++;
                 $results[] = array(
                     'game_key' => $game_key,
