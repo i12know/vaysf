@@ -215,14 +215,22 @@ Deliverable: recommendation + cost model. **Dependencies:** none.
 
 ### T2 (#314) — `spike: contact verification page (token-page pattern)`
 Prototype a `[contact_verify]`-style page on the insurance-upload pattern:
-request-code → token → verified; verified contact stored on the participant.
-Answers Q2 with a working prototype; feeds `find-duplicates` a strong
-anchor. **Dependencies:** T1 (channel).
+request-code → token → verified. Prototype storage must explicitly
+distinguish whether the verified contact belongs to the **athlete,
+registrant, or guardian**; temporary `sf_participants` storage is
+acceptable for the spike, but the deliverable must recommend the final
+role/contact schema shape before any production implementation —
+role-scoped trust data must not be stuffed into the athlete row (that is
+how `parent_info` became a flat-text junk drawer). Answers Q2 with a
+working prototype; feeds `find-duplicates` a strong anchor.
+**Dependencies:** T1 (channel).
 
 ### T3 (#315) — `spike: minor registration → parent notification & consent capture`
 Design the trigger (sync-time, `age_at_event < 18`, new registration), the
 guardian notification (T1 channel), and the consent-capture page (token-page
 pattern) as complement or replacement for the ChMeetings consent form.
+Consent-capture and guardian-contact storage follow the role/contact schema
+recommendation from T2 — no ad-hoc fields on the participant row.
 Answers Q3, informs Q4. **Dependencies:** T1, T2.
 
 ### T4 (#316) — `spike: ChMeetings /families API evaluation`
