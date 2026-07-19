@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.53
+ * Version: 1.0.54
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,7 +18,7 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.53';
+    const VERSION = '1.0.54';
 
     /**
      * Database version
@@ -164,12 +164,11 @@ class VAYSF_Integration {
 		
 		// Add template redirect hook
 		add_action('template_redirect', array($this, 'handle_approval_page'));
-		
-		// Flush rewrite rules on activation (only once)
-		if (get_option('vaysf_rewrite_rules_flushed') !== self::VERSION) {
-			flush_rewrite_rules();
-			update_option('vaysf_rewrite_rules_flushed', self::VERSION);
-		}
+
+		// Flush rewrite rules only after WordPress has registered our custom
+		// routes on init. Flushing earlier can leave coordinator-score-entry
+		// stale until an admin manually saves Permalinks.
+		add_action('init', array($this, 'maybe_flush_rewrite_rules'), 99);
 	}
 
 	/**
@@ -217,6 +216,14 @@ class VAYSF_Integration {
 		$vars[] = 'vaysf_results_desk';
 		$vars[] = 'vaysf_badges_gallery';
 		return $vars;
+	}
+
+	public function maybe_flush_rewrite_rules() {
+		if (get_option('vaysf_rewrite_rules_flushed') !== self::VERSION) {
+			$this->register_rewrite_rules();
+			flush_rewrite_rules(false);
+			update_option('vaysf_rewrite_rules_flushed', self::VERSION);
+		}
 	}
 
 	public function handle_approval_page() {
@@ -289,8 +296,12 @@ class VAYSF_Integration {
         // Create necessary directories
         $this->create_directories();
         
-        // Flush rewrite rules
+        // Register custom routes before flushing; otherwise the first visit to
+        // coordinator-score-entry/results-desk can 404 until Permalinks are
+        // manually saved.
+        $this->register_rewrite_rules();
         flush_rewrite_rules();
+        update_option('vaysf_rewrite_rules_flushed', self::VERSION);
     }
     
     /**
