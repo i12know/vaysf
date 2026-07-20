@@ -565,6 +565,29 @@ function vaysf_results_desk_is_bible_challenge_event($event) {
 }
 
 /**
+ * Return the ranking-rule note for a pool/prelim event.
+ *
+ * @param string $event Schedule event name
+ * @return string
+ */
+function vaysf_results_desk_pool_ranking_rule_note($event) {
+    $event = trim((string) $event);
+    if (vaysf_results_desk_is_bible_challenge_event($event)) {
+        return __('Rule: Bible Challenge ranks by accumulated preliminary score. The top 9 advance; a tie at the 9th/10th cutoff requires coordinator review.', 'vaysf');
+    }
+
+    if (
+        stripos($event, 'Basketball') !== false
+        || stripos($event, 'Volleyball') !== false
+        || stripos($event, 'Soccer') !== false
+    ) {
+        return __('Rule: Team-sport pools rank by wins, then fewer losses, then point differential, then head-to-head when teams remain fully tied. Unresolved cycles require coordinator review.', 'vaysf');
+    }
+
+    return '';
+}
+
+/**
  * Check whether a schedule row includes the selected church.
  *
  * @param array<string,mixed> $row Schedule/result row
@@ -1363,14 +1386,19 @@ function vaysf_render_results_desk_tooltip($label, $tooltip) {
  * Render compact provisional rankings for one pool.
  *
  * @param array<int,array<string,mixed>> $rankings Ranking rows
+ * @param string $event Schedule event name
  * @return void
  */
-function vaysf_render_results_desk_pool_rankings($rankings) {
+function vaysf_render_results_desk_pool_rankings($rankings, $event = '') {
     if (!$rankings) {
         echo '<span class="vaysf-results-desk-muted">' . esc_html__('No scored games yet.', 'vaysf') . '</span>';
         return;
     }
+    $rule_note = vaysf_results_desk_pool_ranking_rule_note($event);
     ?>
+    <?php if ($rule_note !== '') : ?>
+        <p class="vaysf-results-desk-muted" style="margin: 0 0 8px;"><?php echo esc_html($rule_note); ?></p>
+    <?php endif; ?>
     <ol class="vaysf-results-desk-rankings">
         <?php foreach ($rankings as $team) : ?>
             <?php
@@ -1462,7 +1490,7 @@ function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
             <?php endif; ?>
         </td>
         <td>
-            <?php vaysf_render_results_desk_pool_rankings($pool['rankings'] ?? array()); ?>
+            <?php vaysf_render_results_desk_pool_rankings($pool['rankings'] ?? array(), $pool['event'] ?? ''); ?>
         </td>
         <td>
             <span class="<?php echo esc_attr(!empty($pool['complete']) ? 'vaysf-results-desk-pill' : 'vaysf-results-desk-warning'); ?>" title="<?php echo esc_attr($flag_tooltip); ?>">

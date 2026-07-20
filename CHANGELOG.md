@@ -59,6 +59,9 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - Hotfix 1.0.67: Advancement staleness now also compares the saved standings
   snapshot against the current computed rankings, so confirmations made before
   the Bible Challenge ranking-rule correction show as needing re-confirmation.
+- Hotfix 1.0.68: Pool ranking lists now show an event-specific calculation
+  note for Basketball, Volleyball, Soccer, and Bible Challenge so coordinators
+  can see the ranking rule before confirming advancement.
 - Getting `TF-`/`TOW-` schedule rows themselves published (six Track & Field
   events plus one Tug-of-War row, entered as ordinary `sf_schedules` rows
   via `publish-schedule` per the existing `schedule_output.json` shape, not
@@ -67,7 +70,7 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   row shape.
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
-- Bumped plugin header/version to `1.0.67` and rebuilt `plugins/vaysf.zip`
+- Bumped plugin header/version to `1.0.68` and rebuilt `plugins/vaysf.zip`
   (39 files, matches `plugins/vaysf/` on disk; rebuilt on Linux so archive
   entries use forward slashes instead of the prior Windows-built backslash
   paths — no functional change, WordPress's unzip handles either).
