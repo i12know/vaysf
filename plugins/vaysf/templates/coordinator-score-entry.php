@@ -619,7 +619,7 @@ if (!$vaysf_rendering_shortcode) {
                         $score_form_type = 'placement';
                     }
                     $placement_churches = $score_form_type === 'placement'
-                        ? vaysf_get_public_schedule_churches($score_schedule['schedule_version'] ?? null)
+                        ? vaysf_get_placement_church_codes()
                         : array();
                     $placement_first_value = isset($score_payload['first_church_code']) ? (string) $score_payload['first_church_code'] : '';
                     $placement_second_value = isset($score_payload['second_church_code']) ? (string) $score_payload['second_church_code'] : '';

@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.62
+ * Version: 1.0.63
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,12 +18,12 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.62';
+    const VERSION = '1.0.63';
 
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.9';  // Issue #207 - pool advancement confirmation table
+    const DB_VERSION = '1.0.10';  // Issue #207 - schedule-versioned pool advancement confirmation table
     
     /**
      * Database version option name
@@ -787,8 +787,8 @@ class VAYSF_Integration {
 		dbDelta($sql_email_log);
 
         // Pool advancement confirmation table (Issue #207) — one row per
-        // (event, pool_id): who confirmed advancement, when, a snapshot of
-        // the pool-progress rankings used (see
+        // (schedule_version, event, pool_id): who confirmed advancement,
+        // when, a snapshot of the pool-progress rankings used (see
         // vaysf_get_results_desk_pool_progress_rows() in results-desk.php),
         // and the sf_results revision numbers that snapshot was based on.
         // Re-confirming a pool upserts this row rather than keeping a
@@ -800,6 +800,7 @@ class VAYSF_Integration {
         $table_pool_advancement = $wpdb->prefix . self::TABLE_PREFIX . 'pool_advancement';
         $sql_pool_advancement = "CREATE TABLE $table_pool_advancement (
             advancement_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            schedule_version INT UNSIGNED NOT NULL DEFAULT 0,
             event VARCHAR(100) NOT NULL,
             pool_id VARCHAR(20) NOT NULL,
             confirmed_by_user_id BIGINT(20) UNSIGNED NOT NULL,
@@ -809,10 +810,40 @@ class VAYSF_Integration {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY  (advancement_id),
-            UNIQUE KEY event_pool (event, pool_id),
+            UNIQUE KEY schedule_event_pool (schedule_version, event, pool_id),
             KEY confirmed_by_user_id (confirmed_by_user_id)
         ) $charset_collate;";
         dbDelta($sql_pool_advancement);
+
+        $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_pool_advancement} LIKE 'schedule_version'");
+        if (empty($check_column)) {
+            $wpdb->query("ALTER TABLE {$table_pool_advancement} ADD COLUMN schedule_version INT UNSIGNED NOT NULL DEFAULT 0 AFTER advancement_id");
+            error_log('Added schedule_version column to sf_pool_advancement table');
+        }
+
+        $current_advancement_schedule_version = function_exists('vaysf_get_current_published_schedule_version')
+            ? vaysf_get_current_published_schedule_version()
+            : null;
+        if ($current_advancement_schedule_version !== null) {
+            $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$table_pool_advancement} SET schedule_version = %d WHERE schedule_version = 0",
+                    absint($current_advancement_schedule_version)
+                )
+            );
+        }
+
+        $check_index = $wpdb->get_results("SHOW INDEX FROM {$table_pool_advancement} WHERE Key_name = 'event_pool'");
+        if (!empty($check_index)) {
+            $wpdb->query("ALTER TABLE {$table_pool_advancement} DROP INDEX event_pool");
+            error_log('Dropped event_pool unique index from sf_pool_advancement table');
+        }
+
+        $check_index = $wpdb->get_results("SHOW INDEX FROM {$table_pool_advancement} WHERE Key_name = 'schedule_event_pool'");
+        if (empty($check_index)) {
+            $wpdb->query("ALTER TABLE {$table_pool_advancement} ADD UNIQUE KEY schedule_event_pool (schedule_version, event, pool_id)");
+            error_log('Added schedule_event_pool unique index to sf_pool_advancement table');
+        }
 
         // Check if photo_url column needs to be added to existing table
         $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_participants} LIKE 'photo_url'");

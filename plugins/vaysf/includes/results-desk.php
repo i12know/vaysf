@@ -926,6 +926,7 @@ function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 
                 'event' => (string) ($row['event'] ?? ''),
                 'stage' => (string) ($row['stage'] ?? ''),
                 'pool_id' => $pool_display_id,
+                'schedule_version' => absint($schedule_version),
                 'synthetic_pool' => $pool_id === '',
                 'game_count' => 0,
                 'reported_count' => 0,
@@ -1035,17 +1036,26 @@ function vaysf_get_pool_progress_row($event, $pool_id) {
  * @param string $pool_id
  * @return array<string,mixed>|null
  */
-function vaysf_get_pool_advancement($event, $pool_id) {
+function vaysf_get_pool_advancement($event, $pool_id, $schedule_version = null) {
     global $wpdb;
     $event = sanitize_text_field($event);
     $pool_id = sanitize_text_field($pool_id);
-    if ($event === '' || $pool_id === '') {
+    if ($schedule_version === null) {
+        $schedule_version = vaysf_get_current_published_schedule_version();
+    }
+    $schedule_version = absint($schedule_version);
+    if ($event === '' || $pool_id === '' || !$schedule_version) {
         return null;
     }
 
     $table = vaysf_get_table_name('pool_advancement');
     $row = $wpdb->get_row(
-        $wpdb->prepare("SELECT * FROM $table WHERE event = %s AND pool_id = %s", $event, $pool_id),
+        $wpdb->prepare(
+            "SELECT * FROM $table WHERE schedule_version = %d AND event = %s AND pool_id = %s",
+            $schedule_version,
+            $event,
+            $pool_id
+        ),
         ARRAY_A
     );
     return is_array($row) ? $row : null;
@@ -1061,10 +1071,10 @@ function vaysf_get_pool_advancement($event, $pool_id) {
  * @return bool True when confirmed but now stale; false when not confirmed
  *              or still current
  */
-function vaysf_pool_advancement_is_stale($event, $pool_id) {
+function vaysf_pool_advancement_is_stale($event, $pool_id, $schedule_version = null) {
     global $wpdb;
 
-    $advancement = vaysf_get_pool_advancement($event, $pool_id);
+    $advancement = vaysf_get_pool_advancement($event, $pool_id, $schedule_version);
     if ($advancement === null) {
         return false;
     }
@@ -1124,6 +1134,12 @@ function vaysf_confirm_pool_advancement($user_id, $event, $pool_id) {
         return new WP_Error('vaysf_advancement_missing_context', __('Advancement confirmation is missing the user, event, or pool.', 'vaysf'));
     }
 
+    $schedule_version = vaysf_get_current_published_schedule_version();
+    if ($schedule_version === null) {
+        return new WP_Error('vaysf_advancement_no_schedule', __('No published schedule is available for advancement confirmation.', 'vaysf'));
+    }
+    $schedule_version = absint($schedule_version);
+
     $pool = vaysf_get_pool_progress_row($event, $pool_id);
     if ($pool === null || empty($pool['rankings'])) {
         return new WP_Error('vaysf_advancement_no_results', __('No reported results found for this pool.', 'vaysf'));
@@ -1139,16 +1155,25 @@ function vaysf_confirm_pool_advancement($user_id, $event, $pool_id) {
     // based on, so a later correction can be detected as staleness.
     $table_schedules = vaysf_get_table_name('schedules');
     $table_results = vaysf_get_table_name('results');
+    $pool_where = !empty($pool['synthetic_pool'])
+        ? "(s.pool_id IS NULL OR s.pool_id = '')"
+        : 's.pool_id = %s';
+    $result_args = array($schedule_version, $event);
+    if (empty($pool['synthetic_pool'])) {
+        $result_args[] = $pool_id;
+    }
     $result_rows = $wpdb->get_results(
         $wpdb->prepare(
             "SELECT r.result_id, r.current_revision
                 FROM $table_schedules s
                 INNER JOIN $table_results r ON r.schedule_id = s.schedule_id
-                WHERE s.event = %s AND s.pool_id = %s
+                WHERE s.schedule_version = %d
+                  AND s.published_at IS NOT NULL
+                  AND s.event = %s
+                  AND $pool_where
                   AND LOWER(COALESCE(s.stage, '')) IN ('pool', 'prelim', 'preliminary')
                   AND COALESCE(s.game_status, '') <> 'cancelled'",
-            $event,
-            $pool_id
+            $result_args
         ),
         ARRAY_A
     );
@@ -1165,20 +1190,21 @@ function vaysf_confirm_pool_advancement($user_id, $event, $pool_id) {
     }
 
     $table_advancement = vaysf_get_table_name('pool_advancement');
-    $existing = vaysf_get_pool_advancement($event, $pool_id);
+    $existing = vaysf_get_pool_advancement($event, $pool_id, $schedule_version);
 
     if ($existing) {
         $updated = $wpdb->update(
             $table_advancement,
             array(
                 'confirmed_by_user_id' => $user_id,
+                'schedule_version' => $schedule_version,
                 'confirmed_at' => $now,
                 'standings_snapshot_json' => $snapshot_json,
                 'based_on_revisions_json' => $revisions_json,
                 'updated_at' => $now,
             ),
             array('advancement_id' => absint($existing['advancement_id'])),
-            array('%d', '%s', '%s', '%s', '%s'),
+            array('%d', '%d', '%s', '%s', '%s', '%s'),
             array('%d')
         );
         if ($updated === false) {
@@ -1190,6 +1216,7 @@ function vaysf_confirm_pool_advancement($user_id, $event, $pool_id) {
             array(
                 'event' => $event,
                 'pool_id' => $pool_id,
+                'schedule_version' => $schedule_version,
                 'confirmed_by_user_id' => $user_id,
                 'confirmed_at' => $now,
                 'standings_snapshot_json' => $snapshot_json,
@@ -1197,7 +1224,7 @@ function vaysf_confirm_pool_advancement($user_id, $event, $pool_id) {
                 'created_at' => $now,
                 'updated_at' => $now,
             ),
-            array('%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s')
+            array('%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s')
         );
         if ($created === false) {
             return new WP_Error('vaysf_advancement_create_failed', __('Could not create the advancement confirmation.', 'vaysf'));
@@ -1310,8 +1337,9 @@ function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
             <?php
             $pool_event = (string) ($pool['event'] ?? '');
             $pool_id_value = (string) ($pool['pool_id'] ?? '');
-            $advancement = vaysf_get_pool_advancement($pool_event, $pool_id_value);
-            $is_stale = $advancement ? vaysf_pool_advancement_is_stale($pool_event, $pool_id_value) : false;
+            $pool_schedule_version = absint($pool['schedule_version'] ?? 0);
+            $advancement = vaysf_get_pool_advancement($pool_event, $pool_id_value, $pool_schedule_version);
+            $is_stale = $advancement ? vaysf_pool_advancement_is_stale($pool_event, $pool_id_value, $pool_schedule_version) : false;
             ?>
             <?php if ($advancement && $is_stale) : ?>
                 <span class="vaysf-results-desk-warning" title="<?php esc_attr_e('A result contributing to this pool was corrected after advancement was confirmed. Re-confirm after reviewing the standings.', 'vaysf'); ?>">

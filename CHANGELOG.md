@@ -15,7 +15,7 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   is flagged `needs_manual_tiebreak` rather than resolved by alphabetical
   guesswork — wrong output here means the wrong team advances.
 - **Confirm Advancement.** Added a `sf_pool_advancement` table (plugin
-  DB_VERSION 1.0.8 → 1.0.9) and a "Confirm Advancement" action on the
+  DB_VERSION 1.0.8 → 1.0.10) and a "Confirm Advancement" action on the
   Results Desk pool progress table
   (`vaysf_confirm_pool_advancement()`, wired via
   `admin_post_vaysf_confirm_pool_advancement`): records who confirmed a
@@ -23,6 +23,8 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   review table already shows and the contributing results' revision
   numbers, so a later correction can be detected
   (`vaysf_pool_advancement_is_stale()`) and surfaced for re-confirmation.
+  Confirmations are keyed by `schedule_version`, `event`, and `pool_id` so
+  republished schedule rows do not inherit stale advancement state.
   Confirmation is refused while any tie is unresolved or any pool game is
   still missing a result. The existing pool progress review section
   (#320–#323) stays the single ranking source of truth — this reads from it
@@ -36,10 +38,13 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - Added final-placement score entry for Track & Field and Tug-of-War
   (Issue #209): `vaysf_submit_placement_result()` and a
   `[coordinator_score_entry]` form variant that lets a coordinator pick
-  1st/2nd/3rd place churches from the full published-schedule church list,
+  1st/2nd/3rd place churches from the registered `sf_churches` list,
   since these are all-church events with no fixed team_a/team_b matchup on
   the schedule row. Placements store ordered in `winner_keys_json`, same
   data model as every other score type (RFC §9.5).
+- Public schedule display now renders placement results as `1st ABC / 2nd DEF`
+  rather than treating them as missing numeric team scores, and placement POSTs
+  are validated against registered church codes.
 - Getting `TF-`/`TOW-` schedule rows themselves published (six Track & Field
   events plus one Tug-of-War row, entered as ordinary `sf_schedules` rows
   via `publish-schedule` per the existing `schedule_output.json` shape, not
@@ -48,7 +53,7 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   row shape.
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
-- Bumped plugin header/version to `1.0.62` and rebuilt `plugins/vaysf.zip`
+- Bumped plugin header/version to `1.0.63` and rebuilt `plugins/vaysf.zip`
   (39 files, matches `plugins/vaysf/` on disk; rebuilt on Linux so archive
   entries use forward slashes instead of the prior Windows-built backslash
   paths — no functional change, WordPress's unzip handles either).

@@ -737,6 +737,26 @@ class VAYSF_Shortcodes {
             return '—';
         }
 
+        if (($score['type'] ?? '') === 'placement') {
+            if (!empty($score['label'])) {
+                return (string) $score['label'];
+            }
+            if (!empty($score['placements']) && is_array($score['placements'])) {
+                $labels = array();
+                foreach ($score['placements'] as $placement) {
+                    if (empty($placement['place']) || empty($placement['church_code'])) {
+                        continue;
+                    }
+                    $labels[] = $placement['place'] . ' ' . $placement['church_code'];
+                }
+                if ($labels) {
+                    return implode(' / ', $labels);
+                }
+            }
+
+            return '—';
+        }
+
         $parts = array();
         foreach (array('team_a_score', 'team_b_score', 'team_c_score') as $key) {
             if (isset($score[$key]) && $score[$key] !== null) {
@@ -811,11 +831,23 @@ class VAYSF_Shortcodes {
 
             function formatScore(score) {
                 if (!score) { return String.fromCharCode(8212); }
+                if (score.type === 'placement') {
+                    if (score.label) { return score.label; }
+                    if (Array.isArray(score.placements) && score.placements.length) {
+                        return score.placements.map(function (placement) {
+                            return String(placement.place || '') + ' ' + String(placement.church_code || '');
+                        }).join(' / ');
+                    }
+                    return String.fromCharCode(8212);
+                }
                 var parts = [score.team_a_score, score.team_b_score];
                 if (typeof score.team_c_score !== 'undefined' && score.team_c_score !== null) {
                     parts.push(score.team_c_score);
                 }
-                return parts.join(' - ');
+                parts = parts.filter(function (part) {
+                    return typeof part !== 'undefined' && part !== null;
+                });
+                return parts.length ? parts.join(' - ') : String.fromCharCode(8212);
             }
 
             function titleCase(text) {
