@@ -352,6 +352,26 @@ if (!$vaysf_rendering_shortcode) {
         .vaysf-score-entry-pool-section .vaysf-results-desk-rankings li:last-child {
             margin-bottom: 0;
         }
+        .vaysf-score-entry-pool-section .vaysf-pool-review-note-label {
+            color: #50575e;
+            display: block;
+            font-size: .85em;
+            margin: 6px 0;
+            max-width: 230px;
+        }
+        .vaysf-score-entry-pool-section .vaysf-pool-review-note {
+            display: block;
+            font-size: 12px;
+            margin-top: 3px;
+            min-height: 44px;
+            width: 100%;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-note-display {
+            color: #50575e;
+            display: inline-block;
+            margin-top: 4px;
+            max-width: 260px;
+        }
         .vaysf-score-entry-filter {
             align-items: end;
             display: flex;

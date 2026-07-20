@@ -15,7 +15,7 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   is flagged `needs_manual_tiebreak` rather than resolved by alphabetical
   guesswork — wrong output here means the wrong team advances.
 - **Confirm Advancement.** Added a `sf_pool_advancement` table (plugin
-  DB_VERSION 1.0.8 → 1.0.10) and a "Confirm Advancement" action on the
+  DB_VERSION 1.0.8 → 1.0.11) and a "Confirm Advancement" action on the
   Results Desk pool progress table
   (`vaysf_confirm_pool_advancement()`, wired via
   `admin_post_vaysf_confirm_pool_advancement`): records who confirmed a
@@ -25,8 +25,10 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   (`vaysf_pool_advancement_is_stale()`) and surfaced for re-confirmation.
   Confirmations are keyed by `schedule_version`, `event`, and `pool_id` so
   republished schedule rows do not inherit stale advancement state.
-  Confirmation is refused while any tie is unresolved or any pool game is
-  still missing a result. The existing pool progress review section
+  Confirmation is refused while any pool game is still missing a result;
+  completed pools with unresolved ties can be confirmed with a required
+  review note so the tie can be resolved on the event-level playoff/QF
+  finalization page. The existing pool progress review section
   (#320–#323) stays the single ranking source of truth — this reads from it
   rather than recomputing standings a second way.
 - Scope note: this deliberately does **not** auto-populate Semifinal/Final
@@ -66,6 +68,10 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   for team-sport pools and clarifies that the action prepares the pool for
   event-level QF/playoff finalization rather than choosing wildcards, seeds, or
   QF matchups.
+- Hotfix 1.0.70: Completed pools with unresolved ties can now be confirmed
+  with a required review note. The note is stored on `sf_pool_advancement`
+  (`review_note`, DB_VERSION 1.0.11) and displayed with the confirmation so
+  the next-page playoff/QF finalization workflow can sort out the tie.
 - Getting `TF-`/`TOW-` schedule rows themselves published (six Track & Field
   events plus one Tug-of-War row, entered as ordinary `sf_schedules` rows
   via `publish-schedule` per the existing `schedule_output.json` shape, not
@@ -74,7 +80,7 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   row shape.
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
-- Bumped plugin header/version to `1.0.69` and rebuilt `plugins/vaysf.zip`
+- Bumped plugin header/version to `1.0.70` and rebuilt `plugins/vaysf.zip`
   (39 files, matches `plugins/vaysf/` on disk; rebuilt on Linux so archive
   entries use forward slashes instead of the prior Windows-built backslash
   paths — no functional change, WordPress's unzip handles either).

@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.69
+ * Version: 1.0.70
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,12 +18,12 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.69';
+    const VERSION = '1.0.70';
 
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.10';  // Issue #207 - schedule-versioned pool advancement confirmation table
+    const DB_VERSION = '1.0.11';  // Issue #207 - schedule-versioned pool advancement confirmation table with review notes
     
     /**
      * Database version option name
@@ -807,6 +807,7 @@ class VAYSF_Integration {
             confirmed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             standings_snapshot_json TEXT DEFAULT NULL,
             based_on_revisions_json TEXT DEFAULT NULL,
+            review_note TEXT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY  (advancement_id),
@@ -819,6 +820,12 @@ class VAYSF_Integration {
         if (empty($check_column)) {
             $wpdb->query("ALTER TABLE {$table_pool_advancement} ADD COLUMN schedule_version INT UNSIGNED NOT NULL DEFAULT 0 AFTER advancement_id");
             error_log('Added schedule_version column to sf_pool_advancement table');
+        }
+
+        $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_pool_advancement} LIKE 'review_note'");
+        if (empty($check_column)) {
+            $wpdb->query("ALTER TABLE {$table_pool_advancement} ADD COLUMN review_note TEXT DEFAULT NULL AFTER based_on_revisions_json");
+            error_log('Added review_note column to sf_pool_advancement table');
         }
 
         $current_advancement_schedule_version = function_exists('vaysf_get_current_published_schedule_version')

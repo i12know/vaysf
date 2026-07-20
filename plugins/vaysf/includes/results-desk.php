@@ -1240,7 +1240,8 @@ function vaysf_pool_advancement_is_stale($event, $pool_id, $schedule_version = n
  * Confirm advancement for a pool (Issue #207): reads the same pool-progress
  * rankings the Results Desk review section displays
  * (vaysf_get_results_desk_pool_progress_rows()), refuses to confirm if the
- * pool is incomplete or any team is in an unresolved tie, and upserts the
+ * pool is incomplete, requires a note when the pool still has an unresolved
+ * tie, and upserts the
  * sf_pool_advancement record with a standings snapshot and the result
  * revisions it was based on (so a later correction can be detected as
  * staleness via vaysf_pool_advancement_is_stale()).
@@ -1257,14 +1258,16 @@ function vaysf_pool_advancement_is_stale($event, $pool_id, $schedule_version = n
  * @param int $user_id WordPress user id confirming
  * @param string $event
  * @param string $pool_id
+ * @param string $review_note Optional operator note; required for unresolved ties
  * @return array<int,array<string,mixed>>|WP_Error Standings snapshot on success
  */
-function vaysf_confirm_pool_advancement($user_id, $event, $pool_id) {
+function vaysf_confirm_pool_advancement($user_id, $event, $pool_id, $review_note = '') {
     global $wpdb;
 
     $user_id = absint($user_id);
     $event = sanitize_text_field($event);
     $pool_id = sanitize_text_field($pool_id);
+    $review_note = sanitize_textarea_field($review_note);
     if (!$user_id || $event === '' || $pool_id === '') {
         return new WP_Error('vaysf_advancement_missing_context', __('Advancement confirmation is missing the user, event, or pool.', 'vaysf'));
     }
@@ -1282,8 +1285,8 @@ function vaysf_confirm_pool_advancement($user_id, $event, $pool_id) {
     if (empty($pool['complete'])) {
         return new WP_Error('vaysf_advancement_incomplete', __('Not every pool game has a reported result yet.', 'vaysf'));
     }
-    if (!empty($pool['needs_manual_tiebreak'])) {
-        return new WP_Error('vaysf_advancement_unresolved_tiebreak', __('Standings have a tie that head-to-head results cannot resolve. Decide the order manually before confirming.', 'vaysf'));
+    if (!empty($pool['needs_manual_tiebreak']) && $review_note === '') {
+        return new WP_Error('vaysf_advancement_tiebreak_note_required', __('This pool still has an unresolved tie. Add a review note before confirming it for the next-page tiebreak review.', 'vaysf'));
     }
 
     // Record which result rows (by revision number) this confirmation was
@@ -1336,10 +1339,11 @@ function vaysf_confirm_pool_advancement($user_id, $event, $pool_id) {
                 'confirmed_at' => $now,
                 'standings_snapshot_json' => $snapshot_json,
                 'based_on_revisions_json' => $revisions_json,
+                'review_note' => $review_note,
                 'updated_at' => $now,
             ),
             array('advancement_id' => absint($existing['advancement_id'])),
-            array('%d', '%d', '%s', '%s', '%s', '%s'),
+            array('%d', '%d', '%s', '%s', '%s', '%s', '%s'),
             array('%d')
         );
         if ($updated === false) {
@@ -1356,10 +1360,11 @@ function vaysf_confirm_pool_advancement($user_id, $event, $pool_id) {
                 'confirmed_at' => $now,
                 'standings_snapshot_json' => $snapshot_json,
                 'based_on_revisions_json' => $revisions_json,
+                'review_note' => $review_note,
                 'created_at' => $now,
                 'updated_at' => $now,
             ),
-            array('%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s')
+            array('%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s')
         );
         if ($created === false) {
             return new WP_Error('vaysf_advancement_create_failed', __('Could not create the advancement confirmation.', 'vaysf'));
@@ -1524,20 +1529,41 @@ function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
                     );
                     ?>
                 </span>
+                <?php if (!empty($advancement['review_note'])) : ?>
+                    <br><small class="vaysf-results-desk-note-display" title="<?php echo esc_attr($advancement['review_note']); ?>">
+                        <?php echo esc_html(sprintf(__('Note: %s', 'vaysf'), $advancement['review_note'])); ?>
+                    </small>
+                <?php endif; ?>
             <?php endif; ?>
-            <?php if (!empty($pool['complete']) && empty($pool['needs_manual_tiebreak'])) : ?>
+            <?php if (!empty($pool['complete'])) : ?>
                 <?php
+                $has_unresolved_tie = !empty($pool['needs_manual_tiebreak']);
+                $existing_review_note = is_array($advancement) && isset($advancement['review_note'])
+                    ? (string) $advancement['review_note']
+                    : '';
                 $is_bible_challenge_pool = vaysf_results_desk_is_bible_challenge_event($pool_event);
                 if ($is_bible_challenge_pool) {
                     $confirm_label = $advancement ? __('Re-confirm Top 9', 'vaysf') : __('Confirm Top 9', 'vaysf');
-                    $confirm_tooltip = $advancement
-                        ? __('Update the saved Bible Challenge advancement confirmation using the current top 9 teams by cumulative preliminary score. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
-                        : __('Save the current Bible Challenge top 9 teams by cumulative preliminary score as reviewed for advancement. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
+                    if ($has_unresolved_tie) {
+                        $confirm_tooltip = $advancement
+                            ? __('Update the saved Bible Challenge review note while the cutoff tie remains available for the next-page finalization step. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
+                            : __('Save the current Bible Challenge rankings and cutoff-tie note as reviewed for the next-page finalization step. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
+                    } else {
+                        $confirm_tooltip = $advancement
+                            ? __('Update the saved Bible Challenge advancement confirmation using the current top 9 teams by cumulative preliminary score. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
+                            : __('Save the current Bible Challenge top 9 teams by cumulative preliminary score as reviewed for advancement. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
+                    }
                 } else {
                     $confirm_label = $advancement ? __('Re-confirm Pool Review', 'vaysf') : __('Confirm Pool Review', 'vaysf');
-                    $confirm_tooltip = $advancement
-                        ? __('Update this pool ranking as reviewed for event-level QF/playoff finalization. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf')
-                        : __('Record this pool ranking as reviewed for event-level QF/playoff finalization. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf');
+                    if ($has_unresolved_tie) {
+                        $confirm_tooltip = $advancement
+                            ? __('Update this pool review note and keep the unresolved tie available for the next-page QF/playoff finalization step. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf')
+                            : __('Record this pool ranking and tie note as reviewed for the next-page QF/playoff finalization step. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf');
+                    } else {
+                        $confirm_tooltip = $advancement
+                            ? __('Update this pool ranking as reviewed for event-level QF/playoff finalization. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf')
+                            : __('Record this pool ranking as reviewed for event-level QF/playoff finalization. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf');
+                    }
                 }
                 ?>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
@@ -1546,12 +1572,16 @@ function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
                     <input type="hidden" name="pool_id" value="<?php echo esc_attr($pool_id_value); ?>">
                     <input type="hidden" name="return_url" value="<?php echo esc_attr($return_url); ?>">
                     <?php wp_nonce_field('vaysf_confirm_pool_advancement_' . $pool_event . '_' . $pool_id_value); ?>
+                    <?php if ($has_unresolved_tie) : ?>
+                        <label class="vaysf-pool-review-note-label">
+                            <?php esc_html_e('Tie review note', 'vaysf'); ?>
+                            <textarea class="vaysf-pool-review-note" name="review_note" rows="2" required placeholder="<?php echo esc_attr__('Example: FVC/NSD/RPC tied; resolve manually on QF page.', 'vaysf'); ?>"><?php echo esc_textarea($existing_review_note); ?></textarea>
+                        </label>
+                    <?php endif; ?>
                     <button type="submit" class="button button-primary button-small" title="<?php echo esc_attr($confirm_tooltip); ?>" aria-label="<?php echo esc_attr($confirm_tooltip); ?>">
                         <?php echo esc_html($confirm_label); ?>
                     </button>
                 </form>
-            <?php elseif (!empty($pool['needs_manual_tiebreak'])) : ?>
-                <br><small><?php esc_html_e('Resolve the tie above before confirming.', 'vaysf'); ?></small>
             <?php endif; ?>
         </td>
     </tr>
@@ -1681,6 +1711,9 @@ function vaysf_render_results_desk($atts = array()) {
             .vaysf-results-desk-rankings { margin: 0; padding-left: 26px; }
             .vaysf-results-desk-rankings li { margin: 0 0 6px; }
             .vaysf-results-desk-rankings li:last-child { margin-bottom: 0; }
+            .vaysf-pool-review-note-label { display: block; margin: 6px 0; max-width: 230px; font-size: .85em; color: #50575e; }
+            .vaysf-pool-review-note { display: block; width: 100%; min-height: 44px; margin-top: 3px; font-size: 12px; }
+            .vaysf-results-desk-note-display { display: inline-block; max-width: 260px; margin-top: 4px; color: #50575e; }
             @media (max-width: 768px) {
                 .vaysf-results-desk-table { display: block; overflow-x: auto; }
             }
@@ -2064,7 +2097,8 @@ function vaysf_handle_confirm_pool_advancement_request() {
         wp_die(esc_html__('Security check failed. Please try again.', 'vaysf'), 403);
     }
 
-    $result = vaysf_confirm_pool_advancement(get_current_user_id(), $event, $pool_id);
+    $review_note = isset($_POST['review_note']) ? sanitize_textarea_field(wp_unslash($_POST['review_note'])) : '';
+    $result = vaysf_confirm_pool_advancement(get_current_user_id(), $event, $pool_id, $review_note);
 
     if (is_wp_error($result)) {
         $redirect = add_query_arg(
@@ -2081,7 +2115,7 @@ function vaysf_handle_confirm_pool_advancement_request() {
                 'vaysf_advancement_message' => rawurlencode(
                     sprintf(
                         /* translators: %s: event and pool label */
-                        __('Advancement confirmed for %s.', 'vaysf'),
+                        __('Pool review confirmed for %s.', 'vaysf'),
                         trim($event . ' ' . $pool_id)
                     )
                 ),
