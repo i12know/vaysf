@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Advancement confirmation, head-to-head tiebreak, and Track & Field / Tug-of-War placement entry (#207, #209)
+
+Builds on the pool progress rankings review shipped in #320–#323 (below).
+
+- **Head-to-head tiebreak.** Amended `vaysf_results_desk_apply_pool_result()`
+  and `vaysf_results_desk_sort_pool_rankings()` to add head-to-head
+  resolution for teams still fully tied on wins/losses/point-differential
+  after the primary sort (VAY SM ranking convention confirmed for the 2026
+  weekend 1→2 transition: win/loss → point differential → head-to-head). A
+  tied group that head-to-head cannot fully order (e.g. a round-robin cycle)
+  is flagged `needs_manual_tiebreak` rather than resolved by alphabetical
+  guesswork — wrong output here means the wrong team advances.
+- **Confirm Advancement.** Added a `sf_pool_advancement` table (plugin
+  DB_VERSION 1.0.8 → 1.0.9) and a "Confirm Advancement" action on the
+  Results Desk pool progress table
+  (`vaysf_confirm_pool_advancement()`, wired via
+  `admin_post_vaysf_confirm_pool_advancement`): records who confirmed a
+  pool's standings and when, with a snapshot of the same rankings the
+  review table already shows and the contributing results' revision
+  numbers, so a later correction can be detected
+  (`vaysf_pool_advancement_is_stale()`) and surfaced for re-confirmation.
+  Confirmation is refused while any tie is unresolved or any pool game is
+  still missing a result. The existing pool progress review section
+  (#320–#323) stays the single ranking source of truth — this reads from it
+  rather than recomputing standings a second way.
+- Scope note: this deliberately does **not** auto-populate Semifinal/Final
+  schedule rows — which pool's top teams feed which bracket slot is a
+  tournament-structure decision with no existing data model, and guessing
+  it under time pressure was judged a worse risk than the manual step it
+  replaces (placing confirmed teams into next-round schedule rows via the
+  existing schedule editor).
+- Added final-placement score entry for Track & Field and Tug-of-War
+  (Issue #209): `vaysf_submit_placement_result()` and a
+  `[coordinator_score_entry]` form variant that lets a coordinator pick
+  1st/2nd/3rd place churches from the full published-schedule church list,
+  since these are all-church events with no fixed team_a/team_b matchup on
+  the schedule row. Placements store ordered in `winner_keys_json`, same
+  data model as every other score type (RFC §9.5).
+- Getting `TF-`/`TOW-` schedule rows themselves published (six Track & Field
+  events plus one Tug-of-War row, entered as ordinary `sf_schedules` rows
+  via `publish-schedule` per the existing `schedule_output.json` shape, not
+  solver output) is an operator data-entry step, not new tooling — see the
+  new "Fixed-time events" subsection in `docs/SCHEDULING.md` for the exact
+  row shape.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.62`. `plugins/vaysf.zip` not
+  rebuilt in this change — rebuild before deploy per the usual release step.
+
 ### Results Desk dead-code cleanup
 
 - Removed the unreachable `complete_pools` query branch from

@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.61
+ * Version: 1.0.62
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,12 +18,12 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.61';
+    const VERSION = '1.0.62';
 
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.8';  // Issue #183 - participant consent_status for consent_ratio
+    const DB_VERSION = '1.0.9';  // Issue #207 - pool advancement confirmation table
     
     /**
      * Database version option name
@@ -152,6 +152,7 @@ class VAYSF_Integration {
         add_action('admin_post_vaysf_download_result_file', 'vaysf_download_result_file');
         add_action('admin_post_vaysf_download_results_manifest', 'vaysf_download_results_manifest');
         add_action('admin_post_vaysf_download_bible_verses_json', 'vaysf_download_bible_verses_json');
+        add_action('admin_post_vaysf_confirm_pool_advancement', 'vaysf_handle_confirm_pool_advancement_request');
 
         // Seed the option-backed Bible verse store on fresh installs.
         vaysf_seed_bible_verse_rows_if_empty();
@@ -784,7 +785,35 @@ class VAYSF_Integration {
 			KEY sent_at (sent_at)
 		) $charset_collate;";
 		dbDelta($sql_email_log);
-        
+
+        // Pool advancement confirmation table (Issue #207) — one row per
+        // (event, pool_id): who confirmed advancement, when, a snapshot of
+        // the pool-progress rankings used (see
+        // vaysf_get_results_desk_pool_progress_rows() in results-desk.php),
+        // and the sf_results revision numbers that snapshot was based on.
+        // Re-confirming a pool upserts this row rather than keeping a
+        // history table — the "current confirmation" is all downstream code
+        // needs. Staleness (a contributing result corrected after
+        // confirmation) is detected at read time by comparing
+        // based_on_revisions_json against live sf_results.current_revision,
+        // not stored as a flag here.
+        $table_pool_advancement = $wpdb->prefix . self::TABLE_PREFIX . 'pool_advancement';
+        $sql_pool_advancement = "CREATE TABLE $table_pool_advancement (
+            advancement_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            event VARCHAR(100) NOT NULL,
+            pool_id VARCHAR(20) NOT NULL,
+            confirmed_by_user_id BIGINT(20) UNSIGNED NOT NULL,
+            confirmed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            standings_snapshot_json TEXT DEFAULT NULL,
+            based_on_revisions_json TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY  (advancement_id),
+            UNIQUE KEY event_pool (event, pool_id),
+            KEY confirmed_by_user_id (confirmed_by_user_id)
+        ) $charset_collate;";
+        dbDelta($sql_pool_advancement);
+
         // Check if photo_url column needs to be added to existing table
         $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_participants} LIKE 'photo_url'");
         if (empty($check_column)) {
