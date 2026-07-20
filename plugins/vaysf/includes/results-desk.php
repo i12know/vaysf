@@ -1129,6 +1129,37 @@ function vaysf_get_pool_advancement($event, $pool_id, $schedule_version = null) 
 }
 
 /**
+ * Normalize ranking rows before comparing a saved confirmation snapshot to
+ * the current computed standings.
+ *
+ * @param array<int,array<string,mixed>> $rankings Ranking rows
+ * @return array<int,array<string,mixed>>
+ */
+function vaysf_normalize_advancement_rankings_snapshot($rankings) {
+    $normalized = array();
+    foreach ((array) $rankings as $team) {
+        if (!is_array($team)) {
+            continue;
+        }
+        $normalized[] = array(
+            'rank' => (int) ($team['rank'] ?? 0),
+            'team_key' => (string) ($team['team_key'] ?? ''),
+            'for' => (int) ($team['for'] ?? 0),
+            'against' => (int) ($team['against'] ?? 0),
+            'diff' => (int) ($team['diff'] ?? 0),
+            'wins' => (int) ($team['wins'] ?? 0),
+            'losses' => (int) ($team['losses'] ?? 0),
+            'ties' => (int) ($team['ties'] ?? 0),
+            'ranking_basis' => (string) ($team['ranking_basis'] ?? ''),
+            'advances' => !empty($team['advances']),
+            'needs_manual_tiebreak' => !empty($team['needs_manual_tiebreak']),
+        );
+    }
+
+    return $normalized;
+}
+
+/**
  * Check whether a pool's confirmed advancement is stale — i.e. at least one
  * of the results it was confirmed against has since been corrected (its
  * current_revision has moved past what was recorded at confirmation time).
@@ -1138,7 +1169,7 @@ function vaysf_get_pool_advancement($event, $pool_id, $schedule_version = null) 
  * @return bool True when confirmed but now stale; false when not confirmed
  *              or still current
  */
-function vaysf_pool_advancement_is_stale($event, $pool_id, $schedule_version = null) {
+function vaysf_pool_advancement_is_stale($event, $pool_id, $schedule_version = null, $current_rankings = null) {
     global $wpdb;
 
     $advancement = vaysf_get_pool_advancement($event, $pool_id, $schedule_version);
@@ -1161,6 +1192,20 @@ function vaysf_pool_advancement_is_stale($event, $pool_id, $schedule_version = n
             return true;
         }
         if ((int) $current !== (int) $revision_at_confirmation) {
+            return true;
+        }
+    }
+
+    $saved_rankings = json_decode((string) ($advancement['standings_snapshot_json'] ?? ''), true);
+    if (is_array($saved_rankings)) {
+        if ($current_rankings === null) {
+            $pool = vaysf_get_pool_progress_row($event, $pool_id);
+            $current_rankings = is_array($pool) ? ($pool['rankings'] ?? array()) : array();
+        }
+        if (
+            vaysf_normalize_advancement_rankings_snapshot($saved_rankings)
+            !== vaysf_normalize_advancement_rankings_snapshot($current_rankings)
+        ) {
             return true;
         }
     }
@@ -1434,7 +1479,7 @@ function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
             $pool_id_value = (string) ($pool['pool_id'] ?? '');
             $pool_schedule_version = absint($pool['schedule_version'] ?? 0);
             $advancement = vaysf_get_pool_advancement($pool_event, $pool_id_value, $pool_schedule_version);
-            $is_stale = $advancement ? vaysf_pool_advancement_is_stale($pool_event, $pool_id_value, $pool_schedule_version) : false;
+            $is_stale = $advancement ? vaysf_pool_advancement_is_stale($pool_event, $pool_id_value, $pool_schedule_version, $pool['rankings'] ?? array()) : false;
             ?>
             <?php if ($advancement && $is_stale) : ?>
                 <span class="vaysf-results-desk-warning" title="<?php esc_attr_e('A result contributing to this pool was corrected after advancement was confirmed. Re-confirm after reviewing the standings.', 'vaysf'); ?>">
