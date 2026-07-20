@@ -555,6 +555,16 @@ function vaysf_results_desk_pool_team_slots($row) {
 }
 
 /**
+ * Check whether an event uses Bible Challenge advancement rules.
+ *
+ * @param string $event Schedule event name
+ * @return bool
+ */
+function vaysf_results_desk_is_bible_challenge_event($event) {
+    return strcasecmp(trim((string) $event), 'Bible Challenge - Mixed Team') === 0;
+}
+
+/**
  * Check whether a schedule row includes the selected church.
  *
  * @param array<string,mixed> $row Schedule/result row
@@ -627,6 +637,7 @@ function vaysf_results_desk_pool_score_by_team($payload, $slots) {
  * @return void
  */
 function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row, &$head_to_head = array()) {
+    $is_bible_challenge = vaysf_results_desk_is_bible_challenge_event($row['event'] ?? '');
     $slots = vaysf_results_desk_pool_team_slots($row);
     foreach ($slots as $slot) {
         vaysf_results_desk_ensure_pool_team($teams, $slot['key'], $slot['label']);
@@ -658,7 +669,7 @@ function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row, &$head_to_
     if (!empty($payload['split_match'])) {
         $flags['split_match'] = __('At least one volleyball match was recorded as a split/tie.', 'vaysf');
     }
-    if ($is_tie) {
+    if ($is_tie && !$is_bible_challenge) {
         $flags['tie'] = __('At least one result is tied or has multiple winners; review tiebreak rules manually.', 'vaysf');
     }
 
@@ -678,16 +689,18 @@ function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row, &$head_to_
         }
         $teams[$key]['diff'] = $teams[$key]['for'] - $teams[$key]['against'];
 
-        if ($is_tie) {
-            if (!$winner_keys || isset($winner_lookup[$key])) {
-                $teams[$key]['ties']++;
+        if (!$is_bible_challenge) {
+            if ($is_tie) {
+                if (!$winner_keys || isset($winner_lookup[$key])) {
+                    $teams[$key]['ties']++;
+                } else {
+                    $teams[$key]['losses']++;
+                }
+            } elseif (isset($winner_lookup[$key])) {
+                $teams[$key]['wins']++;
             } else {
                 $teams[$key]['losses']++;
             }
-        } elseif (isset($winner_lookup[$key])) {
-            $teams[$key]['wins']++;
-        } else {
-            $teams[$key]['losses']++;
         }
     }
 
@@ -695,7 +708,7 @@ function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row, &$head_to_
     // scores present — a 3-team game (e.g. Bible Challenge) has no single
     // well-defined opponent, so it is intentionally excluded rather than
     // approximated (Issue #207).
-    if (count($slots) === 2) {
+    if (!$is_bible_challenge && count($slots) === 2) {
         $slot_a = $slots[0]['key'];
         $slot_b = $slots[1]['key'];
         if (isset($scores[$slot_a]) && isset($scores[$slot_b])) {
@@ -714,6 +727,52 @@ function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row, &$head_to_
 }
 
 /**
+ * Sort Bible Challenge provisional rankings.
+ *
+ * Bible Challenge advances the top 9 teams by the cumulative score from all
+ * preliminary rows. Win/loss/head-to-head signals are intentionally ignored.
+ *
+ * @param array<string,array<string,mixed>> $teams Ranking map
+ * @return array<int,array<string,mixed>>
+ */
+function vaysf_results_desk_sort_bible_challenge_rankings($teams) {
+    $rankings = array_values($teams);
+    usort($rankings, function ($a, $b) {
+        $a_for = isset($a['for']) ? (int) $a['for'] : 0;
+        $b_for = isset($b['for']) ? (int) $b['for'] : 0;
+        if ($a_for !== $b_for) {
+            return $a_for > $b_for ? -1 : 1;
+        }
+
+        return strcasecmp((string) ($a['label'] ?? ''), (string) ($b['label'] ?? ''));
+    });
+
+    $cutoff_score = null;
+    if (count($rankings) > 9 && isset($rankings[8]['for'])) {
+        $cutoff_score = (int) $rankings[8]['for'];
+        if ((int) ($rankings[9]['for'] ?? PHP_INT_MIN) !== $cutoff_score) {
+            $cutoff_score = null;
+        }
+    }
+
+    foreach ($rankings as $index => $team) {
+        $rankings[$index]['rank'] = $index + 1;
+        $rankings[$index]['ranking_basis'] = 'total_score';
+        $rankings[$index]['advances'] = $index < 9;
+        $rankings[$index]['needs_manual_tiebreak'] = false;
+        if ($cutoff_score !== null && (int) ($team['for'] ?? 0) === $cutoff_score) {
+            $rankings[$index]['needs_manual_tiebreak'] = true;
+            vaysf_results_desk_add_pool_team_note(
+                $rankings[$index],
+                __('Tied at the Bible Challenge top-9 advancement cutoff; decide manually.', 'vaysf')
+            );
+        }
+    }
+
+    return $rankings;
+}
+
+/**
  * Sort provisional pool rankings.
  *
  * Ranking order (VAY SM convention confirmed for the 2026 weekend 1→2
@@ -729,9 +788,14 @@ function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row, &$head_to_
  * @param array<string,array<string,mixed>> $teams Ranking map
  * @param array<string,string> $head_to_head Pair-key ("keyA|keyB", sorted)
  *        => winner team key or 'tie', from vaysf_results_desk_apply_pool_result()
+ * @param string $event Schedule event name
  * @return array<int,array<string,mixed>>
  */
-function vaysf_results_desk_sort_pool_rankings($teams, $head_to_head = array()) {
+function vaysf_results_desk_sort_pool_rankings($teams, $head_to_head = array(), $event = '') {
+    if (vaysf_results_desk_is_bible_challenge_event($event)) {
+        return vaysf_results_desk_sort_bible_challenge_rankings($teams);
+    }
+
     $rankings = array_values($teams);
     usort($rankings, function ($a, $b) {
         $a_wins = isset($a['wins']) ? (int) $a['wins'] : 0;
@@ -966,7 +1030,8 @@ function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 
         }
 
         $pools[$key]['complete'] = ((int) $pool['game_count'] > 0 && (int) $pool['missing_count'] === 0);
-        $pools[$key]['rankings'] = vaysf_results_desk_sort_pool_rankings($pool_teams[$key] ?? array(), $pool_head_to_head[$key] ?? array());
+        $is_bible_challenge = vaysf_results_desk_is_bible_challenge_event($pool['event'] ?? '');
+        $pools[$key]['rankings'] = vaysf_results_desk_sort_pool_rankings($pool_teams[$key] ?? array(), $pool_head_to_head[$key] ?? array(), $pool['event'] ?? '');
         $pools[$key]['needs_manual_tiebreak'] = false;
         foreach ($pools[$key]['rankings'] as $ranked_team) {
             if (!empty($ranked_team['needs_manual_tiebreak'])) {
@@ -975,7 +1040,9 @@ function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 
             }
         }
         if ($pools[$key]['needs_manual_tiebreak']) {
-            $pools[$key]['flags']['unresolved_tiebreak'] = __('A tie could not be resolved by head-to-head results; decide the order manually before confirming advancement.', 'vaysf');
+            $pools[$key]['flags']['unresolved_tiebreak'] = $is_bible_challenge
+                ? __('A tie exists at the Bible Challenge top-9 cumulative-score cutoff; decide the advancing team manually before confirming advancement.', 'vaysf')
+                : __('A tie could not be resolved by head-to-head results; decide the order manually before confirming advancement.', 'vaysf');
         }
         if (!$pools[$key]['complete']) {
             $pools[$key]['flags']['incomplete'] = __('Pool is still incomplete; ranking is provisional.', 'vaysf');
@@ -1262,24 +1329,45 @@ function vaysf_render_results_desk_pool_rankings($rankings) {
     <ol class="vaysf-results-desk-rankings">
         <?php foreach ($rankings as $team) : ?>
             <?php
-            $record = sprintf(
-                '%d-%d-%d',
-                (int) ($team['wins'] ?? 0),
-                (int) ($team['losses'] ?? 0),
-                (int) ($team['ties'] ?? 0)
-            );
-            $metric = sprintf(
-                'PF %d / PA %d / %+d',
-                (int) ($team['for'] ?? 0),
-                (int) ($team['against'] ?? 0),
-                (int) ($team['diff'] ?? 0)
-            );
+            $is_total_score_ranking = (($team['ranking_basis'] ?? '') === 'total_score');
+            if ($is_total_score_ranking) {
+                $record = sprintf(
+                    /* translators: %d: cumulative Bible Challenge preliminary score */
+                    __('Total %d', 'vaysf'),
+                    (int) ($team['for'] ?? 0)
+                );
+                $metric = sprintf(
+                    /* translators: %d: number of preliminary rows scored for this team */
+                    _n('%d prelim scored', '%d prelims scored', (int) ($team['played'] ?? 0), 'vaysf'),
+                    (int) ($team['played'] ?? 0)
+                );
+                $record_tooltip = __('Bible Challenge ranks by cumulative preliminary score. The top 9 advance.', 'vaysf');
+                $metric_tooltip = __('Number of submitted preliminary score rows included in this team total.', 'vaysf');
+            } else {
+                $record = sprintf(
+                    '%d-%d-%d',
+                    (int) ($team['wins'] ?? 0),
+                    (int) ($team['losses'] ?? 0),
+                    (int) ($team['ties'] ?? 0)
+                );
+                $metric = sprintf(
+                    'PF %d / PA %d / %+d',
+                    (int) ($team['for'] ?? 0),
+                    (int) ($team['against'] ?? 0),
+                    (int) ($team['diff'] ?? 0)
+                );
+                $record_tooltip = __('Record is wins-losses-ties from scored pool games.', 'vaysf');
+                $metric_tooltip = __('PF/PA are points for and points against from the score payload. For volleyball this uses match score units, usually sets won/lost.', 'vaysf');
+            }
             $notes = !empty($team['notes']) && is_array($team['notes']) ? implode('; ', $team['notes']) : '';
             ?>
             <li value="<?php echo esc_attr((string) ($team['rank'] ?? 1)); ?>">
                 <strong><?php echo esc_html($team['label'] ?? $team['team_key'] ?? ''); ?></strong>
-                <span class="vaysf-results-desk-pill" title="<?php echo esc_attr__('Record is wins-losses-ties from scored pool games.', 'vaysf'); ?>"><?php echo esc_html($record); ?></span>
-                <span class="vaysf-results-desk-muted" title="<?php echo esc_attr__('PF/PA are points for and points against from the score payload. For volleyball this uses match score units, usually sets won/lost.', 'vaysf'); ?>"><?php echo esc_html($metric); ?></span>
+                <span class="vaysf-results-desk-pill" title="<?php echo esc_attr($record_tooltip); ?>"><?php echo esc_html($record); ?></span>
+                <?php if (!empty($team['advances'])) : ?>
+                    <span class="vaysf-results-desk-pill" title="<?php echo esc_attr__('Top 9 by cumulative Bible Challenge preliminary score advance.', 'vaysf'); ?>"><?php esc_html_e('Advances', 'vaysf'); ?></span>
+                <?php endif; ?>
+                <span class="vaysf-results-desk-muted" title="<?php echo esc_attr($metric_tooltip); ?>"><?php echo esc_html($metric); ?></span>
                 <?php if ($notes !== '') : ?>
                     <span class="vaysf-results-desk-warning" title="<?php echo esc_attr($notes); ?>"><?php echo esc_html__('note', 'vaysf'); ?></span>
                 <?php endif; ?>
@@ -1367,9 +1455,16 @@ function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
             <?php if (!empty($pool['complete']) && empty($pool['needs_manual_tiebreak'])) : ?>
                 <?php
                 $confirm_label = $advancement ? __('Re-confirm', 'vaysf') : __('Confirm Advancement', 'vaysf');
-                $confirm_tooltip = $advancement
-                    ? __('Update the saved advancement confirmation using the current rankings shown here. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
-                    : __('Save the current rankings shown here as reviewed for advancement. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
+                $is_bible_challenge_pool = vaysf_results_desk_is_bible_challenge_event($pool_event);
+                if ($is_bible_challenge_pool) {
+                    $confirm_tooltip = $advancement
+                        ? __('Update the saved Bible Challenge advancement confirmation using the current top 9 teams by cumulative preliminary score. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
+                        : __('Save the current Bible Challenge top 9 teams by cumulative preliminary score as reviewed for advancement. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
+                } else {
+                    $confirm_tooltip = $advancement
+                        ? __('Update the saved advancement confirmation using the current rankings shown here. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
+                        : __('Save the current rankings shown here as reviewed for advancement. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
+                }
                 ?>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                     <input type="hidden" name="action" value="vaysf_confirm_pool_advancement">
@@ -1652,7 +1747,7 @@ function vaysf_render_results_desk($atts = array()) {
                                 </th>
                                 <th>
                                     <?php esc_html_e('Provisional Rankings', 'vaysf'); ?>
-                                    <?php vaysf_render_results_desk_tooltip('?', __('Rankings sort by wins, then ties, point differential, and points for. Ties and sport-specific tiebreakers still require human review.', 'vaysf')); ?>
+                                    <?php vaysf_render_results_desk_tooltip('?', __('Default rankings sort by wins, then ties, point differential, and points for. Bible Challenge ranks by cumulative preliminary score, and the top 9 advance. Cutoff ties still require human review.', 'vaysf')); ?>
                                 </th>
                                 <th>
                                     <?php esc_html_e('Review Status', 'vaysf'); ?>
