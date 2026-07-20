@@ -45,6 +45,10 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - Public schedule display now renders placement results as `1st ABC / 2nd DEF`
   rather than treating them as missing numeric team scores, and placement POSTs
   are validated against registered church codes.
+- Hotfix 1.0.64: Coordinator Score Entry now passes its own return URL into
+  the shared Confirm Advancement form, and the post handler treats a blank
+  `return_url` as missing. This prevents a successful confirmation from
+  landing on a blank `wp-admin/admin-post.php` page.
 - Getting `TF-`/`TOW-` schedule rows themselves published (six Track & Field
   events plus one Tug-of-War row, entered as ordinary `sf_schedules` rows
   via `publish-schedule` per the existing `schedule_output.json` shape, not
@@ -53,7 +57,7 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   row shape.
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
-- Bumped plugin header/version to `1.0.63` and rebuilt `plugins/vaysf.zip`
+- Bumped plugin header/version to `1.0.64` and rebuilt `plugins/vaysf.zip`
   (39 files, matches `plugins/vaysf/` on disk; rebuilt on Linux so archive
   entries use forward slashes instead of the prior Windows-built backslash
   paths — no functional change, WordPress's unzip handles either).

@@ -1298,6 +1298,13 @@ function vaysf_render_results_desk_pool_rankings($rankings) {
  * @return void
  */
 function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
+    if ($return_url === '' && isset($_SERVER['REQUEST_URI'])) {
+        $return_url = home_url(wp_unslash($_SERVER['REQUEST_URI']));
+    }
+    if ($return_url === '') {
+        $return_url = vaysf_get_results_desk_url();
+    }
+
     $game_count = max(0, (int) ($pool['game_count'] ?? 0));
     $reported_count = max(0, (int) ($pool['reported_count'] ?? 0));
     $missing_count = max(0, (int) ($pool['missing_count'] ?? 0));
@@ -1861,7 +1868,13 @@ function vaysf_download_results_manifest() {
  * @return void
  */
 function vaysf_handle_confirm_pool_advancement_request() {
-    $return_url = isset($_POST['return_url']) ? esc_url_raw(wp_unslash($_POST['return_url'])) : vaysf_get_results_desk_url();
+    $return_url = isset($_POST['return_url']) ? esc_url_raw(wp_unslash($_POST['return_url'])) : '';
+    if ($return_url === '') {
+        $return_url = wp_get_referer();
+    }
+    if (!$return_url) {
+        $return_url = vaysf_get_results_desk_url();
+    }
     $return_url = remove_query_arg(array('vaysf_advancement_status', 'vaysf_advancement_message'), $return_url);
 
     if (!vaysf_user_can_view_results_desk()) {

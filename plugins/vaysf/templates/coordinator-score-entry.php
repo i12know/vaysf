@@ -889,7 +889,7 @@ if (!$vaysf_rendering_shortcode) {
                         </thead>
                         <tbody>
                             <?php foreach ($pool_progress_rows as $pool) : ?>
-                                <?php vaysf_render_results_desk_pool_progress_row($pool); ?>
+                                <?php vaysf_render_results_desk_pool_progress_row($pool, $score_entry_return_url); ?>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
