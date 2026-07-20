@@ -48,8 +48,10 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   row shape.
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
-- Bumped plugin header/version to `1.0.62`. `plugins/vaysf.zip` not
-  rebuilt in this change — rebuild before deploy per the usual release step.
+- Bumped plugin header/version to `1.0.62` and rebuilt `plugins/vaysf.zip`
+  (39 files, matches `plugins/vaysf/` on disk; rebuilt on Linux so archive
+  entries use forward slashes instead of the prior Windows-built backslash
+  paths — no functional change, WordPress's unzip handles either).
 
 ### Results Desk dead-code cleanup
 
