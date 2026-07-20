@@ -1527,16 +1527,17 @@ function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
             <?php endif; ?>
             <?php if (!empty($pool['complete']) && empty($pool['needs_manual_tiebreak'])) : ?>
                 <?php
-                $confirm_label = $advancement ? __('Re-confirm', 'vaysf') : __('Confirm Advancement', 'vaysf');
                 $is_bible_challenge_pool = vaysf_results_desk_is_bible_challenge_event($pool_event);
                 if ($is_bible_challenge_pool) {
+                    $confirm_label = $advancement ? __('Re-confirm Top 9', 'vaysf') : __('Confirm Top 9', 'vaysf');
                     $confirm_tooltip = $advancement
                         ? __('Update the saved Bible Challenge advancement confirmation using the current top 9 teams by cumulative preliminary score. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
                         : __('Save the current Bible Challenge top 9 teams by cumulative preliminary score as reviewed for advancement. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
                 } else {
+                    $confirm_label = $advancement ? __('Re-confirm Pool Review', 'vaysf') : __('Confirm Pool Review', 'vaysf');
                     $confirm_tooltip = $advancement
-                        ? __('Update the saved advancement confirmation using the current rankings shown here. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
-                        : __('Save the current rankings shown here as reviewed for advancement. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
+                        ? __('Update this pool ranking as reviewed for event-level QF/playoff finalization. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf')
+                        : __('Record this pool ranking as reviewed for event-level QF/playoff finalization. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf');
                 }
                 ?>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
