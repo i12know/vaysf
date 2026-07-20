@@ -1365,14 +1365,20 @@ function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
                 </span>
             <?php endif; ?>
             <?php if (!empty($pool['complete']) && empty($pool['needs_manual_tiebreak'])) : ?>
+                <?php
+                $confirm_label = $advancement ? __('Re-confirm', 'vaysf') : __('Confirm Advancement', 'vaysf');
+                $confirm_tooltip = $advancement
+                    ? __('Update the saved advancement confirmation using the current rankings shown here. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
+                    : __('Save the current rankings shown here as reviewed for advancement. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
+                ?>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                     <input type="hidden" name="action" value="vaysf_confirm_pool_advancement">
                     <input type="hidden" name="event" value="<?php echo esc_attr($pool_event); ?>">
                     <input type="hidden" name="pool_id" value="<?php echo esc_attr($pool_id_value); ?>">
                     <input type="hidden" name="return_url" value="<?php echo esc_attr($return_url); ?>">
                     <?php wp_nonce_field('vaysf_confirm_pool_advancement_' . $pool_event . '_' . $pool_id_value); ?>
-                    <button type="submit" class="button button-primary button-small">
-                        <?php echo $advancement ? esc_html__('Re-confirm', 'vaysf') : esc_html__('Confirm Advancement', 'vaysf'); ?>
+                    <button type="submit" class="button button-primary button-small" title="<?php echo esc_attr($confirm_tooltip); ?>" aria-label="<?php echo esc_attr($confirm_tooltip); ?>">
+                        <?php echo esc_html($confirm_label); ?>
                     </button>
                 </form>
             <?php elseif (!empty($pool['needs_manual_tiebreak'])) : ?>
