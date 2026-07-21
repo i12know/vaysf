@@ -72,6 +72,14 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   with a required review note. The note is stored on `sf_pool_advancement`
   (`review_note`, DB_VERSION 1.0.11) and displayed with the confirmation so
   the next-page playoff/QF finalization workflow can sort out the tie.
+- Hotfix 1.0.71: Added a read-only Results Desk "Playoff / QF Preview" panel
+  for Issue #326. When an event is selected, managers can see confirmed pool
+  review snapshots, current playoff schedule-row status, and preview labels
+  without writing anything. Bible Challenge previews `BC-Semi-1`/`BC-Semi-2`/
+  `BC-Semi-3` using a balanced snake grouping from the confirmed Top 9 and
+  keeps `BC-Final` as semifinal-winner placeholders. Basketball, Volleyball,
+  and Soccer show confirmed pool reviews and existing playoff rows but block
+  matchup suggestions until wildcard/seed rules are explicit.
 - Getting `TF-`/`TOW-` schedule rows themselves published (six Track & Field
   events plus one Tug-of-War row, entered as ordinary `sf_schedules` rows
   via `publish-schedule` per the existing `schedule_output.json` shape, not
@@ -80,7 +88,7 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   row shape.
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
-- Bumped plugin header/version to `1.0.70` and rebuilt `plugins/vaysf.zip`
+- Bumped plugin header/version to `1.0.71` and rebuilt `plugins/vaysf.zip`
   (39 files, matches `plugins/vaysf/` on disk; rebuilt on Linux so archive
   entries use forward slashes instead of the prior Windows-built backslash
   paths — no functional change, WordPress's unzip handles either).

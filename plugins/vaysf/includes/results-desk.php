@@ -1388,6 +1388,445 @@ function vaysf_render_results_desk_tooltip($label, $tooltip) {
 }
 
 /**
+ * Check whether the Results Desk has a playoff-preview path for an event.
+ *
+ * @param string $event Schedule event name
+ * @return bool
+ */
+function vaysf_results_desk_can_preview_playoff_event($event) {
+    $event = trim((string) $event);
+    if ($event === '') {
+        return false;
+    }
+
+    return vaysf_results_desk_is_bible_challenge_event($event)
+        || stripos($event, 'Basketball') !== false
+        || stripos($event, 'Volleyball') !== false
+        || stripos($event, 'Soccer') !== false;
+}
+
+/**
+ * Fetch confirmed pool review snapshots for an event.
+ *
+ * @param string $event Schedule event name
+ * @param int $schedule_version Published schedule version
+ * @return array<int,array<string,mixed>>
+ */
+function vaysf_results_desk_get_confirmed_pool_reviews($event, $schedule_version) {
+    global $wpdb;
+
+    $event = sanitize_text_field($event);
+    $schedule_version = absint($schedule_version);
+    if ($event === '' || !$schedule_version) {
+        return array();
+    }
+
+    $table = vaysf_get_table_name('pool_advancement');
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT * FROM $table WHERE schedule_version = %d AND event = %s ORDER BY pool_id",
+            $schedule_version,
+            $event
+        ),
+        ARRAY_A
+    );
+    if (!is_array($rows)) {
+        return array();
+    }
+
+    $reviews = array();
+    foreach ($rows as $row) {
+        $snapshot = json_decode((string) ($row['standings_snapshot_json'] ?? ''), true);
+        if (!is_array($snapshot)) {
+            $snapshot = array();
+        }
+
+        $pool_id = (string) ($row['pool_id'] ?? '');
+        $reviews[] = array(
+            'pool_id' => $pool_id,
+            'confirmed_by_user_id' => absint($row['confirmed_by_user_id'] ?? 0),
+            'confirmed_at' => (string) ($row['confirmed_at'] ?? ''),
+            'review_note' => (string) ($row['review_note'] ?? ''),
+            'standings' => $snapshot,
+            'stale' => vaysf_pool_advancement_is_stale($event, $pool_id, $schedule_version),
+        );
+    }
+
+    return $reviews;
+}
+
+/**
+ * Fetch current playoff-ish schedule rows for an event.
+ *
+ * @param string $event Schedule event name
+ * @param int $schedule_version Published schedule version
+ * @return array<string,array<string,mixed>> Rows keyed by game_key
+ */
+function vaysf_results_desk_get_playoff_schedule_rows($event, $schedule_version) {
+    global $wpdb;
+
+    $event = sanitize_text_field($event);
+    $schedule_version = absint($schedule_version);
+    if ($event === '' || !$schedule_version) {
+        return array();
+    }
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $table_results = vaysf_get_table_name('results');
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT s.*, r.result_id, r.public_status, r.score_json, r.winner_keys_json
+                FROM $table_schedules s
+                LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
+                WHERE s.schedule_version = %d
+                  AND s.published_at IS NOT NULL
+                  AND s.event = %s
+                  AND COALESCE(s.game_status, '') <> 'cancelled'
+                  AND LOWER(COALESCE(s.stage, '')) NOT IN ('pool', 'prelim', 'preliminary')
+                ORDER BY s.scheduled_time IS NULL, s.scheduled_time, s.game_key",
+            $schedule_version,
+            $event
+        ),
+        ARRAY_A
+    );
+    if (!is_array($rows)) {
+        return array();
+    }
+
+    $by_key = array();
+    foreach ($rows as $row) {
+        $game_key = (string) ($row['game_key'] ?? '');
+        if ($game_key !== '') {
+            $by_key[$game_key] = $row;
+        }
+    }
+
+    return $by_key;
+}
+
+/**
+ * Return a display label for one ranking/team snapshot row.
+ *
+ * @param array<string,mixed> $team Ranking row
+ * @return string
+ */
+function vaysf_results_desk_preview_team_label($team) {
+    $label = trim((string) ($team['label'] ?? ''));
+    if ($label !== '') {
+        return $label;
+    }
+
+    $key = trim((string) ($team['team_key'] ?? ''));
+    return $key !== '' ? $key : __('TBD', 'vaysf');
+}
+
+/**
+ * Build balanced Bible Challenge semifinal preview rows from confirmed Top 9.
+ *
+ * @param array<int,array<string,mixed>> $reviews Confirmed pool reviews
+ * @param array<string,array<string,mixed>> $schedule_rows Existing playoff rows
+ * @return array<string,mixed>
+ */
+function vaysf_results_desk_build_bible_challenge_preview($reviews, $schedule_rows) {
+    $warnings = array();
+    $source_review = null;
+    foreach ($reviews as $review) {
+        if ($source_review === null || empty($review['stale'])) {
+            $source_review = $review;
+        }
+        if (empty($review['stale'])) {
+            break;
+        }
+    }
+
+    $top_teams = array();
+    if ($source_review && !empty($source_review['standings']) && is_array($source_review['standings'])) {
+        foreach ($source_review['standings'] as $team) {
+            if (!is_array($team)) {
+                continue;
+            }
+            if (!empty($team['advances'])) {
+                $top_teams[] = $team;
+            }
+        }
+        if (count($top_teams) < 9) {
+            $top_teams = array_slice($source_review['standings'], 0, 9);
+        }
+    }
+
+    if (!$source_review) {
+        $warnings[] = __('Bible Challenge Top 9 has not been confirmed yet.', 'vaysf');
+    } elseif (!empty($source_review['stale'])) {
+        $warnings[] = __('The saved Bible Challenge Top 9 is stale; re-confirm before using this preview.', 'vaysf');
+    }
+    if (count($top_teams) < 9) {
+        $warnings[] = __('Fewer than 9 confirmed advancing teams are available, so semifinal labels are incomplete.', 'vaysf');
+    }
+
+    $labels = array_map('vaysf_results_desk_preview_team_label', array_slice($top_teams, 0, 9));
+    $snake = array(
+        'BC-Semi-1' => array(0, 5, 6),
+        'BC-Semi-2' => array(1, 4, 7),
+        'BC-Semi-3' => array(2, 3, 8),
+    );
+    $rows = array();
+    foreach ($snake as $game_key => $positions) {
+        $teams = array();
+        foreach ($positions as $position) {
+            $seed = $position + 1;
+            $teams[] = array(
+                'seed' => $seed,
+                'label' => $labels[$position] ?? sprintf(__('Seed %d TBD', 'vaysf'), $seed),
+            );
+        }
+        $rows[] = array(
+            'game_key' => $game_key,
+            'stage' => __('Semifinal', 'vaysf'),
+            'suggestion' => $teams,
+            'schedule_row' => $schedule_rows[$game_key] ?? null,
+            'note' => __('Balanced snake preview from confirmed Top 9; verify before applying.', 'vaysf'),
+        );
+    }
+
+    $rows[] = array(
+        'game_key' => 'BC-Final',
+        'stage' => __('Final', 'vaysf'),
+        'suggestion' => array(
+            array('seed' => null, 'label' => __('Winner of BC-Semi-1', 'vaysf')),
+            array('seed' => null, 'label' => __('Winner of BC-Semi-2', 'vaysf')),
+            array('seed' => null, 'label' => __('Winner of BC-Semi-3', 'vaysf')),
+        ),
+        'schedule_row' => $schedule_rows['BC-Final'] ?? null,
+        'note' => __('Final stays as winner placeholders until semifinal results are reported.', 'vaysf'),
+    );
+
+    return array(
+        'mode' => 'bible_challenge',
+        'reviews' => $reviews,
+        'warnings' => $warnings,
+        'rows' => $rows,
+    );
+}
+
+/**
+ * Build the event-level playoff preview model for the Results Desk.
+ *
+ * @param array<string,mixed> $filters Results Desk filters
+ * @return array<string,mixed>
+ */
+function vaysf_get_results_desk_playoff_preview($filters = array()) {
+    $filters = vaysf_sanitize_results_desk_filters($filters);
+    $event = trim((string) ($filters['event'] ?? ''));
+    $schedule_version = vaysf_get_current_published_schedule_version();
+    if ($schedule_version === null) {
+        return array('status' => 'no_schedule');
+    }
+    if ($event === '') {
+        return array('status' => 'select_event', 'schedule_version' => absint($schedule_version));
+    }
+    if (!vaysf_results_desk_can_preview_playoff_event($event)) {
+        return array(
+            'status' => 'unsupported',
+            'event' => $event,
+            'schedule_version' => absint($schedule_version),
+        );
+    }
+
+    $reviews = vaysf_results_desk_get_confirmed_pool_reviews($event, $schedule_version);
+    $schedule_rows = vaysf_results_desk_get_playoff_schedule_rows($event, $schedule_version);
+    if (vaysf_results_desk_is_bible_challenge_event($event)) {
+        $preview = vaysf_results_desk_build_bible_challenge_preview($reviews, $schedule_rows);
+    } else {
+        $preview_rows = array();
+        foreach ($schedule_rows as $game_key => $schedule_row) {
+            $preview_rows[] = array(
+                'game_key' => $game_key,
+                'stage' => (string) ($schedule_row['stage'] ?? ''),
+                'suggestion' => array(),
+                'schedule_row' => $schedule_row,
+                'note' => __('Matchup suggestion blocked until wildcard/seed rules are explicit.', 'vaysf'),
+            );
+        }
+        $preview = array(
+            'mode' => 'team_sport',
+            'reviews' => $reviews,
+            'warnings' => array(__('Team-sport QF/Semifinal labels are preview-only until wildcard and seed rules are confirmed.', 'vaysf')),
+            'rows' => $preview_rows,
+        );
+    }
+
+    $preview['status'] = 'ok';
+    $preview['event'] = $event;
+    $preview['schedule_version'] = absint($schedule_version);
+    return $preview;
+}
+
+/**
+ * Render compact labels for a preview row.
+ *
+ * @param array<int,array<string,mixed>> $suggestions Team/placeholder labels
+ * @return void
+ */
+function vaysf_render_results_desk_playoff_suggestions($suggestions) {
+    if (!$suggestions) {
+        echo '<span class="vaysf-results-desk-muted">' . esc_html__('Pending rules / TBD', 'vaysf') . '</span>';
+        return;
+    }
+    ?>
+    <ol class="vaysf-playoff-preview-list">
+        <?php foreach ($suggestions as $suggestion) : ?>
+            <li>
+                <?php if (!empty($suggestion['seed'])) : ?>
+                    <span class="vaysf-results-desk-muted"><?php echo esc_html(sprintf(__('Seed %d', 'vaysf'), (int) $suggestion['seed'])); ?></span>
+                <?php endif; ?>
+                <strong><?php echo esc_html($suggestion['label'] ?? __('TBD', 'vaysf')); ?></strong>
+            </li>
+        <?php endforeach; ?>
+    </ol>
+    <?php
+}
+
+/**
+ * Render existing schedule-row status for one playoff preview row.
+ *
+ * @param array<string,mixed>|null $row Schedule row
+ * @return void
+ */
+function vaysf_render_results_desk_playoff_schedule_status($row) {
+    if (!$row) {
+        echo '<span class="vaysf-results-desk-warning" title="' . esc_attr__('This schedule row does not exist for the current schedule version.', 'vaysf') . '">' . esc_html__('Missing row', 'vaysf') . '</span>';
+        return;
+    }
+
+    $status = (string) ($row['game_status'] ?? 'scheduled');
+    $protected = in_array($status, array('reported', 'official', 'under_review'), true)
+        || trim((string) ($row['score_json'] ?? '')) !== '';
+    $class = $protected ? 'vaysf-results-desk-warning' : 'vaysf-results-desk-pill';
+    $tooltip = $protected
+        ? __('This row already has a protected/reported result; do not overwrite silently.', 'vaysf')
+        : __('This row exists and has no submitted score payload.', 'vaysf');
+    ?>
+    <span class="<?php echo esc_attr($class); ?>" title="<?php echo esc_attr($tooltip); ?>"><?php echo esc_html($status); ?></span>
+    <br><small><?php echo esc_html(sprintf(__('ID %d', 'vaysf'), absint($row['schedule_id'] ?? 0))); ?></small>
+    <?php if (!empty($row['schedule_id'])) : ?>
+        <br><a class="button button-small" href="<?php echo esc_url(admin_url('admin.php?page=vaysf-schedules&action=edit&id=' . absint($row['schedule_id']))); ?>"><?php esc_html_e('Edit row', 'vaysf'); ?></a>
+    <?php endif; ?>
+    <?php
+}
+
+/**
+ * Render confirmed review chips for an event-level preview.
+ *
+ * @param array<int,array<string,mixed>> $reviews Confirmed reviews
+ * @return void
+ */
+function vaysf_render_results_desk_playoff_reviews($reviews) {
+    if (!$reviews) {
+        echo '<p class="vaysf-results-desk-muted">' . esc_html__('No confirmed pool reviews yet.', 'vaysf') . '</p>';
+        return;
+    }
+    ?>
+    <div class="vaysf-playoff-preview-reviews">
+        <?php foreach ($reviews as $review) : ?>
+            <?php $confirmer = get_userdata((int) ($review['confirmed_by_user_id'] ?? 0)); ?>
+            <span class="<?php echo esc_attr(!empty($review['stale']) ? 'vaysf-results-desk-warning' : 'vaysf-results-desk-pill'); ?>" title="<?php echo esc_attr(vaysf_format_results_desk_datetime($review['confirmed_at'] ?? '')); ?>">
+                <?php
+                echo esc_html(sprintf(
+                    /* translators: 1: pool id, 2: user display name */
+                    __('%1$s by %2$s', 'vaysf'),
+                    (string) ($review['pool_id'] ?? ''),
+                    $confirmer ? $confirmer->display_name : __('a Sports Fest admin', 'vaysf')
+                ));
+                ?>
+            </span>
+            <?php if (!empty($review['review_note'])) : ?>
+                <span class="vaysf-results-desk-warning" title="<?php echo esc_attr($review['review_note']); ?>"><?php esc_html_e('note', 'vaysf'); ?></span>
+            <?php endif; ?>
+        <?php endforeach; ?>
+    </div>
+    <?php
+}
+
+/**
+ * Render the event-level playoff/QF preview panel.
+ *
+ * @param array<string,mixed> $preview Preview model
+ * @return void
+ */
+function vaysf_render_results_desk_playoff_preview($preview) {
+    ?>
+    <section class="vaysf-results-desk-section">
+        <h2>
+            <?php esc_html_e('Playoff / QF Preview', 'vaysf'); ?>
+            <?php vaysf_render_results_desk_tooltip('?', __('Read-only preview from confirmed pool reviews and current schedule rows. It does not create, update, or delete schedule rows.', 'vaysf')); ?>
+        </h2>
+        <?php if (($preview['status'] ?? '') === 'select_event') : ?>
+            <div class="vaysf-results-desk-notice">
+                <p><?php esc_html_e('Select one event above to preview its QF/Semifinal schedule rows and confirmed pool-review inputs.', 'vaysf'); ?></p>
+            </div>
+            <?php return; ?>
+        <?php endif; ?>
+        <?php if (($preview['status'] ?? '') === 'unsupported') : ?>
+            <div class="vaysf-results-desk-notice">
+                <p><?php esc_html_e('This event does not have a playoff preview rule yet.', 'vaysf'); ?></p>
+            </div>
+            <?php return; ?>
+        <?php endif; ?>
+        <?php if (($preview['status'] ?? '') !== 'ok') : ?>
+            <div class="vaysf-results-desk-notice vaysf-results-desk-error">
+                <p><?php esc_html_e('No published schedule is available for playoff preview.', 'vaysf'); ?></p>
+            </div>
+            <?php return; ?>
+        <?php endif; ?>
+
+        <p>
+            <?php
+            echo esc_html(sprintf(
+                /* translators: 1: event name, 2: schedule version */
+                __('Previewing %1$s using schedule version %2$d. Nothing is applied from this panel.', 'vaysf'),
+                (string) ($preview['event'] ?? ''),
+                absint($preview['schedule_version'] ?? 0)
+            ));
+            ?>
+        </p>
+        <?php if (!empty($preview['warnings']) && is_array($preview['warnings'])) : ?>
+            <div class="vaysf-results-desk-notice">
+                <?php foreach ($preview['warnings'] as $warning) : ?>
+                    <p><?php echo esc_html($warning); ?></p>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+        <?php vaysf_render_results_desk_playoff_reviews($preview['reviews'] ?? array()); ?>
+
+        <?php if (empty($preview['rows'])) : ?>
+            <div class="vaysf-results-desk-ok"><?php esc_html_e('No playoff schedule rows exist yet for this event.', 'vaysf'); ?></div>
+        <?php else : ?>
+            <table class="vaysf-results-desk-table vaysf-playoff-preview-table">
+                <thead>
+                    <tr>
+                        <th><?php esc_html_e('Expected Row', 'vaysf'); ?></th>
+                        <th><?php esc_html_e('Current Schedule', 'vaysf'); ?></th>
+                        <th><?php esc_html_e('Preview Labels', 'vaysf'); ?></th>
+                        <th><?php esc_html_e('Operator Note', 'vaysf'); ?></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($preview['rows'] as $row) : ?>
+                        <tr>
+                            <td><strong><?php echo esc_html($row['game_key'] ?? ''); ?></strong><br><small><?php echo esc_html($row['stage'] ?? ''); ?></small></td>
+                            <td><?php vaysf_render_results_desk_playoff_schedule_status($row['schedule_row'] ?? null); ?></td>
+                            <td><?php vaysf_render_results_desk_playoff_suggestions($row['suggestion'] ?? array()); ?></td>
+                            <td><?php echo esc_html($row['note'] ?? ''); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+    </section>
+    <?php
+}
+
+/**
  * Render compact provisional rankings for one pool.
  *
  * @param array<int,array<string,mixed>> $rankings Ranking rows
@@ -1714,6 +2153,11 @@ function vaysf_render_results_desk($atts = array()) {
             .vaysf-pool-review-note-label { display: block; margin: 6px 0; max-width: 230px; font-size: .85em; color: #50575e; }
             .vaysf-pool-review-note { display: block; width: 100%; min-height: 44px; margin-top: 3px; font-size: 12px; }
             .vaysf-results-desk-note-display { display: inline-block; max-width: 260px; margin-top: 4px; color: #50575e; }
+            .vaysf-playoff-preview-reviews { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
+            .vaysf-playoff-preview-list { margin: 0; padding-left: 22px; }
+            .vaysf-playoff-preview-list li { margin: 0 0 5px; }
+            .vaysf-playoff-preview-list li:last-child { margin-bottom: 0; }
+            .vaysf-playoff-preview-table td:nth-child(3) { min-width: 220px; }
             @media (max-width: 768px) {
                 .vaysf-results-desk-table { display: block; overflow-x: auto; }
             }
@@ -1875,6 +2319,8 @@ function vaysf_render_results_desk($atts = array()) {
                     </table>
                 <?php endif; ?>
             </section>
+
+            <?php vaysf_render_results_desk_playoff_preview(vaysf_get_results_desk_playoff_preview($filters)); ?>
         <?php endif; ?>
     </div>
     <?php
