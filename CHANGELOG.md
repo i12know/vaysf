@@ -84,6 +84,11 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   point scores from the stored `sets[]` payload, separated by commas (for
   example `25-21, 22-25, 15-12`), while keeping the existing sets-won totals
   in `team_a_score`/`team_b_score` for rankings and winner logic.
+- Hotfix 1.0.73: Results Desk pool-review status no longer renders internal
+  flag keys such as `split_match` or `unresolved_tiebreak` in the visible UI.
+  The status column now shows compact human labels like "Split match", "Tie",
+  and "Needs tiebreak" while keeping the detailed explanation in the hover
+  tooltip.
 - Getting `TF-`/`TOW-` schedule rows themselves published (six Track & Field
   events plus one Tug-of-War row, entered as ordinary `sf_schedules` rows
   via `publish-schedule` per the existing `schedule_output.json` shape, not
@@ -92,7 +97,7 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   row shape.
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
-- Bumped plugin header/version to `1.0.72` and rebuilt `plugins/vaysf.zip`
+- Bumped plugin header/version to `1.0.73` and rebuilt `plugins/vaysf.zip`
   (39 files, matches `plugins/vaysf/` on disk; rebuilt on Linux so archive
   entries use forward slashes instead of the prior Windows-built backslash
   paths — no functional change, WordPress's unzip handles either).

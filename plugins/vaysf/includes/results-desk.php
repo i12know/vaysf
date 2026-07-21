@@ -1388,6 +1388,33 @@ function vaysf_render_results_desk_tooltip($label, $tooltip) {
 }
 
 /**
+ * Convert an internal pool-review flag key to compact display text.
+ *
+ * @param string $flag_key Internal flag key
+ * @return string Human-readable label
+ */
+function vaysf_results_desk_pool_flag_label($flag_key) {
+    switch (sanitize_key($flag_key)) {
+        case 'missing_results':
+            return __('Missing results', 'vaysf');
+        case 'invalid_payload':
+            return __('Invalid score', 'vaysf');
+        case 'unsupported_payload':
+            return __('Unsupported score', 'vaysf');
+        case 'split_match':
+            return __('Split match', 'vaysf');
+        case 'tie':
+            return __('Tie', 'vaysf');
+        case 'unresolved_tiebreak':
+            return __('Needs tiebreak', 'vaysf');
+        case 'incomplete':
+            return __('Incomplete', 'vaysf');
+        default:
+            return ucwords(str_replace('_', ' ', sanitize_key($flag_key)));
+    }
+}
+
+/**
  * Check whether the Results Desk has a playoff-preview path for an event.
  *
  * @param string $event Schedule event name
@@ -1914,8 +1941,9 @@ function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
     $reported_count = max(0, (int) ($pool['reported_count'] ?? 0));
     $missing_count = max(0, (int) ($pool['missing_count'] ?? 0));
     $percent = $game_count > 0 ? round(($reported_count / $game_count) * 100) : 0;
-    $flags = !empty($pool['flags']) && is_array($pool['flags']) ? array_values($pool['flags']) : array();
-    $flag_tooltip = $flags ? implode(' ', $flags) : __('No ranking flags for this pool.', 'vaysf');
+    $pool_flags = !empty($pool['flags']) && is_array($pool['flags']) ? $pool['flags'] : array();
+    $flag_messages = array_values($pool_flags);
+    $flag_tooltip = $flag_messages ? implode(' ', $flag_messages) : __('No ranking flags for this pool.', 'vaysf');
     ?>
     <tr>
         <td>
@@ -1940,8 +1968,13 @@ function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
             <span class="<?php echo esc_attr(!empty($pool['complete']) ? 'vaysf-results-desk-pill' : 'vaysf-results-desk-warning'); ?>" title="<?php echo esc_attr($flag_tooltip); ?>">
                 <?php echo !empty($pool['complete']) ? esc_html__('Ready', 'vaysf') : esc_html__('In progress', 'vaysf'); ?>
             </span>
-            <?php if ($flags) : ?>
-                <br><small><?php echo esc_html(implode(' ', array_keys($pool['flags']))); ?></small>
+            <?php if ($pool_flags) : ?>
+                <br>
+                <?php foreach ($pool_flags as $flag_key => $flag_message) : ?>
+                    <small class="vaysf-results-desk-warning vaysf-results-desk-flag" title="<?php echo esc_attr($flag_message); ?>">
+                        <?php echo esc_html(vaysf_results_desk_pool_flag_label($flag_key)); ?>
+                    </small>
+                <?php endforeach; ?>
             <?php endif; ?>
         </td>
         <td><?php echo esc_html(vaysf_format_results_desk_datetime($pool['last_updated_at'] ?? '')); ?></td>
@@ -2145,6 +2178,7 @@ function vaysf_render_results_desk($atts = array()) {
             .vaysf-results-desk-muted { color: #646970; font-size: .9em; }
             .vaysf-results-desk-warning { display: inline-block; border: 1px solid #dba617; border-radius: 4px; background: #fff8e5; color: #674e00; padding: 2px 6px; cursor: help; }
             .vaysf-results-desk-pill { display: inline-block; border: 1px solid #c3d9c8; border-radius: 4px; background: #ecf7ed; color: #1d5727; padding: 2px 6px; cursor: help; }
+            .vaysf-results-desk-flag { margin: 4px 4px 0 0; font-size: .85em; }
             .vaysf-results-desk-progress { width: 160px; max-width: 100%; height: 10px; margin: 0 0 6px; overflow: hidden; border-radius: 999px; background: #dcdcde; cursor: help; }
             .vaysf-results-desk-progress span { display: block; height: 100%; background: #46b450; }
             .vaysf-results-desk-rankings { margin: 0; padding-left: 26px; }
