@@ -737,10 +737,11 @@ class VAYSF_Shortcodes {
             return '—';
         }
 
+        if (!empty($score['label'])) {
+            return (string) $score['label'];
+        }
+
         if (($score['type'] ?? '') === 'placement') {
-            if (!empty($score['label'])) {
-                return (string) $score['label'];
-            }
             if (!empty($score['placements']) && is_array($score['placements'])) {
                 $labels = array();
                 foreach ($score['placements'] as $placement) {
@@ -831,8 +832,8 @@ class VAYSF_Shortcodes {
 
             function formatScore(score) {
                 if (!score) { return String.fromCharCode(8212); }
+                if (score.label) { return score.label; }
                 if (score.type === 'placement') {
-                    if (score.label) { return score.label; }
                     if (Array.isArray(score.placements) && score.placements.length) {
                         return score.placements.map(function (placement) {
                             return String(placement.place || '') + ' ' + String(placement.church_code || '');

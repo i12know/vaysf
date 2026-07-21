@@ -384,6 +384,23 @@ function vaysf_format_public_score_summary($score_payload) {
         );
     }
 
+    $set_score_labels = array();
+    if ($type === 'volleyball_set_score' && !empty($score_payload['sets']) && is_array($score_payload['sets'])) {
+        foreach ($score_payload['sets'] as $set) {
+            if (!is_array($set) || !isset($set['team_a_score'], $set['team_b_score'])) {
+                continue;
+            }
+            if (!is_numeric($set['team_a_score']) || !is_numeric($set['team_b_score'])) {
+                continue;
+            }
+            $set_score_labels[] = sprintf(
+                '%d-%d',
+                (int) $set['team_a_score'],
+                (int) $set['team_b_score']
+            );
+        }
+    }
+
     $summary = array(
         'type' => $type,
         'team_a_score' => isset($score_payload['team_a_score']) ? (int) $score_payload['team_a_score'] : null,
@@ -391,6 +408,11 @@ function vaysf_format_public_score_summary($score_payload) {
         'team_c_score' => isset($score_payload['team_c_score']) ? (int) $score_payload['team_c_score'] : null,
         'is_tie' => !empty($score_payload['is_tie']),
     );
+
+    if ($set_score_labels) {
+        $summary['set_scores'] = $set_score_labels;
+        $summary['label'] = implode(', ', $set_score_labels);
+    }
 
     if ($summary['team_c_score'] === null) {
         unset($summary['team_c_score']);
