@@ -685,6 +685,85 @@ function vaysf_volleyball_allows_split_match($schedule) {
 }
 
 /**
+ * Events supported by the final-placement score form (Issue #209).
+ *
+ * Track & Field and Tug-of-War are all-church individual/mixed placement
+ * events, not team-vs-team matchups — their schedule rows carry no
+ * team_a_key/team_b_key (RFC §9.5). Placements are chosen fresh from the
+ * published church list at submission time rather than pre-populated from
+ * the schedule row.
+ *
+ * @return array<int,string> Event names eligible for placement entry
+ */
+function vaysf_placement_score_events() {
+    return apply_filters(
+        'vaysf_placement_score_events',
+        array(
+            'Track & Field',
+            'Tug-of-war',
+        )
+    );
+}
+
+/**
+ * Canonical church codes eligible for all-church placement results.
+ *
+ * Placement entries are not tied to team slots on a schedule row, so the
+ * dropdown and POST validation must come from sf_churches rather than from
+ * the public schedule's team_a/b/c columns.
+ *
+ * @return array<int,string> Uppercase church codes
+ */
+function vaysf_get_placement_church_codes() {
+    global $wpdb;
+
+    $table_churches = vaysf_get_table_name('churches');
+    $rows = $wpdb->get_col(
+        "SELECT church_code
+        FROM $table_churches
+        WHERE COALESCE(church_code, '') <> ''
+        ORDER BY church_code"
+    );
+
+    if (!is_array($rows)) {
+        return array();
+    }
+
+    $codes = array();
+    foreach ($rows as $code) {
+        $code = strtoupper(sanitize_text_field($code));
+        if ($code !== '') {
+            $codes[$code] = $code;
+        }
+    }
+
+    return array_values($codes);
+}
+
+/**
+ * Check whether a schedule row can use the final-placement score form.
+ *
+ * @param mixed $schedule Schedule id, row array, or row object
+ * @return bool True when the row is a supported placement event
+ */
+function vaysf_is_placement_score_schedule($schedule) {
+    $schedule_row = vaysf_resolve_schedule_row($schedule);
+    if (!$schedule_row) {
+        return false;
+    }
+
+    $event = isset($schedule_row['event']) ? strtolower(sanitize_text_field($schedule_row['event'])) : '';
+    $placement_events = array_map(
+        function ($name) {
+            return strtolower(sanitize_text_field($name));
+        },
+        vaysf_placement_score_events()
+    );
+
+    return in_array($event, $placement_events, true);
+}
+
+/**
  * Check whether a schedule row currently has any coordinator score form.
  *
  * @param mixed $schedule Schedule id, row array, or row object
@@ -693,7 +772,8 @@ function vaysf_volleyball_allows_split_match($schedule) {
 function vaysf_is_supported_score_schedule($schedule) {
     return vaysf_is_simple_score_schedule($schedule)
         || vaysf_is_three_team_score_schedule($schedule)
-        || vaysf_is_volleyball_score_schedule($schedule);
+        || vaysf_is_volleyball_score_schedule($schedule)
+        || vaysf_is_placement_score_schedule($schedule);
 }
 
 /**
@@ -1696,6 +1776,86 @@ function vaysf_submit_volleyball_score_result(
         $winner_keys,
         $notes,
         __('Coordinator Volleyball score correction', 'vaysf')
+    );
+}
+
+/**
+ * Submit or correct a final-placement result for Track & Field / Tug-of-War
+ * (Issue #209).
+ *
+ * Unlike the other score forms, a placement schedule row has no
+ * team_a_key/team_b_key — placements are entered fresh at submission time
+ * as church codes and stored ordered 1st→3rd in winner_keys_json, following
+ * the RFC §9.5 design of fitting placements into the existing data model.
+ *
+ * @param int $user_id WordPress user id
+ * @param int $schedule_id Schedule row id
+ * @param string $first_church_code Church code placing 1st (required)
+ * @param string $second_church_code Church code placing 2nd (required)
+ * @param string $third_church_code Church code placing 3rd (optional)
+ * @param bool $certified Whether the submitter certified the result
+ * @param string $notes Optional notes
+ * @return array<string,int>|WP_Error Result/revision identifiers on success
+ */
+function vaysf_submit_placement_result($user_id, $schedule_id, $first_church_code, $second_church_code, $third_church_code, $certified, $notes = '') {
+    $first_church_code = strtoupper(sanitize_text_field($first_church_code));
+    $second_church_code = strtoupper(sanitize_text_field($second_church_code));
+    $third_church_code = strtoupper(sanitize_text_field($third_church_code));
+
+    if ($first_church_code === '' || $second_church_code === '') {
+        return new WP_Error('vaysf_placement_missing_places', __('Enter at least 1st and 2nd place churches.', 'vaysf'));
+    }
+
+    $placements = array_values(array_filter(
+        array($first_church_code, $second_church_code, $third_church_code),
+        function ($code) {
+            return $code !== '';
+        }
+    ));
+    if (count($placements) !== count(array_unique($placements))) {
+        return new WP_Error('vaysf_placement_duplicate_church', __('Each place must be a different church.', 'vaysf'));
+    }
+
+    $valid_church_codes = vaysf_get_placement_church_codes();
+    if (empty($valid_church_codes)) {
+        return new WP_Error('vaysf_placement_no_churches', __('No registered churches are available for placement entry.', 'vaysf'));
+    }
+    $valid_lookup = array_fill_keys($valid_church_codes, true);
+    foreach ($placements as $church_code) {
+        if (empty($valid_lookup[$church_code])) {
+            return new WP_Error('vaysf_placement_unknown_church', __('Choose placement churches from the registered church list.', 'vaysf'));
+        }
+    }
+
+    $schedule = vaysf_resolve_schedule_row($schedule_id);
+    if (!$schedule) {
+        return new WP_Error('vaysf_placement_schedule_missing', __('Schedule row not found.', 'vaysf'));
+    }
+
+    if (!vaysf_user_can_submit_schedule_result($user_id, $schedule)) {
+        return new WP_Error('vaysf_placement_forbidden', __('You are not authorized to submit a result for this event.', 'vaysf'));
+    }
+
+    if (!vaysf_is_placement_score_schedule($schedule)) {
+        return new WP_Error('vaysf_placement_unsupported', __('This game needs a different score form.', 'vaysf'));
+    }
+
+    if (!$certified) {
+        return new WP_Error('vaysf_placement_uncertified', __('Please certify that the placements are complete and accurate.', 'vaysf'));
+    }
+
+    return vaysf_persist_score_result(
+        absint($user_id),
+        $schedule,
+        array(
+            'type' => 'placement',
+            'first_church_code' => $first_church_code,
+            'second_church_code' => $second_church_code,
+            'third_church_code' => $third_church_code !== '' ? $third_church_code : null,
+        ),
+        $placements,
+        $notes,
+        __('Coordinator placement correction', 'vaysf')
     );
 }
 

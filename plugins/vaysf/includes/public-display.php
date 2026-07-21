@@ -341,18 +341,51 @@ function vaysf_get_public_schedule_churches($schedule_version = null) {
 }
 
 /**
- * Reduce a decoded score_json payload to the public headline numbers only.
+ * Reduce a decoded score_json payload to the public headline result only.
  *
- * Every score form type (simple_score, three_team_score, volleyball_set_score)
- * stores its final tally in team_a_score/team_b_score(/team_c_score), so no
- * per-type branching is needed here. Anything else in the payload (notes,
- * per-set detail, submitter context) stays private.
+ * Numeric score forms store their final tally in
+ * team_a_score/team_b_score(/team_c_score). Placement events store ordered
+ * church codes instead, so expose only the public 1st/2nd/3rd labels.
  *
  * @param array<string,mixed> $score_payload Decoded score_json
  * @return array<string,mixed> Public-safe score summary
  */
 function vaysf_format_public_score_summary($score_payload) {
+    $type = isset($score_payload['type']) ? sanitize_key($score_payload['type']) : '';
+    if ($type === 'placement') {
+        $placements = array();
+        foreach (
+            array(
+                'first_church_code' => '1st',
+                'second_church_code' => '2nd',
+                'third_church_code' => '3rd',
+            ) as $key => $place
+        ) {
+            $church_code = isset($score_payload[$key]) ? strtoupper(sanitize_text_field($score_payload[$key])) : '';
+            if ($church_code !== '') {
+                $placements[] = array(
+                    'place' => $place,
+                    'church_code' => $church_code,
+                );
+            }
+        }
+
+        $labels = array_map(
+            function ($placement) {
+                return $placement['place'] . ' ' . $placement['church_code'];
+            },
+            $placements
+        );
+
+        return array(
+            'type' => 'placement',
+            'placements' => $placements,
+            'label' => implode(' / ', $labels),
+        );
+    }
+
     $summary = array(
+        'type' => $type,
         'team_a_score' => isset($score_payload['team_a_score']) ? (int) $score_payload['team_a_score'] : null,
         'team_b_score' => isset($score_payload['team_b_score']) ? (int) $score_payload['team_b_score'] : null,
         'team_c_score' => isset($score_payload['team_c_score']) ? (int) $score_payload['team_c_score'] : null,

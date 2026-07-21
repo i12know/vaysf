@@ -555,6 +555,39 @@ function vaysf_results_desk_pool_team_slots($row) {
 }
 
 /**
+ * Check whether an event uses Bible Challenge advancement rules.
+ *
+ * @param string $event Schedule event name
+ * @return bool
+ */
+function vaysf_results_desk_is_bible_challenge_event($event) {
+    return strcasecmp(trim((string) $event), 'Bible Challenge - Mixed Team') === 0;
+}
+
+/**
+ * Return the ranking-rule note for a pool/prelim event.
+ *
+ * @param string $event Schedule event name
+ * @return string
+ */
+function vaysf_results_desk_pool_ranking_rule_note($event) {
+    $event = trim((string) $event);
+    if (vaysf_results_desk_is_bible_challenge_event($event)) {
+        return __('Rule: Bible Challenge ranks by accumulated preliminary score. The top 9 advance; a tie at the 9th/10th cutoff requires coordinator review.', 'vaysf');
+    }
+
+    if (
+        stripos($event, 'Basketball') !== false
+        || stripos($event, 'Volleyball') !== false
+        || stripos($event, 'Soccer') !== false
+    ) {
+        return __('Rule: Team-sport pools rank by wins, then fewer losses, then point differential, then head-to-head when teams remain fully tied. Unresolved cycles require coordinator review.', 'vaysf');
+    }
+
+    return '';
+}
+
+/**
  * Check whether a schedule row includes the selected church.
  *
  * @param array<string,mixed> $row Schedule/result row
@@ -621,9 +654,13 @@ function vaysf_results_desk_pool_score_by_team($payload, $slots) {
  * @param array<string,array<string,mixed>> $teams Ranking map, by team key
  * @param array<string,string> $flags Pool-level flags
  * @param array<string,mixed> $row Schedule/result row
+ * @param array<string,string> $head_to_head Pair-key ("keyA|keyB", sorted) =>
+ *        winner team key or 'tie', accumulated for genuine 2-team games only
+ *        (Issue #207 — feeds head-to-head tiebreak resolution)
  * @return void
  */
-function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row) {
+function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row, &$head_to_head = array()) {
+    $is_bible_challenge = vaysf_results_desk_is_bible_challenge_event($row['event'] ?? '');
     $slots = vaysf_results_desk_pool_team_slots($row);
     foreach ($slots as $slot) {
         vaysf_results_desk_ensure_pool_team($teams, $slot['key'], $slot['label']);
@@ -655,7 +692,7 @@ function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row) {
     if (!empty($payload['split_match'])) {
         $flags['split_match'] = __('At least one volleyball match was recorded as a split/tie.', 'vaysf');
     }
-    if ($is_tie) {
+    if ($is_tie && !$is_bible_challenge) {
         $flags['tie'] = __('At least one result is tied or has multiple winners; review tiebreak rules manually.', 'vaysf');
     }
 
@@ -675,57 +712,247 @@ function vaysf_results_desk_apply_pool_result(&$teams, &$flags, $row) {
         }
         $teams[$key]['diff'] = $teams[$key]['for'] - $teams[$key]['against'];
 
-        if ($is_tie) {
-            if (!$winner_keys || isset($winner_lookup[$key])) {
-                $teams[$key]['ties']++;
+        if (!$is_bible_challenge) {
+            if ($is_tie) {
+                if (!$winner_keys || isset($winner_lookup[$key])) {
+                    $teams[$key]['ties']++;
+                } else {
+                    $teams[$key]['losses']++;
+                }
+            } elseif (isset($winner_lookup[$key])) {
+                $teams[$key]['wins']++;
             } else {
                 $teams[$key]['losses']++;
             }
-        } elseif (isset($winner_lookup[$key])) {
-            $teams[$key]['wins']++;
-        } else {
-            $teams[$key]['losses']++;
+        }
+    }
+
+    // Head-to-head is only meaningful for a genuine 2-team game with both
+    // scores present — a 3-team game (e.g. Bible Challenge) has no single
+    // well-defined opponent, so it is intentionally excluded rather than
+    // approximated (Issue #207).
+    if (!$is_bible_challenge && count($slots) === 2) {
+        $slot_a = $slots[0]['key'];
+        $slot_b = $slots[1]['key'];
+        if (isset($scores[$slot_a]) && isset($scores[$slot_b])) {
+            $pair = array($slot_a, $slot_b);
+            sort($pair);
+            $pair_key = implode('|', $pair);
+            if ($is_tie) {
+                $head_to_head[$pair_key] = 'tie';
+            } elseif (isset($winner_lookup[$slot_a])) {
+                $head_to_head[$pair_key] = $slot_a;
+            } elseif (isset($winner_lookup[$slot_b])) {
+                $head_to_head[$pair_key] = $slot_b;
+            }
         }
     }
 }
 
 /**
- * Sort provisional pool rankings with conservative shared metrics.
+ * Sort Bible Challenge provisional rankings.
+ *
+ * Bible Challenge advances the top 9 teams by the cumulative score from all
+ * preliminary rows. Win/loss/head-to-head signals are intentionally ignored.
  *
  * @param array<string,array<string,mixed>> $teams Ranking map
  * @return array<int,array<string,mixed>>
  */
-function vaysf_results_desk_sort_pool_rankings($teams) {
+function vaysf_results_desk_sort_bible_challenge_rankings($teams) {
     $rankings = array_values($teams);
     usort($rankings, function ($a, $b) {
-        foreach (array('wins', 'ties', 'diff', 'for') as $metric) {
-            $a_value = isset($a[$metric]) ? (int) $a[$metric] : 0;
-            $b_value = isset($b[$metric]) ? (int) $b[$metric] : 0;
-            if ($a_value !== $b_value) {
-                return $a_value > $b_value ? -1 : 1;
-            }
+        $a_for = isset($a['for']) ? (int) $a['for'] : 0;
+        $b_for = isset($b['for']) ? (int) $b['for'] : 0;
+        if ($a_for !== $b_for) {
+            return $a_for > $b_for ? -1 : 1;
         }
 
         return strcasecmp((string) ($a['label'] ?? ''), (string) ($b['label'] ?? ''));
     });
 
-    $rank = 1;
-    $previous = null;
-    foreach ($rankings as $index => $team) {
-        $signature = array(
-            (int) $team['wins'],
-            (int) $team['ties'],
-            (int) $team['diff'],
-            (int) $team['for'],
-        );
-        if ($previous !== null && $signature !== $previous) {
-            $rank = $index + 1;
+    $cutoff_score = null;
+    if (count($rankings) > 9 && isset($rankings[8]['for'])) {
+        $cutoff_score = (int) $rankings[8]['for'];
+        if ((int) ($rankings[9]['for'] ?? PHP_INT_MIN) !== $cutoff_score) {
+            $cutoff_score = null;
         }
-        $rankings[$index]['rank'] = $rank;
-        $previous = $signature;
+    }
+
+    foreach ($rankings as $index => $team) {
+        $rankings[$index]['rank'] = $index + 1;
+        $rankings[$index]['ranking_basis'] = 'total_score';
+        $rankings[$index]['advances'] = $index < 9;
+        $rankings[$index]['needs_manual_tiebreak'] = false;
+        if ($cutoff_score !== null && (int) ($team['for'] ?? 0) === $cutoff_score) {
+            $rankings[$index]['needs_manual_tiebreak'] = true;
+            vaysf_results_desk_add_pool_team_note(
+                $rankings[$index],
+                __('Tied at the Bible Challenge top-9 advancement cutoff; decide manually.', 'vaysf')
+            );
+        }
     }
 
     return $rankings;
+}
+
+/**
+ * Sort provisional pool rankings.
+ *
+ * Ranking order (VAY SM convention confirmed for the 2026 weekend 1→2
+ * transition — Issue #207): win/loss record, then point differential, then
+ * head-to-head result among teams still fully tied. A group that
+ * head-to-head cannot fully order (e.g. a round-robin cycle where every
+ * team in the group beat exactly one other team in it) is flagged
+ * needs_manual_tiebreak rather than resolved by alphabetical guesswork —
+ * wrong output here means the wrong team advances. Alphabetical order is
+ * used only as a stable display order within a flagged group, never as if
+ * it had settled the ranking.
+ *
+ * @param array<string,array<string,mixed>> $teams Ranking map
+ * @param array<string,string> $head_to_head Pair-key ("keyA|keyB", sorted)
+ *        => winner team key or 'tie', from vaysf_results_desk_apply_pool_result()
+ * @param string $event Schedule event name
+ * @return array<int,array<string,mixed>>
+ */
+function vaysf_results_desk_sort_pool_rankings($teams, $head_to_head = array(), $event = '') {
+    if (vaysf_results_desk_is_bible_challenge_event($event)) {
+        return vaysf_results_desk_sort_bible_challenge_rankings($teams);
+    }
+
+    $rankings = array_values($teams);
+    usort($rankings, function ($a, $b) {
+        $a_wins = isset($a['wins']) ? (int) $a['wins'] : 0;
+        $b_wins = isset($b['wins']) ? (int) $b['wins'] : 0;
+        if ($a_wins !== $b_wins) {
+            return $a_wins > $b_wins ? -1 : 1;
+        }
+        $a_losses = isset($a['losses']) ? (int) $a['losses'] : 0;
+        $b_losses = isset($b['losses']) ? (int) $b['losses'] : 0;
+        if ($a_losses !== $b_losses) {
+            return $a_losses < $b_losses ? -1 : 1;
+        }
+        $a_diff = isset($a['diff']) ? (int) $a['diff'] : 0;
+        $b_diff = isset($b['diff']) ? (int) $b['diff'] : 0;
+        if ($a_diff !== $b_diff) {
+            return $a_diff > $b_diff ? -1 : 1;
+        }
+
+        return strcasecmp((string) ($a['label'] ?? ''), (string) ($b['label'] ?? ''));
+    });
+
+    // Group teams still fully tied on wins/losses/diff after the primary
+    // sort and try to break each group using head-to-head results among
+    // just that group.
+    $i = 0;
+    $n = count($rankings);
+    while ($i < $n) {
+        $j = $i;
+        while (
+            $j + 1 < $n
+            && (int) $rankings[$j + 1]['wins'] === (int) $rankings[$i]['wins']
+            && (int) $rankings[$j + 1]['losses'] === (int) $rankings[$i]['losses']
+            && (int) $rankings[$j + 1]['diff'] === (int) $rankings[$i]['diff']
+        ) {
+            $j++;
+        }
+
+        if ($j > $i) {
+            $group_keys = array_map(
+                function ($t) {
+                    return $t['team_key'];
+                },
+                array_slice($rankings, $i, $j - $i + 1)
+            );
+            $ordered = vaysf_resolve_pool_head_to_head_group($group_keys, $head_to_head);
+            if ($ordered === null) {
+                foreach (array_slice($rankings, $i, $j - $i + 1) as $offset => $team) {
+                    $rankings[$i + $offset]['needs_manual_tiebreak'] = true;
+                    vaysf_results_desk_add_pool_team_note(
+                        $rankings[$i + $offset],
+                        __('Tied — head-to-head could not resolve order; decide manually.', 'vaysf')
+                    );
+                }
+            } else {
+                $by_key = array();
+                foreach (array_slice($rankings, $i, $j - $i + 1) as $team) {
+                    $by_key[$team['team_key']] = $team;
+                }
+                foreach ($ordered as $offset => $team_key) {
+                    $rankings[$i + $offset] = $by_key[$team_key];
+                }
+            }
+        }
+
+        $i = $j + 1;
+    }
+
+    foreach ($rankings as $index => $team) {
+        $rankings[$index]['rank'] = $index + 1;
+        if (!isset($rankings[$index]['needs_manual_tiebreak'])) {
+            $rankings[$index]['needs_manual_tiebreak'] = false;
+        }
+    }
+
+    return $rankings;
+}
+
+/**
+ * Order a group of fully-tied teams using head-to-head results among just
+ * that group. Returns null (unresolved) rather than a partial/best-guess
+ * order when the group's results do not produce a strict ranking — e.g. a
+ * round-robin cycle where every team beat exactly one other team in the
+ * group. Callers must treat null as "a human must decide," not as an error.
+ *
+ * @param array<int,string> $group_keys Team keys in the tied group
+ * @param array<string,string> $head_to_head Pair-key => winner key or 'tie'
+ * @return array<int,string>|null Ordered team keys, or null if unresolved
+ */
+function vaysf_resolve_pool_head_to_head_group($group_keys, $head_to_head) {
+    $sub_wins = array_fill_keys($group_keys, 0);
+    $decided_pairs = 0;
+    $total_pairs = 0;
+
+    foreach ($group_keys as $a_index => $team_a) {
+        foreach ($group_keys as $b_index => $team_b) {
+            if ($b_index <= $a_index) {
+                continue;
+            }
+            $total_pairs++;
+            $pair = array($team_a, $team_b);
+            sort($pair);
+            $pair_key = implode('|', $pair);
+            if (!isset($head_to_head[$pair_key]) || $head_to_head[$pair_key] === 'tie') {
+                continue;
+            }
+            $sub_wins[$head_to_head[$pair_key]]++;
+            $decided_pairs++;
+        }
+    }
+
+    // Require every pair in the group to have actually played and produced
+    // a clear winner before trusting a sub-ranking from it.
+    if ($decided_pairs < $total_pairs) {
+        return null;
+    }
+
+    $ordered = $group_keys;
+    usort($ordered, function ($a, $b) use ($sub_wins) {
+        return $sub_wins[$b] <=> $sub_wins[$a];
+    });
+
+    // Confirm the head-to-head sub-standings themselves produced a strict
+    // order (no remaining tie within the group after sub-wins).
+    $sub_win_counts = array_map(
+        function ($key) use ($sub_wins) {
+            return $sub_wins[$key];
+        },
+        $ordered
+    );
+    if (count(array_unique($sub_win_counts)) !== count($sub_win_counts)) {
+        return null;
+    }
+
+    return $ordered;
 }
 
 /**
@@ -771,6 +998,7 @@ function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 
 
     $pools = array();
     $pool_teams = array();
+    $pool_head_to_head = array();
     foreach ($rows as $row) {
         $pool_id = trim((string) ($row['pool_id'] ?? ''));
         $pool_display_id = $pool_id !== '' ? $pool_id : 'P1';
@@ -785,6 +1013,7 @@ function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 
                 'event' => (string) ($row['event'] ?? ''),
                 'stage' => (string) ($row['stage'] ?? ''),
                 'pool_id' => $pool_display_id,
+                'schedule_version' => absint($schedule_version),
                 'synthetic_pool' => $pool_id === '',
                 'game_count' => 0,
                 'reported_count' => 0,
@@ -795,6 +1024,7 @@ function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 
                 'matches_church_filter' => false,
             );
             $pool_teams[$key] = array();
+            $pool_head_to_head[$key] = array();
         }
 
         $pools[$key]['game_count']++;
@@ -813,17 +1043,30 @@ function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 
             $pools[$key]['matches_church_filter'] = true;
         }
 
-        vaysf_results_desk_apply_pool_result($pool_teams[$key], $pools[$key]['flags'], $row);
+        vaysf_results_desk_apply_pool_result($pool_teams[$key], $pools[$key]['flags'], $row, $pool_head_to_head[$key]);
     }
 
     foreach ($pools as $key => $pool) {
         if ($filters['church'] !== '' && empty($pool['matches_church_filter'])) {
-            unset($pools[$key], $pool_teams[$key]);
+            unset($pools[$key], $pool_teams[$key], $pool_head_to_head[$key]);
             continue;
         }
 
         $pools[$key]['complete'] = ((int) $pool['game_count'] > 0 && (int) $pool['missing_count'] === 0);
-        $pools[$key]['rankings'] = vaysf_results_desk_sort_pool_rankings($pool_teams[$key] ?? array());
+        $is_bible_challenge = vaysf_results_desk_is_bible_challenge_event($pool['event'] ?? '');
+        $pools[$key]['rankings'] = vaysf_results_desk_sort_pool_rankings($pool_teams[$key] ?? array(), $pool_head_to_head[$key] ?? array(), $pool['event'] ?? '');
+        $pools[$key]['needs_manual_tiebreak'] = false;
+        foreach ($pools[$key]['rankings'] as $ranked_team) {
+            if (!empty($ranked_team['needs_manual_tiebreak'])) {
+                $pools[$key]['needs_manual_tiebreak'] = true;
+                break;
+            }
+        }
+        if ($pools[$key]['needs_manual_tiebreak']) {
+            $pools[$key]['flags']['unresolved_tiebreak'] = $is_bible_challenge
+                ? __('A tie exists at the Bible Challenge top-9 cumulative-score cutoff; decide the advancing team manually before confirming advancement.', 'vaysf')
+                : __('A tie could not be resolved by head-to-head results; decide the order manually before confirming advancement.', 'vaysf');
+        }
         if (!$pools[$key]['complete']) {
             $pools[$key]['flags']['incomplete'] = __('Pool is still incomplete; ranking is provisional.', 'vaysf');
         }
@@ -849,6 +1092,289 @@ function vaysf_get_results_desk_pool_progress_rows($filters = array(), $limit = 
 }
 
 /**
+ * Find one pool's progress/rankings row (Issue #207).
+ *
+ * Thin wrapper over vaysf_get_results_desk_pool_progress_rows() — reuses
+ * the same rankings pipeline the Results Desk review section already
+ * displays, rather than recomputing standings a second way.
+ *
+ * @param string $event
+ * @param string $pool_id
+ * @return array<string,mixed>|null
+ */
+function vaysf_get_pool_progress_row($event, $pool_id) {
+    $event = sanitize_text_field($event);
+    $pool_id = sanitize_text_field($pool_id);
+    if ($event === '' || $pool_id === '') {
+        return null;
+    }
+
+    $pools = vaysf_get_results_desk_pool_progress_rows(array('event' => $event, 'limit' => 200), 200);
+    foreach ($pools as $pool) {
+        if ((string) ($pool['event'] ?? '') === $event && (string) ($pool['pool_id'] ?? '') === $pool_id) {
+            return $pool;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Fetch the current advancement confirmation for a pool, if any (Issue #207).
+ *
+ * @param string $event
+ * @param string $pool_id
+ * @return array<string,mixed>|null
+ */
+function vaysf_get_pool_advancement($event, $pool_id, $schedule_version = null) {
+    global $wpdb;
+    $event = sanitize_text_field($event);
+    $pool_id = sanitize_text_field($pool_id);
+    if ($schedule_version === null) {
+        $schedule_version = vaysf_get_current_published_schedule_version();
+    }
+    $schedule_version = absint($schedule_version);
+    if ($event === '' || $pool_id === '' || !$schedule_version) {
+        return null;
+    }
+
+    $table = vaysf_get_table_name('pool_advancement');
+    $row = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT * FROM $table WHERE schedule_version = %d AND event = %s AND pool_id = %s",
+            $schedule_version,
+            $event,
+            $pool_id
+        ),
+        ARRAY_A
+    );
+    return is_array($row) ? $row : null;
+}
+
+/**
+ * Normalize ranking rows before comparing a saved confirmation snapshot to
+ * the current computed standings.
+ *
+ * @param array<int,array<string,mixed>> $rankings Ranking rows
+ * @return array<int,array<string,mixed>>
+ */
+function vaysf_normalize_advancement_rankings_snapshot($rankings) {
+    $normalized = array();
+    foreach ((array) $rankings as $team) {
+        if (!is_array($team)) {
+            continue;
+        }
+        $normalized[] = array(
+            'rank' => (int) ($team['rank'] ?? 0),
+            'team_key' => (string) ($team['team_key'] ?? ''),
+            'for' => (int) ($team['for'] ?? 0),
+            'against' => (int) ($team['against'] ?? 0),
+            'diff' => (int) ($team['diff'] ?? 0),
+            'wins' => (int) ($team['wins'] ?? 0),
+            'losses' => (int) ($team['losses'] ?? 0),
+            'ties' => (int) ($team['ties'] ?? 0),
+            'ranking_basis' => (string) ($team['ranking_basis'] ?? ''),
+            'advances' => !empty($team['advances']),
+            'needs_manual_tiebreak' => !empty($team['needs_manual_tiebreak']),
+        );
+    }
+
+    return $normalized;
+}
+
+/**
+ * Check whether a pool's confirmed advancement is stale — i.e. at least one
+ * of the results it was confirmed against has since been corrected (its
+ * current_revision has moved past what was recorded at confirmation time).
+ *
+ * @param string $event
+ * @param string $pool_id
+ * @return bool True when confirmed but now stale; false when not confirmed
+ *              or still current
+ */
+function vaysf_pool_advancement_is_stale($event, $pool_id, $schedule_version = null, $current_rankings = null) {
+    global $wpdb;
+
+    $advancement = vaysf_get_pool_advancement($event, $pool_id, $schedule_version);
+    if ($advancement === null) {
+        return false;
+    }
+
+    $based_on = json_decode((string) $advancement['based_on_revisions_json'], true);
+    if (!is_array($based_on) || empty($based_on)) {
+        return false;
+    }
+
+    $table_results = vaysf_get_table_name('results');
+    foreach ($based_on as $result_id => $revision_at_confirmation) {
+        $current = $wpdb->get_var(
+            $wpdb->prepare("SELECT current_revision FROM $table_results WHERE result_id = %d", absint($result_id))
+        );
+        if ($current === null) {
+            // The contributing result row is gone entirely — treat as stale.
+            return true;
+        }
+        if ((int) $current !== (int) $revision_at_confirmation) {
+            return true;
+        }
+    }
+
+    $saved_rankings = json_decode((string) ($advancement['standings_snapshot_json'] ?? ''), true);
+    if (is_array($saved_rankings)) {
+        if ($current_rankings === null) {
+            $pool = vaysf_get_pool_progress_row($event, $pool_id);
+            $current_rankings = is_array($pool) ? ($pool['rankings'] ?? array()) : array();
+        }
+        if (
+            vaysf_normalize_advancement_rankings_snapshot($saved_rankings)
+            !== vaysf_normalize_advancement_rankings_snapshot($current_rankings)
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Confirm advancement for a pool (Issue #207): reads the same pool-progress
+ * rankings the Results Desk review section displays
+ * (vaysf_get_results_desk_pool_progress_rows()), refuses to confirm if the
+ * pool is incomplete, requires a note when the pool still has an unresolved
+ * tie, and upserts the
+ * sf_pool_advancement record with a standings snapshot and the result
+ * revisions it was based on (so a later correction can be detected as
+ * staleness via vaysf_pool_advancement_is_stale()).
+ *
+ * Deliberately does NOT auto-populate Semifinal/Final schedule rows — which
+ * pool's top teams feed which bracket slot is a tournament-structure
+ * decision with no existing data model in this schema, and guessing it
+ * under time pressure is a worse risk than the manual step it replaces.
+ * This function replaces the error-prone arithmetic (who actually ranks
+ * where); a human still places confirmed teams into next-round schedule
+ * rows via the existing schedule editor, now reading numbers they can
+ * trust instead of computing standings by hand.
+ *
+ * @param int $user_id WordPress user id confirming
+ * @param string $event
+ * @param string $pool_id
+ * @param string $review_note Optional operator note; required for unresolved ties
+ * @return array<int,array<string,mixed>>|WP_Error Standings snapshot on success
+ */
+function vaysf_confirm_pool_advancement($user_id, $event, $pool_id, $review_note = '') {
+    global $wpdb;
+
+    $user_id = absint($user_id);
+    $event = sanitize_text_field($event);
+    $pool_id = sanitize_text_field($pool_id);
+    $review_note = sanitize_textarea_field($review_note);
+    if (!$user_id || $event === '' || $pool_id === '') {
+        return new WP_Error('vaysf_advancement_missing_context', __('Advancement confirmation is missing the user, event, or pool.', 'vaysf'));
+    }
+
+    $schedule_version = vaysf_get_current_published_schedule_version();
+    if ($schedule_version === null) {
+        return new WP_Error('vaysf_advancement_no_schedule', __('No published schedule is available for advancement confirmation.', 'vaysf'));
+    }
+    $schedule_version = absint($schedule_version);
+
+    $pool = vaysf_get_pool_progress_row($event, $pool_id);
+    if ($pool === null || empty($pool['rankings'])) {
+        return new WP_Error('vaysf_advancement_no_results', __('No reported results found for this pool.', 'vaysf'));
+    }
+    if (empty($pool['complete'])) {
+        return new WP_Error('vaysf_advancement_incomplete', __('Not every pool game has a reported result yet.', 'vaysf'));
+    }
+    if (!empty($pool['needs_manual_tiebreak']) && $review_note === '') {
+        return new WP_Error('vaysf_advancement_tiebreak_note_required', __('This pool still has an unresolved tie. Add a review note before confirming it for the next-page tiebreak review.', 'vaysf'));
+    }
+
+    // Record which result rows (by revision number) this confirmation was
+    // based on, so a later correction can be detected as staleness.
+    $table_schedules = vaysf_get_table_name('schedules');
+    $table_results = vaysf_get_table_name('results');
+    $pool_where = !empty($pool['synthetic_pool'])
+        ? "(s.pool_id IS NULL OR s.pool_id = '')"
+        : 's.pool_id = %s';
+    $result_args = array($schedule_version, $event);
+    if (empty($pool['synthetic_pool'])) {
+        $result_args[] = $pool_id;
+    }
+    $result_rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT r.result_id, r.current_revision
+                FROM $table_schedules s
+                INNER JOIN $table_results r ON r.schedule_id = s.schedule_id
+                WHERE s.schedule_version = %d
+                  AND s.published_at IS NOT NULL
+                  AND s.event = %s
+                  AND $pool_where
+                  AND LOWER(COALESCE(s.stage, '')) IN ('pool', 'prelim', 'preliminary')
+                  AND COALESCE(s.game_status, '') <> 'cancelled'",
+            $result_args
+        ),
+        ARRAY_A
+    );
+    $based_on_revisions = array();
+    foreach ((array) $result_rows as $row) {
+        $based_on_revisions[(int) $row['result_id']] = (int) $row['current_revision'];
+    }
+
+    $now = current_time('mysql');
+    $snapshot_json = wp_json_encode($pool['rankings']);
+    $revisions_json = wp_json_encode($based_on_revisions);
+    if ($snapshot_json === false || $revisions_json === false) {
+        return new WP_Error('vaysf_advancement_json_failed', __('Could not encode the standings snapshot.', 'vaysf'));
+    }
+
+    $table_advancement = vaysf_get_table_name('pool_advancement');
+    $existing = vaysf_get_pool_advancement($event, $pool_id, $schedule_version);
+
+    if ($existing) {
+        $updated = $wpdb->update(
+            $table_advancement,
+            array(
+                'confirmed_by_user_id' => $user_id,
+                'schedule_version' => $schedule_version,
+                'confirmed_at' => $now,
+                'standings_snapshot_json' => $snapshot_json,
+                'based_on_revisions_json' => $revisions_json,
+                'review_note' => $review_note,
+                'updated_at' => $now,
+            ),
+            array('advancement_id' => absint($existing['advancement_id'])),
+            array('%d', '%d', '%s', '%s', '%s', '%s', '%s'),
+            array('%d')
+        );
+        if ($updated === false) {
+            return new WP_Error('vaysf_advancement_update_failed', __('Could not update the advancement confirmation.', 'vaysf'));
+        }
+    } else {
+        $created = $wpdb->insert(
+            $table_advancement,
+            array(
+                'event' => $event,
+                'pool_id' => $pool_id,
+                'schedule_version' => $schedule_version,
+                'confirmed_by_user_id' => $user_id,
+                'confirmed_at' => $now,
+                'standings_snapshot_json' => $snapshot_json,
+                'based_on_revisions_json' => $revisions_json,
+                'review_note' => $review_note,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ),
+            array('%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s')
+        );
+        if ($created === false) {
+            return new WP_Error('vaysf_advancement_create_failed', __('Could not create the advancement confirmation.', 'vaysf'));
+        }
+    }
+
+    return $pool['rankings'];
+}
+
+/**
  * Render a tiny help marker using the browser's native hover tooltip.
  *
  * @param string $label Visible marker text
@@ -865,35 +1391,61 @@ function vaysf_render_results_desk_tooltip($label, $tooltip) {
  * Render compact provisional rankings for one pool.
  *
  * @param array<int,array<string,mixed>> $rankings Ranking rows
+ * @param string $event Schedule event name
  * @return void
  */
-function vaysf_render_results_desk_pool_rankings($rankings) {
+function vaysf_render_results_desk_pool_rankings($rankings, $event = '') {
     if (!$rankings) {
         echo '<span class="vaysf-results-desk-muted">' . esc_html__('No scored games yet.', 'vaysf') . '</span>';
         return;
     }
+    $rule_note = vaysf_results_desk_pool_ranking_rule_note($event);
     ?>
+    <?php if ($rule_note !== '') : ?>
+        <p class="vaysf-results-desk-muted" style="margin: 0 0 8px;"><?php echo esc_html($rule_note); ?></p>
+    <?php endif; ?>
     <ol class="vaysf-results-desk-rankings">
         <?php foreach ($rankings as $team) : ?>
             <?php
-            $record = sprintf(
-                '%d-%d-%d',
-                (int) ($team['wins'] ?? 0),
-                (int) ($team['losses'] ?? 0),
-                (int) ($team['ties'] ?? 0)
-            );
-            $metric = sprintf(
-                'PF %d / PA %d / %+d',
-                (int) ($team['for'] ?? 0),
-                (int) ($team['against'] ?? 0),
-                (int) ($team['diff'] ?? 0)
-            );
+            $is_total_score_ranking = (($team['ranking_basis'] ?? '') === 'total_score');
+            if ($is_total_score_ranking) {
+                $record = sprintf(
+                    /* translators: %d: cumulative Bible Challenge preliminary score */
+                    __('Total %d', 'vaysf'),
+                    (int) ($team['for'] ?? 0)
+                );
+                $metric = sprintf(
+                    /* translators: %d: number of preliminary rows scored for this team */
+                    _n('%d prelim scored', '%d prelims scored', (int) ($team['played'] ?? 0), 'vaysf'),
+                    (int) ($team['played'] ?? 0)
+                );
+                $record_tooltip = __('Bible Challenge ranks by cumulative preliminary score. The top 9 advance.', 'vaysf');
+                $metric_tooltip = __('Number of submitted preliminary score rows included in this team total.', 'vaysf');
+            } else {
+                $record = sprintf(
+                    '%d-%d-%d',
+                    (int) ($team['wins'] ?? 0),
+                    (int) ($team['losses'] ?? 0),
+                    (int) ($team['ties'] ?? 0)
+                );
+                $metric = sprintf(
+                    'PF %d / PA %d / %+d',
+                    (int) ($team['for'] ?? 0),
+                    (int) ($team['against'] ?? 0),
+                    (int) ($team['diff'] ?? 0)
+                );
+                $record_tooltip = __('Record is wins-losses-ties from scored pool games.', 'vaysf');
+                $metric_tooltip = __('PF/PA are points for and points against from the score payload. For volleyball this uses match score units, usually sets won/lost.', 'vaysf');
+            }
             $notes = !empty($team['notes']) && is_array($team['notes']) ? implode('; ', $team['notes']) : '';
             ?>
             <li value="<?php echo esc_attr((string) ($team['rank'] ?? 1)); ?>">
                 <strong><?php echo esc_html($team['label'] ?? $team['team_key'] ?? ''); ?></strong>
-                <span class="vaysf-results-desk-pill" title="<?php echo esc_attr__('Record is wins-losses-ties from scored pool games.', 'vaysf'); ?>"><?php echo esc_html($record); ?></span>
-                <span class="vaysf-results-desk-muted" title="<?php echo esc_attr__('PF/PA are points for and points against from the score payload. For volleyball this uses match score units, usually sets won/lost.', 'vaysf'); ?>"><?php echo esc_html($metric); ?></span>
+                <span class="vaysf-results-desk-pill" title="<?php echo esc_attr($record_tooltip); ?>"><?php echo esc_html($record); ?></span>
+                <?php if (!empty($team['advances'])) : ?>
+                    <span class="vaysf-results-desk-pill" title="<?php echo esc_attr__('Top 9 by cumulative Bible Challenge preliminary score advance.', 'vaysf'); ?>"><?php esc_html_e('Advances', 'vaysf'); ?></span>
+                <?php endif; ?>
+                <span class="vaysf-results-desk-muted" title="<?php echo esc_attr($metric_tooltip); ?>"><?php echo esc_html($metric); ?></span>
                 <?php if ($notes !== '') : ?>
                     <span class="vaysf-results-desk-warning" title="<?php echo esc_attr($notes); ?>"><?php echo esc_html__('note', 'vaysf'); ?></span>
                 <?php endif; ?>
@@ -907,9 +1459,18 @@ function vaysf_render_results_desk_pool_rankings($rankings) {
  * Render one pool progress row.
  *
  * @param array<string,mixed> $pool Pool progress row
+ * @param string $return_url Results Desk URL to redirect back to after
+ *        confirming advancement (Issue #207)
  * @return void
  */
-function vaysf_render_results_desk_pool_progress_row($pool) {
+function vaysf_render_results_desk_pool_progress_row($pool, $return_url = '') {
+    if ($return_url === '' && isset($_SERVER['REQUEST_URI'])) {
+        $return_url = home_url(wp_unslash($_SERVER['REQUEST_URI']));
+    }
+    if ($return_url === '') {
+        $return_url = vaysf_get_results_desk_url();
+    }
+
     $game_count = max(0, (int) ($pool['game_count'] ?? 0));
     $reported_count = max(0, (int) ($pool['reported_count'] ?? 0));
     $missing_count = max(0, (int) ($pool['missing_count'] ?? 0));
@@ -934,7 +1495,7 @@ function vaysf_render_results_desk_pool_progress_row($pool) {
             <?php endif; ?>
         </td>
         <td>
-            <?php vaysf_render_results_desk_pool_rankings($pool['rankings'] ?? array()); ?>
+            <?php vaysf_render_results_desk_pool_rankings($pool['rankings'] ?? array(), $pool['event'] ?? ''); ?>
         </td>
         <td>
             <span class="<?php echo esc_attr(!empty($pool['complete']) ? 'vaysf-results-desk-pill' : 'vaysf-results-desk-warning'); ?>" title="<?php echo esc_attr($flag_tooltip); ?>">
@@ -945,6 +1506,84 @@ function vaysf_render_results_desk_pool_progress_row($pool) {
             <?php endif; ?>
         </td>
         <td><?php echo esc_html(vaysf_format_results_desk_datetime($pool['last_updated_at'] ?? '')); ?></td>
+        <td>
+            <?php
+            $pool_event = (string) ($pool['event'] ?? '');
+            $pool_id_value = (string) ($pool['pool_id'] ?? '');
+            $pool_schedule_version = absint($pool['schedule_version'] ?? 0);
+            $advancement = vaysf_get_pool_advancement($pool_event, $pool_id_value, $pool_schedule_version);
+            $is_stale = $advancement ? vaysf_pool_advancement_is_stale($pool_event, $pool_id_value, $pool_schedule_version, $pool['rankings'] ?? array()) : false;
+            ?>
+            <?php if ($advancement && $is_stale) : ?>
+                <span class="vaysf-results-desk-warning" title="<?php esc_attr_e('A result contributing to this pool was corrected after advancement was confirmed. Re-confirm after reviewing the standings.', 'vaysf'); ?>">
+                    <?php esc_html_e('Needs re-confirm', 'vaysf'); ?>
+                </span>
+            <?php elseif ($advancement) : ?>
+                <?php $confirmer = get_userdata((int) $advancement['confirmed_by_user_id']); ?>
+                <span class="vaysf-results-desk-pill" title="<?php echo esc_attr(vaysf_format_results_desk_datetime($advancement['confirmed_at'] ?? '')); ?>">
+                    <?php
+                    printf(
+                        /* translators: %s: user display name */
+                        esc_html__('Confirmed by %s', 'vaysf'),
+                        esc_html($confirmer ? $confirmer->display_name : __('a Sports Fest admin', 'vaysf'))
+                    );
+                    ?>
+                </span>
+                <?php if (!empty($advancement['review_note'])) : ?>
+                    <br><small class="vaysf-results-desk-note-display" title="<?php echo esc_attr($advancement['review_note']); ?>">
+                        <?php echo esc_html(sprintf(__('Note: %s', 'vaysf'), $advancement['review_note'])); ?>
+                    </small>
+                <?php endif; ?>
+            <?php endif; ?>
+            <?php if (!empty($pool['complete'])) : ?>
+                <?php
+                $has_unresolved_tie = !empty($pool['needs_manual_tiebreak']);
+                $existing_review_note = is_array($advancement) && isset($advancement['review_note'])
+                    ? (string) $advancement['review_note']
+                    : '';
+                $is_bible_challenge_pool = vaysf_results_desk_is_bible_challenge_event($pool_event);
+                if ($is_bible_challenge_pool) {
+                    $confirm_label = $advancement ? __('Re-confirm Top 9', 'vaysf') : __('Confirm Top 9', 'vaysf');
+                    if ($has_unresolved_tie) {
+                        $confirm_tooltip = $advancement
+                            ? __('Update the saved Bible Challenge review note while the cutoff tie remains available for the next-page finalization step. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
+                            : __('Save the current Bible Challenge rankings and cutoff-tie note as reviewed for the next-page finalization step. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
+                    } else {
+                        $confirm_tooltip = $advancement
+                            ? __('Update the saved Bible Challenge advancement confirmation using the current top 9 teams by cumulative preliminary score. This does not change scores or automatically populate semifinal/final games.', 'vaysf')
+                            : __('Save the current Bible Challenge top 9 teams by cumulative preliminary score as reviewed for advancement. This does not change scores or automatically populate semifinal/final games.', 'vaysf');
+                    }
+                } else {
+                    $confirm_label = $advancement ? __('Re-confirm Pool Review', 'vaysf') : __('Confirm Pool Review', 'vaysf');
+                    if ($has_unresolved_tie) {
+                        $confirm_tooltip = $advancement
+                            ? __('Update this pool review note and keep the unresolved tie available for the next-page QF/playoff finalization step. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf')
+                            : __('Record this pool ranking and tie note as reviewed for the next-page QF/playoff finalization step. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf');
+                    } else {
+                        $confirm_tooltip = $advancement
+                            ? __('Update this pool ranking as reviewed for event-level QF/playoff finalization. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf')
+                            : __('Record this pool ranking as reviewed for event-level QF/playoff finalization. This does not choose wildcards, assign seeds, submit QF matchups, change scores, or populate schedule rows.', 'vaysf');
+                    }
+                }
+                ?>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action" value="vaysf_confirm_pool_advancement">
+                    <input type="hidden" name="event" value="<?php echo esc_attr($pool_event); ?>">
+                    <input type="hidden" name="pool_id" value="<?php echo esc_attr($pool_id_value); ?>">
+                    <input type="hidden" name="return_url" value="<?php echo esc_attr($return_url); ?>">
+                    <?php wp_nonce_field('vaysf_confirm_pool_advancement_' . $pool_event . '_' . $pool_id_value); ?>
+                    <?php if ($has_unresolved_tie) : ?>
+                        <label class="vaysf-pool-review-note-label">
+                            <?php esc_html_e('Tie review note', 'vaysf'); ?>
+                            <textarea class="vaysf-pool-review-note" name="review_note" rows="2" required placeholder="<?php echo esc_attr__('Example: FVC/NSD/RPC tied; resolve manually on QF page.', 'vaysf'); ?>"><?php echo esc_textarea($existing_review_note); ?></textarea>
+                        </label>
+                    <?php endif; ?>
+                    <button type="submit" class="button button-primary button-small" title="<?php echo esc_attr($confirm_tooltip); ?>" aria-label="<?php echo esc_attr($confirm_tooltip); ?>">
+                        <?php echo esc_html($confirm_label); ?>
+                    </button>
+                </form>
+            <?php endif; ?>
+        </td>
     </tr>
     <?php
 }
@@ -1072,6 +1711,9 @@ function vaysf_render_results_desk($atts = array()) {
             .vaysf-results-desk-rankings { margin: 0; padding-left: 26px; }
             .vaysf-results-desk-rankings li { margin: 0 0 6px; }
             .vaysf-results-desk-rankings li:last-child { margin-bottom: 0; }
+            .vaysf-pool-review-note-label { display: block; margin: 6px 0; max-width: 230px; font-size: .85em; color: #50575e; }
+            .vaysf-pool-review-note { display: block; width: 100%; min-height: 44px; margin-top: 3px; font-size: 12px; }
+            .vaysf-results-desk-note-display { display: inline-block; max-width: 260px; margin-top: 4px; color: #50575e; }
             @media (max-width: 768px) {
                 .vaysf-results-desk-table { display: block; overflow-x: auto; }
             }
@@ -1090,6 +1732,16 @@ function vaysf_render_results_desk($atts = array()) {
                 <p><?php esc_html_e('Your account is not authorized to view the Sports Fest Results Desk.', 'vaysf'); ?></p>
             </div>
         <?php else : ?>
+            <?php
+            $advancement_status = isset($_GET['vaysf_advancement_status']) ? sanitize_key(wp_unslash($_GET['vaysf_advancement_status'])) : '';
+            $advancement_message = isset($_GET['vaysf_advancement_message']) ? sanitize_text_field(wp_unslash($_GET['vaysf_advancement_message'])) : '';
+            if ($advancement_status !== '' && $advancement_message !== '') :
+                $notice_class = $advancement_status === 'error' ? 'vaysf-results-desk-notice vaysf-results-desk-error' : 'vaysf-results-desk-notice vaysf-results-desk-ok';
+                ?>
+                <div class="<?php echo esc_attr($notice_class); ?>">
+                    <p><?php echo esc_html($advancement_message); ?></p>
+                </div>
+            <?php endif; ?>
             <?php
             $summary = vaysf_get_results_desk_summary($filters);
             $events = vaysf_get_published_schedule_events($summary['schedule_version']);
@@ -1202,18 +1854,22 @@ function vaysf_render_results_desk($atts = array()) {
                                 </th>
                                 <th>
                                     <?php esc_html_e('Provisional Rankings', 'vaysf'); ?>
-                                    <?php vaysf_render_results_desk_tooltip('?', __('Rankings sort by wins, then ties, point differential, and points for. Ties and sport-specific tiebreakers still require human review.', 'vaysf')); ?>
+                                    <?php vaysf_render_results_desk_tooltip('?', __('Default rankings sort by wins, then ties, point differential, and points for. Bible Challenge ranks by cumulative preliminary score, and the top 9 advance. Cutoff ties still require human review.', 'vaysf')); ?>
                                 </th>
                                 <th>
                                     <?php esc_html_e('Review Status', 'vaysf'); ?>
                                     <?php vaysf_render_results_desk_tooltip('?', __('Ready means all games in this pool have a score payload. It does not mean semifinal/final slots were confirmed.', 'vaysf')); ?>
                                 </th>
                                 <th><?php esc_html_e('Last Updated', 'vaysf'); ?></th>
+                                <th>
+                                    <?php esc_html_e('Advancement', 'vaysf'); ?>
+                                    <?php vaysf_render_results_desk_tooltip('?', __('Confirming advancement records who confirmed it and when. It does not move teams into Semifinal/Final schedule rows for you — use the schedule editor for that once you trust the ranking shown here.', 'vaysf')); ?>
+                                </th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($pool_progress as $pool) : ?>
-                                <?php vaysf_render_results_desk_pool_progress_row($pool); ?>
+                                <?php vaysf_render_results_desk_pool_progress_row($pool, $return_url); ?>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
@@ -1406,5 +2062,68 @@ function vaysf_download_results_manifest() {
     }
 
     fclose($output);
+    exit;
+}
+
+/**
+ * Handle the Results Desk "Confirm Advancement" form submission (Issue #207).
+ *
+ * Registered as admin_post_vaysf_confirm_pool_advancement in vaysf.php.
+ * Redirects back to the Results Desk with a flash message rather than
+ * wp_die-ing on ordinary failures (unresolved tie, incomplete pool) — those
+ * are expected operator states, not security errors.
+ *
+ * @return void
+ */
+function vaysf_handle_confirm_pool_advancement_request() {
+    $return_url = isset($_POST['return_url']) ? esc_url_raw(wp_unslash($_POST['return_url'])) : '';
+    if ($return_url === '') {
+        $return_url = wp_get_referer();
+    }
+    if (!$return_url) {
+        $return_url = vaysf_get_results_desk_url();
+    }
+    $return_url = remove_query_arg(array('vaysf_advancement_status', 'vaysf_advancement_message'), $return_url);
+
+    if (!vaysf_user_can_view_results_desk()) {
+        wp_die(esc_html__('You are not authorized to confirm pool advancement.', 'vaysf'), 403);
+    }
+
+    $event = isset($_POST['event']) ? sanitize_text_field(wp_unslash($_POST['event'])) : '';
+    $pool_id = isset($_POST['pool_id']) ? sanitize_text_field(wp_unslash($_POST['pool_id'])) : '';
+    $nonce_action = 'vaysf_confirm_pool_advancement_' . $event . '_' . $pool_id;
+
+    if (empty($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), $nonce_action)) {
+        wp_die(esc_html__('Security check failed. Please try again.', 'vaysf'), 403);
+    }
+
+    $review_note = isset($_POST['review_note']) ? sanitize_textarea_field(wp_unslash($_POST['review_note'])) : '';
+    $result = vaysf_confirm_pool_advancement(get_current_user_id(), $event, $pool_id, $review_note);
+
+    if (is_wp_error($result)) {
+        $redirect = add_query_arg(
+            array(
+                'vaysf_advancement_status' => 'error',
+                'vaysf_advancement_message' => rawurlencode($result->get_error_message()),
+            ),
+            $return_url
+        );
+    } else {
+        $redirect = add_query_arg(
+            array(
+                'vaysf_advancement_status' => 'success',
+                'vaysf_advancement_message' => rawurlencode(
+                    sprintf(
+                        /* translators: %s: event and pool label */
+                        __('Pool review confirmed for %s.', 'vaysf'),
+                        trim($event . ' ' . $pool_id)
+                    )
+                ),
+            ),
+            $return_url
+        );
+    }
+
+    wp_safe_redirect($redirect);
     exit;
 }

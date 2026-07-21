@@ -1085,6 +1085,48 @@ pin changes require regenerating and solving the schedule before running
 **Out of scope (future work):**
 - Cross-sport participant conflicts (person in both Basketball and Badminton).
 
+### Fixed-time events (Track & Field, Tug-of-War) — Issue #209
+
+Track & Field's six events and Tug-of-War are all-church placement events,
+not solver-scheduled matchups — RFC §9.5 (`docs/EVENT_DAY_RESULTS_WORKFLOW_RFC.md`)
+scopes them as ordinary `sf_schedules` rows with a fixed time, entered via
+`publish-schedule` rather than produced by `solve-schedule`. There is no
+tooling yet that generates these rows automatically; add them by hand to
+`schedule_output.json` before running `publish-schedule`, using the same row
+shape every solver-produced game uses (see `test_schedule_publisher.py` for
+a worked example), with the team fields left null:
+
+```json
+{
+    "game_key": "TF-W100M",
+    "event": "Track & Field",
+    "stage": "Final",
+    "sub_event": "Women's 100m Dash",
+    "pool_id": null,
+    "round_number": null,
+    "team_a_key": null,
+    "team_a_label": null,
+    "team_b_key": null,
+    "team_b_label": null,
+    "team_c_key": null,
+    "team_c_label": null,
+    "team_ids_json": null,
+    "resource_id": "TRACK-Sat-2",
+    "scheduled_slot": "Sat-2-<time>",
+    "scheduled_location": "Track",
+    "game_status": "scheduled"
+}
+```
+
+`game_key` must be unique and stable across re-publishes (`TF-W100M`,
+`TF-M4X100`, …, `TOW-MIXED`). `event` must be exactly `Track & Field` or
+`Tug-of-war` (matching `vaysf_placement_score_events()` in
+`plugins/vaysf/includes/score-entry.php`) for the coordinator dashboard's
+placement-entry form to pick the row up — it has no team_a/team_b to render,
+so the form instead offers a dropdown of every church from the published
+schedule for 1st/2nd/3rd place, storing the result ordered in
+`winner_keys_json` like any other score type.
+
 ---
 
 ## Offline Planning Workbook (`build-schedule-workbook`)

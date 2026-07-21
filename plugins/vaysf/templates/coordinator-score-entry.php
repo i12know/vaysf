@@ -59,6 +59,9 @@ if (
     $volleyball_tiebreaker_team_a_raw = isset($_POST['volleyball_tiebreaker_team_a_score']) ? trim((string) wp_unslash($_POST['volleyball_tiebreaker_team_a_score'])) : '';
     $volleyball_tiebreaker_team_b_raw = isset($_POST['volleyball_tiebreaker_team_b_score']) ? trim((string) wp_unslash($_POST['volleyball_tiebreaker_team_b_score'])) : '';
     $volleyball_require_tiebreaker = !empty($_POST['volleyball_require_tiebreaker']);
+    $placement_first_church = isset($_POST['placement_first_church']) ? sanitize_text_field(wp_unslash($_POST['placement_first_church'])) : '';
+    $placement_second_church = isset($_POST['placement_second_church']) ? sanitize_text_field(wp_unslash($_POST['placement_second_church'])) : '';
+    $placement_third_church = isset($_POST['placement_third_church']) ? sanitize_text_field(wp_unslash($_POST['placement_third_church'])) : '';
 
     if (
         empty($_POST['_wpnonce'])
@@ -107,6 +110,16 @@ if (
                 $volleyball_require_tiebreaker
             );
         }
+    } elseif ($score_form_type === 'placement') {
+        $submit_result = vaysf_submit_placement_result(
+            get_current_user_id(),
+            $posted_schedule_id,
+            $placement_first_church,
+            $placement_second_church,
+            $placement_third_church,
+            !empty($_POST['certify_score']),
+            isset($_POST['notes']) ? wp_unslash($_POST['notes']) : ''
+        );
     } else {
         $score_values_valid = false;
         if ($score_form_type === 'three_team') {
@@ -338,6 +351,26 @@ if (!$vaysf_rendering_shortcode) {
         }
         .vaysf-score-entry-pool-section .vaysf-results-desk-rankings li:last-child {
             margin-bottom: 0;
+        }
+        .vaysf-score-entry-pool-section .vaysf-pool-review-note-label {
+            color: #50575e;
+            display: block;
+            font-size: .85em;
+            margin: 6px 0;
+            max-width: 230px;
+        }
+        .vaysf-score-entry-pool-section .vaysf-pool-review-note {
+            display: block;
+            font-size: 12px;
+            margin-top: 3px;
+            min-height: 44px;
+            width: 100%;
+        }
+        .vaysf-score-entry-pool-section .vaysf-results-desk-note-display {
+            color: #50575e;
+            display: inline-block;
+            margin-top: 4px;
+            max-width: 260px;
         }
         .vaysf-score-entry-filter {
             align-items: end;
@@ -602,7 +635,15 @@ if (!$vaysf_rendering_shortcode) {
                         $score_form_type = 'three_team';
                     } elseif (vaysf_is_volleyball_score_schedule($score_schedule)) {
                         $score_form_type = 'volleyball';
+                    } elseif (vaysf_is_placement_score_schedule($score_schedule)) {
+                        $score_form_type = 'placement';
                     }
+                    $placement_churches = $score_form_type === 'placement'
+                        ? vaysf_get_placement_church_codes()
+                        : array();
+                    $placement_first_value = isset($score_payload['first_church_code']) ? (string) $score_payload['first_church_code'] : '';
+                    $placement_second_value = isset($score_payload['second_church_code']) ? (string) $score_payload['second_church_code'] : '';
+                    $placement_third_value = isset($score_payload['third_church_code']) ? (string) $score_payload['third_church_code'] : '';
                     $volleyball_set_values = array(
                         1 => array('team_a' => '', 'team_b' => ''),
                         2 => array('team_a' => '', 'team_b' => ''),
@@ -637,7 +678,7 @@ if (!$vaysf_rendering_shortcode) {
                     <div class="vaysf-score-entry-form">
                         <h2><?php echo esc_html($score_schedule['game_key']); ?></h2>
                         <p class="vaysf-score-entry-meta"><?php echo esc_html($score_schedule['event']); ?></p>
-                        <p class="vaysf-score-entry-teams"><?php echo esc_html(vaysf_format_schedule_teams($score_schedule)); ?></p>
+                        <p class="vaysf-score-entry-teams"><?php echo esc_html($score_form_type === 'placement' ? __('All churches', 'vaysf') : vaysf_format_schedule_teams($score_schedule)); ?></p>
                         <p class="vaysf-score-entry-meta"><?php echo esc_html($score_schedule_time); ?></p>
                         <p class="vaysf-score-entry-meta"><?php echo esc_html($score_location_text); ?></p>
 
@@ -685,6 +726,39 @@ if (!$vaysf_rendering_shortcode) {
                                 </label>
                                 <p class="vaysf-score-entry-help">
                                     <?php esc_html_e('House rule note: preliminary/pool volleyball may end as a 1-1 split match. Use the strict checkbox for playoff-style matches or whenever the referee requires one winner.', 'vaysf'); ?>
+                                </p>
+                            <?php elseif ($score_form_type === 'placement') : ?>
+                                <div class="vaysf-score-entry-score-grid vaysf-score-entry-score-grid-three">
+                                    <div>
+                                        <label for="placement-first"><?php esc_html_e('1st place church', 'vaysf'); ?></label>
+                                        <select id="placement-first" name="placement_first_church" required>
+                                            <option value=""><?php esc_html_e('Select a church', 'vaysf'); ?></option>
+                                            <?php foreach ($placement_churches as $church_code) : ?>
+                                                <option value="<?php echo esc_attr($church_code); ?>" <?php selected($placement_first_value, $church_code); ?>><?php echo esc_html($church_code); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label for="placement-second"><?php esc_html_e('2nd place church', 'vaysf'); ?></label>
+                                        <select id="placement-second" name="placement_second_church" required>
+                                            <option value=""><?php esc_html_e('Select a church', 'vaysf'); ?></option>
+                                            <?php foreach ($placement_churches as $church_code) : ?>
+                                                <option value="<?php echo esc_attr($church_code); ?>" <?php selected($placement_second_value, $church_code); ?>><?php echo esc_html($church_code); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label for="placement-third"><?php esc_html_e('3rd place church (optional)', 'vaysf'); ?></label>
+                                        <select id="placement-third" name="placement_third_church">
+                                            <option value=""><?php esc_html_e('Select a church', 'vaysf'); ?></option>
+                                            <?php foreach ($placement_churches as $church_code) : ?>
+                                                <option value="<?php echo esc_attr($church_code); ?>" <?php selected($placement_third_value, $church_code); ?>><?php echo esc_html($church_code); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                </div>
+                                <p class="vaysf-score-entry-help">
+                                    <?php esc_html_e('This event has no fixed matchup — pick the top finishing churches from the full church list.', 'vaysf'); ?>
                                 </p>
                             <?php else : ?>
                                 <div class="vaysf-score-entry-score-grid <?php echo $score_form_type === 'three_team' ? 'vaysf-score-entry-score-grid-three' : ''; ?>">
@@ -835,7 +909,7 @@ if (!$vaysf_rendering_shortcode) {
                         </thead>
                         <tbody>
                             <?php foreach ($pool_progress_rows as $pool) : ?>
-                                <?php vaysf_render_results_desk_pool_progress_row($pool); ?>
+                                <?php vaysf_render_results_desk_pool_progress_row($pool, $score_entry_return_url); ?>
                             <?php endforeach; ?>
                         </tbody>
                     </table>

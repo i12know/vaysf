@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.61
+ * Version: 1.0.70
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,12 +18,12 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.61';
+    const VERSION = '1.0.70';
 
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.8';  // Issue #183 - participant consent_status for consent_ratio
+    const DB_VERSION = '1.0.11';  // Issue #207 - schedule-versioned pool advancement confirmation table with review notes
     
     /**
      * Database version option name
@@ -152,6 +152,7 @@ class VAYSF_Integration {
         add_action('admin_post_vaysf_download_result_file', 'vaysf_download_result_file');
         add_action('admin_post_vaysf_download_results_manifest', 'vaysf_download_results_manifest');
         add_action('admin_post_vaysf_download_bible_verses_json', 'vaysf_download_bible_verses_json');
+        add_action('admin_post_vaysf_confirm_pool_advancement', 'vaysf_handle_confirm_pool_advancement_request');
 
         // Seed the option-backed Bible verse store on fresh installs.
         vaysf_seed_bible_verse_rows_if_empty();
@@ -784,7 +785,73 @@ class VAYSF_Integration {
 			KEY sent_at (sent_at)
 		) $charset_collate;";
 		dbDelta($sql_email_log);
-        
+
+        // Pool advancement confirmation table (Issue #207) — one row per
+        // (schedule_version, event, pool_id): who confirmed advancement,
+        // when, a snapshot of the pool-progress rankings used (see
+        // vaysf_get_results_desk_pool_progress_rows() in results-desk.php),
+        // and the sf_results revision numbers that snapshot was based on.
+        // Re-confirming a pool upserts this row rather than keeping a
+        // history table — the "current confirmation" is all downstream code
+        // needs. Staleness (a contributing result corrected after
+        // confirmation) is detected at read time by comparing
+        // based_on_revisions_json against live sf_results.current_revision,
+        // not stored as a flag here.
+        $table_pool_advancement = $wpdb->prefix . self::TABLE_PREFIX . 'pool_advancement';
+        $sql_pool_advancement = "CREATE TABLE $table_pool_advancement (
+            advancement_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            schedule_version INT UNSIGNED NOT NULL DEFAULT 0,
+            event VARCHAR(100) NOT NULL,
+            pool_id VARCHAR(20) NOT NULL,
+            confirmed_by_user_id BIGINT(20) UNSIGNED NOT NULL,
+            confirmed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            standings_snapshot_json TEXT DEFAULT NULL,
+            based_on_revisions_json TEXT DEFAULT NULL,
+            review_note TEXT DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY  (advancement_id),
+            UNIQUE KEY schedule_event_pool (schedule_version, event, pool_id),
+            KEY confirmed_by_user_id (confirmed_by_user_id)
+        ) $charset_collate;";
+        dbDelta($sql_pool_advancement);
+
+        $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_pool_advancement} LIKE 'schedule_version'");
+        if (empty($check_column)) {
+            $wpdb->query("ALTER TABLE {$table_pool_advancement} ADD COLUMN schedule_version INT UNSIGNED NOT NULL DEFAULT 0 AFTER advancement_id");
+            error_log('Added schedule_version column to sf_pool_advancement table');
+        }
+
+        $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_pool_advancement} LIKE 'review_note'");
+        if (empty($check_column)) {
+            $wpdb->query("ALTER TABLE {$table_pool_advancement} ADD COLUMN review_note TEXT DEFAULT NULL AFTER based_on_revisions_json");
+            error_log('Added review_note column to sf_pool_advancement table');
+        }
+
+        $current_advancement_schedule_version = function_exists('vaysf_get_current_published_schedule_version')
+            ? vaysf_get_current_published_schedule_version()
+            : null;
+        if ($current_advancement_schedule_version !== null) {
+            $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$table_pool_advancement} SET schedule_version = %d WHERE schedule_version = 0",
+                    absint($current_advancement_schedule_version)
+                )
+            );
+        }
+
+        $check_index = $wpdb->get_results("SHOW INDEX FROM {$table_pool_advancement} WHERE Key_name = 'event_pool'");
+        if (!empty($check_index)) {
+            $wpdb->query("ALTER TABLE {$table_pool_advancement} DROP INDEX event_pool");
+            error_log('Dropped event_pool unique index from sf_pool_advancement table');
+        }
+
+        $check_index = $wpdb->get_results("SHOW INDEX FROM {$table_pool_advancement} WHERE Key_name = 'schedule_event_pool'");
+        if (empty($check_index)) {
+            $wpdb->query("ALTER TABLE {$table_pool_advancement} ADD UNIQUE KEY schedule_event_pool (schedule_version, event, pool_id)");
+            error_log('Added schedule_event_pool unique index to sf_pool_advancement table');
+        }
+
         // Check if photo_url column needs to be added to existing table
         $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_participants} LIKE 'photo_url'");
         if (empty($check_column)) {

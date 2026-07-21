@@ -2,6 +2,89 @@
 
 ## Unreleased
 
+### Advancement confirmation, head-to-head tiebreak, and Track & Field / Tug-of-War placement entry (#207, #209)
+
+Builds on the pool progress rankings review shipped in #320–#323 (below).
+
+- **Head-to-head tiebreak.** Amended `vaysf_results_desk_apply_pool_result()`
+  and `vaysf_results_desk_sort_pool_rankings()` to add head-to-head
+  resolution for teams still fully tied on wins/losses/point-differential
+  after the primary sort (VAY SM ranking convention confirmed for the 2026
+  weekend 1→2 transition: win/loss → point differential → head-to-head). A
+  tied group that head-to-head cannot fully order (e.g. a round-robin cycle)
+  is flagged `needs_manual_tiebreak` rather than resolved by alphabetical
+  guesswork — wrong output here means the wrong team advances.
+- **Confirm Advancement.** Added a `sf_pool_advancement` table (plugin
+  DB_VERSION 1.0.8 → 1.0.11) and a "Confirm Advancement" action on the
+  Results Desk pool progress table
+  (`vaysf_confirm_pool_advancement()`, wired via
+  `admin_post_vaysf_confirm_pool_advancement`): records who confirmed a
+  pool's standings and when, with a snapshot of the same rankings the
+  review table already shows and the contributing results' revision
+  numbers, so a later correction can be detected
+  (`vaysf_pool_advancement_is_stale()`) and surfaced for re-confirmation.
+  Confirmations are keyed by `schedule_version`, `event`, and `pool_id` so
+  republished schedule rows do not inherit stale advancement state.
+  Confirmation is refused while any pool game is still missing a result;
+  completed pools with unresolved ties can be confirmed with a required
+  review note so the tie can be resolved on the event-level playoff/QF
+  finalization page. The existing pool progress review section
+  (#320–#323) stays the single ranking source of truth — this reads from it
+  rather than recomputing standings a second way.
+- Scope note: this deliberately does **not** auto-populate Semifinal/Final
+  schedule rows — which pool's top teams feed which bracket slot is a
+  tournament-structure decision with no existing data model, and guessing
+  it under time pressure was judged a worse risk than the manual step it
+  replaces (placing confirmed teams into next-round schedule rows via the
+  existing schedule editor).
+- Added final-placement score entry for Track & Field and Tug-of-War
+  (Issue #209): `vaysf_submit_placement_result()` and a
+  `[coordinator_score_entry]` form variant that lets a coordinator pick
+  1st/2nd/3rd place churches from the registered `sf_churches` list,
+  since these are all-church events with no fixed team_a/team_b matchup on
+  the schedule row. Placements store ordered in `winner_keys_json`, same
+  data model as every other score type (RFC §9.5).
+- Public schedule display now renders placement results as `1st ABC / 2nd DEF`
+  rather than treating them as missing numeric team scores, and placement POSTs
+  are validated against registered church codes.
+- Hotfix 1.0.64: Coordinator Score Entry now passes its own return URL into
+  the shared Confirm Advancement form, and the post handler treats a blank
+  `return_url` as missing. This prevents a successful confirmation from
+  landing on a blank `wp-admin/admin-post.php` page.
+- Hotfix 1.0.65: Added hover/accessible tooltip copy to the Confirm
+  Advancement/Re-confirm button clarifying that it records the displayed
+  rankings for review and does not change scores or auto-fill bracket games.
+- Hotfix 1.0.66: Bible Challenge prelim advancement now ranks teams by
+  cumulative score across all submitted preliminary rows, marks the top 9 as
+  advancing, and blocks confirmation only when there is a tie at the top-9
+  cutoff.
+- Hotfix 1.0.67: Advancement staleness now also compares the saved standings
+  snapshot against the current computed rankings, so confirmations made before
+  the Bible Challenge ranking-rule correction show as needing re-confirmation.
+- Hotfix 1.0.68: Pool ranking lists now show an event-specific calculation
+  note for Basketball, Volleyball, Soccer, and Bible Challenge so coordinators
+  can see the ranking rule before confirming advancement.
+- Hotfix 1.0.69: Pool-row confirmation copy now says "Confirm Pool Review"
+  for team-sport pools and clarifies that the action prepares the pool for
+  event-level QF/playoff finalization rather than choosing wildcards, seeds, or
+  QF matchups.
+- Hotfix 1.0.70: Completed pools with unresolved ties can now be confirmed
+  with a required review note. The note is stored on `sf_pool_advancement`
+  (`review_note`, DB_VERSION 1.0.11) and displayed with the confirmation so
+  the next-page playoff/QF finalization workflow can sort out the tie.
+- Getting `TF-`/`TOW-` schedule rows themselves published (six Track & Field
+  events plus one Tug-of-War row, entered as ordinary `sf_schedules` rows
+  via `publish-schedule` per the existing `schedule_output.json` shape, not
+  solver output) is an operator data-entry step, not new tooling — see the
+  new "Fixed-time events" subsection in `docs/SCHEDULING.md` for the exact
+  row shape.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.70` and rebuilt `plugins/vaysf.zip`
+  (39 files, matches `plugins/vaysf/` on disk; rebuilt on Linux so archive
+  entries use forward slashes instead of the prior Windows-built backslash
+  paths — no functional change, WordPress's unzip handles either).
+
 ### Results Desk dead-code cleanup
 
 - Removed the unreachable `complete_pools` query branch from
