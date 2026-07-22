@@ -4824,9 +4824,37 @@ function vaysf_apply_team_qf_playoff_preview($event, $schedule_version, $arrange
         $team_b = $teams_by_key[$picks[1]];
 
         $existing = $wpdb->get_row(
-            $wpdb->prepare("SELECT * FROM $table_schedules WHERE game_key = %s", $game_key),
+            $wpdb->prepare(
+                "SELECT * FROM $table_schedules WHERE game_key = %s AND schedule_version = %d",
+                $game_key,
+                $schedule_version
+            ),
             ARRAY_A
         );
+
+        if (!$existing) {
+            $other_version = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT schedule_id, schedule_version FROM $table_schedules WHERE game_key = %s LIMIT 1",
+                    $game_key
+                ),
+                ARRAY_A
+            );
+            if ($other_version) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error(
+                    'vaysf_team_qf_apply_schedule_version_mismatch',
+                    sprintf(
+                        /* translators: 1: game key, 2: existing schedule version, 3: submitted schedule version */
+                        __('Schedule row %1$s already exists on schedule version %2$d, not submitted version %3$d. Refresh Results Desk and try again before applying.', 'vaysf'),
+                        $game_key,
+                        absint($other_version['schedule_version'] ?? 0),
+                        $schedule_version
+                    )
+                );
+            }
+        }
+
         if ($existing && vaysf_schedule_row_has_protected_result($existing)) {
             $results[] = array('game_key' => $game_key, 'action' => 'skipped_protected');
             continue;

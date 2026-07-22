@@ -380,6 +380,23 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
 - Bumped plugin header/version to `1.0.87` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.88: Fixed a silent-miss bug in
+  `vaysf_apply_team_qf_playoff_preview()` (PR #327 review) — it looked up
+  the existing QF row by `game_key` alone, then updated it scoped to
+  `schedule_id AND schedule_version = $current_version`. If that row lived
+  on an older schedule version (event-day republish/version churn),
+  `$wpdb->update()` matched zero rows and returned `0`, not `false`, so the
+  handler recorded `action => 'updated'` even though the current-version QF
+  row was never created or touched. Now mirrors the version-mismatch guard
+  already used by `vaysf_apply_bible_challenge_playoff_preview()` and
+  `vaysf_prewire_team_playoff_row()`: look up by `game_key AND
+  schedule_version` together, and if that misses but a same-`game_key` row
+  exists on a different version, fail with an explicit
+  `vaysf_team_qf_apply_schedule_version_mismatch` error instead of
+  reporting a no-op update as success.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.88` and rebuilt `plugins/vaysf.zip`.
 
 ### Results Desk dead-code cleanup
 
