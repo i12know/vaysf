@@ -696,7 +696,7 @@ function vaysf_record_coin_toss_flip($user_id, $event, $schedule_version, $team_
             'team_a_key' => $team_a_key,
             'team_b_key' => $team_b_key,
             'call_by_key' => $call_by_key,
-            'call' => $call,
+            'call_side' => $call,
             'result' => $result,
             'winner_key' => $winner_key,
             'flipped_by_user_id' => $user_id,

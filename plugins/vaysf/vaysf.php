@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.89
+ * Version: 1.0.92
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,12 +18,12 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.89';
+    const VERSION = '1.0.92';
 
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.12';  // Issue #329 - sf_coin_toss_flip table for BB/VB cross-pool QF seeding tiebreaks
+    const DB_VERSION = '1.0.13';  // coin_toss_flip.call renamed to call_side - "call" is a reserved MySQL keyword
     
     /**
      * Database version option name
@@ -874,7 +874,7 @@ class VAYSF_Integration {
             team_a_key VARCHAR(64) NOT NULL,
             team_b_key VARCHAR(64) NOT NULL,
             call_by_key VARCHAR(64) NOT NULL,
-            call VARCHAR(10) NOT NULL,
+            call_side VARCHAR(10) NOT NULL,
             result VARCHAR(10) NOT NULL,
             winner_key VARCHAR(64) NOT NULL,
             flipped_by_user_id BIGINT(20) UNSIGNED NOT NULL,

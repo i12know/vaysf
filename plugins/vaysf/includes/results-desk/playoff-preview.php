@@ -377,9 +377,26 @@ function vaysf_results_desk_build_team_qf_preview($event, $reviews, $schedule_ro
         : array();
     $custom_active = false;
 
+    // The Coordinator "QF Setup" tab renders every authorized team-sport
+    // event's reorder form on one page (1.0.85), all posting to the same
+    // ?qf_seed=... query string. Only treat $_GET['qf_seed'] as a submission
+    // for *this* event if it actually contains a key with this event's
+    // prefix — otherwise reordering one event (e.g. Volleyball) makes every
+    // other event on the page (e.g. Basketball) see a non-empty but
+    // irrelevant array and wrongly report "every QF row needs exactly two
+    // selected teams" for rows nobody touched.
+    $submitted_for_this_event = array();
     if ($can_customize && isset($_GET['qf_seed']) && is_array($_GET['qf_seed'])) {
         $submitted = wp_unslash($_GET['qf_seed']);
-        $candidate = vaysf_results_desk_validate_team_qf_arrangement($submitted, $prefix, $teams_by_key);
+        foreach ($submitted as $submitted_key => $picks) {
+            if (strpos((string) $submitted_key, $prefix . '-QF-') === 0) {
+                $submitted_for_this_event[$submitted_key] = $picks;
+            }
+        }
+    }
+
+    if ($submitted_for_this_event) {
+        $candidate = vaysf_results_desk_validate_team_qf_arrangement($submitted_for_this_event, $prefix, $teams_by_key);
         if (is_wp_error($candidate)) {
             $warnings[] = $candidate->get_error_message();
         } else {
@@ -523,6 +540,7 @@ function vaysf_get_results_desk_playoff_preview($filters = array()) {
     return $preview;
 }
 
+/**
  * Write a chosen Bible Challenge semifinal matchup directly into the
  * BC-Semi-1/2/3 schedule rows for the given event/schedule_version.
  *

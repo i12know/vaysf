@@ -209,8 +209,12 @@ if (isset($_GET['score_submitted']) && $_GET['score_submitted'] === '1') {
 }
 
 $container_style = 'max-width: 960px; margin: 32px auto; padding: 20px;';
-$score_entry_return_url = isset($_SERVER['REQUEST_URI'])
-    ? esc_url_raw(home_url(wp_unslash($_SERVER['REQUEST_URI'])))
+// home_url($_SERVER['REQUEST_URI']) double-prefixes the path on a site whose
+// home URL already includes a subdirectory (e.g. Bluehost staging mounted at
+// /staging/<id>/) — same bug fixed for the Results Desk in 1.0.75. Reuse its
+// fix here instead of home_url().
+$score_entry_return_url = function_exists('vaysf_results_desk_current_request_url')
+    ? vaysf_results_desk_current_request_url()
     : vaysf_get_coordinator_score_entry_url('assigned');
 
 if (!$vaysf_rendering_shortcode) {
