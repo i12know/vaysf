@@ -72,18 +72,331 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   with a required review note. The note is stored on `sf_pool_advancement`
   (`review_note`, DB_VERSION 1.0.11) and displayed with the confirmation so
   the next-page playoff/QF finalization workflow can sort out the tie.
+- Hotfix 1.0.71: Added a read-only Results Desk "Playoff / QF Preview" panel
+  for Issue #326. When an event is selected, managers can see confirmed pool
+  review snapshots, current playoff schedule-row status, and preview labels
+  without writing anything. Bible Challenge previews `BC-Semi-1`/`BC-Semi-2`/
+  `BC-Semi-3` using a balanced snake grouping from the confirmed Top 9 and
+  keeps `BC-Final` as semifinal-winner placeholders. Basketball, Volleyball,
+  and Soccer show confirmed pool reviews and existing playoff rows but block
+  matchup suggestions until wildcard/seed rules are explicit.
+- Hotfix 1.0.72: Volleyball public score display now shows the actual per-set
+  point scores from the stored `sets[]` payload, separated by commas (for
+  example `25-21, 22-25, 15-12`), while keeping the existing sets-won totals
+  in `team_a_score`/`team_b_score` for rankings and winner logic.
+- Hotfix 1.0.73: Results Desk pool-review status no longer renders internal
+  flag keys such as `split_match` or `unresolved_tiebreak` in the visible UI.
+  The status column now shows compact human labels like "Split match", "Tie",
+  and "Needs tiebreak" while keeping the detailed explanation in the hover
+  tooltip.
 - Getting `TF-`/`TOW-` schedule rows themselves published (six Track & Field
   events plus one Tug-of-War row, entered as ordinary `sf_schedules` rows
   via `publish-schedule` per the existing `schedule_output.json` shape, not
   solver output) is an operator data-entry step, not new tooling — see the
   new "Fixed-time events" subsection in `docs/SCHEDULING.md` for the exact
   row shape.
+- Hotfix 1.0.74: The Bible Challenge "Playoff / QF Preview" panel (1.0.71)
+  gained two controls: a dropdown-based reorder form to try a custom
+  semifinal grouping instead of the default balanced snake (session-only —
+  travels as `bc_seed` GET params, never persisted), and an "Apply matchup to
+  schedule" button that writes the arrangement currently shown directly into
+  the `BC-Semi-1`/`BC-Semi-2`/`BC-Semi-3` schedule rows
+  (`vaysf_apply_bible_challenge_playoff_preview()`, wired via
+  `admin_post_vaysf_apply_bible_challenge_preview`), creating the rows if
+  missing. **Scope note, deliberate deviation:** this bypasses the
+  "`publish-schedule` is the only writer to WordPress schedule rows"
+  convention in `docs/SCHEDULING.md`, and the same reasoning noted for
+  Confirm Advancement above (no existing data model for which pool's teams
+  feed which bracket slot) — done at explicit operator request, not because
+  the tradeoff went away. Applied rows are left `game_status = 'scheduled'`
+  (not protected), so a later `publish-schedule` run targeting the same
+  `game_key`s can still silently overwrite them; rows already
+  `reported`/`official`/`under_review` are skipped rather than overwritten,
+  mirroring the `/schedules/upsert` REST endpoint's own protected-row rule.
+- Hotfix 1.0.75: Fixed a pre-existing bug (not introduced by 1.0.74) where the
+  Results Desk's "return to this page" URL was built as
+  `home_url($_SERVER['REQUEST_URI'])`. On a site whose home URL already
+  includes a subdirectory — e.g. a Bluehost staging site mounted at
+  `/staging/<id>/` — `REQUEST_URI` already contains that same prefix, so
+  concatenating the two doubled it (`/staging/8189/staging/8189/results-desk/`)
+  and WordPress couldn't route the result, landing on a 404 after Confirm
+  Advancement or the new Apply action. Added
+  `vaysf_results_desk_current_request_url()`, which builds the URL from
+  scheme + host + `REQUEST_URI` directly instead of routing through
+  `home_url()`, and pointed both the pool-progress-row return URL and the
+  main Results Desk return URL at it. The underlying database write in each
+  case had already completed before the broken redirect — this only fixes
+  where the browser lands afterward. Also tightened the Bible Challenge Apply
+  writer so updates only target the submitted `schedule_version`, with a clear
+  mismatch error if the visible preview is stale.
+- Hotfix 1.0.76: Extended the Results Desk playoff preview operator controls
+  to Basketball and Volleyball quarterfinals. BB/VB now show editable QF
+  dropdowns sourced from confirmed pool-review teams, prevent duplicate team
+  picks across QF slots, and provide an explicit "Apply QF matchup to
+  schedule" action that updates only existing current-version QF rows. Reported,
+  official, under-review, or already-scored QF rows are skipped rather than
+  overwritten; court, time, and later playoff rows are left untouched.
+- Hotfix 1.0.77: BB/VB QF Apply now also prewires Semifinal and Final rows
+  with `WIN-...` placeholders (`QF-1/2 -> Semi-1`, `QF-3/4 -> Semi-2`,
+  `Semi-1/2 -> Final`), creating missing rows and preserving court/time on
+  existing unprotected rows. Score submission now resolves those placeholders
+  automatically after each single-winner QF/Semi result; corrected upstream
+  results can update an unreported downstream placeholder slot, while reported,
+  official, under-review, or already-scored downstream rows are left untouched.
+  Placeholder rows are not scoreable until both sides have resolved to real
+  teams.
+- Hotfix 1.0.78: Added a WordPress event-day source-of-truth export on
+  **Sports Fest > Schedules**. The new "Export Event-Day JSON" button downloads
+  the selected schedule version (or the current published version when no
+  version filter is selected) as raw JSON containing schedules, results, result
+  revisions, pool advancement confirmations, metadata, and row counts. This is
+  intended for the local operations computer to archive/import live WP state
+  during Sports Fest without rerunning the Python scheduler.
+- Hotfix 1.0.79: No functional change — rebuild-only. Version bump so the
+  combined result of the 1.0.74–1.0.78 work above (Bible Challenge preview
+  reorder/Apply, the `home_url()`/`REQUEST_URI` return-URL fix, BB/VB QF
+  Apply with Semi/Final placeholder prewiring, and the event-day JSON export)
+  has a single clean version to upload to staging.
+- Hotfix 1.0.80: Hardened the Results Desk Apply buttons and event-day export
+  for live operations. Bible Challenge Apply now uses the same protected-result
+  guard as BB/VB QF Apply: rows already reported, official, under review, or
+  already carrying a score payload are skipped rather than overwritten. Bible
+  Challenge Apply also prewires `BC-Final` with `WIN-BC-Semi-1/2/3`
+  placeholders, and score submission can now automatically advance winners
+  from all three `BC-Semi-*` rows into the three final slots. The Schedules
+  admin export now includes an "Export Publish JSON ZIP" action that downloads
+  `approved_schedule_input.json` and `approved_schedule_output.json`
+  reconstructed from live WordPress schedule rows for local middleware replay,
+  alongside the raw event-day state JSON backup. Because WordPress does not
+  store the full original solver model, the publish JSON uses inferred resource
+  stubs and should be treated as a replay/manipulation artifact, not a perfect
+  reconstruction of pre-event `schedule_input.json`.
+- Hotfix 1.0.81: Parked the balanced Bible Challenge snake grouping in code for
+  2027 RFC #328, but changed the live Results Desk BC semifinal default back to
+  the 2026 coordinator artifact's maximum top-seed-protection layout: Semi #1
+  seeds 4/3/5, Semi #2 seeds 6/2/7, and Semi #3 seeds 8/1/9. The existing BC
+  dropdown override and Apply action still work, and Apply continues to prewire
+  `BC-Final` with semifinal winner placeholders.
+- Hotfix 1.0.82: `vaysf_results_desk_get_playoff_schedule_rows()` no longer
+  requires `published_at IS NOT NULL`. This function feeds both the
+  Playoff/QF Preview panel and the QF/BC Apply handlers — all operator-only,
+  capability-gated contexts, never the public schedule display (which has
+  its own separately-filtered query and is unaffected). Without this fix, a
+  QF-stage row created ahead of time via the Schedules editor (which never
+  sets `published_at` — only `publish-schedule` or an Apply handler does)
+  was invisible to its own Apply flow: the BB/VB QF Apply handler already
+  stamped `published_at` on every write it made, but could never discover
+  such a row to write to in the first place, since the discovery query
+  filtered it out. BC was unaffected in practice (its Apply handler always
+  creates `BC-Semi-*`/`BC-Final` outright rather than depending on a
+  pre-existing row), but shares the same query, so a hand-created BC row in
+  this state would have hit the identical bug.
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
-- Bumped plugin header/version to `1.0.70` and rebuilt `plugins/vaysf.zip`
-  (39 files, matches `plugins/vaysf/` on disk; rebuilt on Linux so archive
-  entries use forward slashes instead of the prior Windows-built backslash
-  paths — no functional change, WordPress's unzip handles either).
+- Bumped plugin header/version to `1.0.82` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.83: Implemented Issue #329 — Basketball/Volleyball QF now works
+  the same 3-step way Bible Challenge already did: review, reassign, Apply
+  creates everything. This replaces the interim BB/VB QF Apply (1.0.76/1.0.77,
+  update-only against admin-hand-created rows) with the coordinator's actual
+  2026 official seeding rule, documented and confirmed on the issue before
+  implementation.
+  - **DB_VERSION 1.0.11 → 1.0.12.** New `sf_coin_toss_flip` table: one row
+    per pairwise coin-toss flip (who called, what they called, the
+    server-generated result, who won), permanent audit trail, never pruned.
+  - **Cross-pool QF seeding ranking**
+    (`vaysf_results_desk_get_event_seeding_rankings()` and its
+    `vaysf_results_desk_accumulate_event_seeding_stats()` /
+    `vaysf_results_desk_resolve_seeding_group()` helpers in
+    `results-desk.php`): ranks *all* of an event's teams across all of its
+    pools (not per-pool), per the coordinator's official rule —
+    W-L record, then head-to-head, then difficulty-of-schedule (sum of each
+    opponent's own final W-L), then point differential (Basketball capped at
+    40/game per rule §3.3.3, Volleyball uncapped per §3.5), then coin toss.
+    Volleyball's §3.4.1.1 sub-rule (a head-to-head match that itself splits
+    1-1 is broken by that single match's point differential before falling
+    to difficulty-of-schedule) is folded into the head-to-head step. Blocked
+    until every pool for the event is fully reported.
+  - **Coin toss** (`vaysf_record_coin_toss_flip()`): server generates the
+    flip (`wp_rand`) for fairness — a coordinator names which team calls and
+    what they call, but no human performs the flip itself, per the
+    coordinator's explicit instruction. Refuses to re-flip an already-decided
+    pair; the log is permanent, so a later re-confirm (e.g. after a score
+    correction) reuses prior flips rather than re-flipping unchanged ties.
+  - **"Confirm All Pools for QF Seeding"**
+    (`vaysf_confirm_event_qf_seeding()`, wired via
+    `admin_post_vaysf_confirm_event_qf_seeding`): one event-level action
+    replaces individually confirming each of the event's pools, per the
+    coordinator's explicit answer on issue #329. Requires every pool complete
+    and every tie resolved (coin toss where needed) before it will write
+    anything. Stored in the existing `sf_pool_advancement` table under the
+    sentinel `pool_id = "ALL"`
+    (`vaysf_results_desk_event_seeding_pool_id()`), reusing that table's
+    existing read/staleness machinery unchanged rather than adding a parallel
+    table for the confirmed snapshot.
+  - **QF candidates now come from the confirmed seeding, not raw pool
+    dumps.** `vaysf_results_desk_get_team_qf_candidate_teams()` previously
+    pooled *every* team from *every* confirmed per-pool review with no
+    cutoff (13 candidates for a 3-pool, 13-team Basketball bracket). It now
+    reads the confirmed Top 8 from the "ALL" snapshot, mirroring exactly how
+    `vaysf_results_desk_get_bible_challenge_confirmed_teams()` already reads
+    BC's confirmed Top 9.
+  - **QF Apply now creates from a fixed template, like BC's Apply already
+    did.** `vaysf_apply_team_qf_playoff_preview()` was update-only — it could
+    reassign teams into QF rows that already existed, but errored if any of
+    QF-1..4 were missing, so an admin had to hand-create them first via the
+    Schedules editor (the exact tedium issue #329 asked to remove). It now
+    creates `<PREFIX>-QF-1..4` outright from the confirmed Top 8 (seeded
+    1v8/4v5/3v6/2v7 by default, freely reorderable first, same as
+    everywhere else on this panel), the same create-if-missing pattern as
+    `vaysf_apply_bible_challenge_playoff_preview()`. The whole write now runs
+    inside one DB transaction (`vaysf_persist_score_result()`'s existing
+    `START TRANSACTION`/`COMMIT`/`ROLLBACK` pattern) — this also closes the
+    partial-commit bug found during 2026-07-21 staging testing (QF team
+    writes could commit even when downstream Semi/Final prewiring then
+    failed), though with QF-1..4 now always self-created that specific
+    trigger can no longer occur either way.
+  - **3rd-place match**, always on the schedule per the coordinator's answer
+    on issue #329. New `LOSE-<game_key>` placeholder convention alongside the
+    existing `WIN-<game_key>` (`vaysf_is_playoff_placeholder_team_key()` in
+    `score-entry.php`). `vaysf_get_playoff_advancement_targets()` (renamed
+    from the single-target `vaysf_get_playoff_advancement_target()`, its one
+    caller updated) now returns every downstream target a result feeds: a
+    Semifinal produces both a winner-into-Final and a loser-into-3rd-Place
+    advancement, each resolved independently via the new
+    `vaysf_advance_playoff_participant_into_target()` — a missing/protected
+    3rd-place row must never block the winner from reaching the Final, and
+    vice versa. Bible Challenge's 3-team `BC-Semi-N` is unaffected (no
+    well-defined "loser" in a 3-team pod, and no 3rd-place match), and
+    `vaysf_prewire_team_playoff_bracket_rows()` now always prewires
+    `<PREFIX>-3rd-Place` alongside Semi-1/Semi-2/Final.
+  - Per-pool "Confirm Pool Review" is now suppressed in the Results Desk for
+    Basketball/Volleyball pools specifically (replaced by the event-wide
+    action above); Bible Challenge and any other pool/prelim event keep the
+    unchanged per-pool flow.
+  - See [Issue #329](https://github.com/i12know/vaysf/issues/329) for the
+    coordinator's exact rule text, the answered open questions this
+    implementation follows, and the gap analysis against the prior BC-only
+    implementation.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.83`, `DB_VERSION` to `1.0.12`, and
+  rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.84: Fixed a pre-existing, active data-integrity bug in
+  `vaysf_get_result_fallbacks_for_schedule_rows()` (score-entry.php),
+  unrelated to #329's own code but found while testing it on staging.
+  This function exists to reattach a genuinely orphaned result (e.g. after a
+  schedule republish retires a `schedule_id`) to its replacement row, but its
+  match conditions included team-key pairing alone, with no requirement that
+  the historical schedule_id was actually gone. Two teams simply rematching
+  later in the event — a pool game, then meeting again in a QF/Semi/Final —
+  was indistinguishable from "this schedule_id was replaced": opening score
+  entry for the second game would find the first game's live, currently
+  reported result and silently move its `schedule_id` onto the new game,
+  orphaning the original. Confirmed live on 2026-07-21 staging: a real
+  Sunday 7/19 Basketball prelim result (`BBM-02`, RPC vs MWC) had its
+  `schedule_id` reassigned onto a newly-created `BBM-Semi-1` (also RPC vs
+  MWC) the moment its score-entry form was opened. No data was actually
+  lost — the original submission was recovered from `sf_result_revisions`,
+  which independently records the `schedule_id` each revision was submitted
+  against. Fixed by requiring the historical schedule row to be unpublished
+  or gone (`s_hist.published_at` empty) before a result is eligible to be
+  recovered onto a different schedule_id at all.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.84` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.85: Extended Basketball/Volleyball QF preview/reassign/Apply to
+  the Coordinator Score Entry screen, not just the Results Desk. Confirming
+  QF seeding (the ranking/coin-toss work) stays Results-Desk-only —
+  coordinators can preview the already-confirmed bracket, reorder it, and
+  Apply it to the schedule, so a coordinator running event day doesn't need
+  a Results-Desk-capable account just to set up the QF rows their own
+  assigned games depend on.
+  - New `vaysf_user_can_manage_team_qf_schedule()` (results-desk.php):
+    Results-Desk-capable users OR `sf2025_submit_results`. Used by
+    `vaysf_handle_apply_team_qf_preview_request()`'s capability check in
+    place of the stricter `vaysf_user_can_view_results_desk()`. A
+    coordinator is further restricted to their own authorized events
+    (`vaysf_get_user_score_entry_events()`) — the same scoping already used
+    for score submission — so a Volleyball-only coordinator can't Apply
+    Basketball's bracket.
+  - New "QF Setup" tab on the Coordinator Score Entry dashboard
+    (`templates/coordinator-score-entry.php`, `?view=qf-setup`), shown only
+    when the coordinator has at least one Basketball/Volleyball event
+    authorized (`vaysf_get_user_team_qf_setup_events()`). Reuses
+    `vaysf_results_desk_build_team_qf_preview()` and the existing
+    schedule-status/suggestion render helpers directly — this template
+    already leaned on Results Desk helpers via `function_exists()` guards
+    (e.g. the shared Pools Progress table), so this follows the same
+    established pattern. New `vaysf_render_coordinator_qf_setup_panel()` and
+    `vaysf_render_coordinator_team_qf_reorder_form()` (score-entry.php); the
+    Apply button itself reuses `vaysf_render_results_desk_team_qf_apply_form()`
+    unchanged. If QF seeding hasn't been confirmed yet for an event, the
+    panel says so and points the coordinator to a Sports Fest manager rather
+    than exposing seeding confirmation or the coin-toss flow here.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.85` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.86: Fixed a bug found live on staging immediately after
+  confirming Basketball's QF seeding for the first time: it showed "needs
+  re-confirm" right away, even though nothing had actually changed.
+  `vaysf_pool_advancement_is_stale()`'s staleness check falls back to
+  `vaysf_get_pool_progress_row($event, $pool_id)` whenever a caller doesn't
+  supply `$current_rankings` explicitly — and
+  `vaysf_results_desk_get_confirmed_pool_reviews()` (used by both the
+  coordinator QF Setup panel and `vaysf_results_desk_get_team_qf_candidate_teams()`)
+  is exactly such a caller. `vaysf_get_pool_progress_row()` only understands
+  real per-pool ids like "P1"; it has no concept of the cross-pool "ALL"
+  sentinel (Issue #329) and always returns null for it, so the comparison
+  ran against an empty ranking and read as stale unconditionally. Fixed by
+  special-casing the "ALL" pool_id in the fallback to compute current
+  rankings via `vaysf_results_desk_get_event_seeding_rankings()` instead.
+  Also cleaned up a stray `game_status = 'reported'` left on `BBM-Semi-1`
+  from the 1.0.84 data-repair session — that repair only reverted the
+  misattached `sf_results` row, not the schedule row's own status, which
+  would have made `vaysf_prewire_team_playoff_row()` wrongly treat it as
+  protected.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.86` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.87: Fixed a real double-booking bug found live on staging while
+  testing the coordinator QF Setup panel for the first time:
+  `BBM-QF-2`'s preview showed the same team (GAC) in both slots.
+  `vaysf_results_desk_default_team_qf_arrangement()` preferred whatever team
+  was already sitting in a QF row's `team_a_key`/`team_b_key` from an
+  earlier Apply over the fresh seed template, per-slot, whenever that team
+  was still a valid confirmed Top 8 candidate. `BBM-QF-2` had stale data
+  from a pre-#329 test (`MWC vs GAC`); `MWC` no longer qualified so slot A
+  fell back to the template (seed 4 = GAC), while slot B's still-valid
+  existing value (`GAC`) was kept as-is — landing GAC in both slots. This
+  wasn't only a stale-test-data problem: the same collision can happen with
+  real data any time re-seeding changes the Top 8 and an old row's
+  still-valid team happens to now overlap with the fresh template's pick for
+  a different slot, since the old per-row check has no way to see what
+  other rows already claimed. Fixed by dropping the "prefer existing row"
+  behavior entirely — the default arrangement is now built purely from the
+  fixed seed template, the same rule Bible Challenge's default already
+  follows. An operator who wants a specific arrangement uses the reorder
+  dropdowns (session-only, unchanged) exactly as with BC.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.87` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.88: Fixed a silent-miss bug in
+  `vaysf_apply_team_qf_playoff_preview()` (PR #327 review) — it looked up
+  the existing QF row by `game_key` alone, then updated it scoped to
+  `schedule_id AND schedule_version = $current_version`. If that row lived
+  on an older schedule version (event-day republish/version churn),
+  `$wpdb->update()` matched zero rows and returned `0`, not `false`, so the
+  handler recorded `action => 'updated'` even though the current-version QF
+  row was never created or touched. Now mirrors the version-mismatch guard
+  already used by `vaysf_apply_bible_challenge_playoff_preview()` and
+  `vaysf_prewire_team_playoff_row()`: look up by `game_key AND
+  schedule_version` together, and if that misses but a same-`game_key` row
+  exists on a different version, fail with an explicit
+  `vaysf_team_qf_apply_schedule_version_mismatch` error instead of
+  reporting a no-op update as success.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.88` and rebuilt `plugins/vaysf.zip`.
 
 ### Results Desk dead-code cleanup
 

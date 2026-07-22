@@ -3,7 +3,7 @@
  * Plugin Name: VAYSF Integration
  * Description: Vietnamese Alliance Youth Sports Fest integration with ChMeetings via REST API (works with external Windows middleware)
  *              - The middleware will run on a scheduled basis (once a day during slow period, but higher frequency during rush period before deadlines)
- * Version: 1.0.70
+ * Version: 1.0.88
  * Author: Bumble Ho
  * Text Domain: vaysf
  */
@@ -18,12 +18,12 @@ class VAYSF_Integration {
     /**
      * Plugin version
      */
-    const VERSION = '1.0.70';
+    const VERSION = '1.0.88';
 
     /**
      * Database version
      */
-    const DB_VERSION = '1.0.11';  // Issue #207 - schedule-versioned pool advancement confirmation table with review notes
+    const DB_VERSION = '1.0.12';  // Issue #329 - sf_coin_toss_flip table for BB/VB cross-pool QF seeding tiebreaks
     
     /**
      * Database version option name
@@ -152,7 +152,13 @@ class VAYSF_Integration {
         add_action('admin_post_vaysf_download_result_file', 'vaysf_download_result_file');
         add_action('admin_post_vaysf_download_results_manifest', 'vaysf_download_results_manifest');
         add_action('admin_post_vaysf_download_bible_verses_json', 'vaysf_download_bible_verses_json');
+        add_action('admin_post_vaysf_download_event_day_state_json', 'vaysf_download_event_day_state_json');
+        add_action('admin_post_vaysf_download_event_day_publish_zip', 'vaysf_download_event_day_publish_zip');
         add_action('admin_post_vaysf_confirm_pool_advancement', 'vaysf_handle_confirm_pool_advancement_request');
+        add_action('admin_post_vaysf_apply_bible_challenge_preview', 'vaysf_handle_apply_bible_challenge_preview_request');
+        add_action('admin_post_vaysf_apply_team_qf_preview', 'vaysf_handle_apply_team_qf_preview_request');
+        add_action('admin_post_vaysf_confirm_event_qf_seeding', 'vaysf_handle_confirm_event_qf_seeding_request');
+        add_action('admin_post_vaysf_flip_coin_toss', 'vaysf_handle_flip_coin_toss_request');
 
         // Seed the option-backed Bible verse store on fresh installs.
         vaysf_seed_bible_verse_rows_if_empty();
@@ -851,6 +857,33 @@ class VAYSF_Integration {
             $wpdb->query("ALTER TABLE {$table_pool_advancement} ADD UNIQUE KEY schedule_event_pool (schedule_version, event, pool_id)");
             error_log('Added schedule_event_pool unique index to sf_pool_advancement table');
         }
+
+        // Coin-toss flip audit log (Issue #329) — Basketball/Volleyball QF
+        // seeding tie-break of last resort. One row per pairwise flip: who
+        // called, what they called, the server-generated (fair, not
+        // human-flipped) result, and who won. Read by
+        // vaysf_results_desk_get_event_seeding_rankings() to resolve
+        // otherwise-tied pairs, and permanently retained as the audit trail
+        // even after a seeding snapshot is confirmed — never mutated or
+        // pruned by a re-confirm.
+        $table_coin_toss_flip = $wpdb->prefix . self::TABLE_PREFIX . 'coin_toss_flip';
+        $sql_coin_toss_flip = "CREATE TABLE $table_coin_toss_flip (
+            flip_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            schedule_version INT UNSIGNED NOT NULL DEFAULT 0,
+            event VARCHAR(100) NOT NULL,
+            team_a_key VARCHAR(64) NOT NULL,
+            team_b_key VARCHAR(64) NOT NULL,
+            call_by_key VARCHAR(64) NOT NULL,
+            call VARCHAR(10) NOT NULL,
+            result VARCHAR(10) NOT NULL,
+            winner_key VARCHAR(64) NOT NULL,
+            flipped_by_user_id BIGINT(20) UNSIGNED NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY  (flip_id),
+            KEY schedule_event (schedule_version, event),
+            KEY team_pair (team_a_key, team_b_key)
+        ) $charset_collate;";
+        dbDelta($sql_coin_toss_flip);
 
         // Check if photo_url column needs to be added to existing table
         $check_column = $wpdb->get_results("SHOW COLUMNS FROM {$table_participants} LIKE 'photo_url'");

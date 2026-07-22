@@ -11,6 +11,451 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+/**
+ * Return the requested event-day schedule version from an admin export request.
+ *
+ * @return int
+ */
+function vaysf_get_event_day_export_schedule_version_from_request() {
+    $schedule_version = isset($_GET['schedule_version']) && $_GET['schedule_version'] !== ''
+        ? absint($_GET['schedule_version'])
+        : (function_exists('vaysf_get_current_published_schedule_version') ? vaysf_get_current_published_schedule_version() : null);
+    $schedule_version = $schedule_version === null ? 0 : absint($schedule_version);
+    if (!$schedule_version) {
+        wp_die(esc_html__('No published schedule version is available to export.', 'vaysf'), 400);
+    }
+
+    return $schedule_version;
+}
+
+/**
+ * Fetch the live WordPress event-day schedule/results state as arrays.
+ *
+ * @param int $schedule_version Schedule version
+ * @return array<string,mixed>
+ */
+function vaysf_get_event_day_state_export_payload($schedule_version) {
+    global $wpdb;
+
+    $schedule_version = absint($schedule_version);
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $table_results = vaysf_get_table_name('results');
+    $table_revisions = vaysf_get_table_name('result_revisions');
+    $table_advancement = vaysf_get_table_name('pool_advancement');
+
+    $schedules = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT *
+                FROM $table_schedules
+                WHERE schedule_version = %d
+                ORDER BY scheduled_time IS NULL, scheduled_time, event, game_key, schedule_id",
+            $schedule_version
+        ),
+        ARRAY_A
+    );
+    if (!is_array($schedules)) {
+        $schedules = array();
+    }
+
+    $results = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT r.*
+                FROM $table_results r
+                INNER JOIN $table_schedules s ON s.schedule_id = r.schedule_id
+                WHERE s.schedule_version = %d
+                ORDER BY r.updated_at, r.result_id",
+            $schedule_version
+        ),
+        ARRAY_A
+    );
+    if (!is_array($results)) {
+        $results = array();
+    }
+
+    $result_revisions = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT rr.*
+                FROM $table_revisions rr
+                INNER JOIN $table_results r ON r.result_id = rr.result_id
+                INNER JOIN $table_schedules s ON s.schedule_id = r.schedule_id
+                WHERE s.schedule_version = %d
+                ORDER BY rr.submitted_at, rr.result_id, rr.revision_number",
+            $schedule_version
+        ),
+        ARRAY_A
+    );
+    if (!is_array($result_revisions)) {
+        $result_revisions = array();
+    }
+
+    $pool_advancement = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT *
+                FROM $table_advancement
+                WHERE schedule_version = %d
+                ORDER BY event, pool_id, advancement_id",
+            $schedule_version
+        ),
+        ARRAY_A
+    );
+    if (!is_array($pool_advancement)) {
+        $pool_advancement = array();
+    }
+
+    $status_counts = array();
+    foreach ($schedules as $row) {
+        $status = (string) ($row['game_status'] ?? 'scheduled');
+        if (!isset($status_counts[$status])) {
+            $status_counts[$status] = 0;
+        }
+        $status_counts[$status]++;
+    }
+    ksort($status_counts);
+
+    $payload = array(
+        'schema' => 'vaysf_event_day_state_export_v1',
+        'generated_at' => current_time('mysql'),
+        'generated_at_utc' => gmdate('Y-m-d H:i:s'),
+        'site_url' => site_url(),
+        'plugin_version' => defined('VAYSF_Integration::VERSION') ? VAYSF_Integration::VERSION : '',
+        'db_version' => defined('VAYSF_Integration::DB_VERSION') ? VAYSF_Integration::DB_VERSION : '',
+        'schedule_version' => $schedule_version,
+        'counts' => array(
+            'schedules' => count($schedules),
+            'results' => count($results),
+            'result_revisions' => count($result_revisions),
+            'pool_advancement' => count($pool_advancement),
+            'schedule_statuses' => $status_counts,
+        ),
+        'tables' => array(
+            'schedules' => $schedules,
+            'results' => $results,
+            'result_revisions' => $result_revisions,
+            'pool_advancement' => $pool_advancement,
+        ),
+    );
+
+    return $payload;
+}
+
+/**
+ * Download the live WordPress event-day schedule/results state as JSON.
+ *
+ * This is the operator-facing handoff from WordPress (live event source of
+ * truth) back to the local operations computer. It exports the selected or
+ * current published schedule version without transforming score payloads,
+ * so local tools can archive/import the exact WP state instead of rerunning
+ * the scheduler during Sports Fest.
+ *
+ * @return void
+ */
+function vaysf_download_event_day_state_json() {
+    if (!current_user_can('sf2025_admin')) {
+        wp_die(esc_html__('You are not authorized to export event-day state.', 'vaysf'), 403);
+    }
+    if (empty($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'vaysf_download_event_day_state_json')) {
+        wp_die(esc_html__('Invalid event-day export request.', 'vaysf'), 403);
+    }
+
+    $schedule_version = vaysf_get_event_day_export_schedule_version_from_request();
+    $payload = vaysf_get_event_day_state_export_payload($schedule_version);
+    $json = wp_json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        wp_die(esc_html__('Could not encode event-day state export.', 'vaysf'), 500);
+    }
+
+    $filename = sprintf('vaysf-event-day-state-v%d-%s.json', $schedule_version, date_i18n('Ymd-His'));
+    nocache_headers();
+    header('Content-Type: application/json; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . sanitize_file_name($filename) . '"');
+    echo $json;
+    exit;
+}
+
+/**
+ * Infer a schedule_input resource_type from the event name stored in WordPress.
+ *
+ * @param array<string,mixed> $row Schedule row
+ * @return string
+ */
+function vaysf_event_day_export_resource_type($row) {
+    $event = (string) ($row['event'] ?? '');
+    if (stripos($event, 'Basketball') !== false) {
+        return 'Basketball Court';
+    }
+    if (stripos($event, 'Volleyball') !== false) {
+        return 'Volleyball Court';
+    }
+    if (stripos($event, 'Soccer') !== false) {
+        return 'Soccer Field';
+    }
+    if (stripos($event, 'Bible Challenge') !== false) {
+        return 'BC Station';
+    }
+    if (stripos($event, 'Table Tennis') !== false) {
+        return 'Table Tennis Table';
+    }
+    if (stripos($event, 'Tennis') !== false) {
+        return 'Tennis Court';
+    }
+    if (stripos($event, 'Badminton') !== false) {
+        return 'Badminton Court';
+    }
+    if (stripos($event, 'Pickleball') !== false) {
+        return 'Pickleball Court';
+    }
+    if (stripos($event, 'Tug-of-war') !== false || stripos($event, 'Tug of war') !== false) {
+        return 'Tug-of-war';
+    }
+    if (stripos($event, 'Track') !== false) {
+        return 'Track & Field';
+    }
+
+    return $event !== '' ? $event : 'Event-Day Resource';
+}
+
+/**
+ * Infer a conservative game duration for exported schedule_input rows.
+ *
+ * @param array<string,mixed> $row Schedule row
+ * @return float
+ */
+function vaysf_event_day_export_duration_minutes($row) {
+    $event = (string) ($row['event'] ?? '');
+    if (stripos($event, 'Track') !== false || stripos($event, 'Tug-of-war') !== false || stripos($event, 'Tug of war') !== false) {
+        return 30.0;
+    }
+
+    return 60.0;
+}
+
+/**
+ * Parse a scheduler slot label into day/time parts.
+ *
+ * @param string $slot Slot such as Sat-2-20:30
+ * @return array{day:string,time:string}
+ */
+function vaysf_event_day_export_parse_slot($slot) {
+    $slot = trim((string) $slot);
+    if (preg_match('/^(.+)-(\d{1,2}:\d{2})$/', $slot, $matches)) {
+        return array('day' => $matches[1], 'time' => $matches[2]);
+    }
+
+    return array('day' => 'Event-Day', 'time' => '08:00');
+}
+
+/**
+ * Add minutes to a HH:MM time string, capped at 23:59 for contract validity.
+ *
+ * @param string $time HH:MM
+ * @param float $minutes Minutes to add
+ * @return string
+ */
+function vaysf_event_day_export_add_minutes($time, $minutes) {
+    $parts = explode(':', trim((string) $time));
+    $hour = isset($parts[0]) ? absint($parts[0]) : 8;
+    $minute = isset($parts[1]) ? absint($parts[1]) : 0;
+    $total = min(23 * 60 + 59, $hour * 60 + $minute + max(1, (int) ceil((float) $minutes)));
+
+    return sprintf('%02d:%02d', (int) floor($total / 60), $total % 60);
+}
+
+/**
+ * Convert live WordPress schedule rows into publish-schedule JSON artifacts.
+ *
+ * The resulting pair is intentionally a replay/export contract, not a full
+ * reconstruction of the original solver model. WordPress does not store the
+ * original venue availability, athlete conflict edges, or solver diagnostics.
+ *
+ * @param array<string,mixed> $state_payload Event-day state payload
+ * @return array{input:array<string,mixed>,output:array<string,mixed>}
+ */
+function vaysf_build_event_day_publish_artifacts($state_payload) {
+    $schedule_version = absint($state_payload['schedule_version'] ?? 0);
+    $rows = isset($state_payload['tables']['schedules']) && is_array($state_payload['tables']['schedules'])
+        ? $state_payload['tables']['schedules']
+        : array();
+
+    $games = array();
+    $assignments = array();
+    $resources_by_id = array();
+    $day_order = array();
+
+    foreach ($rows as $row) {
+        if (!is_array($row) || (string) ($row['game_status'] ?? '') === 'cancelled') {
+            continue;
+        }
+
+        $game_id = trim((string) ($row['game_key'] ?? ''));
+        if ($game_id === '') {
+            continue;
+        }
+
+        $duration = vaysf_event_day_export_duration_minutes($row);
+        $resource_type = vaysf_event_day_export_resource_type($row);
+        $resource_id = trim((string) ($row['resource_id'] ?? ''));
+        if ($resource_id === '') {
+            $resource_id = 'WP-UNASSIGNED-' . sanitize_key($game_id);
+        }
+        $slot = trim((string) ($row['scheduled_slot'] ?? ''));
+        if ($slot === '') {
+            $slot = 'Event-Day-08:00';
+        }
+        $parsed_slot = vaysf_event_day_export_parse_slot($slot);
+        $day_order[$parsed_slot['day']] = true;
+
+        $team_ids = array_values(array_filter(array(
+            trim((string) ($row['team_a_key'] ?? '')),
+            trim((string) ($row['team_b_key'] ?? '')),
+            trim((string) ($row['team_c_key'] ?? '')),
+        ), 'strlen'));
+
+        $round = isset($row['round_number']) && is_numeric($row['round_number'])
+            ? (int) $row['round_number']
+            : null;
+
+        $games[] = array(
+            'game_id' => $game_id,
+            'event' => (string) ($row['event'] ?? ''),
+            'stage' => (string) ($row['stage'] ?? ''),
+            'pool_id' => (string) ($row['pool_id'] ?? ''),
+            'round' => $round,
+            'duration_minutes' => $duration,
+            'resource_type' => $resource_type,
+            'team_a_id' => (string) ($row['team_a_key'] ?? ''),
+            'team_a_label' => (string) ($row['team_a_label'] ?? ''),
+            'team_b_id' => (string) ($row['team_b_key'] ?? ''),
+            'team_b_label' => (string) ($row['team_b_label'] ?? ''),
+            'team_c_id' => (string) ($row['team_c_key'] ?? ''),
+            'team_c_label' => (string) ($row['team_c_label'] ?? ''),
+            'team_ids' => $team_ids,
+            'x_wp_schedule_id' => absint($row['schedule_id'] ?? 0),
+            'x_wp_game_status' => (string) ($row['game_status'] ?? ''),
+        );
+
+        $assignments[] = array(
+            'game_id' => $game_id,
+            'resource_id' => $resource_id,
+            'slot' => $slot,
+            'event' => (string) ($row['event'] ?? ''),
+            'stage' => (string) ($row['stage'] ?? ''),
+            'team_a_id' => (string) ($row['team_a_key'] ?? ''),
+            'team_b_id' => (string) ($row['team_b_key'] ?? ''),
+            'team_c_id' => (string) ($row['team_c_key'] ?? ''),
+            'scheduled_location' => (string) ($row['scheduled_location'] ?? ''),
+        );
+
+        if (!isset($resources_by_id[$resource_id])) {
+            $resources_by_id[$resource_id] = array(
+                'resource_id' => $resource_id,
+                'resource_type' => $resource_type,
+                'day' => $parsed_slot['day'],
+                'open_time' => $parsed_slot['time'],
+                'close_time' => vaysf_event_day_export_add_minutes($parsed_slot['time'], $duration),
+                'slot_minutes' => max(15, (int) min(60, $duration)),
+                'label' => $resource_id,
+                'venue_name' => (string) ($row['scheduled_location'] ?? ''),
+                'x_event_day_export_stub' => true,
+            );
+        } elseif ($resources_by_id[$resource_id]['day'] === $parsed_slot['day']) {
+            if (strcmp($parsed_slot['time'], $resources_by_id[$resource_id]['open_time']) < 0) {
+                $resources_by_id[$resource_id]['open_time'] = $parsed_slot['time'];
+            }
+            $close_time = vaysf_event_day_export_add_minutes($parsed_slot['time'], $duration);
+            if (strcmp($close_time, $resources_by_id[$resource_id]['close_time']) > 0) {
+                $resources_by_id[$resource_id]['close_time'] = $close_time;
+            }
+        }
+    }
+
+    $metadata = array(
+        'source' => 'wordpress_event_day_export',
+        'schema' => 'vaysf_event_day_publish_bundle_v1',
+        'schedule_version' => $schedule_version,
+        'generated_at' => (string) ($state_payload['generated_at'] ?? ''),
+        'site_url' => (string) ($state_payload['site_url'] ?? ''),
+        'note' => 'Replay pair exported from WordPress event-day state. Resource rows are inferred stubs; keep the bundled vaysf-event-day-state JSON as the audit source.',
+    );
+
+    return array(
+        'input' => array(
+            'generated_at' => (string) ($state_payload['generated_at'] ?? ''),
+            'games' => $games,
+            'resources' => array_values($resources_by_id),
+            'playoff_slots' => array(),
+            'team_conflicts' => array(),
+            'precedence' => array(),
+            'day_order' => array_keys($day_order),
+            'approved_games' => $metadata,
+        ),
+        'output' => array(
+            'solved_at' => (string) ($state_payload['generated_at'] ?? ''),
+            'status' => 'FEASIBLE',
+            'assignments' => $assignments,
+            'unscheduled' => array(),
+            'approved_games' => $metadata,
+        ),
+    );
+}
+
+/**
+ * Download publish-schedule-compatible event-day JSON files as a ZIP bundle.
+ *
+ * @return void
+ */
+function vaysf_download_event_day_publish_zip() {
+    if (!current_user_can('sf2025_admin')) {
+        wp_die(esc_html__('You are not authorized to export event-day publish JSON.', 'vaysf'), 403);
+    }
+    if (empty($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'vaysf_download_event_day_publish_zip')) {
+        wp_die(esc_html__('Invalid event-day publish export request.', 'vaysf'), 403);
+    }
+    if (!class_exists('ZipArchive')) {
+        wp_die(esc_html__('The PHP ZipArchive extension is required to download the publish JSON bundle.', 'vaysf'), 500);
+    }
+
+    $schedule_version = vaysf_get_event_day_export_schedule_version_from_request();
+    $state_payload = vaysf_get_event_day_state_export_payload($schedule_version);
+    $artifacts = vaysf_build_event_day_publish_artifacts($state_payload);
+
+    $json_flags = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+    if (defined('JSON_PRESERVE_ZERO_FRACTION')) {
+        $json_flags |= JSON_PRESERVE_ZERO_FRACTION;
+    }
+
+    $input_json = wp_json_encode($artifacts['input'], $json_flags);
+    $output_json = wp_json_encode($artifacts['output'], $json_flags);
+    $state_json = wp_json_encode($state_payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($input_json === false || $output_json === false || $state_json === false) {
+        wp_die(esc_html__('Could not encode event-day publish export.', 'vaysf'), 500);
+    }
+
+    $zip_path = wp_tempnam('vaysf-event-day-publish-v' . $schedule_version . '.zip');
+    if (!$zip_path) {
+        wp_die(esc_html__('Could not create a temporary export file.', 'vaysf'), 500);
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($zip_path, ZipArchive::OVERWRITE) !== true) {
+        wp_delete_file($zip_path);
+        wp_die(esc_html__('Could not create the event-day publish ZIP.', 'vaysf'), 500);
+    }
+    $zip->addFromString('approved_schedule_input.json', $input_json);
+    $zip->addFromString('approved_schedule_output.json', $output_json);
+    $zip->addFromString(sprintf('vaysf-event-day-state-v%d.json', $schedule_version), $state_json);
+    $zip->close();
+
+    $filename = sprintf('vaysf-event-day-publish-v%d-%s.zip', $schedule_version, date_i18n('Ymd-His'));
+    nocache_headers();
+    header('Content-Type: application/zip');
+    header('Content-Disposition: attachment; filename="' . sanitize_file_name($filename) . '"');
+    header('Content-Length: ' . filesize($zip_path));
+    readfile($zip_path);
+    wp_delete_file($zip_path);
+    exit;
+}
+
 class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
 
     /**
@@ -363,9 +808,48 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
         $events = $wpdb->get_col("SELECT DISTINCT event FROM $table_schedules WHERE event IS NOT NULL AND event <> '' ORDER BY event");
         $versions = $wpdb->get_col("SELECT DISTINCT schedule_version FROM $table_schedules ORDER BY schedule_version DESC");
         $total_pages = max(1, (int) ceil($total_items / $per_page));
+        $current_schedule_version = function_exists('vaysf_get_current_published_schedule_version')
+            ? vaysf_get_current_published_schedule_version()
+            : null;
+        $export_schedule_version = $version_filter !== null
+            ? $version_filter
+            : ($current_schedule_version !== null ? absint($current_schedule_version) : 0);
+        $export_url = wp_nonce_url(
+            add_query_arg(
+                array(
+                    'action' => 'vaysf_download_event_day_state_json',
+                    'schedule_version' => $export_schedule_version,
+                ),
+                admin_url('admin-post.php')
+            ),
+            'vaysf_download_event_day_state_json'
+        );
+        $publish_export_url = wp_nonce_url(
+            add_query_arg(
+                array(
+                    'action' => 'vaysf_download_event_day_publish_zip',
+                    'schedule_version' => $export_schedule_version,
+                ),
+                admin_url('admin-post.php')
+            ),
+            'vaysf_download_event_day_publish_zip'
+        );
         ?>
         <div class="wrap">
-            <h1>Schedules <a href="<?php echo esc_url(admin_url('admin.php?page=vaysf-schedules&action=new')); ?>" class="page-title-action">Add New</a></h1>
+            <h1>
+                Schedules
+                <a href="<?php echo esc_url(admin_url('admin.php?page=vaysf-schedules&action=new')); ?>" class="page-title-action">Add New</a>
+                <?php if ($export_schedule_version) : ?>
+                    <a href="<?php echo esc_url($publish_export_url); ?>" class="page-title-action">Export Publish JSON ZIP</a>
+                    <a href="<?php echo esc_url($export_url); ?>" class="page-title-action">Export State JSON</a>
+                <?php endif; ?>
+            </h1>
+            <?php if ($export_schedule_version) : ?>
+                <p class="description">
+                    Publish ZIP downloads `approved_schedule_input.json` and `approved_schedule_output.json` reconstructed from WordPress schedule version
+                    <?php echo esc_html($export_schedule_version); ?> for local middleware replay. State JSON downloads the raw schedules, results, revisions, and pool confirmations backup.
+                </p>
+            <?php endif; ?>
             <form method="get" class="tablenav top">
                 <input type="hidden" name="page" value="vaysf-schedules">
                 <select name="event">

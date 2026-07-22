@@ -24,7 +24,7 @@ $tabs = array(
     'submitted' => esc_html__('Submitted Today', 'vaysf'),
     'assigned' => esc_html__('Assigned Games', 'vaysf'),
 );
-if (!isset($tabs[$view])) {
+if ($view !== 'qf-setup' && !isset($tabs[$view])) {
     $view = 'needs';
 }
 
@@ -526,6 +526,49 @@ if (!$vaysf_rendering_shortcode) {
             color: #1d4ed8;
             text-decoration: none;
         }
+        .vaysf-qf-setup-section h2 {
+            font-size: 1.35rem;
+            margin: 0 0 4px;
+        }
+        .vaysf-playoff-assignment-form,
+        .vaysf-playoff-apply-form {
+            background: #f9f9f9;
+            border: 1px solid #dcdcde;
+            border-radius: 4px;
+            margin: 12px 0;
+            padding: 10px;
+        }
+        .vaysf-playoff-apply-form {
+            background: #fff8e5;
+            border-color: #dba617;
+        }
+        .vaysf-playoff-assignment-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            margin-bottom: 10px;
+        }
+        .vaysf-playoff-assignment-grid fieldset {
+            border: 1px solid #dcdcde;
+            border-radius: 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 220px;
+            padding: 8px;
+        }
+        .vaysf-playoff-assignment-grid legend {
+            font-weight: 600;
+            padding: 0 4px;
+        }
+        .vaysf-playoff-assignment-grid label {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .vaysf-qf-setup-section .vaysf-playoff-preview-table td:nth-child(3) {
+            min-width: 220px;
+        }
         @media (max-width: 640px) {
             .vaysf-score-entry-dashboard {
                 margin: 16px auto !important;
@@ -577,6 +620,7 @@ if (!$vaysf_rendering_shortcode) {
         $user_id = get_current_user_id();
         $has_all_event_access = vaysf_user_has_all_score_entry_events($user_id);
         $authorized_events = vaysf_get_user_score_entry_events($user_id);
+        $qf_setup_events = vaysf_get_user_team_qf_setup_events($user_id);
         $current_version = vaysf_get_current_published_schedule_version();
         $selected_event = in_array($requested_event, $authorized_events, true) ? $requested_event : '';
         $row_sets = array(
@@ -862,7 +906,27 @@ if (!$vaysf_rendering_shortcode) {
                         (<?php echo esc_html(count($row_sets[$tab_key])); ?>)
                     </a>
                 <?php endforeach; ?>
+                <?php if ($qf_setup_events) : ?>
+                    <a
+                        href="<?php echo esc_url(vaysf_get_coordinator_score_entry_url('qf-setup', $selected_event)); ?>"
+                        class="<?php echo $view === 'qf-setup' ? 'is-active' : ''; ?>"
+                        role="tab"
+                        aria-selected="<?php echo $view === 'qf-setup' ? 'true' : 'false'; ?>"
+                    >
+                        <?php esc_html_e('QF Setup', 'vaysf'); ?>
+                    </a>
+                <?php endif; ?>
             </div>
+
+            <?php if ($view === 'qf-setup') : ?>
+                <?php if (!$qf_setup_events) : ?>
+                    <div class="vaysf-score-entry-notice">
+                        <p><?php esc_html_e('No Basketball or Volleyball events are assigned to your coordinator account.', 'vaysf'); ?></p>
+                    </div>
+                <?php else : ?>
+                    <?php vaysf_render_coordinator_qf_setup_panel($qf_setup_events); ?>
+                <?php endif; ?>
+            <?php else : ?>
 
             <p class="vaysf-score-entry-event-list">
                 <?php
@@ -966,6 +1030,7 @@ if (!$vaysf_rendering_shortcode) {
                         <?php endif; ?>
                     </article>
                 <?php endforeach; ?>
+            <?php endif; ?>
             <?php endif; ?>
             <?php endif; ?>
         <?php endif; ?>
