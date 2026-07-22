@@ -397,6 +397,36 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
 - Bumped plugin header/version to `1.0.88` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.89: Fixed a real 403 found live on staging while retesting the
+  Coordinator Score Entry dashboard end-to-end for issue #331 (coordinator
+  self-service walkthroughs for Bible Challenge/Basketball/Volleyball): a
+  Bible Challenge coordinator clicking their own "Re-confirm Top 9" button
+  (rendered by the shared Pools Progress table on the Coordinator dashboard,
+  same as on the Results Desk) hit a bare "You are not authorized to confirm
+  pool advancement" `wp_die()`. `vaysf_handle_confirm_pool_advancement_request()`
+  had never been updated past `vaysf_user_can_view_results_desk()` when 1.0.85
+  gave coordinators the rest of this workflow, so the button the coordinator
+  dashboard displays and the handler the form posts to disagreed about who
+  could use it. Added `vaysf_user_can_confirm_pool_review()` (access.php),
+  matching the existing `vaysf_user_can_manage_team_qf_schedule()` pattern
+  (Results-Desk-capable OR `sf2025_submit_results`), and scoped non-Results-Desk
+  users to their own authorized events via `vaysf_get_user_score_entry_events()`
+  — the same event-scoping already used for QF Apply — so a Volleyball-only
+  coordinator still can't confirm Basketball's pool review by guessing POST
+  fields. The event-wide "Confirm All Pools for QF Seeding" action (ranking +
+  coin toss) is unaffected and stays Results-Desk-only by design.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Included this fix in the `1.0.89` plugin package.
+- Hotfix 1.0.89: Refactored `plugins/vaysf/includes/results-desk.php`
+  for issue #333 into focused `includes/results-desk/` modules:
+  access/shared helpers, pool progress/ranking, BB/VB QF seeding,
+  playoff preview, rendering, and admin-post actions. The original
+  `results-desk.php` is now a thin loader/facade so existing hooks,
+  shortcodes, and function names remain stable.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.89` and rebuilt `plugins/vaysf.zip`.
 
 ### Results Desk dead-code cleanup
 
