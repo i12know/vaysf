@@ -518,6 +518,14 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   coordinators assigned to that exact event. Once confirmed, the existing
   preview/reorder/Apply flow unlocks without manager/admin help.
 - Bumped plugin header/version to `1.0.93` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.94: Fixed the Volleyball-Men QF setup blocker found live on the
+  fresh 1.0.93 staging retest. The event's Top 8 QF seeds were already stable,
+  but unresolved coin-toss groups entirely below the advancing cutoff still
+  rendered Flip coin forms and blocked "Confirm All Pools for QF Seeding."
+  QF confirmation now only requires coin-toss resolution for unresolved groups
+  touching seed slots 1-8, while lower-table unresolved ties remain visible as
+  diagnostics and no longer block the coordinator from setting up the bracket.
+- Bumped plugin header/version to `1.0.94` and rebuilt `plugins/vaysf.zip`.
 
 ### Results Desk dead-code cleanup
 

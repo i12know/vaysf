@@ -414,6 +414,9 @@ function vaysf_results_desk_resolve_seeding_group_numeric($group, $field, $head_
                     $ordered[] = $by_key[$key];
                 }
             } else {
+                foreach ($sub_group as $team) {
+                    $ordered[] = $team;
+                }
                 $unresolved_groups[] = $sub_keys;
             }
         }
@@ -432,7 +435,7 @@ function vaysf_results_desk_resolve_seeding_group_numeric($group, $field, $head_
  *
  * @param string $event Schedule event name
  * @param int $schedule_version Published schedule version
- * @return array<string,mixed> {sport_type, complete, pools_complete, rankings, fully_resolved, unresolved_groups}
+ * @return array<string,mixed> {sport_type, complete, pools_complete, rankings, fully_resolved, unresolved_groups, qf_fully_resolved, qf_unresolved_groups}
  */
 function vaysf_results_desk_get_event_seeding_rankings($event, $schedule_version) {
     $sport_type = vaysf_results_desk_seeding_sport_type($event);
@@ -497,6 +500,24 @@ function vaysf_results_desk_get_event_seeding_rankings($event, $schedule_version
         $ordered[$index]['needs_coin_toss'] = !empty($unresolved_keys[$team['team_key']]);
     }
 
+    $qf_seed_keys = array();
+    foreach ($ordered as $index => $team) {
+        if ($index >= 8) {
+            break;
+        }
+        $qf_seed_keys[$team['team_key']] = true;
+    }
+
+    $qf_unresolved_groups = array();
+    foreach ($unresolved_groups as $group_keys) {
+        foreach ($group_keys as $key) {
+            if (!empty($qf_seed_keys[$key])) {
+                $qf_unresolved_groups[] = $group_keys;
+                break;
+            }
+        }
+    }
+
     return array(
         'sport_type' => $sport_type,
         'complete' => $complete,
@@ -504,6 +525,8 @@ function vaysf_results_desk_get_event_seeding_rankings($event, $schedule_version
         'rankings' => $ordered,
         'fully_resolved' => empty($unresolved_groups),
         'unresolved_groups' => $unresolved_groups,
+        'qf_fully_resolved' => empty($qf_unresolved_groups),
+        'qf_unresolved_groups' => $qf_unresolved_groups,
     );
 }
 
@@ -535,9 +558,9 @@ function vaysf_confirm_event_qf_seeding($user_id, $event, $schedule_version = nu
     if (empty($seeding['complete'])) {
         return new WP_Error('vaysf_qf_seeding_incomplete', __('Every pool for this event must be fully reported before confirming QF seeding.', 'vaysf'));
     }
-    if (empty($seeding['fully_resolved'])) {
+    if (empty($seeding['qf_fully_resolved'])) {
         $pending = array();
-        foreach ($seeding['unresolved_groups'] as $group) {
+        foreach ($seeding['qf_unresolved_groups'] as $group) {
             $pending[] = implode(' vs ', $group);
         }
         return new WP_Error(

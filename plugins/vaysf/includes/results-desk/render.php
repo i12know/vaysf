@@ -322,11 +322,12 @@ function vaysf_render_results_desk_event_qf_seeding_panel($event, $schedule_vers
             </table>
         <?php endif; ?>
 
-        <?php foreach ($seeding['unresolved_groups'] as $group_keys) : ?>
+        <?php $qf_unresolved_groups = $seeding['qf_unresolved_groups'] ?? $seeding['unresolved_groups']; ?>
+        <?php foreach ($qf_unresolved_groups as $group_keys) : ?>
             <?php vaysf_render_results_desk_coin_toss_form($event, $schedule_version, $group_keys, $seeding['rankings'], $return_url); ?>
         <?php endforeach; ?>
 
-        <?php if (!empty($seeding['complete']) && !empty($seeding['fully_resolved']) && !empty($seeding['rankings'])) : ?>
+        <?php if (!empty($seeding['complete']) && !empty($seeding['qf_fully_resolved']) && !empty($seeding['rankings'])) : ?>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="vaysf_confirm_event_qf_seeding">
                 <input type="hidden" name="event" value="<?php echo esc_attr($event); ?>">
