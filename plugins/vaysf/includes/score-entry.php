@@ -612,6 +612,8 @@ function vaysf_is_simple_score_schedule($schedule) {
 
     return !empty($schedule_row['team_a_key'])
         && !empty($schedule_row['team_b_key'])
+        && !vaysf_is_playoff_placeholder_team_key($schedule_row['team_a_key'])
+        && !vaysf_is_playoff_placeholder_team_key($schedule_row['team_b_key'])
         && empty($schedule_row['team_c_key']);
 }
 
@@ -656,6 +658,8 @@ function vaysf_is_volleyball_score_schedule($schedule) {
 
     return !empty($schedule_row['team_a_key'])
         && !empty($schedule_row['team_b_key'])
+        && !vaysf_is_playoff_placeholder_team_key($schedule_row['team_a_key'])
+        && !vaysf_is_playoff_placeholder_team_key($schedule_row['team_b_key'])
         && empty($schedule_row['team_c_key']);
 }
 
@@ -847,6 +851,7 @@ function vaysf_get_result_fallbacks_for_schedule_rows($schedule_rows) {
     $table_schedules = vaysf_get_table_name('schedules');
     $candidate_rows = $wpdb->get_results(
         "SELECT r.*, s_hist.game_key AS historical_game_key, s_hist.event AS historical_event,
+            s_hist.published_at AS historical_published_at,
             s_hist.team_a_key AS historical_team_a_key,
             s_hist.team_a_label AS historical_team_a_label,
             s_hist.team_b_key AS historical_team_b_key,
@@ -869,6 +874,24 @@ function vaysf_get_result_fallbacks_for_schedule_rows($schedule_rows) {
 
     $matches = array();
     foreach ($candidate_rows as $candidate) {
+        // A result is only a fallback candidate for a *different* schedule
+        // row when its own current schedule_id is genuinely orphaned — gone,
+        // or no longer published (e.g. after a republish retired that row).
+        // Without this gate, two teams simply rematching later in the event
+        // (a pool game, then a QF/Semi/Final against the same opponent) is
+        // indistinguishable from "this schedule_id was replaced," and a
+        // live, currently-published result belonging to one game (e.g. a
+        // pool match) would be found and effectively stolen — its
+        // schedule_id reassigned — the moment anyone opened score entry for
+        // the *other* game between the same two teams. This actually
+        // happened on 2026-07-21 staging: a real prelim BBM-02 (RPC vs MWC)
+        // result got its schedule_id silently moved onto the newly-created
+        // BBM-Semi-1 (also RPC vs MWC) the first time its score-entry form
+        // was opened, because the two teams matched.
+        if (!empty($candidate['historical_published_at'])) {
+            continue;
+        }
+
         $decoded = json_decode($candidate['score_json'] ?? '', true);
         if (!is_array($decoded)) {
             $decoded = array();
@@ -1320,6 +1343,321 @@ function vaysf_get_score_form_url_by_game_key($schedule, $view = 'assigned', $ev
 }
 
 /**
+ * Check whether a schedule team key is a playoff winner or loser placeholder
+ * (Issue #329 added LOSE-* alongside the original WIN-* for 3rd-place
+ * matches, which need the losing side of a Semifinal rather than the
+ * winning side).
+ *
+ * @param string $team_key Schedule team key
+ * @return bool
+ */
+function vaysf_is_playoff_placeholder_team_key($team_key) {
+    return (bool) preg_match('/^(WIN|LOSE)-[A-Za-z0-9_-]+$/', trim((string) $team_key));
+}
+
+/**
+ * Return every downstream slot that should be filled once a playoff game is
+ * decided: always the winner's target, and — for a two-team Semifinal only —
+ * also the loser's target into the 3rd-Place match (Issue #329; the
+ * 3rd-place match is always on the schedule, so every Semifinal has one).
+ * Bible Challenge's 3-team BC-Semi-N has no 3rd-place match and no
+ * well-defined "loser" for a 3-team pod, so it only ever gets a winner
+ * target, unchanged from before #329.
+ *
+ * @param string $game_key Source game key, e.g. BBM-QF-1 or VBM-Semi-2
+ * @return array<int,array{game_key:string,slot:string,for:string}> Zero or more targets
+ */
+function vaysf_get_playoff_advancement_targets($game_key) {
+    $game_key = sanitize_text_field($game_key);
+    $targets = array();
+
+    if (preg_match('/^BC-Semi-(\d+)$/', $game_key, $matches)) {
+        $semi_number = absint($matches[1]);
+        if (!in_array($semi_number, array(1, 2, 3), true)) {
+            return $targets;
+        }
+
+        $bc_final_slots = array(1 => 'a', 2 => 'b', 3 => 'c');
+        $targets[] = array('game_key' => 'BC-Final', 'slot' => $bc_final_slots[$semi_number], 'for' => 'winner');
+        return $targets;
+    }
+
+    if (preg_match('/^(.+)-QF-(\d+)$/', $game_key, $matches)) {
+        $qf_number = absint($matches[2]);
+        if ($qf_number < 1) {
+            return $targets;
+        }
+
+        $targets[] = array(
+            'game_key' => $matches[1] . '-Semi-' . (int) ceil($qf_number / 2),
+            'slot' => ($qf_number % 2) === 1 ? 'a' : 'b',
+            'for' => 'winner',
+        );
+        return $targets;
+    }
+
+    if (preg_match('/^(.+)-Semi-(\d+)$/', $game_key, $matches)) {
+        $semi_number = absint($matches[2]);
+        if (!in_array($semi_number, array(1, 2), true)) {
+            return $targets;
+        }
+
+        $prefix = $matches[1];
+        $slot = $semi_number === 1 ? 'a' : 'b';
+        $targets[] = array('game_key' => $prefix . '-Final', 'slot' => $slot, 'for' => 'winner');
+        $targets[] = array('game_key' => $prefix . '-3rd-Place', 'slot' => $slot, 'for' => 'loser');
+        return $targets;
+    }
+
+    return $targets;
+}
+
+/**
+ * Return team metadata from a source schedule row by team key.
+ *
+ * @param array<string,mixed> $schedule Source schedule row
+ * @param string $team_key Winner team key
+ * @return array<string,string>|null
+ */
+function vaysf_get_schedule_team_metadata($schedule, $team_key) {
+    $team_key = trim((string) $team_key);
+    if ($team_key === '') {
+        return null;
+    }
+
+    foreach (array('a', 'b', 'c') as $slot) {
+        if (trim((string) ($schedule["team_{$slot}_key"] ?? '')) !== $team_key) {
+            continue;
+        }
+
+        $label = trim((string) ($schedule["team_{$slot}_label"] ?? ''));
+        $church = trim((string) ($schedule["team_{$slot}_church_code"] ?? ''));
+        if ($church === '') {
+            $church = vaysf_extract_church_code_from_team_value($team_key);
+        }
+        if ($church === '' && $label !== '') {
+            $church = vaysf_extract_church_code_from_team_value($label);
+        }
+
+        return array(
+            'key' => $team_key,
+            'label' => $label !== '' ? $label : $team_key,
+            'church_code' => $church,
+        );
+    }
+
+    return null;
+}
+
+/**
+ * Return whether a next-round schedule row is safe for automatic advancement.
+ *
+ * @param array<string,mixed> $row Target schedule row
+ * @return bool
+ */
+function vaysf_can_auto_update_playoff_target_row($row) {
+    if (!$row) {
+        return false;
+    }
+
+    $status = sanitize_text_field($row['game_status'] ?? '');
+    if (in_array($status, array('reported', 'official', 'under_review'), true)) {
+        return false;
+    }
+
+    if (!empty($row['schedule_id']) && vaysf_get_result_for_schedule(absint($row['schedule_id']))) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Return whether a schedule row already has protected status or a score result.
+ *
+ * @param array<string,mixed>|null $row Schedule row
+ * @return bool
+ */
+function vaysf_schedule_row_has_protected_result($row) {
+    if (!$row || !is_array($row)) {
+        return false;
+    }
+
+    $status = sanitize_text_field($row['game_status'] ?? '');
+    if (in_array($status, array('reported', 'official', 'under_review'), true)) {
+        return true;
+    }
+
+    if (!empty($row['result_id']) || trim((string) ($row['score_json'] ?? '')) !== '') {
+        return true;
+    }
+
+    return !empty($row['schedule_id']) && (bool) vaysf_get_result_for_schedule(absint($row['schedule_id']));
+}
+
+/**
+ * Rebuild team_ids_json from a schedule row plus pending slot updates.
+ *
+ * @param array<string,mixed> $row Existing schedule row
+ * @param array<string,string> $data Pending update data
+ * @return string|false
+ */
+function vaysf_build_schedule_team_ids_json($row, $data = array()) {
+    $keys = array();
+    foreach (array('team_a_key', 'team_b_key', 'team_c_key') as $field) {
+        $key = array_key_exists($field, $data) ? $data[$field] : ($row[$field] ?? '');
+        $key = trim((string) $key);
+        if ($key !== '') {
+            $keys[] = $key;
+        }
+    }
+
+    return wp_json_encode($keys);
+}
+
+/**
+ * Advance a reported playoff result into every prewired downstream row it
+ * feeds: always the winner's target, and — for a Semifinal — also the
+ * loser's target into the 3rd-Place match (Issue #329). Each target is
+ * independent: if the 3rd-place row is missing or protected, that must not
+ * block the winner from advancing to the Final, and vice versa, so this
+ * delegates each target to vaysf_advance_playoff_participant_into_target()
+ * separately rather than failing the whole call on one target's problem.
+ *
+ * @param array<string,mixed> $schedule Source schedule row
+ * @param array<int,string> $winner_keys Winner keys from the submitted result
+ * @return array<string,mixed>|array<int,array<string,mixed>|WP_Error>
+ */
+function vaysf_apply_playoff_advancement_from_result($schedule, $winner_keys) {
+    $game_key = sanitize_text_field($schedule['game_key'] ?? '');
+    $schedule_version = absint($schedule['schedule_version'] ?? 0);
+    $winner_keys = array_values(array_filter(array_map('sanitize_text_field', (array) $winner_keys)));
+    if ($game_key === '' || !$schedule_version || count($winner_keys) !== 1) {
+        return array('advanced' => false, 'reason' => 'not_single_winner');
+    }
+
+    $targets = vaysf_get_playoff_advancement_targets($game_key);
+    if (!$targets) {
+        return array('advanced' => false, 'reason' => 'not_playoff_source');
+    }
+
+    $winner = vaysf_get_schedule_team_metadata($schedule, $winner_keys[0]);
+    if ($winner === null) {
+        return new WP_Error('vaysf_playoff_advancement_unknown_winner', __('The winning team was not found on the source schedule row.', 'vaysf'));
+    }
+
+    $loser = null;
+    foreach (array('team_a_key', 'team_b_key') as $field) {
+        $candidate_key = trim((string) ($schedule[$field] ?? ''));
+        if ($candidate_key !== '' && $candidate_key !== $winner['key']) {
+            $loser = vaysf_get_schedule_team_metadata($schedule, $candidate_key);
+            break;
+        }
+    }
+
+    $advancements = array();
+    foreach ($targets as $target) {
+        $participant = ($target['for'] === 'loser') ? $loser : $winner;
+        if ($participant === null) {
+            $advancements[] = array('advanced' => false, 'reason' => 'participant_unknown', 'target_game_key' => $target['game_key'], 'for' => $target['for']);
+            continue;
+        }
+        $advancements[] = vaysf_advance_playoff_participant_into_target($schedule, $schedule_version, $game_key, $target, $participant);
+    }
+
+    // Preserve the single-result contract for the common (BC-Semi/QF) case
+    // with exactly one target; return the full list only for a Semifinal,
+    // which produces two independent advancements (winner + loser). The one
+    // caller (vaysf_persist_score_result()) only checks is_wp_error() on
+    // whatever comes back, so it handles both shapes.
+    return count($advancements) === 1 ? $advancements[0] : $advancements;
+}
+
+/**
+ * Advance one participant (winner or loser) into one prewired target slot.
+ * Extracted from vaysf_apply_playoff_advancement_from_result() so each of a
+ * Semifinal's two advancements (winner into Final, loser into 3rd-Place) can
+ * succeed or fail independently.
+ *
+ * @param array<string,mixed> $schedule Source schedule row
+ * @param int $schedule_version
+ * @param string $source_game_key
+ * @param array{game_key:string,slot:string,for:string} $target
+ * @param array<string,string> $participant From vaysf_get_schedule_team_metadata()
+ * @return array<string,mixed>|WP_Error
+ */
+function vaysf_advance_playoff_participant_into_target($schedule, $schedule_version, $source_game_key, $target, $participant) {
+    global $wpdb;
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $target_row = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT * FROM $table_schedules WHERE game_key = %s AND schedule_version = %d",
+            $target['game_key'],
+            $schedule_version
+        ),
+        ARRAY_A
+    );
+    if (!$target_row) {
+        return array('advanced' => false, 'reason' => 'target_missing', 'target_game_key' => $target['game_key']);
+    }
+    if (!vaysf_can_auto_update_playoff_target_row($target_row)) {
+        return array('advanced' => false, 'reason' => 'target_protected', 'target_game_key' => $target['game_key']);
+    }
+
+    $slot = $target['slot'];
+    $placeholder_key = ($target['for'] === 'loser' ? 'LOSE-' : 'WIN-') . $source_game_key;
+    $slot_key_field = "team_{$slot}_key";
+    $slot_label_field = "team_{$slot}_label";
+    $slot_church_field = "team_{$slot}_church_code";
+    $current_slot_key = trim((string) ($target_row[$slot_key_field] ?? ''));
+    $source_participant_keys = array_filter(array(
+        trim((string) ($schedule['team_a_key'] ?? '')),
+        trim((string) ($schedule['team_b_key'] ?? '')),
+        trim((string) ($schedule['team_c_key'] ?? '')),
+    ));
+
+    if ($current_slot_key !== $placeholder_key && !in_array($current_slot_key, $source_participant_keys, true)) {
+        return array('advanced' => false, 'reason' => 'slot_not_owned_by_source', 'target_game_key' => $target['game_key']);
+    }
+
+    $data = array(
+        $slot_key_field => $participant['key'],
+        $slot_label_field => $participant['label'],
+        $slot_church_field => $participant['church_code'],
+        'updated_at' => current_time('mysql'),
+    );
+    $team_ids_json = vaysf_build_schedule_team_ids_json($target_row, $data);
+    if ($team_ids_json === false) {
+        return new WP_Error('vaysf_playoff_advancement_json_failed', __('Could not encode the advanced team ids.', 'vaysf'));
+    }
+    $data['team_ids_json'] = $team_ids_json;
+
+    $updated = $wpdb->update(
+        $table_schedules,
+        $data,
+        array(
+            'schedule_id' => absint($target_row['schedule_id']),
+            'schedule_version' => $schedule_version,
+        ),
+        array('%s', '%s', '%s', '%s', '%s'),
+        array('%d', '%d')
+    );
+    if ($updated === false) {
+        return new WP_Error('vaysf_playoff_advancement_update_failed', __('Could not advance the playoff result to the next row.', 'vaysf'));
+    }
+
+    return array(
+        'advanced' => true,
+        'source_game_key' => $source_game_key,
+        'target_game_key' => $target['game_key'],
+        'target_slot' => $slot,
+        'for' => $target['for'],
+        'participant_key' => $participant['key'],
+    );
+}
+
+/**
  * Persist a score payload to the current result row and append a revision.
  *
  * @param int $user_id WordPress user id
@@ -1468,6 +1806,19 @@ function vaysf_persist_score_result($user_id, $schedule, $score_payload, $winner
     }
 
     $wpdb->query('COMMIT');
+
+    $advancement = vaysf_apply_playoff_advancement_from_result($schedule, $winner_keys);
+    // A Semifinal returns two independent advancements (winner into Final,
+    // loser into 3rd-Place, Issue #329); anything else returns one. Log
+    // every WP_Error found in either shape rather than only checking the
+    // top level, so a 3rd-place advancement failure is never silently lost
+    // just because the winner's advancement into the Final succeeded.
+    foreach ((is_wp_error($advancement) || isset($advancement['advanced'])) ? array($advancement) : $advancement as $one_advancement) {
+        if (is_wp_error($one_advancement)) {
+            error_log('VAYSF playoff advancement failed after score submit: ' . $one_advancement->get_error_message());
+        }
+    }
+
     return array(
         'result_id' => $result_id,
         'revision_id' => $revision_id,
@@ -2068,7 +2419,7 @@ function vaysf_get_coordinator_score_pool_progress_rows($user_id, $event_filter 
  */
 function vaysf_get_coordinator_score_entry_url($view = 'assigned', $event_filter = '') {
     $view = sanitize_key($view);
-    if (!in_array($view, array('needs', 'submitted', 'assigned'), true)) {
+    if (!in_array($view, array('needs', 'submitted', 'assigned', 'qf-setup'), true)) {
         $view = 'assigned';
     }
 
@@ -2079,6 +2430,161 @@ function vaysf_get_coordinator_score_entry_url($view = 'assigned', $event_filter
     }
 
     return add_query_arg($args, site_url('coordinator-score-entry'));
+}
+
+/**
+ * Return the coordinator's authorized events that support cross-pool QF
+ * seeding (Basketball/Volleyball) — used to decide whether the "QF Setup"
+ * tab appears on the Coordinator Score Entry dashboard at all.
+ *
+ * @param int $user_id
+ * @return array<int,string>
+ */
+function vaysf_get_user_team_qf_setup_events($user_id) {
+    $events = vaysf_get_user_score_entry_events($user_id);
+    return array_values(array_filter($events, function ($event) {
+        return vaysf_results_desk_seeding_sport_type($event) !== null;
+    }));
+}
+
+/**
+ * Render the Coordinator Score Entry "QF Setup" panel: lets a coordinator
+ * preview, reassign, and Apply the Basketball/Volleyball QF bracket for
+ * their authorized events, once a Sports Fest manager has already confirmed
+ * QF seeding in the Results Desk. Confirming seeding itself and the
+ * coin-toss flow stay Results-Desk-only —
+ * vaysf_user_can_manage_team_qf_schedule() only broadens preview/Apply, not
+ * the seeding confirmation that has to happen first.
+ *
+ * @param array<int,string> $events Events to show (already filtered to BB/VB + authorized)
+ * @return void
+ */
+function vaysf_render_coordinator_qf_setup_panel($events) {
+    if (!$events) {
+        return;
+    }
+
+    $current_version = vaysf_get_current_published_schedule_version();
+    if ($current_version === null) {
+        ?>
+        <div class="vaysf-score-entry-notice">
+            <p><?php esc_html_e('No published Sports Fest schedule is available yet.', 'vaysf'); ?></p>
+        </div>
+        <?php
+        return;
+    }
+
+    foreach ($events as $event) {
+        $event_return_url = vaysf_get_coordinator_score_entry_url('qf-setup', $event);
+        ?>
+        <section class="vaysf-score-entry-pool-section vaysf-qf-setup-section">
+            <h2>
+                <?php echo esc_html($event); ?>
+                <?php if (function_exists('vaysf_render_results_desk_tooltip')) : ?>
+                    <?php vaysf_render_results_desk_tooltip('?', __('Preview from the QF seeding a Sports Fest manager already confirmed. On its own it does not create, update, or delete schedule rows.', 'vaysf')); ?>
+                <?php endif; ?>
+            </h2>
+            <?php
+            $reviews = vaysf_results_desk_get_confirmed_pool_reviews($event, $current_version);
+            $schedule_rows = vaysf_results_desk_get_playoff_schedule_rows($event, $current_version);
+            $preview = vaysf_results_desk_build_team_qf_preview($event, $reviews, $schedule_rows);
+            $preview['event'] = $event;
+            $preview['schedule_version'] = absint($current_version);
+            ?>
+            <?php if (!empty($preview['warnings']) && is_array($preview['warnings'])) : ?>
+                <div class="vaysf-score-entry-notice">
+                    <?php foreach ($preview['warnings'] as $warning) : ?>
+                        <p><?php echo esc_html($warning); ?></p>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if (empty($preview['can_customize'])) : ?>
+                <div class="vaysf-score-entry-notice">
+                    <p><?php esc_html_e('Ask a Sports Fest manager to confirm QF seeding for this event in the Results Desk before setting up the bracket here.', 'vaysf'); ?></p>
+                </div>
+            <?php else : ?>
+                <?php vaysf_render_coordinator_team_qf_reorder_form($preview, $event); ?>
+
+                <table class="vaysf-results-desk-table vaysf-playoff-preview-table">
+                    <thead>
+                        <tr>
+                            <th><?php esc_html_e('Expected Row', 'vaysf'); ?></th>
+                            <th><?php esc_html_e('Current Schedule', 'vaysf'); ?></th>
+                            <th><?php esc_html_e('Preview Labels', 'vaysf'); ?></th>
+                            <th><?php esc_html_e('Operator Note', 'vaysf'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($preview['rows'] as $row) : ?>
+                            <tr>
+                                <td><strong><?php echo esc_html($row['game_key'] ?? ''); ?></strong><br><small><?php echo esc_html($row['stage'] ?? ''); ?></small></td>
+                                <td><?php if (function_exists('vaysf_render_results_desk_playoff_schedule_status')) { vaysf_render_results_desk_playoff_schedule_status($row['schedule_row'] ?? null); } ?></td>
+                                <td><?php if (function_exists('vaysf_render_results_desk_playoff_suggestions')) { vaysf_render_results_desk_playoff_suggestions($row['suggestion'] ?? array()); } ?></td>
+                                <td><?php echo esc_html($row['note'] ?? ''); ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+
+                <?php if (function_exists('vaysf_render_results_desk_team_qf_apply_form')) : ?>
+                    <?php vaysf_render_results_desk_team_qf_apply_form($preview, $event_return_url); ?>
+                <?php endif; ?>
+            <?php endif; ?>
+        </section>
+        <?php
+    }
+}
+
+/**
+ * Render the coordinator-facing QF reorder dropdown form. Mirrors
+ * vaysf_render_results_desk_team_qf_reorder_form() but posts back to the
+ * Coordinator Score Entry "QF Setup" tab (GET, `view=qf-setup` preserved)
+ * instead of the Results Desk page.
+ *
+ * @param array<string,mixed> $preview
+ * @param string $event
+ * @return void
+ */
+function vaysf_render_coordinator_team_qf_reorder_form($preview, $event) {
+    if (empty($preview['can_customize'])) {
+        return;
+    }
+
+    $teams_by_key = $preview['teams_by_key'] ?? array();
+    $arrangement = $preview['arrangement'] ?? array();
+    ?>
+    <form method="get" class="vaysf-playoff-assignment-form">
+        <input type="hidden" name="view" value="qf-setup">
+        <input type="hidden" name="event" value="<?php echo esc_attr($event); ?>">
+        <p class="vaysf-results-desk-muted">
+            <?php esc_html_e('Assign confirmed pool-review teams into QF matchups, then click Update preview. This only changes what you see in this browser until Apply is clicked.', 'vaysf'); ?>
+        </p>
+        <div class="vaysf-playoff-assignment-grid">
+            <?php foreach ($arrangement as $game_key => $team_keys) : ?>
+                <fieldset>
+                    <legend><?php echo esc_html($game_key); ?></legend>
+                    <?php foreach ($team_keys as $slot_index => $selected_key) : ?>
+                        <label>
+                            <span class="vaysf-results-desk-muted"><?php echo esc_html($slot_index === 0 ? __('Slot A', 'vaysf') : __('Slot B', 'vaysf')); ?></span>
+                            <select name="qf_seed[<?php echo esc_attr($game_key); ?>][]">
+                                <?php foreach ($teams_by_key as $team_key => $team) : ?>
+                                    <option value="<?php echo esc_attr($team_key); ?>" <?php selected($selected_key, $team_key); ?>>
+                                        <?php echo esc_html(function_exists('vaysf_results_desk_team_qf_option_label') ? vaysf_results_desk_team_qf_option_label($team) : (string) ($team['label'] ?? $team_key)); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                    <?php endforeach; ?>
+                </fieldset>
+            <?php endforeach; ?>
+        </div>
+        <button type="submit" class="button"><?php esc_html_e('Update preview', 'vaysf'); ?></button>
+        <?php if (!empty($preview['custom_active'])) : ?>
+            <a class="button" href="<?php echo esc_url(remove_query_arg('qf_seed')); ?>"><?php esc_html_e('Reset to default QF order', 'vaysf'); ?></a>
+        <?php endif; ?>
+    </form>
+    <?php
 }
 
 /**
