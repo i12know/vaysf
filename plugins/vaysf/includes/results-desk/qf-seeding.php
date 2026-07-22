@@ -126,6 +126,50 @@ function vaysf_results_desk_seeding_score_by_team($payload, $slots, $sport_type)
 }
 
 /**
+ * Count volleyball W-L using the manager worksheet's rally-game convention.
+ *
+ * The public result stores match winners in winner_keys_json, but the 2026
+ * manager ranking sheet counts each 25-point rally game as one W/L unit.
+ *
+ * @param array<string,mixed> $payload Decoded score_json
+ * @return array<string,array<string,int>> Slot letter => wins/losses/played
+ */
+function vaysf_results_desk_volleyball_set_record_by_slot($payload) {
+    $record = array(
+        'a' => array('wins' => 0, 'losses' => 0, 'played' => 0),
+        'b' => array('wins' => 0, 'losses' => 0, 'played' => 0),
+    );
+
+    if (empty($payload['sets']) || !is_array($payload['sets'])) {
+        return $record;
+    }
+
+    foreach ($payload['sets'] as $set) {
+        if (!is_array($set) || !isset($set['team_a_score'], $set['team_b_score'])) {
+            continue;
+        }
+
+        $team_a_score = (int) $set['team_a_score'];
+        $team_b_score = (int) $set['team_b_score'];
+        if ($team_a_score === $team_b_score) {
+            continue;
+        }
+
+        $record['a']['played']++;
+        $record['b']['played']++;
+        if ($team_a_score > $team_b_score) {
+            $record['a']['wins']++;
+            $record['b']['losses']++;
+        } else {
+            $record['b']['wins']++;
+            $record['a']['losses']++;
+        }
+    }
+
+    return $record;
+}
+
+/**
  * Accumulate cross-pool W-L/points/opponent stats for one event's teams from
  * its preliminary rows (Issue #329 §3.1–3.3/3.4 ranking basis). Parallel to,
  * but deliberately separate from, vaysf_results_desk_apply_pool_result():
@@ -183,13 +227,21 @@ function vaysf_results_desk_accumulate_event_seeding_stats($rows, $sport_type) {
         $winner_keys = array_values(array_filter(array_map('strval', $winner_keys)));
         $winner_lookup = array_fill_keys($winner_keys, true);
         $is_tie = !empty($payload['is_tie']) || count($winner_keys) > 1 || !empty($payload['split_match']);
+        $volleyball_set_record = $sport_type === 'volleyball'
+            ? vaysf_results_desk_volleyball_set_record_by_slot($payload)
+            : array();
 
         foreach ($slots as $slot) {
             $key = $slot['key'];
             if (!isset($scores[$key])) {
                 continue;
             }
-            $teams[$key]['played']++;
+            $slot_letter = (string) ($slot['slot'] ?? '');
+            $set_record = $volleyball_set_record[$slot_letter] ?? null;
+            $played_units = is_array($set_record) && (int) ($set_record['played'] ?? 0) > 0
+                ? (int) $set_record['played']
+                : 1;
+            $teams[$key]['played'] += $played_units;
             $teams[$key]['for'] += (int) $scores[$key];
             $opponent_key = ($key === $slot_a) ? $slot_b : $slot_a;
             $opponent_score = (int) ($scores[$opponent_key] ?? 0);
@@ -201,7 +253,10 @@ function vaysf_results_desk_accumulate_event_seeding_stats($rows, $sport_type) {
             $teams[$key]['capped_diff'] = ($teams[$key]['capped_diff'] ?? 0) + $game_diff;
             $teams[$key]['diff'] = $teams[$key]['for'] - $teams[$key]['against'];
 
-            if ($is_tie) {
+            if ($sport_type === 'volleyball' && is_array($set_record) && (int) ($set_record['played'] ?? 0) > 0) {
+                $teams[$key]['wins'] += (int) ($set_record['wins'] ?? 0);
+                $teams[$key]['losses'] += (int) ($set_record['losses'] ?? 0);
+            } elseif ($is_tie) {
                 if (!$winner_keys || isset($winner_lookup[$key])) {
                     $teams[$key]['ties']++;
                 } else {

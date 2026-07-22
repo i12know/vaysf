@@ -6,6 +6,11 @@
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
 
+- Hotfix 1.0.97: Counted Volleyball QF seeding W-L by individual rally games
+  from `score_json.sets[]`, matching the manager ranking sheet's 6-0/6-2
+  style records. This fixes the remaining 1.0.96 Women's Volleyball mismatch
+  where ANH's 3-1 match record incorrectly ranked above tied 6-2 teams.
+- Bumped plugin header/version to `1.0.97` and rebuilt `plugins/vaysf.zip`.
 - Hotfix 1.0.96: Updated Volleyball QF seeding to match the 2026 manager
   ranking artifact from Loc Nguyen's playoff email. Volleyball event-wide
   point differential now uses rally points summed from `score_json.sets[]`
