@@ -240,7 +240,6 @@ function vaysf_handle_confirm_event_qf_seeding_request() {
     wp_safe_redirect($redirect);
     exit;
 }
-
 /**
  * admin-post handler for one coin-toss flip (Issue #329) â€” see
  * vaysf_record_coin_toss_flip().

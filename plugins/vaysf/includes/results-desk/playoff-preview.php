@@ -725,4 +725,3 @@ function vaysf_apply_bible_challenge_playoff_preview($event, $schedule_version, 
 
     return $results;
 }
-

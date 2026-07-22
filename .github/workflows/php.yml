@@ -1,0 +1,57 @@
+name: PHP
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/php.yml"
+      - "composer.json"
+      - "plugins/vaysf/**/*.php"
+      - "scripts/lint-php.ps1"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/php.yml"
+      - "composer.json"
+      - "plugins/vaysf/**/*.php"
+      - "scripts/lint-php.ps1"
+
+jobs:
+  fast-php:
+    name: PHP syntax lint (${{ matrix.php-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version:
+          - "8.2"
+          - "8.3"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          tools: composer
+          coverage: none
+
+      - name: Validate Composer metadata
+        run: composer validate --no-check-lock --strict
+
+      - name: Check whitespace
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --check "origin/${{ github.base_ref }}...HEAD"
+          else
+            git diff-tree --check --no-commit-id --root -r HEAD
+          fi
+
+      - name: Lint plugin PHP
+        shell: pwsh
+        run: ./scripts/lint-php.ps1 -All -PhpBin php

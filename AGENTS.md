@@ -45,6 +45,14 @@ vaysf/
 │   ├── INSTALLATION.md
 │   ├── USAGE.md
 │   ├── ARCHITECTURE.md
+│   ├── ARCHITECTURE_REVIEW_2026.md  # 2026 system review, debt register, roadmap
+│   ├── SCHEDULING.md                # scheduling pipeline reference (read before touching scheduling)
+│   ├── SCHEDULE-HOW-TO.md           # operator how-to for schedule production
+│   ├── PRD.md
+│   ├── PRD_SCHEDULING_HELPER.md     # 2027 Scheduling Helper GUI PRD (epic #272)
+│   ├── CANONICAL_IDENTITY_RFC.md    # duplicate-people repair layer (epic #307, Track A)
+│   ├── REGISTRANT_TRUST_RFC.md      # roles/verification/minor-consent (epic #307, Track T)
+│   ├── EVENT_DAY_RESULTS_WORKFLOW_RFC.md
 │   ├── SEASON_TRANSITION.md
 │   ├── CHMEETINGS_API_MIGRATION.md
 │   ├── TROUBLESHOOTING.md
@@ -52,12 +60,24 @@ vaysf/
 ├── middleware/                      # Python, all middleware code lives here
 │   ├── .env.template                # committed; real .env is gitignored
 │   ├── requirements.txt
-│   ├── main.py                      # CLI entry: sync, sync-churches, export-*
+│   ├── main.py                      # CLI entry: sync, sync-churches, export-*, *-schedule
+│   ├── church_teams_export.py       # live ChMeetings/WP export; delegates scheduling
+│   ├── schedule_workbook.py         # ScheduleWorkbookBuilder: scheduling tabs + workbooks
+│   ├── scheduler.py                 # OR-Tools CP-SAT pool-play solver
+│   ├── chrome_export_vaysf_forms.py # sanctioned diagnostic-only Playwright form export (see Conventions)
+│   ├── *.bat                        # Windows operator launchers (daily-run, run-schedule, …)
+│   ├── scratch/                     # OR-Tools POC referenced by docs/SCHEDULING.md
 │   ├── tests/                       # pytest; mock by default, LIVE_TEST=true for real API
 │   └── ...
 ├── plugins/                         # WordPress plugin (PHP)
+│   ├── vaysf/                       # plugin source tree
 │   └── vaysf.zip                    # distributable plugin (kept in repo)
+├── scripts/
+│   └── lint-php.ps1                 # php -l across the plugin; -All or changed-since-main
+├── .github/workflows/php.yml        # CI: runs the PHP lint on push/PR
+├── composer.json                    # PHP dev deps (PHPCS/WPCS/PHPCompatibility/PHPUnit) + lint:php script
 ├── chmeetings_openapi_v1.json       # snapshot of the ChMeetings OpenAPI spec
+├── CLAUDE.md                        # Claude Code guidance (kept in sync with this file)
 ├── CHANGELOG.md
 ├── LICENSE                          # MIT
 └── README.md
@@ -108,11 +128,39 @@ pytest tests/ -v
 set LIVE_TEST=true && pytest tests/ -v -s
 ```
 
-Mock mode is the default and is what CI runs. Live tests are run locally before a release. Fixtures under `tests/fixtures/` are real ChMeetings responses with PII redacted; when the schema shifts, re-record and commit new fixtures rather than patching around stale ones.
+Mock mode is the default and is what CI runs. Live tests are run locally before a release. Fixtures are the `mock_chm_people*.json` files directly under `middleware/tests/` — synthetic ChMeetings responses shaped like the real API with PII redacted; when the schema shifts, re-record and commit new fixtures rather than patching around stale ones.
+
+For WordPress plugin PHP syntax checks on this Windows workspace, PHP is installed at:
+
+```powershell
+S:\php\php.exe -l plugins\vaysf\vaysf.php
+```
+
+Composer is installed locally at:
+
+```powershell
+S:\php\php.exe S:\composer\composer.phar validate --no-check-lock --strict
+```
+
+When reviewing or changing PHP, use `S:\php\php.exe -l` on every touched PHP file, for example:
+
+```powershell
+$files = git diff --name-only main...HEAD -- '*.php'
+foreach ($file in $files) { S:\php\php.exe -l $file }
+```
+
+The repo also has a fast PHP harness:
+
+```powershell
+.\scripts\lint-php.ps1 -All
+S:\php\php.exe S:\composer\composer.phar run lint:php
+```
+
+`.github/workflows/php.yml` runs the same lint in CI. There is still no PHPUnit test harness wired up for the plugin — run the lint on any PHP change before pushing, not just before release.
 
 ## Conventions specific to this repo
 
-**API-first, always.** The v1.05/v1.06 releases specifically removed Selenium in favor of pure API calls and eliminated all manual Excel import steps. Do not reintroduce browser automation. Do not reintroduce manual Excel as a primary path — Excel export is a diagnostic fallback only (`--excel-fallback`).
+**API-first, always.** The v1.05/v1.06 releases specifically removed Selenium in favor of pure API calls and eliminated all manual Excel import steps. Do not reintroduce browser automation in any production sync path. Do not reintroduce manual Excel as a primary path — Excel export is a diagnostic fallback only (`--excel-fallback`). One sanctioned exception exists: `middleware/chrome_export_vaysf_forms.py` is a diagnostic-only Playwright helper that attaches to an operator's authenticated Chrome session to export ChMeetings form spreadsheets (used by the consent-404 investigation and `daily-run.bat`). Treat it like `--excel-fallback`: an operator tool, never a dependency of sync/validation/approval logic, and not a precedent for adding browser automation elsewhere.
 
 **`CHM_FIELDS` is the only way to reference ChMeetings field names.** If you see a literal ChMeetings field string anywhere in middleware business logic, treat it as a bug. Update `CHM_FIELDS` and route through it. See the shared skill's §6 for the full pattern.
 
@@ -135,6 +183,10 @@ Validation is JSON-driven with Pydantic models. The rules live in a JSON file re
 3. Run `pytest` (mock mode) to confirm the rule behaves as intended.
 4. Note the rule change in `CHANGELOG.md` with a reference to the issue or request that motivated it.
 
+## Scheduling pipeline
+
+Game scheduling runs as a four-step pipeline: roster export → `schedule_input.json` → CP-SAT solver → Excel timetable. Before writing or modifying any scheduling code (Steps 1–4), read `docs/SCHEDULING.md`. It describes the pipeline, the `schedule_input.json` schema, what the OR-Tools POC proved, and the five constraint gaps that must be filled in Issues #93 and #94.
+
 ## Pastor approval workflow
 
 Pastors approve (or decline) their church's participants through the WordPress admin or via email link. The middleware pulls approval status from WordPress, then writes it back to ChMeetings group membership via API. If the API sync fails repeatedly, the `--excel-fallback` path is available but should be treated as a symptom that needs root-cause investigation, not a permanent workaround.
@@ -144,9 +196,10 @@ Pastors approve (or decline) their church's participants through the WordPress a
 1. All target issues for the release are closed or moved.
 2. Field inspector run and any drift resolved.
 3. `pytest` passes in mock mode and in `LIVE_TEST=true` mode.
-4. `CHANGELOG.md` updated with the new version entry.
-5. Tag the release (`git tag v1.0X`) and push tags.
-6. If the WordPress plugin changed, rebuild `plugins/vaysf.zip` and commit it.
+4. If the WordPress plugin changed, `.\scripts\lint-php.ps1 -All` (or `composer run lint:php`) passes — see Testing above.
+5. `CHANGELOG.md` updated with the new version entry.
+6. Tag the release (`git tag v1.0X`) and push tags.
+7. If the WordPress plugin changed, rebuild `plugins/vaysf.zip` and commit it.
 
 ## Issue conventions
 

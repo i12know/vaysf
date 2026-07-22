@@ -1,0 +1,36 @@
+{
+  "name": "i12know/vaysf",
+  "description": "VAY Sports Fest middleware and WordPress plugin integration.",
+  "license": "MIT",
+  "type": "project",
+  "require": {
+    "php": "^8.1"
+  },
+  "require-dev": {
+    "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
+    "phpcompatibility/php-compatibility": "^9.3",
+    "phpcompatibility/phpcompatibility-wp": "^2.1",
+    "phpunit/phpunit": "^9.6 || ^10.5",
+    "squizlabs/php_codesniffer": "^3.11",
+    "wp-coding-standards/wpcs": "^3.1",
+    "yoast/phpunit-polyfills": "^3.0"
+  },
+  "config": {
+    "allow-plugins": {
+      "dealerdirect/phpcodesniffer-composer-installer": true
+    },
+    "sort-packages": true
+  },
+  "scripts": {
+    "lint:php": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/lint-php.ps1 -All",
+    "lint:php:changed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/lint-php.ps1",
+    "test:php": "@lint:php"
+  },
+  "scripts-descriptions": {
+    "lint:php": "Run php -l against all tracked plugin PHP files.",
+    "lint:php:changed": "Run php -l against plugin PHP files changed since main.",
+    "test:php": "Run the fast PHP harness."
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}
