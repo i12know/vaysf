@@ -488,4 +488,3 @@ function vaysf_handle_apply_team_qf_preview_request() {
     wp_safe_redirect($redirect);
     exit;
 }
-

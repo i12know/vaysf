@@ -1288,4 +1288,3 @@ function vaysf_apply_team_qf_playoff_preview($event, $schedule_version, $arrange
 
     return $results;
 }
-
