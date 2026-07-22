@@ -2450,11 +2450,10 @@ function vaysf_get_user_team_qf_setup_events($user_id) {
 /**
  * Render the Coordinator Score Entry "QF Setup" panel: lets a coordinator
  * preview, reassign, and Apply the Basketball/Volleyball QF bracket for
- * their authorized events, once a Sports Fest manager has already confirmed
- * QF seeding in the Results Desk. Confirming seeding itself and the
- * coin-toss flow stay Results-Desk-only —
- * vaysf_user_can_manage_team_qf_schedule() only broadens preview/Apply, not
- * the seeding confirmation that has to happen first.
+ * their authorized events. Coordinators can also confirm/re-confirm
+ * cross-pool QF seeding and resolve coin-toss tie-breaks for their own
+ * assigned events from this same panel; Results Desk roles still cover every
+ * event.
  *
  * @param array<int,string> $events Events to show (already filtered to BB/VB + authorized)
  * @return void
@@ -2481,7 +2480,7 @@ function vaysf_render_coordinator_qf_setup_panel($events) {
             <h2>
                 <?php echo esc_html($event); ?>
                 <?php if (function_exists('vaysf_render_results_desk_tooltip')) : ?>
-                    <?php vaysf_render_results_desk_tooltip('?', __('Preview from the QF seeding a Sports Fest manager already confirmed. On its own it does not create, update, or delete schedule rows.', 'vaysf')); ?>
+                    <?php vaysf_render_results_desk_tooltip('?', __('Review and confirm cross-pool QF seeding for this assigned event, then preview/apply the QF schedule rows. Preview alone does not create, update, or delete schedule rows.', 'vaysf')); ?>
                 <?php endif; ?>
             </h2>
             <?php
@@ -2491,6 +2490,10 @@ function vaysf_render_coordinator_qf_setup_panel($events) {
             $preview['event'] = $event;
             $preview['schedule_version'] = absint($current_version);
             ?>
+            <?php if (function_exists('vaysf_render_results_desk_event_qf_seeding_panel')) : ?>
+                <?php vaysf_render_results_desk_event_qf_seeding_panel($event, $current_version, $event_return_url); ?>
+            <?php endif; ?>
+
             <?php if (!empty($preview['warnings']) && is_array($preview['warnings'])) : ?>
                 <div class="vaysf-score-entry-notice">
                     <?php foreach ($preview['warnings'] as $warning) : ?>
@@ -2501,7 +2504,7 @@ function vaysf_render_coordinator_qf_setup_panel($events) {
 
             <?php if (empty($preview['can_customize'])) : ?>
                 <div class="vaysf-score-entry-notice">
-                    <p><?php esc_html_e('Ask a Sports Fest manager to confirm QF seeding for this event in the Results Desk before setting up the bracket here.', 'vaysf'); ?></p>
+                    <p><?php esc_html_e('Confirm QF seeding above before setting up the bracket here.', 'vaysf'); ?></p>
                 </div>
             <?php else : ?>
                 <?php vaysf_render_coordinator_team_qf_reorder_form($preview, $event); ?>

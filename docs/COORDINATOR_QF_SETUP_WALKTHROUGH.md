@@ -1,115 +1,119 @@
 # Coordinator Self-Service Walkthrough: Pool Review & QF Setup
 
-This is a **verification record**, not a design doc: a live-staging walkthrough
-(2026-07-22, plugin 1.0.71 → 1.0.92) confirming that a Sports Fest coordinator
-— not just a Results-Desk manager — can review their event's pools and set up
-their own Quarterfinal bracket end-to-end from the Coordinator Score Entry
-dashboard. See issue [#335](https://github.com/i12know/vaysf/issues/335) for
-the full bug list this pass produced, and `docs/SCHEDULING.md` for how the
-underlying schedule/results data model works.
+This is a verification record, not a design doc: live-staging walkthroughs on
+2026-07-22 covering plugin upgrades from 1.0.71 through 1.0.93. The goal is
+that a Sports Fest coordinator, not just a Results Desk manager, can review
+their event's pools, confirm advancement/QF seeding, preview the bracket,
+reorder matchups, and apply QF schedule rows end-to-end from the Coordinator
+Score Entry dashboard.
 
-No screenshots are embedded here (not currently capturable through the
-testing tooling used for this pass) — every step below was reproduced and
-its outcome confirmed against the live staging site.
+See issue [#335](https://github.com/i12know/vaysf/issues/335) for the bug list
+this pass produced, and `docs/SCHEDULING.md` for how the underlying
+schedule/results data model works.
 
-## Who this is for
+Screenshots below are from the fresh staging site at
+`/staging/8463/coordinator-score-entry/`, logged in as `test_coordinator`.
 
-Four coordinator personas were tested, each authorized (via
-`sf2025_submit_results` + per-event authorization, not Results Desk access)
-for a different event on the Coordinator Score Entry dashboard
-(`/coordinator-score-entry`):
+## Who This Is For
+
+Four coordinator personas were tested, each authorized via
+`sf2025_submit_results` plus per-event authorization, not Results Desk access:
 
 - Bible Challenge coordinator
-- Basketball (Men) coordinator
-- Volleyball (Men) coordinator
-- Volleyball (Women) coordinator
+- Basketball-Men coordinator
+- Volleyball-Men coordinator
+- Volleyball-Women coordinator
 
-## The one intentional manager hand-off
+## Coordinator-Owned Advancement
 
-Before any Basketball/Volleyball coordinator can set up their QF bracket, a
-Sports Fest manager must confirm cross-pool QF seeding in the Results Desk
-("Confirm All Pools for QF Seeding"), including resolving any coin-toss ties.
-This is deliberate — per issue #329, ranking/coin-toss authority stays
-Results-Desk-only — not a gap. The Coordinator dashboard's QF Setup tab says
-so plainly when seeding isn't confirmed yet: *"Ask a Sports Fest manager to
-confirm QF seeding for this event in the Results Desk before setting up the
-bracket here."* Bible Challenge has no equivalent hand-off: a coordinator can
-confirm their own Top-9 advancement directly.
+Coordinators must not need a manager/admin to complete the event-day review job
+for their assigned events. As of 1.0.93:
 
-Everything else — reviewing pool standings, confirming/re-confirming
-advancement, previewing the QF bracket, reordering it, and applying it to the
-schedule — is coordinator self-service.
+- Bible Challenge coordinators can confirm/re-confirm the Top 9 directly from
+  the Pools Progress For Review table.
+- Basketball/Volleyball coordinators can review cross-pool rankings, resolve
+  coin-toss ties, and confirm/re-confirm QF seeding directly from the QF Setup
+  tab for their assigned events.
+- Results Desk users can still perform the same QF-seeding actions across all
+  events, but coordinator accounts are scoped to their own authorized events.
 
-## Walkthrough: Bible Challenge coordinator
+## Walkthrough: Bible Challenge Coordinator
 
-1. Coordinator opens **Coordinator Score Entry → Assigned Games**, filters to
-   "Bible Challenge - Mixed Team". The **Pools Progress For Review** table
-   shows the pool's 14/14 scored games, the Top-9-by-cumulative-score
-   ranking, and a **Review Status** of "Ready".
-2. If a manager already confirmed advancement, the row shows "Confirmed by
-   \<name\>" plus a **Re-confirm Top 9** button; otherwise it shows
-   **Confirm Top 9**.
-3. Clicking the button re-confirms (or confirms) the pool's advancement as
-   the coordinator's own account, with no Results-Desk access required.
-4. Confirmed outcome: pool now shows "Confirmed by Test Coordinator", and the
-   page lands back on the same dashboard (not a 404).
+1. Coordinator opens Coordinator Score Entry and filters to
+   `Bible Challenge - Mixed Team`.
+2. The Pools Progress For Review table shows the pool's 14/14 scored games,
+   the Top-9-by-cumulative-score ranking, and Review Status of Ready.
+3. If advancement was already confirmed, the row shows who confirmed it plus a
+   Re-confirm Top 9 button; otherwise it shows Confirm Top 9.
+4. Clicking the button confirms/re-confirms the pool's advancement as the
+   coordinator account, with no Results Desk access required.
+5. Confirmed outcome: the page redirects back to the same dashboard with a
+   success message, not a 404.
 
-## Walkthrough: Basketball / Volleyball coordinator
+![Bible Challenge pool review before coordinator confirmation](images/coordinator-qf-setup/01-bible-challenge-pool-review-before.png)
 
-1. Manager confirms QF seeding for the event in the Results Desk (resolving
-   any coin-toss ties first if the pool ranking has an unresolved cycle).
-2. Coordinator opens **Coordinator Score Entry → QF Setup**. Every
-   Basketball/Volleyball event the coordinator is authorized for appears on
-   this one page (not just their currently-filtered event).
-3. Each event shows a bracket editor: **Slot A / Slot B** dropdowns for
+![Bible Challenge confirmation success state](images/coordinator-qf-setup/02-bible-challenge-confirmed-success.png)
+
+## Walkthrough: Basketball / Volleyball Coordinator
+
+1. Coordinator opens Coordinator Score Entry -> QF Setup.
+2. Every Basketball/Volleyball event the coordinator is authorized for appears
+   on the one QF Setup page, not just the currently filtered event.
+3. If QF seeding has not been confirmed yet, the coordinator reviews the
+   cross-pool QF seeding panel for that event, resolves any required coin-toss
+   tie-breaks, and clicks Confirm All Pools for QF Seeding.
+4. Each confirmed event shows a bracket editor: Slot A / Slot B dropdowns for
    QF-1..4, pre-filled with the standard 1-vs-8 / 4-vs-5 / 3-vs-6 / 2-vs-7
-   seeding from the manager's confirmed Top 8, plus a live preview table
-   (Expected Row → Current Schedule status → Preview Labels).
-4. Coordinator may reorder any slot via the dropdowns and click
-   **Update preview** to see the custom arrangement reflected (labeled
-   "Custom QF assignment (this browser only); verify before applying") before
-   committing to anything.
-5. Clicking **Apply QF matchup to schedule** writes the arrangement into the
-   `<PREFIX>-QF-1..4` schedule rows (creating them if missing) and prewires
-   Semifinal/Final/3rd-Place rows with `WIN-`/`LOSE-` placeholders. Rows
-   already reported/official/under-review are left untouched.
-6. Confirmed outcome for all three events (Basketball-Men, Volleyball-Men,
-   Volleyball-Women): QF-1..4, Semi-1/2, Final, and 3rd-Place rows all show
-   `scheduled` with real schedule IDs, and the actual game listing under
-   **Assigned Games** shows the correct matchup — including a coordinator's
-   manual reorder (Volleyball-Men's QF-4 was flipped from the default RPC/ANH
-   to ANH/RPC and the applied row reflected exactly that).
+   seeding from the confirmed Top 8, plus a live preview table.
+5. Coordinator may reorder any slot via the dropdowns and click Update preview
+   to see the custom arrangement reflected before committing.
+6. Clicking Apply QF matchup to schedule writes the arrangement into the
+   `<PREFIX>-QF-1..4` schedule rows, creating them if missing, and prewires
+   Semifinal/Final/3rd-Place rows with winner/loser placeholders. Rows already
+   reported/official/under-review are left untouched.
 
-## Bugs found and fixed during this pass
+## Fresh-Staging Regression Caught Before 1.0.93
 
-All five were found by actually clicking through the coordinator flow live on
-staging, not by code review, and are detailed in the CHANGELOG entries for
-1.0.89 through 1.0.92:
+On the staging site restored from 1.0.71 data and upgraded to 1.0.92, the
+coordinator could reach QF Setup but could not continue when QF seeding had not
+already been confirmed by a manager. This was the remaining design gap:
 
-1. **Pool-review confirm 403'd for every coordinator.** The shared
-   "Re-confirm Top 9" / "Confirm Pool Review" button, rendered on both the
-   Results Desk and the Coordinator dashboard, posted to a handler that only
-   accepted Results-Desk-capable users — the coordinator-facing button had
-   never been wired up to the broader capability 1.0.85 introduced for QF
-   Setup. Fixed with `vaysf_user_can_confirm_pool_review()`.
-2. **Coin toss could never actually be recorded.** `sf_coin_toss_flip`'s
-   `call` column was an unquoted reserved MySQL keyword; the raw `CREATE
-   TABLE` most likely failed at table-creation time, silently, with
-   `DB_VERSION` bumped anyway. Renamed to `call_side`.
-3. **A fatal PHP parse error**, caught during this pass before it ever went
-   live: the #333 file-split had dropped the opening `/**` off a docblock in
-   `playoff-preview.php`.
-4. **Coordinator dashboard 404 after a successful confirm.** Its own copy of
-   the pre-1.0.75 `home_url($_SERVER['REQUEST_URI'])` return-URL doubling bug
-   (never updated when 1.0.75 fixed the Results Desk's copy).
-5. **Cross-event false-positive validation.** Reordering one event's QF
-   bracket on the QF Setup tab (which lists every authorized event on one
-   page) made an unrelated event on the same page falsely report "every QF
-   row needs exactly two selected teams."
+![QF Setup blocked in 1.0.92 because coordinator could not confirm seeding](images/coordinator-qf-setup/03-qf-setup-1092-blocked-needs-seeding.png)
+
+1.0.93 fixes that gap by rendering the cross-pool QF seeding/coin-toss panel
+inside the coordinator QF Setup section and by allowing the corresponding
+admin-post handlers for either Results Desk users or coordinators assigned to
+that exact event. After 1.0.93 is activated on staging, the final BB/VB success
+screenshots should be recaptured from the same QF Setup page.
+
+## Bugs Found And Fixed During This Pass
+
+All six were found by actually clicking through the coordinator flow live on
+staging, not by code review. They are detailed in the CHANGELOG entries for
+1.0.89 through 1.0.93:
+
+1. Pool-review confirm 403'd for every coordinator. Fixed with
+   `vaysf_user_can_confirm_pool_review()`.
+2. Coin toss could never actually be recorded because `sf_coin_toss_flip.call`
+   used an unquoted reserved MySQL keyword. Renamed to `call_side`.
+3. A fatal PHP parse error was caught before activation: the #333 file split
+   had dropped a docblock opener in `playoff-preview.php`.
+4. Coordinator dashboard returned to a doubled staging URL and 404'd after a
+   successful confirm. Fixed by reusing `vaysf_results_desk_current_request_url()`.
+5. Reordering one event's QF bracket made unrelated events on the same QF Setup
+   page falsely report incomplete QF rows. Fixed by filtering `qf_seed` keys to
+   the current event prefix before validation.
+6. Fresh staging still required a manager for BB/VB QF seeding. Fixed in
+   1.0.93 by moving seeding review, coin tosses, and QF-seeding confirmation
+   into the coordinator's assigned-event QF Setup panel.
 
 ## Result
 
-As of plugin 1.0.92 on staging, all four coordinator personas complete their
-own pool-review/QF-setup job end-to-end without needing a Results-Desk
-account, other than the one intentional per-event seeding confirmation a
-manager performs once.
+As of plugin 1.0.93, the intended coordinator workflow is self-service for
+Bible Challenge, Basketball-Men, Volleyball-Men, and Volleyball-Women: pool
+review, QF seeding confirmation, tie resolution, preview/reorder, and Apply all
+live on the Coordinator Score Entry dashboard for assigned events.
+
+The fresh staging site used for the screenshots was still running 1.0.92 when
+the BB/VB blocker was discovered. Activate the 1.0.93 package, then re-run the
+BB/VB portion above to capture the final success screenshots.

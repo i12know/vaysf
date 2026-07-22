@@ -30,10 +30,9 @@ function vaysf_user_can_view_results_desk($user_id = null) {
  * Check whether a user may preview/reassign/apply Basketball/Volleyball QF
  * matchups — broader than vaysf_user_can_view_results_desk(), since
  * coordinators (sf2025_submit_results, no Results Desk access) are meant to
- * be able to do this from the Coordinator Score Entry screen once a manager
- * has already confirmed QF seeding there. Confirming seeding itself
- * (vaysf_confirm_event_qf_seeding()) and the coin-toss flow stay
- * Results-Desk-only — this only broadens preview/reorder/Apply.
+ * be able to do this from the Coordinator Score Entry screen. QF-seeding
+ * confirmation and coin-toss permissions are event-scoped separately in
+ * vaysf_user_can_confirm_event_qf_seeding().
  *
  * @param int|null $user_id WordPress user id; defaults to current user
  * @return bool
@@ -45,6 +44,35 @@ function vaysf_user_can_manage_team_qf_schedule($user_id = null) {
     }
 
     return vaysf_user_can_view_results_desk($user_id) || user_can($user_id, 'sf2025_submit_results');
+}
+
+/**
+ * Check whether a user may confirm/re-confirm cross-pool QF seeding and
+ * perform coin-toss tie-breaks for one Basketball/Volleyball event. Results
+ * Desk roles cover every event; coordinator accounts are scoped to their
+ * assigned score-entry events.
+ *
+ * @param string $event Schedule event name
+ * @param int|null $user_id WordPress user id; defaults to current user
+ * @return bool
+ */
+function vaysf_user_can_confirm_event_qf_seeding($event, $user_id = null) {
+    $user_id = $user_id === null ? get_current_user_id() : absint($user_id);
+    $event = sanitize_text_field($event);
+    if (!$user_id || $event === '' || !vaysf_results_desk_seeding_sport_type($event)) {
+        return false;
+    }
+
+    if (vaysf_user_can_view_results_desk($user_id)) {
+        return true;
+    }
+
+    if (!user_can($user_id, 'sf2025_submit_results')) {
+        return false;
+    }
+
+    return function_exists('vaysf_get_user_score_entry_events')
+        && in_array($event, vaysf_get_user_score_entry_events($user_id), true);
 }
 
 /**

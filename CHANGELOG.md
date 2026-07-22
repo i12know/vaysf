@@ -505,6 +505,19 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
 - Bumped plugin header/version to `1.0.92` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.93: Fixed the remaining coordinator self-service gap found on a
+  fresh staging site upgraded from plugin 1.0.71 to 1.0.92 for issue #335:
+  the Coordinator Score Entry "QF Setup" tab could show Basketball and
+  Volleyball events, but if cross-pool QF seeding had not already been
+  confirmed by a Results Desk manager it stopped with "Ask a Sports Fest
+  manager..." This made coordinators unable to complete their own pool-review
+  and QF setup job on a newly restored/staged season. The coordinator panel
+  now renders the same cross-pool seeding review, coin-toss, and "Confirm All
+  Pools for QF Seeding" controls for each assigned BB/VB event, and the
+  corresponding admin-post handlers accept only Results Desk users or
+  coordinators assigned to that exact event. Once confirmed, the existing
+  preview/reorder/Apply flow unlocks without manager/admin help.
+- Bumped plugin header/version to `1.0.93` and rebuilt `plugins/vaysf.zip`.
 
 ### Results Desk dead-code cleanup
 
