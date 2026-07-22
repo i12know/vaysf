@@ -363,11 +363,17 @@ function vaysf_render_results_desk_coin_toss_form($event, $schedule_version, $gr
     foreach ($rankings as $team) {
         $by_key[$team['team_key']] = $team;
     }
+    $recorded_decisions = vaysf_get_coin_toss_decisions($event, $schedule_version);
 
     for ($i = 0; $i < count($group_keys); $i++) {
         for ($j = $i + 1; $j < count($group_keys); $j++) {
             $key_a = $group_keys[$i];
             $key_b = $group_keys[$j];
+            $pair_key = array($key_a, $key_b);
+            sort($pair_key);
+            if (isset($recorded_decisions[implode('|', $pair_key)])) {
+                continue;
+            }
             $label_a = (string) ($by_key[$key_a]['label'] ?? $key_a);
             $label_b = (string) ($by_key[$key_b]['label'] ?? $key_b);
             ?>

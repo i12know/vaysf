@@ -526,6 +526,14 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   touching seed slots 1-8, while lower-table unresolved ties remain visible as
   diagnostics and no longer block the coordinator from setting up the bracket.
 - Bumped plugin header/version to `1.0.94` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.95: Fixed the follow-up Volleyball-Men coin-toss UX blocker found
+  on a fresh 1.0.94 staging clone. After the first required seed-order coin
+  toss recorded successfully, the seeding panel still rendered that same pair
+  as the first Flip coin form; clicking it again correctly failed with "This
+  pair already has a recorded coin-toss decision," but left coordinators stuck
+  unless they knew to skip to later forms. The coin-toss renderer now hides
+  already-recorded pairs, leaving only still-needed flips visible.
+- Bumped plugin header/version to `1.0.95` and rebuilt `plugins/vaysf.zip`.
 
 ### Results Desk dead-code cleanup
 
