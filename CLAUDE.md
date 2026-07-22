@@ -72,6 +72,10 @@ vaysf/
 ├── plugins/                         # WordPress plugin (PHP)
 │   ├── vaysf/                       # plugin source tree
 │   └── vaysf.zip                    # distributable plugin (kept in repo)
+├── scripts/
+│   └── lint-php.ps1                 # php -l across the plugin; -All or changed-since-main
+├── .github/workflows/php.yml        # CI: runs the PHP lint on push/PR
+├── composer.json                    # PHP dev deps (PHPCS/WPCS/PHPCompatibility/PHPUnit) + lint:php script
 ├── chmeetings_openapi_v1.json       # snapshot of the ChMeetings OpenAPI spec
 ├── AGENTS.md                        # agent-tool guidance (kept in sync with this file)
 ├── CHANGELOG.md
@@ -126,6 +130,23 @@ set LIVE_TEST=true && pytest tests/ -v -s
 
 Mock mode is the default and is what CI runs. Live tests are run locally before a release. Fixtures are the `mock_chm_people*.json` files directly under `middleware/tests/` — synthetic ChMeetings responses shaped like the real API with PII redacted; when the schema shifts, re-record and commit new fixtures rather than patching around stale ones.
 
+**PHP syntax checking.** PHP and Composer are installed locally on this Windows workspace at `S:\php\php.exe` and `S:\composer\composer.phar` — there is still no PHPUnit test harness wired up for the plugin, but `php -l` is available and should be run on every touched PHP file:
+
+```powershell
+S:\php\php.exe -l plugins\vaysf\vaysf.php
+
+# Lint everything changed since main
+$files = git diff --name-only main...HEAD -- '*.php'
+foreach ($file in $files) { S:\php\php.exe -l $file }
+
+# Or use the repo's own harness
+.\scripts\lint-php.ps1          # changed-since-main
+.\scripts\lint-php.ps1 -All     # every tracked plugin PHP file
+S:\php\php.exe S:\composer\composer.phar run lint:php
+```
+
+`.github/workflows/php.yml` runs the same lint in CI. This would have caught the missing-docblock fatal parse error found live on staging during the 2026-07-22 coordinator testing pass (see `docs/COORDINATOR_QF_SETUP_WALKTHROUGH.md`) — run it on any PHP change before pushing, not just before release.
+
 ## Conventions specific to this repo
 
 **API-first, always.** The v1.05/v1.06 releases specifically removed Selenium in favor of pure API calls and eliminated all manual Excel import steps. Do not reintroduce browser automation in any production sync path. Do not reintroduce manual Excel as a primary path — Excel export is a diagnostic fallback only (`--excel-fallback`). One sanctioned exception exists: `middleware/chrome_export_vaysf_forms.py` is a diagnostic-only Playwright helper that attaches to an operator's authenticated Chrome session to export ChMeetings form spreadsheets (used by the consent-404 investigation and `daily-run.bat`). Treat it like `--excel-fallback`: an operator tool, never a dependency of sync/validation/approval logic, and not a precedent for adding browser automation elsewhere.
@@ -164,9 +185,10 @@ Pastors approve (or decline) their church's participants through the WordPress a
 1. All target issues for the release are closed or moved.
 2. Field inspector run and any drift resolved.
 3. `pytest` passes in mock mode and in `LIVE_TEST=true` mode.
-4. `CHANGELOG.md` updated with the new version entry.
-5. Tag the release (`git tag v1.0X`) and push tags.
-6. If the WordPress plugin changed, rebuild `plugins/vaysf.zip` and commit it.
+4. If the WordPress plugin changed, `.\scripts\lint-php.ps1 -All` (or `composer run lint:php`) passes — see Testing above.
+5. `CHANGELOG.md` updated with the new version entry.
+6. Tag the release (`git tag v1.0X`) and push tags.
+7. If the WordPress plugin changed, rebuild `plugins/vaysf.zip` and commit it.
 
 ## Issue conventions
 

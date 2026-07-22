@@ -397,6 +397,114 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
 - Bumped plugin header/version to `1.0.88` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.89: Fixed a real 403 found live on staging while retesting the
+  Coordinator Score Entry dashboard end-to-end for issue #335 (coordinator
+  self-service walkthroughs for Bible Challenge/Basketball/Volleyball): a
+  Bible Challenge coordinator clicking their own "Re-confirm Top 9" button
+  (rendered by the shared Pools Progress table on the Coordinator dashboard,
+  same as on the Results Desk) hit a bare "You are not authorized to confirm
+  pool advancement" `wp_die()`. `vaysf_handle_confirm_pool_advancement_request()`
+  had never been updated past `vaysf_user_can_view_results_desk()` when 1.0.85
+  gave coordinators the rest of this workflow, so the button the coordinator
+  dashboard displays and the handler the form posts to disagreed about who
+  could use it. Added `vaysf_user_can_confirm_pool_review()` (access.php),
+  matching the existing `vaysf_user_can_manage_team_qf_schedule()` pattern
+  (Results-Desk-capable OR `sf2025_submit_results`), and scoped non-Results-Desk
+  users to their own authorized events via `vaysf_get_user_score_entry_events()`
+  — the same event-scoping already used for QF Apply — so a Volleyball-only
+  coordinator still can't confirm Basketball's pool review by guessing POST
+  fields. The event-wide "Confirm All Pools for QF Seeding" action (ranking +
+  coin toss) is unaffected and stays Results-Desk-only by design.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Included this fix in the `1.0.89` plugin package.
+- Hotfix 1.0.89: Refactored `plugins/vaysf/includes/results-desk.php`
+  for issue #333 into focused `includes/results-desk/` modules:
+  access/shared helpers, pool progress/ranking, BB/VB QF seeding,
+  playoff preview, rendering, and admin-post actions. The original
+  `results-desk.php` is now a thin loader/facade so existing hooks,
+  shortcodes, and function names remain stable.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.89` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.90: Fixed a coin toss that could never actually be recorded —
+  found live on staging while retesting Volleyball's cross-pool QF seeding
+  for issue #335 (every "Flip coin" click failed with "Could not record the
+  coin toss," reproduced on two different tied pairs). Root cause: the
+  `sf_coin_toss_flip` table's `CREATE TABLE` (vaysf.php) declared a column
+  literally named `call`, unquoted — `CALL` is a reserved MySQL keyword, so
+  the raw DDL most likely failed at table-creation time. `dbDelta()`
+  swallows that failure silently, and `DB_VERSION` still got bumped to
+  `1.0.12` regardless, so the version gate never retried creating the table.
+  Reads against a table that was never actually created just come back
+  empty (which is indistinguishable from "no ties yet"), so nothing looked
+  wrong until an operator tried to actually flip a coin and `$wpdb->insert()`
+  surfaced the failure. Renamed the column to `call_side` in both the
+  `CREATE TABLE` statement and `vaysf_record_coin_toss_flip()`'s insert
+  (qf-seeding.php) rather than relying on backtick-quoting, and bumped
+  `DB_VERSION` to `1.0.13` so `create_tables()` runs again and `dbDelta()`
+  gets a chance to create the table under its corrected schema.
+- Also fixed a fatal activation error in this same 1.0.90 package, caught
+  before it ever went live: attempting to activate 1.0.90 on staging failed
+  with `Parse error: syntax error, unexpected token "*"` in
+  `includes/results-desk/playoff-preview.php` on line 526. The #333 split
+  had dropped the opening `/**` off
+  `vaysf_apply_bible_challenge_playoff_preview()`'s docblock, so the doc
+  comment body (` * Write a chosen Bible Challenge...`) was left as bare
+  top-level PHP statements — a fatal parse error, not something WordPress
+  could silently tolerate. Restored the missing `/**`. Scanned all six
+  `includes/results-desk/*.php` files plus the `results-desk.php` loader
+  for the same pattern (orphaned docblock-continuation lines, unbalanced
+  braces) and found no other instances.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.90`, `DB_VERSION` to `1.0.13`, and
+  rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.91: Fixed a second instance of the 1.0.75 return-URL doubling
+  bug, found live on staging immediately after 1.0.90 activated: a Bible
+  Challenge coordinator clicking "Re-confirm Top 9" from the Coordinator
+  Score Entry dashboard got a 404 ("No Results Found") even though the
+  confirmation itself had already succeeded
+  (`vaysf_advancement_status=success` was present in the — doubled —
+  redirect URL). `templates/coordinator-score-entry.php` built its own
+  `$score_entry_return_url` via `home_url(wp_unslash($_SERVER['REQUEST_URI']))`,
+  the exact pattern 1.0.75 replaced on the Results Desk side with
+  `vaysf_results_desk_current_request_url()` — but the coordinator template
+  had its own independent copy of the old broken logic that was never
+  updated. On this Bluehost staging site (home URL includes `/staging/5041/`),
+  `REQUEST_URI` already carries that prefix, so `home_url()` doubled it to
+  `/staging/5041/staging/5041/coordinator-score-entry/...`, which WordPress
+  can't route. Pointed the coordinator template at the same
+  `vaysf_results_desk_current_request_url()` helper instead. Searched the
+  rest of the plugin for the same `home_url($_SERVER['REQUEST_URI'])`
+  pattern and found no other live occurrences.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.91` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.92: Fixed a cross-event false-positive validation error found
+  live on staging while running the coordinator QF Setup Apply flow
+  end-to-end for issue #335: reordering Volleyball - Men Team's bracket and
+  clicking "Update preview" made the unrelated Basketball - Men Team section
+  on the same page show "Every QF row needs exactly two selected teams,"
+  even though nobody touched Basketball's own selections and its preview
+  data was otherwise untouched. The Coordinator Score Entry "QF Setup" tab
+  renders every one of a coordinator's authorized team-sport events on a
+  single page (1.0.85), all posting reorder submissions to the same
+  `?qf_seed[...]=...` query string. `vaysf_results_desk_build_team_qf_preview()`
+  (playoff-preview.php) only checked whether `$_GET['qf_seed']` was a
+  non-empty array at all — true for every event's render pass once *any*
+  event's form was submitted — then handed the *entire* array to
+  `vaysf_results_desk_validate_team_qf_arrangement()` keyed by that event's
+  own prefix, which correctly found zero picks for its own (untouched)
+  `<PREFIX>-QF-*` keys and correctly-per-its-inputs reported them incomplete.
+  Fixed by first filtering `$_GET['qf_seed']` down to only the keys carrying
+  this event's own prefix, and only running validation at all when that
+  filtered set is non-empty — an event with no submitted keys of its own now
+  simply keeps showing its default arrangement instead of getting mistaken
+  for the event that fired.
+- No PHP test harness exists in this repo; verification is manual against a
+  staging WordPress site before deploy.
+- Bumped plugin header/version to `1.0.92` and rebuilt `plugins/vaysf.zip`.
 
 ### Results Desk dead-code cleanup
 

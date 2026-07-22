@@ -227,6 +227,10 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# PHP tooling
+vendor/
+.phpcs-cache
+
 # PyPI configuration file
 .pypirc
 middleware/logs/
