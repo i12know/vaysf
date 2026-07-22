@@ -254,11 +254,16 @@ function vaysf_render_results_desk_event_qf_seeding_panel($event, $schedule_vers
     $existing = vaysf_get_pool_advancement($event, $pool_id, $schedule_version);
     $is_stale = $existing ? vaysf_pool_advancement_is_stale($event, $pool_id, $schedule_version, $seeding['rankings']) : false;
     $diff_field = $sport_type === 'basketball' ? 'capped_diff' : 'diff';
+    $sos_label = $sport_type === 'volleyball' ? __('Avg Opp Win %', 'vaysf') : __('SOS', 'vaysf');
+    $sos_tooltip = $sport_type === 'volleyball'
+        ? __('Difficulty of schedule: average win percentage of every opponent played, matching the manager ranking sheet.', 'vaysf')
+        : __('Difficulty of schedule: sum of every opponent played\'s own final win-loss record.', 'vaysf');
+    $point_diff_label = $sport_type === 'volleyball' ? __('Point Diff (rally)', 'vaysf') : __('Point Diff', 'vaysf');
     ?>
     <div class="vaysf-qf-seeding-panel">
         <h3>
             <?php esc_html_e('Cross-Pool QF Seeding', 'vaysf'); ?>
-            <?php vaysf_render_results_desk_tooltip('?', __('Official 2026 rule: W-L record, then head-to-head, then difficulty of schedule, then point differential, then coin toss. Confirming here replaces confirming each pool individually for this event.', 'vaysf')); ?>
+            <?php vaysf_render_results_desk_tooltip('?', __('Official 2026 rule: W-L record, then pairwise head-to-head where available, then difficulty of schedule, then point differential, then coin toss. Confirming here replaces confirming each pool individually for this event.', 'vaysf')); ?>
         </h3>
 
         <?php if (empty($seeding['complete'])) : ?>
@@ -294,10 +299,10 @@ function vaysf_render_results_desk_event_qf_seeding_panel($event, $schedule_vers
                         <th><?php esc_html_e('Team', 'vaysf'); ?></th>
                         <th><?php esc_html_e('W-L', 'vaysf'); ?></th>
                         <th>
-                            <?php esc_html_e('SOS', 'vaysf'); ?>
-                            <?php vaysf_render_results_desk_tooltip('?', __('Difficulty of schedule: sum of every opponent played\'s own final win-loss record.', 'vaysf')); ?>
+                            <?php echo esc_html($sos_label); ?>
+                            <?php vaysf_render_results_desk_tooltip('?', $sos_tooltip); ?>
                         </th>
-                        <th><?php esc_html_e('Point Diff', 'vaysf'); ?></th>
+                        <th><?php echo esc_html($point_diff_label); ?></th>
                         <th><?php esc_html_e('Status', 'vaysf'); ?></th>
                     </tr>
                 </thead>
@@ -307,7 +312,7 @@ function vaysf_render_results_desk_event_qf_seeding_panel($event, $schedule_vers
                             <td><?php echo empty($team['needs_coin_toss']) ? esc_html((string) $team['rank']) : 'â€”'; ?></td>
                             <td><?php echo esc_html((string) ($team['label'] ?? $team['team_key'])); ?></td>
                             <td><?php echo esc_html(((int) ($team['wins'] ?? 0)) . '-' . ((int) ($team['losses'] ?? 0))); ?></td>
-                            <td><?php echo esc_html((string) ($team['sos'] ?? 0)); ?></td>
+                            <td><?php echo esc_html($sport_type === 'volleyball' ? number_format((float) ($team['sos'] ?? 0), 3) : (string) ($team['sos'] ?? 0)); ?></td>
                             <td><?php echo esc_html((string) ($team[$diff_field] ?? 0)); ?></td>
                             <td>
                                 <?php if (!empty($team['needs_coin_toss'])) : ?>

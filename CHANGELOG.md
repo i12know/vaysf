@@ -6,6 +6,18 @@
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
 
+- Hotfix 1.0.96: Updated Volleyball QF seeding to match the 2026 manager
+  ranking artifact from Loc Nguyen's playoff email. Volleyball event-wide
+  point differential now uses rally points summed from `score_json.sets[]`
+  instead of the stored sets-won `team_a_score` / `team_b_score` display
+  values. Volleyball difficulty-of-schedule now follows the manager sheet's
+  `Avg Opp Win %` presentation, and tied W-L groups use the manager's
+  pairwise application of the handbook: direct head-to-head when present,
+  then DoS, then total rally-point differential, then coin toss. This should
+  reproduce the published 2026 Volleyball Men seeds
+  `MWC/RPC/SFV/NSD/TLC/FVC/GAC/ANH` and Volleyball Women seeds
+  `MWC/FVC/NSD/RPC/ANH/GAC/ORN/NHC`.
+- Bumped plugin header/version to `1.0.96` and rebuilt `plugins/vaysf.zip`.
 - **Head-to-head tiebreak.** Amended `vaysf_results_desk_apply_pool_result()`
   and `vaysf_results_desk_sort_pool_rankings()` to add head-to-head
   resolution for teams still fully tied on wins/losses/point-differential
