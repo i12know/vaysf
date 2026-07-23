@@ -6,6 +6,18 @@
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
 
+- Hotfix 1.1.00: Added a Sports Fest > Schedules "Playoff Placement From
+  Manager Schedule" panel for Issue #337. Sports Fest managers can fill the
+  Saturday/Sunday venue, slot, and time fields from the attached manager
+  schedule image for BBM, MVB, VBW, and BC playoff rows without changing
+  matchups or results. Missing playoff rows can be created as blank scheduled
+  rows first, so managers may establish slots before coordinators apply QF/BC
+  matchups; later coordinator Apply flows preserve those placement fields.
+  Protected/scored rows are locked and skipped. The publish JSON ZIP export is
+  now available to `sf2025_write` users, while the raw event-day state JSON
+  backup remains admin-only. `BC-Final` exports as a 90-minute block for the
+  Sunday 2:30-4:00 PM schedule reservation.
+- Bumped plugin header/version to `1.1.00` and rebuilt `plugins/vaysf.zip`.
 - Hotfix 1.0.99: Corrected Basketball QF Difficulty of Schedule to match
   Matthew's playoff seeding spreadsheet: DoS is the total number of wins by
   opponents played, not opponent win percentage and not net opponent W-L.
