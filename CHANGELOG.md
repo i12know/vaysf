@@ -6,6 +6,20 @@
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
 
+- Hotfix 1.1.03: Corrected the Men's Volleyball manager playoff placement
+  game keys from `MVB-*` to the canonical `VBM-*` prefix used by Coordinator
+  apply flows, public advancement, and middleware schedule IDs. The Manager
+  save now retires unprotected stale `MVB-*` playoff placeholder rows from the
+  bad template so they do not leak into public schedule/export views. Rebuilt
+  `plugins/vaysf.zip`. Fixes #341.
+- Hotfix 1.1.02: Added a clearer Manager schedule error when a playoff row's
+  game key already exists on a different schedule version, so stale tabs or
+  version drift explain how to recover instead of surfacing as a generic save
+  failure. Rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.1.01: Corrected the Issue #337 manager playoff placement template
+  so QF, SF, Final, and 3rd-place defaults point to EHS Main Gym, EHS Practice
+  Gym, and EHS Library instead of ORN resources/locations. Rebuilt
+  `plugins/vaysf.zip`.
 - Scheduling: Normalized generated third-place playoff game keys to
   `*-3rd-Place` across gym, Soccer, and pod/racquet bracket builders so
   middleware output matches the WordPress semifinal advancement contract.
