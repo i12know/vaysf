@@ -6,6 +6,13 @@
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
 
+- Hotfix 1.0.98: Updated Basketball QF seeding to follow the Basketball
+  coordinator's revised playoff tiebreak order. Event-wide Basketball seeding
+  now infers preliminary bye wins from uneven pool schedules so those wins
+  count in W-L and opponents' Difficulty of Schedule, and resolves tied
+  records by DoS, capped point differential, fewer points allowed,
+  head-to-head, then coin toss.
+- Bumped plugin header/version to `1.0.98` and rebuilt `plugins/vaysf.zip`.
 - Hotfix 1.0.97: Counted Volleyball QF seeding W-L by individual rally games
   from `score_json.sets[]`, matching the manager ranking sheet's 6-0/6-2
   style records. This fixes the remaining 1.0.96 Women's Volleyball mismatch
