@@ -24,7 +24,7 @@ from config import (
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
-from chmeetings.backend_connector import ChMeetingsConnector
+from chmeetings.backend_connector import ChMeetingsConnector, ChMeetingsReadError
 from wordpress.frontend_connector import WordPressConnector
 
 
@@ -693,9 +693,14 @@ def repair_form_people(
             logger.error("Authentication with ChMeetings failed")
             return empty
 
-        live_people: List[Dict[str, Any]] = (
-            people if people is not None else chm_connector.get_people()
-        )
+        try:
+            live_people: List[Dict[str, Any]] = (
+                people if people is not None else chm_connector.get_people()
+            )
+        except ChMeetingsReadError as exc:
+            logger.error(f"Failed to load ChMeetings people for repair-form-people: {exc}")
+            return empty
+
         live_groups: List[Dict[str, Any]] = (
             groups if groups is not None else chm_connector.get_groups()
         )
@@ -867,7 +872,11 @@ def audit_form_people(
             if not chm_connector.authenticate():
                 logger.error("Authentication with ChMeetings failed")
                 return False
-            people = chm_connector.get_people()
+            try:
+                people = chm_connector.get_people()
+            except ChMeetingsReadError as exc:
+                logger.error(f"Failed to load ChMeetings people for audit-form-people: {exc}")
+                return False
 
     people_index = _index_people_for_form_audit(people)
     audit_rows: List[Dict[str, str]] = []
@@ -1299,7 +1308,11 @@ def _assign_people_to_church_team_groups_legacy(
             return False
 
         # --- Identification (unchanged logic) ---
-        all_people = chm_connector.get_people()
+        try:
+            all_people = chm_connector.get_people()
+        except ChMeetingsReadError as exc:
+            logger.error(f"Failed to load ChMeetings people for group assignment: {exc}")
+            return False
         logger.info(f"Retrieved {len(all_people)} people from ChMeetings")
         if source_file:
             audit_form_people(source_file, people=all_people)
@@ -1518,7 +1531,11 @@ def assign_people_to_church_team_groups(
             logger.error("Authentication with ChMeetings failed")
             return False
 
-        all_people = chm_connector.get_people()
+        try:
+            all_people = chm_connector.get_people()
+        except ChMeetingsReadError as exc:
+            logger.error(f"Failed to load ChMeetings people for group assignment: {exc}")
+            return False
         logger.info(f"Retrieved {len(all_people)} people from ChMeetings")
         if target_chm_ids:
             found_target_ids = {str(person.get("id")) for person in all_people} & target_chm_ids

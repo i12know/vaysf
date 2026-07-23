@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 # Ensure the middleware package root is importable (mirrors conftest.py / pytest.ini)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from chmeetings.backend_connector import ChMeetingsReadError
 from group_assignment import (
     assign_people_to_church_team_groups,
     audit_form_people,
@@ -1175,3 +1176,46 @@ def test_repair_form_people_blocks_duplicate_source_submissions(mock_connector, 
     audit_file = tmp_path / "form_people_repair.xlsx"
     df = pd.read_excel(audit_file)
     assert set(df["Outcome"]) == {"blocked_duplicate_source"}
+
+
+# ---------------------------------------------------------------------------
+# ChMeetingsReadError handling — a mid-pagination ChMeetings read failure must
+# not crash these operator commands (daily-run.bat runs assign-groups
+# unattended); it must be logged and reported as a clean failure instead.
+# ---------------------------------------------------------------------------
+
+def test_assign_people_to_church_team_groups_returns_false_on_get_people_read_error(mock_connector):
+    """A mid-pagination ChMeetings read failure must be a clean False, not a crash."""
+    mock_connector.get_people.side_effect = ChMeetingsReadError("page 2 connection dropped")
+
+    result = assign_people_to_church_team_groups(dry_run=False)
+
+    assert result is False
+    mock_connector.get_groups.assert_not_called()
+    mock_connector.add_person_to_group.assert_not_called()
+
+
+def test_audit_form_people_returns_false_on_get_people_read_error(mock_connector, tmp_path):
+    """A mid-pagination ChMeetings read failure must be a clean False, not a crash."""
+    mock_connector.get_people.side_effect = ChMeetingsReadError("page 2 connection dropped")
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([_individual_row()]).to_excel(source_file, index=False)
+
+    result = audit_form_people(str(source_file))
+
+    assert result is False
+
+
+def test_repair_form_people_returns_empty_on_get_people_read_error(mock_connector, tmp_path):
+    """A mid-pagination ChMeetings read failure must be a clean empty result, not a crash."""
+    mock_connector.get_people.side_effect = ChMeetingsReadError("page 2 connection dropped")
+
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([_individual_row()]).to_excel(source_file, index=False)
+
+    counts = repair_form_people(str(source_file), dry_run=True)
+
+    assert counts["created"] == 0
+    assert counts["linked"] == 0
+    mock_connector.create_person.assert_not_called()
