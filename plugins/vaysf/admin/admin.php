@@ -56,6 +56,100 @@ class VAYSF_Admin {
 
         // Register settings
         add_action('admin_init', array($this->pages['settings'], 'register_settings'));
+
+        // Keep event-day admin screens fresh during plugin hotfix deploys.
+        add_action('admin_init', array($this, 'send_vaysf_admin_no_cache_headers'));
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_cache_guard'));
+        add_action('wp_ajax_vaysf_plugin_version', array($this, 'ajax_plugin_version'));
+    }
+
+    /**
+     * Whether the current wp-admin request is one of the Sports Fest screens.
+     *
+     * @return bool
+     */
+    private function is_vaysf_admin_request() {
+        $page = isset($_GET['page']) ? sanitize_key(wp_unslash($_GET['page'])) : '';
+
+        return $page === 'vaysf' || strpos($page, 'vaysf-') === 0;
+    }
+
+    /**
+     * Send conservative no-cache headers for Sports Fest admin pages.
+     *
+     * @return void
+     */
+    public function send_vaysf_admin_no_cache_headers() {
+        if (!$this->is_vaysf_admin_request() || headers_sent()) {
+            return;
+        }
+
+        $this->send_no_cache_headers();
+    }
+
+    /**
+     * Send conservative no-cache headers for a Sports Fest response.
+     *
+     * @return void
+     */
+    private function send_no_cache_headers() {
+        if (headers_sent()) {
+            return;
+        }
+
+        nocache_headers();
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('X-VAYSF-Plugin-Version: ' . VAYSF_Integration::VERSION);
+    }
+
+    /**
+     * Enqueue the admin version guard on Sports Fest admin pages.
+     *
+     * @return void
+     */
+    public function enqueue_admin_cache_guard() {
+        if (!$this->is_vaysf_admin_request()) {
+            return;
+        }
+
+        wp_enqueue_script(
+            'vaysf-admin-cache-guard',
+            plugins_url('assets/admin-cache-guard.js', dirname(__DIR__) . '/vaysf.php'),
+            array(),
+            VAYSF_Integration::VERSION,
+            true
+        );
+        wp_localize_script(
+            'vaysf-admin-cache-guard',
+            'vaysfAdminCacheGuard',
+            array(
+                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('vaysf_plugin_version'),
+                'renderedVersion' => VAYSF_Integration::VERSION,
+                'reloadMessage' => __('Sports Fest was updated after this page loaded. Reload this page before saving so you do not submit an older screen.', 'vaysf'),
+                'reloadLabel' => __('Reload now', 'vaysf'),
+            )
+        );
+    }
+
+    /**
+     * Return the active plugin version for stale-page checks.
+     *
+     * @return void
+     */
+    public function ajax_plugin_version() {
+        $this->send_no_cache_headers();
+
+        if (!current_user_can('sf2025_read')) {
+            wp_send_json_error(array('message' => __('You do not have permission to read Sports Fest status.', 'vaysf')), 403);
+        }
+
+        check_ajax_referer('vaysf_plugin_version', 'nonce');
+
+        wp_send_json_success(array(
+            'version' => VAYSF_Integration::VERSION,
+        ));
     }
 
     /**

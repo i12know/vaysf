@@ -39,6 +39,21 @@ class VAYSF_REST_Public_Display extends VAYSF_REST_Controller {
     }
 
     /**
+     * Add no-cache headers for event-day public display endpoints.
+     *
+     * @param WP_REST_Response $response Response object
+     * @return WP_REST_Response
+     */
+    private function add_public_no_cache_headers($response) {
+        $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        $response->header('Pragma', 'no-cache');
+        $response->header('Expires', 'Wed, 11 Jan 1984 05:00:00 GMT');
+        $response->header('X-VAYSF-Plugin-Version', VAYSF_Integration::VERSION);
+
+        return $response;
+    }
+
+    /**
      * Public read-only live schedule + reported/official scores (Issue #206).
      *
      * @param WP_REST_Request $request Request object
@@ -54,7 +69,7 @@ class VAYSF_REST_Public_Display extends VAYSF_REST_Controller {
             'upcoming_only' => $request->get_param('upcoming_only'),
         ));
 
-        return rest_ensure_response($rows);
+        return $this->add_public_no_cache_headers(rest_ensure_response($rows));
     }
 
     /**
@@ -68,6 +83,6 @@ class VAYSF_REST_Public_Display extends VAYSF_REST_Controller {
             'event' => $request->get_param('event'),
         ));
 
-        return rest_ensure_response($rows);
+        return $this->add_public_no_cache_headers(rest_ensure_response($rows));
     }
 }
