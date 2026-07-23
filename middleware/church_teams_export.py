@@ -2317,7 +2317,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         if playoff_teams >= 4:
             final_ids.append(f"{prefix}-Final")
             if include_third:
-                final_ids.append(f"{prefix}-3rd")
+                final_ids.append(f"{prefix}-3rd-Place")
         return early_ids, final_ids
 
     def _write_court_schedule_sketch(
