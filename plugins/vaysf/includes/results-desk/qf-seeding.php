@@ -99,6 +99,115 @@ function vaysf_results_desk_volleyball_match_point_totals($payload) {
 }
 
 /**
+ * Build the score map used by event-wide QF seeding.
+ *
+ * Volleyball result payloads store team_a_score/team_b_score as sets won for
+ * display, but the manager's 2026 ranking artifact uses rally points for
+ * playoff point differential. Basketball keeps using the existing score
+ * fields, with its 40-point cap applied by the caller.
+ *
+ * @param array<string,mixed> $payload Decoded score_json
+ * @param array<int,array{slot:string,key:string,label:string}> $slots Schedule slots
+ * @param string $sport_type 'basketball' or 'volleyball'
+ * @return array<string,int>
+ */
+function vaysf_results_desk_seeding_score_by_team($payload, $slots, $sport_type) {
+    if ($sport_type === 'volleyball' && count($slots) >= 2) {
+        $totals = vaysf_results_desk_volleyball_match_point_totals($payload);
+        if ($totals !== null) {
+            return array(
+                $slots[0]['key'] => $totals[0],
+                $slots[1]['key'] => $totals[1],
+            );
+        }
+    }
+
+    return vaysf_results_desk_pool_score_by_team($payload, $slots);
+}
+
+/**
+ * Count volleyball W-L using the manager worksheet's rally-game convention.
+ *
+ * The public result stores match winners in winner_keys_json, but the 2026
+ * manager ranking sheet counts each 25-point rally game as one W/L unit.
+ *
+ * @param array<string,mixed> $payload Decoded score_json
+ * @return array<string,array<string,int>> Slot letter => wins/losses/played
+ */
+function vaysf_results_desk_volleyball_set_record_by_slot($payload) {
+    $record = array(
+        'a' => array('wins' => 0, 'losses' => 0, 'played' => 0),
+        'b' => array('wins' => 0, 'losses' => 0, 'played' => 0),
+    );
+
+    if (empty($payload['sets']) || !is_array($payload['sets'])) {
+        return $record;
+    }
+
+    foreach ($payload['sets'] as $set) {
+        if (!is_array($set) || !isset($set['team_a_score'], $set['team_b_score'])) {
+            continue;
+        }
+
+        $team_a_score = (int) $set['team_a_score'];
+        $team_b_score = (int) $set['team_b_score'];
+        if ($team_a_score === $team_b_score) {
+            continue;
+        }
+
+        $record['a']['played']++;
+        $record['b']['played']++;
+        if ($team_a_score > $team_b_score) {
+            $record['a']['wins']++;
+            $record['b']['losses']++;
+        } else {
+            $record['b']['wins']++;
+            $record['a']['losses']++;
+        }
+    }
+
+    return $record;
+}
+
+/**
+ * Infer Basketball preliminary bye wins from an uneven pool schedule.
+ *
+ * Matthew's 2026 Basketball worksheet uses total opponent wins for Difficulty
+ * of Schedule. If an opponent received an official bye in preliminary play,
+ * that bye strengthens the opponent for DoS math, but it is not displayed as
+ * an extra played match in that team's own QF standing.
+ *
+ * @param array<string,array<string,int>> $scheduled_by_pool Team scheduled counts per pool
+ * @return array<string,int> Bye wins by team key
+ */
+function vaysf_results_desk_infer_basketball_bye_wins($scheduled_by_pool) {
+    $bye_wins_by_team = array();
+
+    foreach ($scheduled_by_pool as $pool_counts) {
+        if (!is_array($pool_counts) || empty($pool_counts)) {
+            continue;
+        }
+
+        $target_games = max(array_map('absint', array_values($pool_counts)));
+        if ($target_games <= 0) {
+            continue;
+        }
+
+        foreach ($pool_counts as $team_key => $scheduled_count) {
+            $team_key = (string) $team_key;
+            $bye_wins = $target_games - absint($scheduled_count);
+            if ($bye_wins <= 0) {
+                continue;
+            }
+
+            $bye_wins_by_team[$team_key] = (int) ($bye_wins_by_team[$team_key] ?? 0) + $bye_wins;
+        }
+    }
+
+    return $bye_wins_by_team;
+}
+
+/**
  * Accumulate cross-pool W-L/points/opponent stats for one event's teams from
  * its preliminary rows (Issue #329 §3.1–3.3/3.4 ranking basis). Parallel to,
  * but deliberately separate from, vaysf_results_desk_apply_pool_result():
@@ -120,6 +229,7 @@ function vaysf_results_desk_accumulate_event_seeding_stats($rows, $sport_type) {
     $vb_match_point_diff = array();
     $pool_game_counts = array();
     $pool_missing_counts = array();
+    $scheduled_by_pool = array();
     $opponents_played = array();
 
     foreach ($rows as $row) {
@@ -133,6 +243,7 @@ function vaysf_results_desk_accumulate_event_seeding_stats($rows, $sport_type) {
 
         foreach ($slots as $slot) {
             vaysf_results_desk_ensure_pool_team($teams, $slot['key'], $slot['label']);
+            $scheduled_by_pool[$pool_id][$slot['key']] = ($scheduled_by_pool[$pool_id][$slot['key']] ?? 0) + 1;
         }
 
         $score_json = trim((string) ($row['score_json'] ?? ''));
@@ -141,7 +252,7 @@ function vaysf_results_desk_accumulate_event_seeding_stats($rows, $sport_type) {
             continue;
         }
         $payload = vaysf_results_desk_decode_json_array($score_json);
-        $scores = vaysf_results_desk_pool_score_by_team($payload, $slots);
+        $scores = vaysf_results_desk_seeding_score_by_team($payload, $slots, $sport_type);
         if (!$payload || !$scores) {
             $pool_missing_counts[$pool_id] = ($pool_missing_counts[$pool_id] ?? 0) + 1;
             continue;
@@ -156,13 +267,21 @@ function vaysf_results_desk_accumulate_event_seeding_stats($rows, $sport_type) {
         $winner_keys = array_values(array_filter(array_map('strval', $winner_keys)));
         $winner_lookup = array_fill_keys($winner_keys, true);
         $is_tie = !empty($payload['is_tie']) || count($winner_keys) > 1 || !empty($payload['split_match']);
+        $volleyball_set_record = $sport_type === 'volleyball'
+            ? vaysf_results_desk_volleyball_set_record_by_slot($payload)
+            : array();
 
         foreach ($slots as $slot) {
             $key = $slot['key'];
             if (!isset($scores[$key])) {
                 continue;
             }
-            $teams[$key]['played']++;
+            $slot_letter = (string) ($slot['slot'] ?? '');
+            $set_record = $volleyball_set_record[$slot_letter] ?? null;
+            $played_units = is_array($set_record) && (int) ($set_record['played'] ?? 0) > 0
+                ? (int) $set_record['played']
+                : 1;
+            $teams[$key]['played'] += $played_units;
             $teams[$key]['for'] += (int) $scores[$key];
             $opponent_key = ($key === $slot_a) ? $slot_b : $slot_a;
             $opponent_score = (int) ($scores[$opponent_key] ?? 0);
@@ -174,7 +293,10 @@ function vaysf_results_desk_accumulate_event_seeding_stats($rows, $sport_type) {
             $teams[$key]['capped_diff'] = ($teams[$key]['capped_diff'] ?? 0) + $game_diff;
             $teams[$key]['diff'] = $teams[$key]['for'] - $teams[$key]['against'];
 
-            if ($is_tie) {
+            if ($sport_type === 'volleyball' && is_array($set_record) && (int) ($set_record['played'] ?? 0) > 0) {
+                $teams[$key]['wins'] += (int) ($set_record['wins'] ?? 0);
+                $teams[$key]['losses'] += (int) ($set_record['losses'] ?? 0);
+            } elseif ($is_tie) {
                 if (!$winner_keys || isset($winner_lookup[$key])) {
                     $teams[$key]['ties']++;
                 } else {
@@ -218,19 +340,34 @@ function vaysf_results_desk_accumulate_event_seeding_stats($rows, $sport_type) {
         $pool_complete_by_id[$pool_id] = ($count > 0) && empty($pool_missing_counts[$pool_id]);
     }
 
-    // Difficulty of schedule (§3.3.2/§3.4.2): sum, over every game a team
-    // played, of that game's opponent's final net W-L record (wins minus
-    // losses). Requires final W-L for every team, which the pass above just
-    // finished computing, hence the separate second pass here.
+    $basketball_bye_wins_by_team = $sport_type === 'basketball'
+        ? vaysf_results_desk_infer_basketball_bye_wins($scheduled_by_pool)
+        : array();
+
+    // Difficulty of schedule requires final W-L for every team, which the
+    // pass above just finished computing, hence the separate second pass here.
+    // Basketball DoS is total opponent wins, with inferred bye wins counted
+    // for the opponent only. Volleyball DoS is average opponent win percentage.
     foreach ($teams as $key => $team) {
         $sos = 0;
+        $opponent_count = 0;
         foreach (($opponents_played[$key] ?? array()) as $opponent_key) {
             $opponent = $teams[$opponent_key] ?? null;
             if ($opponent) {
-                $sos += ((int) $opponent['wins'] - (int) $opponent['losses']);
+                if ($sport_type === 'volleyball') {
+                    $opponent_games = (int) $opponent['wins'] + (int) $opponent['losses'] + (int) ($opponent['ties'] ?? 0);
+                    if ($opponent_games > 0) {
+                        $sos += (((int) $opponent['wins']) + (0.5 * (int) ($opponent['ties'] ?? 0))) / $opponent_games;
+                        $opponent_count++;
+                    }
+                } else {
+                    $sos += (int) $opponent['wins'] + (int) ($basketball_bye_wins_by_team[$opponent_key] ?? 0);
+                }
             }
         }
-        $teams[$key]['sos'] = $sos;
+        $teams[$key]['sos'] = $sport_type === 'volleyball' && $opponent_count > 0
+            ? round($sos / $opponent_count, 6)
+            : $sos;
     }
 
     return array($teams, $head_to_head, $vb_match_point_diff, $pool_complete_by_id);
@@ -281,33 +418,16 @@ function vaysf_get_coin_toss_decisions($event, $schedule_version) {
 }
 
 /**
- * Resolve one still-tied group of teams (equal wins/losses) through the
- * remaining 2026 tie-break cascade (Issue #329): head-to-head, then
- * difficulty-of-schedule, then point differential, then coin toss. Each step
- * may only partially resolve a group — e.g. head-to-head might cleanly
- * separate 2 of 4 tied teams while leaving the other 2 still tied — so the
- * remainder recurses through the remaining, narrower criteria exactly the
- * way vaysf_resolve_pool_head_to_head_group() already does for the
- * single-criterion per-pool case.
+ * Build the effective pairwise head-to-head map for QF seeding. Volleyball
+ * split matches are upgraded to the winner of that match's rally-point
+ * differential, matching the manager's 2026 worksheet notes.
  *
- * @param array<int,array<string,mixed>> $group Team rows, already tied on wins/losses
  * @param array<string,string> $head_to_head pair_key => winner key or 'tie'
- * @param array<string,int> $vb_match_point_diff pair_key => single-match point diff (Volleyball only)
- * @param array<string,string> $coin_toss_decisions pair_key => winner key, from recorded flips
- * @param bool $is_volleyball
- * @param string $diff_field 'capped_diff' (Basketball) or 'diff' (Volleyball)
- * @return array{ordered:array<int,array<string,mixed>>,unresolved_groups:array<int,array<int,string>>}
+ * @param array<string,int> $vb_match_point_diff pair_key => single-match point diff
+ * @param bool $is_volleyball Whether the current event is Volleyball
+ * @return array<string,string>
  */
-function vaysf_results_desk_resolve_seeding_group($group, $head_to_head, $vb_match_point_diff, $coin_toss_decisions, $is_volleyball, $diff_field) {
-    if (count($group) <= 1) {
-        return array('ordered' => $group, 'unresolved_groups' => array());
-    }
-
-    // Step 1: head-to-head, with Volleyball's §3.4.1.1 split-match point-diff
-    // sub-rule folded in — a recorded 'tie' entry for a genuine split match
-    // is upgraded to a real winner here before group resolution runs, so a
-    // 1-1 split still counts as "decided" for this step rather than falling
-    // straight through to difficulty-of-schedule.
+function vaysf_results_desk_effective_head_to_head($head_to_head, $vb_match_point_diff, $is_volleyball) {
     $effective_head_to_head = $head_to_head;
     if ($is_volleyball) {
         foreach ($vb_match_point_diff as $pair_key => $point_diff) {
@@ -317,31 +437,133 @@ function vaysf_results_desk_resolve_seeding_group($group, $head_to_head, $vb_mat
             }
         }
     }
-    $group_keys = array_map(function ($t) {
-        return $t['team_key'];
-    }, $group);
-    $by_key = array_combine($group_keys, $group);
 
-    $h2h_order = vaysf_resolve_pool_head_to_head_group($group_keys, $effective_head_to_head);
-    if ($h2h_order !== null) {
-        $ordered = array();
-        foreach ($h2h_order as $key) {
-            $ordered[] = $by_key[$key];
-        }
-        return array('ordered' => $ordered, 'unresolved_groups' => array());
+    return $effective_head_to_head;
+}
+
+/**
+ * Compare two teams within an equal W-L seeding group.
+ *
+ * Volleyball keeps the manager's pairwise application of the 2026 handbook:
+ * direct head-to-head when present, then difficulty of schedule, then total
+ * rally-point differential, then coin toss. Basketball follows the coordinator
+ * revision: difficulty of schedule, capped point differential, fewer points
+ * allowed, head-to-head, then coin toss.
+ *
+ * @param array<string,mixed> $a First team row
+ * @param array<string,mixed> $b Second team row
+ * @param array<string,string> $effective_head_to_head pair_key => winner key or 'tie'
+ * @param array<string,string> $coin_toss_decisions pair_key => winner key
+ * @param string $diff_field 'capped_diff' (Basketball) or 'diff' (Volleyball)
+ * @param string $sport_type 'basketball' or 'volleyball'
+ * @return int -1 when $a ranks higher, 1 when $b ranks higher, 0 when unresolved
+ */
+function vaysf_results_desk_compare_seeding_pair($a, $b, $effective_head_to_head, $coin_toss_decisions, $diff_field, $sport_type = 'volleyball') {
+    $key_a = (string) ($a['team_key'] ?? '');
+    $key_b = (string) ($b['team_key'] ?? '');
+    if ($key_a === '' || $key_b === '' || $key_a === $key_b) {
+        return 0;
     }
 
-    // Step 2: difficulty of schedule — numeric, so re-sort and re-group
-    // rather than a pairwise decision map.
-    return vaysf_results_desk_resolve_seeding_group_numeric(
-        $group,
-        'sos',
-        $head_to_head,
-        $vb_match_point_diff,
-        $coin_toss_decisions,
-        $is_volleyball,
-        $diff_field,
-        'point_diff'
+    $pair = array($key_a, $key_b);
+    sort($pair);
+    $pair_key = implode('|', $pair);
+
+    $a_sos = (float) ($a['sos'] ?? 0);
+    $b_sos = (float) ($b['sos'] ?? 0);
+    $a_diff = (float) ($a[$diff_field] ?? 0);
+    $b_diff = (float) ($b[$diff_field] ?? 0);
+
+    if ($sport_type === 'basketball') {
+        if (abs($a_sos - $b_sos) > 0.000001) {
+            return $a_sos > $b_sos ? -1 : 1;
+        }
+
+        if (abs($a_diff - $b_diff) > 0.000001) {
+            return $a_diff > $b_diff ? -1 : 1;
+        }
+
+        $a_against = (float) ($a['against'] ?? 0);
+        $b_against = (float) ($b['against'] ?? 0);
+        if (abs($a_against - $b_against) > 0.000001) {
+            return $a_against < $b_against ? -1 : 1;
+        }
+
+        if (!empty($effective_head_to_head[$pair_key]) && $effective_head_to_head[$pair_key] !== 'tie') {
+            return $effective_head_to_head[$pair_key] === $key_a ? -1 : 1;
+        }
+
+        if (!empty($coin_toss_decisions[$pair_key])) {
+            return $coin_toss_decisions[$pair_key] === $key_a ? -1 : 1;
+        }
+
+        return 0;
+    }
+
+    if (!empty($effective_head_to_head[$pair_key]) && $effective_head_to_head[$pair_key] !== 'tie') {
+        return $effective_head_to_head[$pair_key] === $key_a ? -1 : 1;
+    }
+
+    if (abs($a_sos - $b_sos) > 0.000001) {
+        return $a_sos > $b_sos ? -1 : 1;
+    }
+
+    if (abs($a_diff - $b_diff) > 0.000001) {
+        return $a_diff > $b_diff ? -1 : 1;
+    }
+
+    if (!empty($coin_toss_decisions[$pair_key])) {
+        return $coin_toss_decisions[$pair_key] === $key_a ? -1 : 1;
+    }
+
+    return 0;
+}
+
+/**
+ * Resolve one still-tied W-L group through the sport-specific 2026 QF
+ * seeding tiebreak chain.
+ *
+ * @param array<int,array<string,mixed>> $group Team rows, already tied on wins/losses
+ * @param array<string,string> $head_to_head pair_key => winner key or 'tie'
+ * @param array<string,int> $vb_match_point_diff pair_key => single-match point diff (Volleyball only)
+ * @param array<string,string> $coin_toss_decisions pair_key => winner key, from recorded flips
+ * @param bool $is_volleyball
+ * @param string $diff_field 'capped_diff' (Basketball) or 'diff' (Volleyball)
+ * @param string $sport_type 'basketball' or 'volleyball'
+ * @return array{ordered:array<int,array<string,mixed>>,unresolved_groups:array<int,array<int,string>>}
+ */
+function vaysf_results_desk_resolve_seeding_group($group, $head_to_head, $vb_match_point_diff, $coin_toss_decisions, $is_volleyball, $diff_field, $sport_type = 'volleyball') {
+    if (count($group) <= 1) {
+        return array('ordered' => $group, 'unresolved_groups' => array());
+    }
+
+    $manager_head_to_head = vaysf_results_desk_effective_head_to_head($head_to_head, $vb_match_point_diff, $is_volleyball);
+    $manager_sorted = $group;
+    usort($manager_sorted, function ($a, $b) use ($manager_head_to_head, $coin_toss_decisions, $diff_field, $sport_type) {
+        $result = vaysf_results_desk_compare_seeding_pair($a, $b, $manager_head_to_head, $coin_toss_decisions, $diff_field, $sport_type);
+        if ($result !== 0) {
+            return $result;
+        }
+
+        return strcasecmp((string) ($a['label'] ?? ''), (string) ($b['label'] ?? ''));
+    });
+
+    $unresolved_keys = array();
+    foreach ($manager_sorted as $a_index => $team_a) {
+        foreach ($manager_sorted as $b_index => $team_b) {
+            if ($b_index <= $a_index) {
+                continue;
+            }
+            if (vaysf_results_desk_compare_seeding_pair($team_a, $team_b, $manager_head_to_head, $coin_toss_decisions, $diff_field, $sport_type) === 0) {
+                $unresolved_keys[(string) $team_a['team_key']] = true;
+                $unresolved_keys[(string) $team_b['team_key']] = true;
+            }
+        }
+    }
+
+    return array(
+        'ordered' => $manager_sorted,
+        'unresolved_groups' => empty($unresolved_keys) ? array() : array(array_keys($unresolved_keys)),
     );
 }
 
@@ -414,6 +636,9 @@ function vaysf_results_desk_resolve_seeding_group_numeric($group, $field, $head_
                     $ordered[] = $by_key[$key];
                 }
             } else {
+                foreach ($sub_group as $team) {
+                    $ordered[] = $team;
+                }
                 $unresolved_groups[] = $sub_keys;
             }
         }
@@ -427,12 +652,13 @@ function vaysf_results_desk_resolve_seeding_group_numeric($group, $field, $head_
 /**
  * Compute the confirmed-ready cross-pool QF seeding ranking for one
  * Basketball/Volleyball event (Issue #329, official 2026 rules): W-L record,
- * then head-to-head, then difficulty-of-schedule, then point differential
- * (Basketball capped at 40/game, Volleyball uncapped), then coin toss.
+ * then the sport-specific tie chain. Basketball uses the coordinator's
+ * revised DoS -> capped point differential -> points allowed -> head-to-head
+ * order; Volleyball uses the Loc/manager Volleyball method.
  *
  * @param string $event Schedule event name
  * @param int $schedule_version Published schedule version
- * @return array<string,mixed> {sport_type, complete, pools_complete, rankings, fully_resolved, unresolved_groups}
+ * @return array<string,mixed> {sport_type, complete, pools_complete, rankings, fully_resolved, unresolved_groups, qf_fully_resolved, qf_unresolved_groups}
  */
 function vaysf_results_desk_get_event_seeding_rankings($event, $schedule_version) {
     $sport_type = vaysf_results_desk_seeding_sport_type($event);
@@ -479,7 +705,7 @@ function vaysf_results_desk_get_event_seeding_rankings($event, $schedule_version
     $ordered = array();
     $unresolved_groups = array();
     foreach ($groups as $group) {
-        $result = vaysf_results_desk_resolve_seeding_group($group, $head_to_head, $vb_match_point_diff, $coin_toss_decisions, $is_volleyball, $diff_field);
+        $result = vaysf_results_desk_resolve_seeding_group($group, $head_to_head, $vb_match_point_diff, $coin_toss_decisions, $is_volleyball, $diff_field, $sport_type);
         $ordered = array_merge($ordered, $result['ordered']);
         $unresolved_groups = array_merge($unresolved_groups, $result['unresolved_groups']);
     }
@@ -497,6 +723,24 @@ function vaysf_results_desk_get_event_seeding_rankings($event, $schedule_version
         $ordered[$index]['needs_coin_toss'] = !empty($unresolved_keys[$team['team_key']]);
     }
 
+    $qf_seed_keys = array();
+    foreach ($ordered as $index => $team) {
+        if ($index >= 8) {
+            break;
+        }
+        $qf_seed_keys[$team['team_key']] = true;
+    }
+
+    $qf_unresolved_groups = array();
+    foreach ($unresolved_groups as $group_keys) {
+        foreach ($group_keys as $key) {
+            if (!empty($qf_seed_keys[$key])) {
+                $qf_unresolved_groups[] = $group_keys;
+                break;
+            }
+        }
+    }
+
     return array(
         'sport_type' => $sport_type,
         'complete' => $complete,
@@ -504,6 +748,8 @@ function vaysf_results_desk_get_event_seeding_rankings($event, $schedule_version
         'rankings' => $ordered,
         'fully_resolved' => empty($unresolved_groups),
         'unresolved_groups' => $unresolved_groups,
+        'qf_fully_resolved' => empty($qf_unresolved_groups),
+        'qf_unresolved_groups' => $qf_unresolved_groups,
     );
 }
 
@@ -535,9 +781,9 @@ function vaysf_confirm_event_qf_seeding($user_id, $event, $schedule_version = nu
     if (empty($seeding['complete'])) {
         return new WP_Error('vaysf_qf_seeding_incomplete', __('Every pool for this event must be fully reported before confirming QF seeding.', 'vaysf'));
     }
-    if (empty($seeding['fully_resolved'])) {
+    if (empty($seeding['qf_fully_resolved'])) {
         $pending = array();
-        foreach ($seeding['unresolved_groups'] as $group) {
+        foreach ($seeding['qf_unresolved_groups'] as $group) {
             $pending[] = implode(' vs ', $group);
         }
         return new WP_Error(

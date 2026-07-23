@@ -199,12 +199,13 @@ function vaysf_handle_confirm_event_qf_seeding_request() {
     }
     $return_url = remove_query_arg(array('vaysf_advancement_status', 'vaysf_advancement_message'), $return_url);
 
-    if (!vaysf_user_can_view_results_desk()) {
-        wp_die(esc_html__('You are not authorized to confirm QF seeding.', 'vaysf'), 403);
-    }
-
     $event = isset($_POST['event']) ? sanitize_text_field(wp_unslash($_POST['event'])) : '';
     $schedule_version = isset($_POST['schedule_version']) ? absint($_POST['schedule_version']) : 0;
+
+    if (!vaysf_user_can_confirm_event_qf_seeding($event)) {
+        wp_die(esc_html__('You are not authorized to confirm QF seeding for this event.', 'vaysf'), 403);
+    }
+
     $nonce_action = 'vaysf_confirm_event_qf_seeding_' . $event . '_' . $schedule_version;
 
     if (empty($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), $nonce_action)) {
@@ -256,14 +257,15 @@ function vaysf_handle_flip_coin_toss_request() {
     }
     $return_url = remove_query_arg(array('vaysf_advancement_status', 'vaysf_advancement_message'), $return_url);
 
-    if (!vaysf_user_can_view_results_desk()) {
-        wp_die(esc_html__('You are not authorized to flip a coin toss.', 'vaysf'), 403);
-    }
-
     $event = isset($_POST['event']) ? sanitize_text_field(wp_unslash($_POST['event'])) : '';
     $schedule_version = isset($_POST['schedule_version']) ? absint($_POST['schedule_version']) : 0;
     $team_a_key = isset($_POST['team_a_key']) ? sanitize_text_field(wp_unslash($_POST['team_a_key'])) : '';
     $team_b_key = isset($_POST['team_b_key']) ? sanitize_text_field(wp_unslash($_POST['team_b_key'])) : '';
+
+    if (!vaysf_user_can_confirm_event_qf_seeding($event)) {
+        wp_die(esc_html__('You are not authorized to flip a coin toss for this event.', 'vaysf'), 403);
+    }
+
     $nonce_action = 'vaysf_flip_coin_toss_' . $event . '_' . $schedule_version . '_' . $team_a_key . '_' . $team_b_key;
 
     if (empty($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), $nonce_action)) {

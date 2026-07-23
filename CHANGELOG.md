@@ -6,6 +6,37 @@
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
 
+- Hotfix 1.0.99: Corrected Basketball QF Difficulty of Schedule to match
+  Matthew's playoff seeding spreadsheet: DoS is the total number of wins by
+  opponents played, not opponent win percentage and not net opponent W-L.
+  Inferred official bye wins now count only when that team is evaluated as an
+  opponent for DoS, so WAG's bye strengthens ANH/FVC's schedule but no longer
+  changes WAG's displayed preliminary W-L standing.
+- Bumped plugin header/version to `1.0.99` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.98: Updated Basketball QF seeding to follow the Basketball
+  coordinator's revised playoff tiebreak order. Event-wide Basketball seeding
+  now infers preliminary bye wins from uneven pool schedules so those wins
+  count in W-L and opponents' Difficulty of Schedule, and resolves tied
+  records by DoS, capped point differential, fewer points allowed,
+  head-to-head, then coin toss.
+- Bumped plugin header/version to `1.0.98` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.97: Counted Volleyball QF seeding W-L by individual rally games
+  from `score_json.sets[]`, matching the manager ranking sheet's 6-0/6-2
+  style records. This fixes the remaining 1.0.96 Women's Volleyball mismatch
+  where ANH's 3-1 match record incorrectly ranked above tied 6-2 teams.
+- Bumped plugin header/version to `1.0.97` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.96: Updated Volleyball QF seeding to match the 2026 manager
+  ranking artifact from Loc Nguyen's playoff email. Volleyball event-wide
+  point differential now uses rally points summed from `score_json.sets[]`
+  instead of the stored sets-won `team_a_score` / `team_b_score` display
+  values. Volleyball difficulty-of-schedule now follows the manager sheet's
+  `Avg Opp Win %` presentation, and tied W-L groups use the manager's
+  pairwise application of the handbook: direct head-to-head when present,
+  then DoS, then total rally-point differential, then coin toss. This should
+  reproduce the published 2026 Volleyball Men seeds
+  `MWC/RPC/SFV/NSD/TLC/FVC/GAC/ANH` and Volleyball Women seeds
+  `MWC/FVC/NSD/RPC/ANH/GAC/ORN/NHC`.
+- Bumped plugin header/version to `1.0.96` and rebuilt `plugins/vaysf.zip`.
 - **Head-to-head tiebreak.** Amended `vaysf_results_desk_apply_pool_result()`
   and `vaysf_results_desk_sort_pool_rankings()` to add head-to-head
   resolution for teams still fully tied on wins/losses/point-differential
@@ -505,6 +536,35 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - No PHP test harness exists in this repo; verification is manual against a
   staging WordPress site before deploy.
 - Bumped plugin header/version to `1.0.92` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.93: Fixed the remaining coordinator self-service gap found on a
+  fresh staging site upgraded from plugin 1.0.71 to 1.0.92 for issue #335:
+  the Coordinator Score Entry "QF Setup" tab could show Basketball and
+  Volleyball events, but if cross-pool QF seeding had not already been
+  confirmed by a Results Desk manager it stopped with "Ask a Sports Fest
+  manager..." This made coordinators unable to complete their own pool-review
+  and QF setup job on a newly restored/staged season. The coordinator panel
+  now renders the same cross-pool seeding review, coin-toss, and "Confirm All
+  Pools for QF Seeding" controls for each assigned BB/VB event, and the
+  corresponding admin-post handlers accept only Results Desk users or
+  coordinators assigned to that exact event. Once confirmed, the existing
+  preview/reorder/Apply flow unlocks without manager/admin help.
+- Bumped plugin header/version to `1.0.93` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.94: Fixed the Volleyball-Men QF setup blocker found live on the
+  fresh 1.0.93 staging retest. The event's Top 8 QF seeds were already stable,
+  but unresolved coin-toss groups entirely below the advancing cutoff still
+  rendered Flip coin forms and blocked "Confirm All Pools for QF Seeding."
+  QF confirmation now only requires coin-toss resolution for unresolved groups
+  touching seed slots 1-8, while lower-table unresolved ties remain visible as
+  diagnostics and no longer block the coordinator from setting up the bracket.
+- Bumped plugin header/version to `1.0.94` and rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.0.95: Fixed the follow-up Volleyball-Men coin-toss UX blocker found
+  on a fresh 1.0.94 staging clone. After the first required seed-order coin
+  toss recorded successfully, the seeding panel still rendered that same pair
+  as the first Flip coin form; clicking it again correctly failed with "This
+  pair already has a recorded coin-toss decision," but left coordinators stuck
+  unless they knew to skip to later forms. The coin-toss renderer now hides
+  already-recorded pairs, leaving only still-needed flips visible.
+- Bumped plugin header/version to `1.0.95` and rebuilt `plugins/vaysf.zip`.
 
 ### Results Desk dead-code cleanup
 
