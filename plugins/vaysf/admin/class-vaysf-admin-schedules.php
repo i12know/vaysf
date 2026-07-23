@@ -685,16 +685,16 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
             'VBW-QF-2' => array('scheduled_time' => '2026-07-25 08:00:00', 'scheduled_slot' => 'Sat-2-08:00', 'resource_id' => 'EHS-PRACTICE-VB3', 'scheduled_location' => 'EHS Practice Gym - VB3'),
             'VBW-QF-1' => array('scheduled_time' => '2026-07-25 09:00:00', 'scheduled_slot' => 'Sat-2-09:00', 'resource_id' => 'EHS-PRACTICE-VB2', 'scheduled_location' => 'EHS Practice Gym - VB2'),
             'VBW-QF-4' => array('scheduled_time' => '2026-07-25 09:00:00', 'scheduled_slot' => 'Sat-2-09:00', 'resource_id' => 'EHS-PRACTICE-VB3', 'scheduled_location' => 'EHS Practice Gym - VB3'),
-            'MVB-QF-1' => array('scheduled_time' => '2026-07-25 10:00:00', 'scheduled_slot' => 'Sat-2-10:00', 'resource_id' => 'EHS-PRACTICE-VB2', 'scheduled_location' => 'EHS Practice Gym - VB2'),
-            'MVB-QF-2' => array('scheduled_time' => '2026-07-25 10:00:00', 'scheduled_slot' => 'Sat-2-10:00', 'resource_id' => 'EHS-PRACTICE-VB3', 'scheduled_location' => 'EHS Practice Gym - VB3'),
-            'MVB-QF-4' => array('scheduled_time' => '2026-07-25 11:00:00', 'scheduled_slot' => 'Sat-2-11:00', 'resource_id' => 'EHS-PRACTICE-VB2', 'scheduled_location' => 'EHS Practice Gym - VB2'),
-            'MVB-QF-3' => array('scheduled_time' => '2026-07-25 11:00:00', 'scheduled_slot' => 'Sat-2-11:00', 'resource_id' => 'EHS-PRACTICE-VB3', 'scheduled_location' => 'EHS Practice Gym - VB3'),
+            'VBM-QF-1' => array('scheduled_time' => '2026-07-25 10:00:00', 'scheduled_slot' => 'Sat-2-10:00', 'resource_id' => 'EHS-PRACTICE-VB2', 'scheduled_location' => 'EHS Practice Gym - VB2'),
+            'VBM-QF-2' => array('scheduled_time' => '2026-07-25 10:00:00', 'scheduled_slot' => 'Sat-2-10:00', 'resource_id' => 'EHS-PRACTICE-VB3', 'scheduled_location' => 'EHS Practice Gym - VB3'),
+            'VBM-QF-4' => array('scheduled_time' => '2026-07-25 11:00:00', 'scheduled_slot' => 'Sat-2-11:00', 'resource_id' => 'EHS-PRACTICE-VB2', 'scheduled_location' => 'EHS Practice Gym - VB2'),
+            'VBM-QF-3' => array('scheduled_time' => '2026-07-25 11:00:00', 'scheduled_slot' => 'Sat-2-11:00', 'resource_id' => 'EHS-PRACTICE-VB3', 'scheduled_location' => 'EHS Practice Gym - VB3'),
             'VBW-Semi-1' => array('scheduled_time' => '2026-07-25 14:00:00', 'scheduled_slot' => 'Sat-2-14:00', 'resource_id' => 'EHS-PRACTICE-VB2', 'scheduled_location' => 'EHS Practice Gym - VB2'),
             'VBW-Semi-2' => array('scheduled_time' => '2026-07-25 14:00:00', 'scheduled_slot' => 'Sat-2-14:00', 'resource_id' => 'EHS-PRACTICE-VB3', 'scheduled_location' => 'EHS Practice Gym - VB3'),
-            'MVB-Semi-1' => array('scheduled_time' => '2026-07-25 15:00:00', 'scheduled_slot' => 'Sat-2-15:00', 'resource_id' => 'EHS-PRACTICE-VB2', 'scheduled_location' => 'EHS Practice Gym - VB2'),
-            'MVB-Semi-2' => array('scheduled_time' => '2026-07-25 15:00:00', 'scheduled_slot' => 'Sat-2-15:00', 'resource_id' => 'EHS-PRACTICE-VB3', 'scheduled_location' => 'EHS Practice Gym - VB3'),
-            'MVB-Final' => array('scheduled_time' => '2026-07-26 12:00:00', 'scheduled_slot' => 'Sun-2-12:00', 'resource_id' => 'EHS-MAIN-CC', 'scheduled_location' => 'EHS Main Gym - Center Court'),
-            'MVB-3rd-Place' => array('scheduled_time' => '2026-07-26 12:00:00', 'scheduled_slot' => 'Sun-2-12:00', 'resource_id' => 'EHS-PRACTICE-CC', 'scheduled_location' => 'EHS Practice Gym - Center Court'),
+            'VBM-Semi-1' => array('scheduled_time' => '2026-07-25 15:00:00', 'scheduled_slot' => 'Sat-2-15:00', 'resource_id' => 'EHS-PRACTICE-VB2', 'scheduled_location' => 'EHS Practice Gym - VB2'),
+            'VBM-Semi-2' => array('scheduled_time' => '2026-07-25 15:00:00', 'scheduled_slot' => 'Sat-2-15:00', 'resource_id' => 'EHS-PRACTICE-VB3', 'scheduled_location' => 'EHS Practice Gym - VB3'),
+            'VBM-Final' => array('scheduled_time' => '2026-07-26 12:00:00', 'scheduled_slot' => 'Sun-2-12:00', 'resource_id' => 'EHS-MAIN-CC', 'scheduled_location' => 'EHS Main Gym - Center Court'),
+            'VBM-3rd-Place' => array('scheduled_time' => '2026-07-26 12:00:00', 'scheduled_slot' => 'Sun-2-12:00', 'resource_id' => 'EHS-PRACTICE-CC', 'scheduled_location' => 'EHS Practice Gym - Center Court'),
             'VBW-Final' => array('scheduled_time' => '2026-07-26 13:00:00', 'scheduled_slot' => 'Sun-2-13:00', 'resource_id' => 'EHS-MAIN-CC', 'scheduled_location' => 'EHS Main Gym - Center Court'),
             'VBW-3rd-Place' => array('scheduled_time' => '2026-07-26 13:00:00', 'scheduled_slot' => 'Sun-2-13:00', 'resource_id' => 'EHS-PRACTICE-CC', 'scheduled_location' => 'EHS Practice Gym - Center Court'),
             'BC-Semi-1' => array('scheduled_time' => '2026-07-25 14:00:00', 'scheduled_slot' => 'Sat-2-14:00', 'resource_id' => 'EHS-LIBRARY', 'scheduled_location' => 'EHS Library'),
@@ -729,7 +729,7 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
         $event = '';
         if (strpos($game_key, 'BBM-') === 0) {
             $event = 'Basketball - Men Team';
-        } elseif (strpos($game_key, 'MVB-') === 0) {
+        } elseif (strpos($game_key, 'VBM-') === 0) {
             $event = 'Volleyball - Men Team';
         } elseif (strpos($game_key, 'VBW-') === 0) {
             $event = 'Volleyball - Women Team';
@@ -752,6 +752,73 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
             'event' => $event,
             'stage' => $stage,
         );
+    }
+
+    private function cleanup_legacy_mvb_playoff_placement_rows($schedule_version) {
+        global $wpdb;
+
+        $schedule_version = absint($schedule_version);
+        if (!$schedule_version) {
+            return 0;
+        }
+
+        $legacy_game_keys = array(
+            'MVB-QF-1',
+            'MVB-QF-2',
+            'MVB-QF-3',
+            'MVB-QF-4',
+            'MVB-Semi-1',
+            'MVB-Semi-2',
+            'MVB-Final',
+            'MVB-3rd-Place',
+        );
+        $table_schedules = vaysf_get_table_name('schedules');
+        $table_results = vaysf_get_table_name('results');
+        $placeholders = implode(', ', array_fill(0, count($legacy_game_keys), '%s'));
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT s.*, r.result_id, r.score_json
+                    FROM $table_schedules s
+                    LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
+                    WHERE s.schedule_version = %d
+                      AND s.game_key IN ($placeholders)
+                      AND COALESCE(s.game_status, '') <> 'cancelled'",
+                array_merge(array($schedule_version), $legacy_game_keys)
+            ),
+            ARRAY_A
+        );
+        if (!is_array($rows) || empty($rows)) {
+            return 0;
+        }
+
+        $retired_count = 0;
+        foreach ($rows as $row) {
+            if ($this->is_protected_schedule_status((string) ($row['game_status'] ?? '')) || vaysf_schedule_row_has_protected_result($row)) {
+                continue;
+            }
+
+            $result = $wpdb->update(
+                $table_schedules,
+                array(
+                    'game_status' => 'cancelled',
+                    'updated_at' => current_time('mysql'),
+                ),
+                array(
+                    'schedule_id' => absint($row['schedule_id'] ?? 0),
+                    'schedule_version' => $schedule_version,
+                ),
+                array('%s', '%s'),
+                array('%d', '%d')
+            );
+            if ($result === false) {
+                return new WP_Error('vaysf_playoff_placement_legacy_cleanup_failed', 'Could not retire stale MVB playoff placement rows.');
+            }
+            if ($result > 0) {
+                $retired_count++;
+            }
+        }
+
+        return $retired_count;
     }
 
     private function datetime_local_value($mysql_datetime) {
@@ -989,10 +1056,16 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
             return new WP_Error('vaysf_playoff_placement_all_skipped', 'No rows were updated; selected rows were missing or protected.');
         }
 
+        $retired_legacy_count = $this->cleanup_legacy_mvb_playoff_placement_rows($schedule_version);
+        if (is_wp_error($retired_legacy_count)) {
+            return $retired_legacy_count;
+        }
+
         return array(
             'updated' => $updated_count,
             'created' => $created_count,
             'skipped' => $skipped_count,
+            'retired_legacy' => $retired_legacy_count,
         );
     }
 
