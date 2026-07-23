@@ -170,19 +170,19 @@ function vaysf_results_desk_volleyball_set_record_by_slot($payload) {
 }
 
 /**
- * Apply Basketball preliminary bye wins inferred from an uneven pool schedule.
+ * Infer Basketball preliminary bye wins from an uneven pool schedule.
  *
- * A Basketball bye counts as an automatic match win for the team receiving it
- * and must be included in opponents' Difficulty of Schedule. The published
- * schedule does not store an explicit bye row, so infer byes by comparing each
- * team's scheduled preliminary game count against the highest scheduled count
- * in that pool.
+ * Matthew's 2026 Basketball worksheet uses total opponent wins for Difficulty
+ * of Schedule. If an opponent received an official bye in preliminary play,
+ * that bye strengthens the opponent for DoS math, but it is not displayed as
+ * an extra played match in that team's own QF standing.
  *
- * @param array<string,array<string,mixed>> $teams Ranking map, by team key
  * @param array<string,array<string,int>> $scheduled_by_pool Team scheduled counts per pool
- * @return void
+ * @return array<string,int> Bye wins by team key
  */
-function vaysf_results_desk_apply_basketball_bye_wins(&$teams, $scheduled_by_pool) {
+function vaysf_results_desk_infer_basketball_bye_wins($scheduled_by_pool) {
+    $bye_wins_by_team = array();
+
     foreach ($scheduled_by_pool as $pool_counts) {
         if (!is_array($pool_counts) || empty($pool_counts)) {
             continue;
@@ -195,20 +195,16 @@ function vaysf_results_desk_apply_basketball_bye_wins(&$teams, $scheduled_by_poo
 
         foreach ($pool_counts as $team_key => $scheduled_count) {
             $team_key = (string) $team_key;
-            if (!isset($teams[$team_key])) {
-                continue;
-            }
-
             $bye_wins = $target_games - absint($scheduled_count);
             if ($bye_wins <= 0) {
                 continue;
             }
 
-            $teams[$team_key]['played'] += $bye_wins;
-            $teams[$team_key]['wins'] += $bye_wins;
-            $teams[$team_key]['bye_wins'] = (int) ($teams[$team_key]['bye_wins'] ?? 0) + $bye_wins;
+            $bye_wins_by_team[$team_key] = (int) ($bye_wins_by_team[$team_key] ?? 0) + $bye_wins;
         }
     }
+
+    return $bye_wins_by_team;
 }
 
 /**
@@ -344,14 +340,14 @@ function vaysf_results_desk_accumulate_event_seeding_stats($rows, $sport_type) {
         $pool_complete_by_id[$pool_id] = ($count > 0) && empty($pool_missing_counts[$pool_id]);
     }
 
-    if ($sport_type === 'basketball') {
-        vaysf_results_desk_apply_basketball_bye_wins($teams, $scheduled_by_pool);
-    }
+    $basketball_bye_wins_by_team = $sport_type === 'basketball'
+        ? vaysf_results_desk_infer_basketball_bye_wins($scheduled_by_pool)
+        : array();
 
-    // Difficulty of schedule (§3.3.2/§3.4.2): sum, over every game a team
-    // played, of that game's opponent's final net W-L record (wins minus
-    // losses). Requires final W-L for every team, which the pass above just
-    // finished computing, hence the separate second pass here.
+    // Difficulty of schedule requires final W-L for every team, which the
+    // pass above just finished computing, hence the separate second pass here.
+    // Basketball DoS is total opponent wins, with inferred bye wins counted
+    // for the opponent only. Volleyball DoS is average opponent win percentage.
     foreach ($teams as $key => $team) {
         $sos = 0;
         $opponent_count = 0;
@@ -365,7 +361,7 @@ function vaysf_results_desk_accumulate_event_seeding_stats($rows, $sport_type) {
                         $opponent_count++;
                     }
                 } else {
-                    $sos += ((int) $opponent['wins'] - (int) $opponent['losses']);
+                    $sos += (int) $opponent['wins'] + (int) ($basketball_bye_wins_by_team[$opponent_key] ?? 0);
                 }
             }
         }

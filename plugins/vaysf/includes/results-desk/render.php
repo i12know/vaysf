@@ -257,13 +257,16 @@ function vaysf_render_results_desk_event_qf_seeding_panel($event, $schedule_vers
     $sos_label = $sport_type === 'volleyball' ? __('Avg Opp Win %', 'vaysf') : __('SOS', 'vaysf');
     $sos_tooltip = $sport_type === 'volleyball'
         ? __('Difficulty of schedule: average win percentage of every opponent played, matching the manager ranking sheet.', 'vaysf')
-        : __('Difficulty of schedule: sum of every opponent played\'s own final win-loss record.', 'vaysf');
+        : __('Difficulty of schedule: total wins by opponents played; inferred official bye wins count in the opponent\'s win total.', 'vaysf');
     $point_diff_label = $sport_type === 'volleyball' ? __('Point Diff (rally)', 'vaysf') : __('Point Diff', 'vaysf');
+    $qf_tooltip = $sport_type === 'basketball'
+        ? __('Basketball 2026 rule: W-L record, then difficulty of schedule by total opponent wins, then capped point differential, fewer points allowed, head-to-head, then coin toss. Confirming here replaces confirming each pool individually for this event.', 'vaysf')
+        : __('Volleyball 2026 rule: W-L record, then pairwise head-to-head where available, then difficulty of schedule, then point differential, then coin toss. Confirming here replaces confirming each pool individually for this event.', 'vaysf');
     ?>
     <div class="vaysf-qf-seeding-panel">
         <h3>
             <?php esc_html_e('Cross-Pool QF Seeding', 'vaysf'); ?>
-            <?php vaysf_render_results_desk_tooltip('?', __('Official 2026 rule: W-L record, then pairwise head-to-head where available, then difficulty of schedule, then point differential, then coin toss. Confirming here replaces confirming each pool individually for this event.', 'vaysf')); ?>
+            <?php vaysf_render_results_desk_tooltip('?', $qf_tooltip); ?>
         </h3>
 
         <?php if (empty($seeding['complete'])) : ?>

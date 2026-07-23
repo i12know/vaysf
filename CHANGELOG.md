@@ -6,6 +6,13 @@
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
 
+- Hotfix 1.0.99: Corrected Basketball QF Difficulty of Schedule to match
+  Matthew's playoff seeding spreadsheet: DoS is the total number of wins by
+  opponents played, not opponent win percentage and not net opponent W-L.
+  Inferred official bye wins now count only when that team is evaluated as an
+  opponent for DoS, so WAG's bye strengthens ANH/FVC's schedule but no longer
+  changes WAG's displayed preliminary W-L standing.
+- Bumped plugin header/version to `1.0.99` and rebuilt `plugins/vaysf.zip`.
 - Hotfix 1.0.98: Updated Basketball QF seeding to follow the Basketball
   coordinator's revised playoff tiebreak order. Event-wide Basketball seeding
   now infers preliminary bye wins from uneven pool schedules so those wins
