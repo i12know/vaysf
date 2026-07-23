@@ -222,6 +222,11 @@ function vaysf_event_day_export_resource_type($row) {
  * @return float
  */
 function vaysf_event_day_export_duration_minutes($row) {
+    $game_key = (string) ($row['game_key'] ?? '');
+    if ($game_key === 'BC-Final') {
+        return 90.0;
+    }
+
     $event = (string) ($row['event'] ?? '');
     if (stripos($event, 'Track') !== false || stripos($event, 'Tug-of-war') !== false || stripos($event, 'Tug of war') !== false) {
         return 30.0;
@@ -375,7 +380,7 @@ function vaysf_build_event_day_publish_artifacts($state_payload) {
         'schedule_version' => $schedule_version,
         'generated_at' => (string) ($state_payload['generated_at'] ?? ''),
         'site_url' => (string) ($state_payload['site_url'] ?? ''),
-        'note' => 'Replay pair exported from WordPress event-day state. Resource rows are inferred stubs; keep the bundled vaysf-event-day-state JSON as the audit source.',
+        'note' => 'Replay pair exported from WordPress event-day state. Resource rows are inferred stubs; admins can export raw state JSON separately for audit.',
     );
 
     return array(
@@ -405,7 +410,7 @@ function vaysf_build_event_day_publish_artifacts($state_payload) {
  * @return void
  */
 function vaysf_download_event_day_publish_zip() {
-    if (!current_user_can('sf2025_admin')) {
+    if (!current_user_can('sf2025_write')) {
         wp_die(esc_html__('You are not authorized to export event-day publish JSON.', 'vaysf'), 403);
     }
     if (empty($_GET['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'vaysf_download_event_day_publish_zip')) {
@@ -418,6 +423,7 @@ function vaysf_download_event_day_publish_zip() {
     $schedule_version = vaysf_get_event_day_export_schedule_version_from_request();
     $state_payload = vaysf_get_event_day_state_export_payload($schedule_version);
     $artifacts = vaysf_build_event_day_publish_artifacts($state_payload);
+    $include_state_backup = current_user_can('sf2025_admin');
 
     $json_flags = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
     if (defined('JSON_PRESERVE_ZERO_FRACTION')) {
@@ -426,8 +432,10 @@ function vaysf_download_event_day_publish_zip() {
 
     $input_json = wp_json_encode($artifacts['input'], $json_flags);
     $output_json = wp_json_encode($artifacts['output'], $json_flags);
-    $state_json = wp_json_encode($state_payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    if ($input_json === false || $output_json === false || $state_json === false) {
+    $state_json = $include_state_backup
+        ? wp_json_encode($state_payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+        : '';
+    if ($input_json === false || $output_json === false || ($include_state_backup && $state_json === false)) {
         wp_die(esc_html__('Could not encode event-day publish export.', 'vaysf'), 500);
     }
 
@@ -443,7 +451,9 @@ function vaysf_download_event_day_publish_zip() {
     }
     $zip->addFromString('approved_schedule_input.json', $input_json);
     $zip->addFromString('approved_schedule_output.json', $output_json);
-    $zip->addFromString(sprintf('vaysf-event-day-state-v%d.json', $schedule_version), $state_json);
+    if ($include_state_backup) {
+        $zip->addFromString(sprintf('vaysf-event-day-state-v%d.json', $schedule_version), $state_json);
+    }
     $zip->close();
 
     $filename = sprintf('vaysf-event-day-publish-v%d-%s.zip', $schedule_version, date_i18n('Ymd-His'));
@@ -654,6 +664,398 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
 
         return true;
     }
+
+    /**
+     * Return the 2026 manager playoff placement template from issue #337.
+     *
+     * These defaults come from the attached manager schedule image. They only
+     * place existing rows; they do not change teams, brackets, or results.
+     */
+    private function playoff_placement_template() {
+        return array(
+            'BBM-QF-3' => array('scheduled_time' => '2026-07-25 08:00:00', 'scheduled_slot' => 'Sat-2-08:00', 'resource_id' => 'ORN-MAIN-CC-1', 'scheduled_location' => 'ORN Church - Main Gym Center Court 1'),
+            'BBM-QF-2' => array('scheduled_time' => '2026-07-25 08:00:00', 'scheduled_slot' => 'Sat-2-08:00', 'resource_id' => 'ORN-MAIN-CC-2', 'scheduled_location' => 'ORN Church - Main Gym Center Court 2'),
+            'BBM-QF-1' => array('scheduled_time' => '2026-07-25 09:00:00', 'scheduled_slot' => 'Sat-2-09:00', 'resource_id' => 'ORN-MAIN-CC-1', 'scheduled_location' => 'ORN Church - Main Gym Center Court 1'),
+            'BBM-QF-4' => array('scheduled_time' => '2026-07-25 09:00:00', 'scheduled_slot' => 'Sat-2-09:00', 'resource_id' => 'ORN-MAIN-CC-2', 'scheduled_location' => 'ORN Church - Main Gym Center Court 2'),
+            'BBM-Semi-1' => array('scheduled_time' => '2026-07-25 11:00:00', 'scheduled_slot' => 'Sat-2-11:00', 'resource_id' => 'ORN-MAIN-CC-1', 'scheduled_location' => 'ORN Church - Main Gym Center Court 1'),
+            'BBM-Semi-2' => array('scheduled_time' => '2026-07-25 11:00:00', 'scheduled_slot' => 'Sat-2-11:00', 'resource_id' => 'ORN-MAIN-CC-2', 'scheduled_location' => 'ORN Church - Main Gym Center Court 2'),
+            'BBM-3rd-Place' => array('scheduled_time' => '2026-07-26 14:00:00', 'scheduled_slot' => 'Sun-2-14:00', 'resource_id' => 'ORN-MAIN-CC', 'scheduled_location' => 'ORN Church - Main Gym Center Court'),
+            'BBM-Final' => array('scheduled_time' => '2026-07-26 15:00:00', 'scheduled_slot' => 'Sun-2-15:00', 'resource_id' => 'ORN-MAIN-CC', 'scheduled_location' => 'ORN Church - Main Gym Center Court'),
+            'VBW-QF-3' => array('scheduled_time' => '2026-07-25 08:00:00', 'scheduled_slot' => 'Sat-2-08:00', 'resource_id' => 'ORN-PRACTICE-VB2', 'scheduled_location' => 'ORN Church - Practice Gym VB2'),
+            'VBW-QF-2' => array('scheduled_time' => '2026-07-25 08:00:00', 'scheduled_slot' => 'Sat-2-08:00', 'resource_id' => 'ORN-PRACTICE-VB3', 'scheduled_location' => 'ORN Church - Practice Gym VB3'),
+            'VBW-QF-1' => array('scheduled_time' => '2026-07-25 09:00:00', 'scheduled_slot' => 'Sat-2-09:00', 'resource_id' => 'ORN-PRACTICE-VB2', 'scheduled_location' => 'ORN Church - Practice Gym VB2'),
+            'VBW-QF-4' => array('scheduled_time' => '2026-07-25 09:00:00', 'scheduled_slot' => 'Sat-2-09:00', 'resource_id' => 'ORN-PRACTICE-VB3', 'scheduled_location' => 'ORN Church - Practice Gym VB3'),
+            'MVB-QF-1' => array('scheduled_time' => '2026-07-25 10:00:00', 'scheduled_slot' => 'Sat-2-10:00', 'resource_id' => 'ORN-PRACTICE-VB2', 'scheduled_location' => 'ORN Church - Practice Gym VB2'),
+            'MVB-QF-2' => array('scheduled_time' => '2026-07-25 10:00:00', 'scheduled_slot' => 'Sat-2-10:00', 'resource_id' => 'ORN-PRACTICE-VB3', 'scheduled_location' => 'ORN Church - Practice Gym VB3'),
+            'MVB-QF-4' => array('scheduled_time' => '2026-07-25 11:00:00', 'scheduled_slot' => 'Sat-2-11:00', 'resource_id' => 'ORN-PRACTICE-VB2', 'scheduled_location' => 'ORN Church - Practice Gym VB2'),
+            'MVB-QF-3' => array('scheduled_time' => '2026-07-25 11:00:00', 'scheduled_slot' => 'Sat-2-11:00', 'resource_id' => 'ORN-PRACTICE-VB3', 'scheduled_location' => 'ORN Church - Practice Gym VB3'),
+            'VBW-Semi-1' => array('scheduled_time' => '2026-07-25 14:00:00', 'scheduled_slot' => 'Sat-2-14:00', 'resource_id' => 'ORN-PRACTICE-VB2', 'scheduled_location' => 'ORN Church - Practice Gym VB2'),
+            'VBW-Semi-2' => array('scheduled_time' => '2026-07-25 14:00:00', 'scheduled_slot' => 'Sat-2-14:00', 'resource_id' => 'ORN-PRACTICE-VB3', 'scheduled_location' => 'ORN Church - Practice Gym VB3'),
+            'MVB-Semi-1' => array('scheduled_time' => '2026-07-25 15:00:00', 'scheduled_slot' => 'Sat-2-15:00', 'resource_id' => 'ORN-PRACTICE-VB2', 'scheduled_location' => 'ORN Church - Practice Gym VB2'),
+            'MVB-Semi-2' => array('scheduled_time' => '2026-07-25 15:00:00', 'scheduled_slot' => 'Sat-2-15:00', 'resource_id' => 'ORN-PRACTICE-VB3', 'scheduled_location' => 'ORN Church - Practice Gym VB3'),
+            'MVB-Final' => array('scheduled_time' => '2026-07-26 12:00:00', 'scheduled_slot' => 'Sun-2-12:00', 'resource_id' => 'ORN-MAIN-CC', 'scheduled_location' => 'ORN Church - Main Gym Center Court'),
+            'MVB-3rd-Place' => array('scheduled_time' => '2026-07-26 12:00:00', 'scheduled_slot' => 'Sun-2-12:00', 'resource_id' => 'ORN-PRACTICE-CC', 'scheduled_location' => 'ORN Church - Practice Gym Center Court'),
+            'VBW-Final' => array('scheduled_time' => '2026-07-26 13:00:00', 'scheduled_slot' => 'Sun-2-13:00', 'resource_id' => 'ORN-MAIN-CC', 'scheduled_location' => 'ORN Church - Main Gym Center Court'),
+            'VBW-3rd-Place' => array('scheduled_time' => '2026-07-26 13:00:00', 'scheduled_slot' => 'Sun-2-13:00', 'resource_id' => 'ORN-PRACTICE-CC', 'scheduled_location' => 'ORN Church - Practice Gym Center Court'),
+            'BC-Semi-1' => array('scheduled_time' => '2026-07-25 14:00:00', 'scheduled_slot' => 'Sat-2-14:00', 'resource_id' => 'ORN-BC-LIBRARY', 'scheduled_location' => 'ORN Church - BC Library'),
+            'BC-Semi-2' => array('scheduled_time' => '2026-07-25 15:00:00', 'scheduled_slot' => 'Sat-2-15:00', 'resource_id' => 'ORN-BC-LIBRARY', 'scheduled_location' => 'ORN Church - BC Library'),
+            'BC-Semi-3' => array('scheduled_time' => '2026-07-25 16:00:00', 'scheduled_slot' => 'Sat-2-16:00', 'resource_id' => 'ORN-BC-LIBRARY', 'scheduled_location' => 'ORN Church - BC Library'),
+            'BC-Final' => array('scheduled_time' => '2026-07-26 14:30:00', 'scheduled_slot' => 'Sun-2-14:30', 'resource_id' => 'ORN-PRACTICE-CC', 'scheduled_location' => 'ORN Church - Practice Gym Center Court'),
+        );
+    }
+
+    private function placement_row_needs_values($row) {
+        if (!$row) {
+            return true;
+        }
+
+        foreach (array('scheduled_time', 'scheduled_slot', 'resource_id', 'scheduled_location') as $field) {
+            if (trim((string) ($row[$field] ?? '')) === '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function playoff_placement_row_metadata($game_key) {
+        $game_key = (string) $game_key;
+        $event = '';
+        if (strpos($game_key, 'BBM-') === 0) {
+            $event = 'Basketball - Men Team';
+        } elseif (strpos($game_key, 'MVB-') === 0) {
+            $event = 'Volleyball - Men Team';
+        } elseif (strpos($game_key, 'VBW-') === 0) {
+            $event = 'Volleyball - Women Team';
+        } elseif (strpos($game_key, 'BC-') === 0) {
+            $event = 'Bible Challenge - Mixed Team';
+        }
+
+        $stage = '';
+        if (strpos($game_key, '-QF-') !== false) {
+            $stage = 'Quarterfinal';
+        } elseif (strpos($game_key, '-Semi-') !== false) {
+            $stage = 'Semifinal';
+        } elseif (substr($game_key, -10) === '-3rd-Place') {
+            $stage = '3rd Place';
+        } elseif (substr($game_key, -6) === '-Final') {
+            $stage = 'Final';
+        }
+
+        return array(
+            'event' => $event,
+            'stage' => $stage,
+        );
+    }
+
+    private function datetime_local_value($mysql_datetime) {
+        $mysql_datetime = trim((string) $mysql_datetime);
+        if ($mysql_datetime === '') {
+            return '';
+        }
+
+        return str_replace(' ', 'T', substr($mysql_datetime, 0, 16));
+    }
+
+    private function sanitize_placement_datetime($value) {
+        $value = sanitize_text_field(wp_unslash($value));
+        $value = str_replace('T', ' ', trim($value));
+        if ($value === '') {
+            return '';
+        }
+        if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $value)) {
+            return $value . ':00';
+        }
+        if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value)) {
+            return $value;
+        }
+
+        return '';
+    }
+
+    private function get_playoff_placement_rows($schedule_version) {
+        global $wpdb;
+
+        $template = $this->playoff_placement_template();
+        $rows_by_key = array();
+        $schedule_version = absint($schedule_version);
+        if ($schedule_version) {
+            $table_schedules = vaysf_get_table_name('schedules');
+            $table_results = vaysf_get_table_name('results');
+            $game_keys = array_keys($template);
+            $placeholders = implode(', ', array_fill(0, count($game_keys), '%s'));
+            $sql = "SELECT s.*, r.result_id, r.score_json
+                FROM $table_schedules s
+                LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
+                WHERE s.schedule_version = %d
+                  AND s.game_key IN ($placeholders)";
+            $query_args = array_merge(array($schedule_version), $game_keys);
+            $rows = $wpdb->get_results($wpdb->prepare($sql, $query_args), ARRAY_A);
+            if (is_array($rows)) {
+                foreach ($rows as $row) {
+                    $rows_by_key[(string) ($row['game_key'] ?? '')] = $row;
+                }
+            }
+        }
+
+        $placements = array();
+        foreach ($template as $game_key => $defaults) {
+            $row = $rows_by_key[$game_key] ?? null;
+            $protected = $row
+                ? ($this->is_protected_schedule_status((string) ($row['game_status'] ?? '')) || !empty($row['result_id']) || trim((string) ($row['score_json'] ?? '')) !== '')
+                : false;
+            $placements[] = array(
+                'game_key' => $game_key,
+                'row' => $row,
+                'defaults' => $defaults,
+                'protected' => $protected,
+                'needs_values' => $this->placement_row_needs_values($row),
+            );
+        }
+
+        return $placements;
+    }
+
+    private function save_playoff_placements_from_post($schedule_version) {
+        global $wpdb;
+
+        if (!current_user_can('sf2025_write')) {
+            return new WP_Error('vaysf_forbidden', 'You are not allowed to place playoff schedule rows.');
+        }
+
+        $schedule_version = absint($schedule_version);
+        if (!$schedule_version) {
+            return new WP_Error('vaysf_schedule_version_required', 'A schedule version is required.');
+        }
+
+        $submitted = isset($_POST['placements']) && is_array($_POST['placements'])
+            ? wp_unslash($_POST['placements'])
+            : array();
+        if (!$submitted) {
+            return new WP_Error('vaysf_playoff_placement_empty', 'No playoff placement rows were submitted.');
+        }
+
+        $template = $this->playoff_placement_template();
+        $table_schedules = vaysf_get_table_name('schedules');
+        $updated_count = 0;
+        $created_count = 0;
+        $skipped_count = 0;
+        $selected_count = 0;
+
+        foreach ($submitted as $game_key_raw => $posted) {
+            $game_key = sanitize_text_field($game_key_raw);
+            if (!isset($template[$game_key]) || !is_array($posted) || empty($posted['apply'])) {
+                continue;
+            }
+            $selected_count++;
+
+            $existing = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT * FROM $table_schedules WHERE game_key = %s AND schedule_version = %d",
+                    $game_key,
+                    $schedule_version
+                ),
+                ARRAY_A
+            );
+            if ($existing && ($this->is_protected_schedule_status((string) ($existing['game_status'] ?? '')) || vaysf_schedule_row_has_protected_result($existing))) {
+                $skipped_count++;
+                continue;
+            }
+
+            $scheduled_time = $this->sanitize_placement_datetime($posted['scheduled_time'] ?? '');
+            $scheduled_slot = sanitize_text_field($posted['scheduled_slot'] ?? '');
+            $resource_id = sanitize_text_field($posted['resource_id'] ?? '');
+            $scheduled_location = sanitize_text_field($posted['scheduled_location'] ?? '');
+            if ($scheduled_time === '' || $scheduled_slot === '' || $resource_id === '' || $scheduled_location === '') {
+                return new WP_Error('vaysf_playoff_placement_incomplete', sprintf('Placement for %s is missing time, slot, resource, or location.', $game_key));
+            }
+
+            if ($existing) {
+                $merged = array_merge($existing, array(
+                    'resource_id' => $resource_id,
+                    'scheduled_slot' => $scheduled_slot,
+                ));
+            } else {
+                $metadata = $this->playoff_placement_row_metadata($game_key);
+                $merged = array_merge(array(
+                    'game_key' => $game_key,
+                    'schedule_version' => $schedule_version,
+                    'event' => $metadata['event'],
+                    'stage' => $metadata['stage'],
+                    'pool_id' => null,
+                    'round_number' => null,
+                    'sub_event' => null,
+                    'team_a_key' => null,
+                    'team_a_label' => null,
+                    'team_b_key' => null,
+                    'team_b_label' => null,
+                    'team_c_key' => null,
+                    'team_c_label' => null,
+                    'team_ids_json' => null,
+                ), array(
+                    'resource_id' => $resource_id,
+                    'scheduled_slot' => $scheduled_slot,
+                ));
+            }
+            $source_hash = $this->compute_schedule_source_hash($merged);
+            $data = array(
+                'resource_id' => $resource_id,
+                'scheduled_slot' => $scheduled_slot,
+                'scheduled_time' => $scheduled_time,
+                'scheduled_location' => $scheduled_location,
+                'source_hash' => $source_hash,
+                'published_at' => !empty($existing['published_at']) ? $existing['published_at'] : current_time('mysql'),
+                'updated_at' => current_time('mysql'),
+            );
+
+            if ($existing) {
+                $result = $wpdb->update(
+                    $table_schedules,
+                    $data,
+                    array(
+                        'schedule_id' => absint($existing['schedule_id']),
+                        'schedule_version' => $schedule_version,
+                    ),
+                    array('%s', '%s', '%s', '%s', '%s', '%s', '%s'),
+                    array('%d', '%d')
+                );
+            } else {
+                $metadata = $this->playoff_placement_row_metadata($game_key);
+                $data = array_merge(array(
+                    'game_key' => $game_key,
+                    'schedule_version' => $schedule_version,
+                    'event' => $metadata['event'],
+                    'stage' => $metadata['stage'],
+                    'pool_id' => null,
+                    'round_number' => null,
+                    'sub_event' => null,
+                    'team_a_key' => null,
+                    'team_a_label' => null,
+                    'team_b_key' => null,
+                    'team_b_label' => null,
+                    'team_c_key' => null,
+                    'team_c_label' => null,
+                    'team_ids_json' => null,
+                    'game_status' => 'scheduled',
+                    'created_at' => current_time('mysql'),
+                ), $data);
+                $result = $wpdb->insert(
+                    $table_schedules,
+                    $data,
+                    array('%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
+                );
+            }
+            if ($result === false) {
+                return new WP_Error('vaysf_playoff_placement_failed', sprintf('Could not update playoff placement for %s.', $game_key));
+            }
+            if ($existing) {
+                $updated_count++;
+            } else {
+                $created_count++;
+            }
+        }
+
+        if (!$selected_count) {
+            return new WP_Error('vaysf_playoff_placement_none_selected', 'Select at least one playoff row to place.');
+        }
+
+        if (!$updated_count && !$created_count && $skipped_count) {
+            return new WP_Error('vaysf_playoff_placement_all_skipped', 'No rows were updated; selected rows were missing or protected.');
+        }
+
+        return array(
+            'updated' => $updated_count,
+            'created' => $created_count,
+            'skipped' => $skipped_count,
+        );
+    }
+
+    private function render_playoff_placement_panel($schedule_version, $publish_export_url) {
+        if (!current_user_can('sf2025_write') || !$schedule_version) {
+            return;
+        }
+
+        $placements = $this->get_playoff_placement_rows($schedule_version);
+        $missing_count = 0;
+        foreach ($placements as $placement) {
+            if (!empty($placement['needs_values'])) {
+                $missing_count++;
+            }
+        }
+        ?>
+        <div class="card" style="max-width: none; margin-top: 16px;">
+            <h2>Playoff Placement From Manager Schedule</h2>
+            <p>
+                Fill venue/time data for the Basketball, Volleyball, and Bible Challenge playoff rows in schedule version
+                <strong><?php echo esc_html($schedule_version); ?></strong>. This only updates placement fields; teams, brackets, and results are not changed.
+            </p>
+            <p>
+                <a class="button" href="<?php echo esc_url($publish_export_url); ?>">Download Publish JSON ZIP after saving</a>
+                <span class="description"><?php echo esc_html($missing_count); ?> template row(s) are missing at least one placement field.</span>
+            </p>
+            <form method="post">
+                <?php wp_nonce_field('save_playoff_placements_' . absint($schedule_version)); ?>
+                <input type="hidden" name="vaysf_action" value="save_playoff_placements">
+                <input type="hidden" name="schedule_version" value="<?php echo esc_attr($schedule_version); ?>">
+                <table class="wp-list-table widefat striped">
+                    <thead>
+                        <tr>
+                            <th>Apply</th>
+                            <th>Game Key</th>
+                            <th>Current Row</th>
+                            <th>Scheduled Time</th>
+                            <th>Slot</th>
+                            <th>Resource</th>
+                            <th>Location</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($placements as $placement) : ?>
+                            <?php
+                            $row = $placement['row'];
+                            $defaults = $placement['defaults'];
+                            $protected = !empty($placement['protected']);
+                            $missing = !empty($placement['needs_values']);
+                            $values = array();
+                            foreach (array('scheduled_time', 'scheduled_slot', 'resource_id', 'scheduled_location') as $field) {
+                                $current = $row ? trim((string) ($row[$field] ?? '')) : '';
+                                $values[$field] = $current !== '' ? $current : $defaults[$field];
+                            }
+                            ?>
+                            <tr>
+                                <td>
+                                    <?php if ($protected) : ?>
+                                        <span class="dashicons dashicons-lock" title="Protected/scored row"></span>
+                                    <?php else : ?>
+                                        <input type="checkbox" name="placements[<?php echo esc_attr($placement['game_key']); ?>][apply]" value="1" <?php checked($missing); ?>>
+                                    <?php endif; ?>
+                                </td>
+                                <td><strong><?php echo esc_html($placement['game_key']); ?></strong></td>
+                                <td>
+                                    <?php if (!$row) : ?>
+                                        <span class="description">Will create blank row</span>
+                                    <?php else : ?>
+                                        <?php echo esc_html($row['event'] ?? ''); ?><br>
+                                        <small><?php echo esc_html(trim(($row['stage'] ?? '') . ' ' . ($row['game_status'] ?? ''))); ?></small>
+                                    <?php endif; ?>
+                                </td>
+                                <td><input type="datetime-local" name="placements[<?php echo esc_attr($placement['game_key']); ?>][scheduled_time]" value="<?php echo esc_attr($this->datetime_local_value($values['scheduled_time'])); ?>" <?php disabled($protected); ?>></td>
+                                <td><input name="placements[<?php echo esc_attr($placement['game_key']); ?>][scheduled_slot]" value="<?php echo esc_attr($values['scheduled_slot']); ?>" <?php disabled($protected); ?>></td>
+                                <td><input name="placements[<?php echo esc_attr($placement['game_key']); ?>][resource_id]" value="<?php echo esc_attr($values['resource_id']); ?>" <?php disabled($protected); ?>></td>
+                                <td><input class="regular-text" name="placements[<?php echo esc_attr($placement['game_key']); ?>][scheduled_location]" value="<?php echo esc_attr($values['scheduled_location']); ?>" <?php disabled($protected); ?>></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <p>
+                    <label><input type="checkbox" required> I reviewed the manager schedule image and understand this writes placement fields directly to WordPress.</label>
+                </p>
+                <?php submit_button('Save Playoff Placements'); ?>
+            </form>
+        </div>
+        <?php
+    }
+
     private function render_schedule_form($schedule = array()) {
         $schedule_id = isset($schedule['schedule_id']) ? absint($schedule['schedule_id']) : 0;
         $action = $schedule_id ? 'save_schedule' : 'create_schedule';
@@ -750,6 +1152,13 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
             } else {
                 $this->print_admin_notice($this->cancel_schedule_from_post($schedule_id), 'Schedule cancelled.');
             }
+        } elseif ($vaysf_action === 'save_playoff_placements') {
+            $placement_schedule_version = isset($_POST['schedule_version']) ? absint($_POST['schedule_version']) : 0;
+            if (!isset($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'save_playoff_placements_' . $placement_schedule_version)) {
+                $this->print_admin_notice(new WP_Error('vaysf_bad_nonce', 'Invalid playoff placement request.'), '');
+            } else {
+                $this->print_admin_notice($this->save_playoff_placements_from_post($placement_schedule_version), 'Playoff placements saved.');
+            }
         }
 
         $action = isset($_GET['action']) ? sanitize_text_field(wp_unslash($_GET['action'])) : '';
@@ -841,15 +1250,21 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
                 <a href="<?php echo esc_url(admin_url('admin.php?page=vaysf-schedules&action=new')); ?>" class="page-title-action">Add New</a>
                 <?php if ($export_schedule_version) : ?>
                     <a href="<?php echo esc_url($publish_export_url); ?>" class="page-title-action">Export Publish JSON ZIP</a>
-                    <a href="<?php echo esc_url($export_url); ?>" class="page-title-action">Export State JSON</a>
+                    <?php if (current_user_can('sf2025_admin')) : ?>
+                        <a href="<?php echo esc_url($export_url); ?>" class="page-title-action">Export State JSON</a>
+                    <?php endif; ?>
                 <?php endif; ?>
             </h1>
             <?php if ($export_schedule_version) : ?>
                 <p class="description">
                     Publish ZIP downloads `approved_schedule_input.json` and `approved_schedule_output.json` reconstructed from WordPress schedule version
-                    <?php echo esc_html($export_schedule_version); ?> for local middleware replay. State JSON downloads the raw schedules, results, revisions, and pool confirmations backup.
+                    <?php echo esc_html($export_schedule_version); ?> for local middleware replay.
+                    <?php if (current_user_can('sf2025_admin')) : ?>
+                        State JSON downloads the raw schedules, results, revisions, and pool confirmations backup.
+                    <?php endif; ?>
                 </p>
             <?php endif; ?>
+            <?php $this->render_playoff_placement_panel($export_schedule_version, $publish_export_url); ?>
             <form method="get" class="tablenav top">
                 <input type="hidden" name="page" value="vaysf-schedules">
                 <select name="event">
