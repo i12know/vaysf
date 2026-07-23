@@ -6,6 +6,14 @@
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
 
+- Hotfix 1.1.02: Added a clearer Manager schedule error when a playoff row's
+  game key already exists on a different schedule version, so stale tabs or
+  version drift explain how to recover instead of surfacing as a generic save
+  failure. Rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.1.01: Corrected the Issue #337 manager playoff placement template
+  so QF, SF, Final, and 3rd-place defaults point to EHS Main Gym, EHS Practice
+  Gym, and EHS Library instead of ORN resources/locations. Rebuilt
+  `plugins/vaysf.zip`.
 - Hotfix 1.1.00: Added a Sports Fest > Schedules "Playoff Placement From
   Manager Schedule" panel for Issue #337. Sports Fest managers can fill the
   Saturday/Sunday venue, slot, and time fields from the attached manager
