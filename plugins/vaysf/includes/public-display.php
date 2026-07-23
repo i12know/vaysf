@@ -790,7 +790,7 @@ function vaysf_get_public_advancement_rows($filters = array()) {
     $sql = "SELECT *
         FROM $table_schedules
         WHERE $where_clause
-        ORDER BY event, stage, scheduled_time IS NULL, scheduled_time, schedule_id";
+        ORDER BY event, scheduled_time IS NULL, scheduled_time, stage, schedule_id";
 
     $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
     if (!is_array($rows)) {
@@ -807,6 +807,8 @@ function vaysf_get_public_advancement_rows($filters = array()) {
             'team_b_label' => isset($row['team_b_label']) ? (string) $row['team_b_label'] : '',
             'team_c_label' => isset($row['team_c_label']) ? (string) $row['team_c_label'] : '',
             'scheduled_time' => isset($row['scheduled_time']) ? (string) $row['scheduled_time'] : '',
+            'scheduled_slot' => isset($row['scheduled_slot']) ? (string) $row['scheduled_slot'] : '',
+            'display_time' => vaysf_format_schedule_display_time($row['scheduled_time'] ?? '', $row['scheduled_slot'] ?? '', 'D g:i A'),
             'scheduled_location' => isset($row['scheduled_location']) ? (string) $row['scheduled_location'] : '',
             'game_status' => isset($row['game_status']) ? (string) $row['game_status'] : 'scheduled',
         );

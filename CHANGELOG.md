@@ -17,6 +17,11 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   and added a Manager/admin warning that blocks form saves when the page was
   rendered by an older plugin version after a hotfix upload. Rebuilt
   `plugins/vaysf.zip`.
+- Hotfix 1.1.05: Polished the public `[vaysf_advancement]` shortcode with a
+  clear heading, visitor-friendly responsive layout, last-checked timestamp,
+  schedule-time ordering within each event, and row-set reconciliation during
+  refresh so newly confirmed advancement rows appear without a reload. Rebuilt
+  `plugins/vaysf.zip`. Fixes #345.
 - Hotfix 1.1.02: Added a clearer Manager schedule error when a playoff row's
   game key already exists on a different schedule version, so stale tabs or
   version drift explain how to recover instead of surfacing as a generic save
