@@ -54,6 +54,7 @@ class WordPressConnector:
         self.total_participants = 0
         self.total_participant_pages = 0
         self.last_get_rosters_status = "unknown"
+        self.last_get_roster_status = "unknown"
         self.last_get_approvals_status = "unknown"
         self.last_get_validation_issues_status = "unknown"
         self.last_update_validation_issue_status = "unknown"
@@ -315,17 +316,23 @@ class WordPressConnector:
                 raise  # Let retry handle transient failures.
             return []
             
+    @retry(**_WP_READ_RETRY)
     def get_roster(self, roster_id: int) -> Optional[Dict[str, Any]]:
         """Get a specific roster by ID from WordPress."""
         try:
             response = self.session.get(f"{self.custom_api_url}/rosters/{roster_id}")
+            if response.status_code == 404:
+                self.last_get_roster_status = "not_found"
+                logger.warning(f"Roster {roster_id} not found")
+                return None
             response.raise_for_status()
+            self.last_get_roster_status = "ok"
             return response.json()
         except requests.RequestException as e:
-            if response.status_code == 404:
-                logger.warning(f"Roster {roster_id} not found")
-            else:
-                logger.error(f"Failed to get roster {roster_id}: {str(e)}")
+            self.last_get_roster_status = "failed"
+            logger.error(f"Failed to get roster {roster_id}: {str(e)}")
+            if _is_retryable_wp_read_exception(e):
+                raise
             return None            
             
 ## Newer code:

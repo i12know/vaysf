@@ -16,6 +16,11 @@ class ChMeetingsAPIError(Exception):
     pass
 
 
+class ChMeetingsReadError(ChMeetingsAPIError):
+    """Raised when a ChMeetings read cannot be completed safely."""
+    pass
+
+
 # Fields returned by GET /api/v1/people/{id} that must NOT be sent in
 # PUT /api/v1/people/{id}.  Sending them causes HTTP 400 or 500 errors:
 #   - full_name      : computed by the server from first + last name
@@ -88,6 +93,7 @@ class ChMeetingsConnector:
         self.api_key = Config.CHM_API_KEY
         self.use_api = use_api
         self.last_group_membership_delete_status: Optional[str] = None
+        self.last_get_people_status: Optional[str] = None
         self.last_get_person_status: Optional[str] = None
         self.last_get_groups_status: Optional[str] = None
         self.last_get_group_people_status: Optional[str] = None
@@ -190,6 +196,7 @@ class ChMeetingsConnector:
         """
         if not self.use_api:
             logger.error("API usage is disabled")
+            self.last_get_people_status = "failed"
             return []
 
         all_people = []
@@ -231,9 +238,13 @@ class ChMeetingsConnector:
                         break
                 page += 1
             except requests.RequestException as e:
+                self.last_get_people_status = "failed"
                 logger.error(f"Failed to get people on page {page}: {str(e)}")
-                break
+                raise ChMeetingsReadError(
+                    f"Failed to complete ChMeetings people read on page {page}"
+                ) from e
 
+        self.last_get_people_status = "ok"
         return all_people
 
     def get_person(self, person_id: str) -> Optional[Dict[str, Any]]:

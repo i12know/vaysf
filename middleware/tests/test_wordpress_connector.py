@@ -384,6 +384,33 @@ def test_get_rosters_raises_retry_error_after_exhausted_attempts(wp_connector, m
         wp_connector.get_rosters({"participant_id": 42})
 
 
+def test_get_roster_raises_retry_error_after_exhausted_connection_errors(wp_connector, mocker):
+    """get_roster() should retry connection errors without referencing an unset response."""
+    mocker.patch("time.sleep")
+    mocker.patch.object(wp_connector.session, "get", side_effect=_connection_error())
+
+    with pytest.raises(RetryError):
+        wp_connector.get_roster(77)
+
+    assert wp_connector.last_get_roster_status == "failed"
+
+
+def test_get_roster_returns_none_on_404_without_retry(wp_connector, mocker):
+    """A missing roster is a true not-found result, not a transient read failure."""
+    mocker.patch("time.sleep")
+
+    missing_response = mocker.Mock()
+    missing_response.status_code = 404
+
+    mock_get = mocker.patch.object(wp_connector.session, "get", return_value=missing_response)
+
+    result = wp_connector.get_roster(77)
+
+    assert result is None
+    assert wp_connector.last_get_roster_status == "not_found"
+    assert mock_get.call_count == 1
+
+
 def test_get_participants_retries_on_transient_disconnect(wp_connector, mocker):
     """get_participants() retries on ConnectionError and returns data on recovery."""
     mocker.patch("time.sleep")

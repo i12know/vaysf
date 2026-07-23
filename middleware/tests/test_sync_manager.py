@@ -1983,6 +1983,38 @@ def test_sync_participants_skips_orphaned_group_membership(sync_manager, mocker)
 # All three tests are pure mock tests (no LIVE_TEST guard needed).
 # ---------------------------------------------------------------------------
 
+def test_sync_participants_fails_when_group_member_read_fails(sync_manager, mocker):
+    """A failed ChMeetings Team group member read must not look like an empty group."""
+    mocker.patch("sync.participants.Config.TEAM_PREFIX", "Team")
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "pastor_email": "pastor@rpc.org"}],
+    )
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_groups",
+        return_value=[{"id": "870578", "name": "Team RPC"}],
+    )
+
+    def failed_group_people(_group_id):
+        sync_manager.chm_connector.last_get_group_people_status = "failed"
+        return []
+
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_group_people",
+        side_effect=failed_group_people,
+    )
+    get_person = mocker.patch.object(sync_manager.chm_connector, "get_person")
+
+    result = sync_manager.sync_participants()
+
+    assert result is False
+    get_person.assert_not_called()
+
+
 def test_sync_approvals_api_happy(sync_manager, mocker):
     """Happy path: 2 approved participants → add_person_to_group called twice,
     both marked synced in WordPress."""
