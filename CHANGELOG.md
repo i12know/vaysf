@@ -6,6 +6,10 @@
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
 
+- Scheduling: Normalized generated third-place playoff game keys to
+  `*-3rd-Place` across gym, Soccer, and pod/racquet bracket builders so
+  middleware output matches the WordPress semifinal advancement contract.
+  Updated the visual master schedule parser and regression tests. Fixes #342.
 - Hotfix 1.1.00: Added a Sports Fest > Schedules "Playoff Placement From
   Manager Schedule" panel for Issue #337. Sports Fest managers can fill the
   Saturday/Sunday venue, slot, and time fields from the attached manager

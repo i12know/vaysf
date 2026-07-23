@@ -545,7 +545,7 @@ def test_solve_soccer_precedence_keeps_final_after_pool_games():
             soccer_game("SOC-Semi-1", "SOC-Seed-1", "SOC-Seed-4", stage="Semi", pool_id="", round_num=1),
             soccer_game("SOC-Semi-2", "SOC-Seed-2", "SOC-Seed-3", stage="Semi", pool_id="", round_num=2),
             soccer_game("SOC-Final", "WIN-SOC-Semi-1", "WIN-SOC-Semi-2", stage="Final", pool_id="", round_num=1),
-            soccer_game("SOC-3rd", "LOS-SOC-Semi-1", "LOS-SOC-Semi-2", stage="3rd", pool_id="", round_num=1),
+            soccer_game("SOC-3rd-Place", "LOS-SOC-Semi-1", "LOS-SOC-Semi-2", stage="3rd", pool_id="", round_num=1),
         ],
         resources=[soccer_resource],
     )
@@ -562,7 +562,7 @@ def test_solve_soccer_precedence_keeps_final_after_pool_games():
             for semi_id in semi_ids
         ]
         + [
-            {"before_game_id": semi_id, "after_game_id": "SOC-3rd", "min_gap_slots": 1}
+            {"before_game_id": semi_id, "after_game_id": "SOC-3rd-Place", "min_gap_slots": 1}
             for semi_id in semi_ids
         ]
     )
@@ -576,7 +576,7 @@ def test_solve_soccer_precedence_keeps_final_after_pool_games():
     pool_max = max(slot_index[slot_by_game[game_id]] for game_id in pool_game_ids)
     semi_min = min(slot_index[slot_by_game[game_id]] for game_id in semi_ids)
     final_idx = slot_index[slot_by_game["SOC-Final"]]
-    third_idx = slot_index[slot_by_game["SOC-3rd"]]
+    third_idx = slot_index[slot_by_game["SOC-3rd-Place"]]
 
     assert pool_max < semi_min
     assert max(slot_index[slot_by_game[game_id]] for game_id in semi_ids) < final_idx

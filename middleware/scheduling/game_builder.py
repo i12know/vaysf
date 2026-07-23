@@ -387,7 +387,7 @@ def _build_assigned_soccer_game_objects(
             for semi_id in semi_ids
         )
         if COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME:
-            third_id = f"{prefix}-3rd"
+            third_id = f"{prefix}-3rd-Place"
             games.append({
                 "game_id": third_id,
                 "event": event_name,
@@ -524,7 +524,7 @@ def _build_single_elim_playoff(
     )
 
     if include_third:
-        third_id = f"{prefix}-3rd"
+        third_id = f"{prefix}-3rd-Place"
         third_game = {
             "game_id": third_id,
             "event": event_name,
@@ -897,7 +897,7 @@ def _build_pod_game_objects(
       - ``-QF-N``   quarter-final games (bracket size >= 8)
       - ``-Semi-N`` semi-final games
       - ``-Final``  championship game
-      - ``-3rd``    third-place game when enabled and two Semis are played
+      - ``-3rd-Place`` third-place game when enabled and two Semis are played
     Early rounds keep sequential numeric IDs (``-01``, ``-02``, ...).
 
     Precedence edges enforce round ordering: every game in round R must
@@ -1042,7 +1042,7 @@ def _build_pod_game_objects(
             COURT_ESTIMATE_INCLUDE_THIRD_PLACE_GAME
             and len(semi_ids) == 2
         ):
-            third_id = f"{division_id}-3rd"
+            third_id = f"{division_id}-3rd-Place"
             div_games.append({
                 "game_id":              third_id,
                 "division_id":          division_id,
@@ -1390,5 +1390,5 @@ def _make_playoff_ids(
     if playoff_teams >= 4:
         final_ids.append(f"{prefix}-Final")
         if include_third:
-            final_ids.append(f"{prefix}-3rd")
+            final_ids.append(f"{prefix}-3rd-Place")
     return early_ids, final_ids
