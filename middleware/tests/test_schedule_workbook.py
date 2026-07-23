@@ -2453,7 +2453,7 @@ def test_venue_centric_pins_solve_end_to_end_with_precedence(tmp_path):
         ["game_id", "event", "stage", "gym_name", "date", "start_time"],
         ["BBM-Semi-1", "Basketball - Men Team", "Semi", "EHS Main Gym", "2026-07-26", "12:00"],
         ["BBM-Semi-2", "Basketball - Men Team", "Semi", "EHS Main Gym", "2026-07-26", "13:00"],
-        ["BBM-3rd",    "Basketball - Men Team", "3rd",  "EHS Main Gym", "2026-07-26", "14:00"],
+        ["BBM-3rd-Place", "Basketball - Men Team", "3rd",  "EHS Main Gym", "2026-07-26", "14:00"],
         ["BBM-Final",  "Basketball - Men Team", "Final", "EHS Main Gym", "2026-07-26", "15:00"],
     ]
     path = tmp_path / "venue_input.xlsx"
@@ -2483,7 +2483,7 @@ def test_venue_centric_pins_solve_end_to_end_with_precedence(tmp_path):
         a["game_id"] for a in out["assignments"]
         if a["resource_id"] == "BB-Sun-2-PF1"
     }
-    assert pinned_users == {"BBM-Semi-1", "BBM-Semi-2", "BBM-3rd", "BBM-Final"}
+    assert pinned_users == {"BBM-Semi-1", "BBM-Semi-2", "BBM-3rd-Place", "BBM-Final"}
 
 
 def test_load_playoff_slots_accepts_venue_centric_columns(tmp_path):
@@ -3163,7 +3163,7 @@ def test_build_assigned_gym_game_objects_auto_generates_playoffs_for_8_teams():
     assert qf_ids == {"BBM-QF-1", "BBM-QF-2", "BBM-QF-3", "BBM-QF-4"}
     assert semi_ids == {"BBM-Semi-1", "BBM-Semi-2"}
     assert final_ids == {"BBM-Final"}
-    assert third_ids == {"BBM-3rd"}
+    assert third_ids == {"BBM-3rd-Place"}
 
     # Final pulls winners of semis
     final_game = next(g for g in bbm_games if g["game_id"] == "BBM-Final")
@@ -3187,7 +3187,7 @@ def test_build_assigned_gym_game_objects_auto_generates_playoffs_for_8_teams():
     assert ("BBM-QF-3", "BBM-Semi-1") not in bbm_prec
     assert ("BBM-QF-4", "BBM-Semi-1") not in bbm_prec
     assert all((s, "BBM-Final") in bbm_prec for s in semi_ids)
-    assert all((s, "BBM-3rd") in bbm_prec for s in semi_ids)
+    assert all((s, "BBM-3rd-Place") in bbm_prec for s in semi_ids)
 
     # QF→Semi, Semi→Final, Semi→3rd all require a 1-hour rest buffer (min_gap_slots=2)
     qf_semi_rules = [
@@ -3198,7 +3198,7 @@ def test_build_assigned_gym_game_objects_auto_generates_playoffs_for_8_teams():
     semi_final_rules = [
         r for r in precedence
         if str(r.get("before_game_id") or "").startswith("BBM-Semi-")
-        and str(r.get("after_game_id") or "") in ("BBM-Final", "BBM-3rd")
+        and str(r.get("after_game_id") or "") in ("BBM-Final", "BBM-3rd-Place")
     ]
     assert all(r["min_gap_slots"] == 2 for r in qf_semi_rules), "QF→Semi must require 2-slot gap"
     assert all(r["min_gap_slots"] == 2 for r in semi_final_rules), "Semi→Final/3rd must require 2-slot gap"
@@ -4622,12 +4622,12 @@ def test_pod_game_objects_assigns_r1_team_ids_for_confirmed_doubles():
     final_game = next(g for g in games if g["stage"] == "Final")
     assert final_game["team_a_id"] is None and final_game["team_b_id"] is None
     third_game = next(g for g in games if g["stage"] == "3rd")
-    assert third_game["game_id"] == "BAD-Men-Doubles-3rd"
+    assert third_game["game_id"] == "BAD-Men-Doubles-3rd-Place"
     assert third_game["team_a_id"] is None and third_game["team_b_id"] is None
     # Precedence: Semi-1, Semi-2 → Final and 3rd
     assert len(prec) == 4
     after_ids = {p["after_game_id"] for p in prec}
-    assert after_ids == {"BAD-Men-Doubles-Final", "BAD-Men-Doubles-3rd"}
+    assert after_ids == {"BAD-Men-Doubles-Final", "BAD-Men-Doubles-3rd-Place"}
 
 
 def test_pod_game_objects_r1_matchups_are_bye_aware():
@@ -4655,7 +4655,7 @@ def test_pod_game_objects_r1_matchups_are_bye_aware():
         "BAD-Men-Doubles-Semi-1",
         "BAD-Men-Doubles-Semi-2",
         "BAD-Men-Doubles-Final",
-        "BAD-Men-Doubles-3rd",
+        "BAD-Men-Doubles-3rd-Place",
     ]
 
     # Only QF-1 has known team IDs (the 2 non-bye players)
@@ -4673,8 +4673,8 @@ def test_pod_game_objects_r1_matchups_are_bye_aware():
         ("BAD-Men-Doubles-QF-1", "BAD-Men-Doubles-Semi-2"),
         ("BAD-Men-Doubles-Semi-1", "BAD-Men-Doubles-Final"),
         ("BAD-Men-Doubles-Semi-2", "BAD-Men-Doubles-Final"),
-        ("BAD-Men-Doubles-Semi-1", "BAD-Men-Doubles-3rd"),
-        ("BAD-Men-Doubles-Semi-2", "BAD-Men-Doubles-3rd"),
+        ("BAD-Men-Doubles-Semi-1", "BAD-Men-Doubles-3rd-Place"),
+        ("BAD-Men-Doubles-Semi-2", "BAD-Men-Doubles-3rd-Place"),
     }
 
 
@@ -4741,7 +4741,7 @@ def test_build_pod_game_objects_tt_singles_bracket_p8():
         "TT-Men-Singles-Semi-1",
         "TT-Men-Singles-Semi-2",
         "TT-Men-Singles-Final",
-        "TT-Men-Singles-3rd",
+        "TT-Men-Singles-3rd-Place",
     ]
     stages = [g["stage"] for g in games]
     assert stages == ["QF", "QF", "Semi", "Semi", "Final", "3rd"]
@@ -4757,7 +4757,7 @@ def test_build_pod_game_objects_tt_singles_bracket_p8():
     assert len(semi_to_final) == 4
     assert {
         p["after_game_id"] for p in semi_to_final
-    } == {"TT-Men-Singles-Final", "TT-Men-Singles-3rd"}
+    } == {"TT-Men-Singles-Final", "TT-Men-Singles-3rd-Place"}
     assert all(p["min_gap_slots"] == 1 for p in prec)
 
 
@@ -4781,7 +4781,7 @@ def test_build_pod_game_objects_tt_full_bracket_p8():
         "TT-Women-Singles-Semi-1",
         "TT-Women-Singles-Semi-2",
         "TT-Women-Singles-Final",
-        "TT-Women-Singles-3rd",
+        "TT-Women-Singles-3rd-Place",
     ]
     # 8 QF→Semi + 2 Semi→Final + 2 Semi→3rd edges = 12 total
     assert len(prec) == 12
@@ -4803,7 +4803,7 @@ def test_build_pod_game_objects_pickleball_singles_bracket_p4():
         "PCK-Women-Singles-Semi-1",
         "PCK-Women-Singles-Semi-2",
         "PCK-Women-Singles-Final",
-        "PCK-Women-Singles-3rd",
+        "PCK-Women-Singles-3rd-Place",
     ]
     stages = [g["stage"] for g in games]
     assert stages == ["Semi", "Semi", "Final", "3rd"]
@@ -4814,7 +4814,7 @@ def test_build_pod_game_objects_pickleball_singles_bracket_p4():
     assert len(prec) == 4
     assert {
         p["after_game_id"] for p in prec
-    } == {"PCK-Women-Singles-Final", "PCK-Women-Singles-3rd"}
+    } == {"PCK-Women-Singles-Final", "PCK-Women-Singles-3rd-Place"}
     assert all(p["min_gap_slots"] == 1 for p in prec)
 
 
@@ -4835,13 +4835,13 @@ def test_pod_precedence_included_in_schedule_input(tmp_path):
     assert "TT-Men-Singles-Final" in game_ids
     assert "TT-Men-Singles-Semi-1" in game_ids
     assert "TT-Men-Singles-Semi-2" in game_ids
-    assert "TT-Men-Singles-3rd" in game_ids
+    assert "TT-Men-Singles-3rd-Place" in game_ids
 
     # Precedence edges from the TT bracket must be included
     tt_prec = [p for p in si["precedence"] if "TT-Men-Singles" in p["before_game_id"]]
     assert len(tt_prec) == 4  # both Semis → Final and 3rd
     after_ids = {p["after_game_id"] for p in tt_prec}
-    assert after_ids == {"TT-Men-Singles-Final", "TT-Men-Singles-3rd"}
+    assert after_ids == {"TT-Men-Singles-Final", "TT-Men-Singles-3rd-Place"}
 
 
 def test_schedule_output_orders_all_early_racquet_rounds_before_qf():
@@ -5328,7 +5328,7 @@ def test_soccer_schedule_input_adds_playoff_precedence(tmp_path):
     assert len(pool_game_ids) == 6
     assert semi_ids == {"SOC-Semi-1", "SOC-Semi-2"}
     assert final_ids == {"SOC-Final"}
-    assert third_ids == {"SOC-3rd"}
+    assert third_ids == {"SOC-3rd-Place"}
 
     precedence_pairs = {
         (str(rule["before_game_id"]), str(rule["after_game_id"]))
@@ -5344,7 +5344,7 @@ def test_soccer_schedule_input_adds_playoff_precedence(tmp_path):
         (semi_id, "SOC-Final")
         for semi_id in semi_ids
     } | {
-        (semi_id, "SOC-3rd")
+        (semi_id, "SOC-3rd-Place")
         for semi_id in semi_ids
     }
     assert precedence_pairs == expected_pairs
