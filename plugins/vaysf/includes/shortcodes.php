@@ -494,8 +494,8 @@ class VAYSF_Shortcodes {
                     <p><?php echo esc_html($subtitle); ?></p>
                 <?php endif; ?>
             </div>
-            <p class="vaysf-advancement-empty" <?php hidden(!empty($rows)); ?>><?php echo esc_html__('No confirmed advancement yet.', 'vaysf'); ?></p>
-            <table class="vaysf-advancement-table" <?php hidden(empty($rows)); ?>>
+            <p class="vaysf-advancement-empty"<?php echo !empty($rows) ? ' hidden' : ''; ?>><?php echo esc_html__('No confirmed advancement yet.', 'vaysf'); ?></p>
+            <table class="vaysf-advancement-table"<?php echo empty($rows) ? ' hidden' : ''; ?>>
                 <thead>
                     <tr>
                         <th><?php echo esc_html__('Event', 'vaysf'); ?></th>

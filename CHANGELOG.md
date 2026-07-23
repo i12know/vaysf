@@ -22,6 +22,9 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   schedule-time ordering within each event, and row-set reconciliation during
   refresh so newly confirmed advancement rows appear without a reload. Rebuilt
   `plugins/vaysf.zip`. Fixes #345.
+- Hotfix 1.1.06: Fixed the public `[vaysf_advancement]` shortcode so it does
+  not call WordPress admin-only `hidden()` helpers on the front page. Rebuilt
+  `plugins/vaysf.zip`.
 - Hotfix 1.1.02: Added a clearer Manager schedule error when a playoff row's
   game key already exists on a different schedule version, so stale tabs or
   version drift explain how to recover instead of surfacing as a generic save
