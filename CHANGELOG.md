@@ -12,6 +12,11 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   save now retires unprotected stale `MVB-*` playoff placeholder rows from the
   bad template so they do not leak into public schedule/export views. Rebuilt
   `plugins/vaysf.zip`. Fixes #341.
+- Hotfix 1.1.04: Added no-cache headers for Sports Fest admin pages and public
+  event-day schedule/advancement JSON, versioned the admin cache-guard asset,
+  and added a Manager/admin warning that blocks form saves when the page was
+  rendered by an older plugin version after a hotfix upload. Rebuilt
+  `plugins/vaysf.zip`.
 - Hotfix 1.1.02: Added a clearer Manager schedule error when a playoff row's
   game key already exists on a different schedule version, so stale tabs or
   version drift explain how to recover instead of surfacing as a generic save
