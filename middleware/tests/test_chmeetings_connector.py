@@ -4,7 +4,7 @@ import pytest
 import sys
 import time
 import requests
-from chmeetings.backend_connector import ChMeetingsConnector
+from chmeetings.backend_connector import ChMeetingsConnector, ChMeetingsReadError
 from conftest import require_live_mutation_test
 from loguru import logger
 
@@ -107,6 +107,37 @@ def test_get_people_pagination(chm_connector, mocker, mock_chm_people_data):
 
     assert len(people) == 3, "All 3 people should be collected across 2 pages"
     assert call_count["n"] == 2, "Should have made exactly 2 page requests"
+
+
+def test_get_people_page_two_failure_raises_instead_of_returning_partial(chm_connector, mocker, mock_chm_people_data):
+    """A mid-pagination ChMeetings failure must not return a truncated people list."""
+    live_test = os.getenv("LIVE_TEST", "false").strip().lower() == "true"
+    if live_test:
+        pytest.skip("Failure semantics are covered by mock mode")
+
+    page1_data = mock_chm_people_data[:2]
+    call_count = {"n": 0}
+
+    def paged_get(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise requests.ConnectionError("page 2 connection dropped")
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = mocker.Mock()
+        mock_resp.json.return_value = {
+            "paging": {"total_count": 3, "page": 1, "page_size": 2},
+            "data": page1_data,
+        }
+        return mock_resp
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("requests.Session.get", paged_get)
+        with pytest.raises(ChMeetingsReadError):
+            chm_connector.get_people({"page_size": 2})
+
+    assert chm_connector.last_get_people_status == "failed"
+    assert call_count["n"] == 2
 
 
 def test_get_people_request_params(chm_connector, mocker):

@@ -716,7 +716,17 @@ class ParticipantSyncer:
             all_participants_processed_successfully = True # Assume success unless a participant fails
 
             for group in team_groups:
+                if hasattr(self.chm_connector, "last_get_group_people_status"):
+                    self.chm_connector.last_get_group_people_status = None
                 participants_in_group = self.chm_connector.get_group_people(group["id"])
+                if getattr(self.chm_connector, "last_get_group_people_status", None) == "failed":
+                    logger.error(
+                        f"Failed to load participants in group '{group['name']}' "
+                        f"(ID: {group['id']}). Full participant sync cannot safely continue."
+                    )
+                    all_participants_processed_successfully = False
+                    continue
+
                 if not participants_in_group:
                     logger.info(f"No participants in group '{group['name']}' (ID: {group['id']}). Skipping.")
                     continue
@@ -749,12 +759,7 @@ class ParticipantSyncer:
                 logger.warning("Full participant sync from groups completed, but one or more participants encountered errors or were invalid. Check logs and stats.")
 
             logger.info(f"Participant sync completed. Stats: Participants {self.stats['participants']}, Rosters: {self.stats['rosters']}, Validation Issues: {self.stats['validation_issues']}")
-            # For full sync, the method is considered "successful" if it ran through.
-            # Individual errors are in stats. The original code implies a True return if it reaches the end.
-            # However, all_participants_processed_successfully gives a more nuanced status.
-            # Let's return True if the process completed, consistent with original high-level behavior.
-            # If you want it to return False if ANY participant fails, change the return to `all_participants_processed_successfully`.
-            return True
+            return all_participants_processed_successfully
 # START --- New helper method for ParticipantSyncer in participants.py ---
     def _sync_single_participant(
         self,
