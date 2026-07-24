@@ -400,6 +400,26 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output directory for generated PDFs (default: EXPORT_DIR/scoresheets)",
     )
+    scoresheets_parser.add_argument(
+        "--stage",
+        choices=sorted(["playoff", "quarterfinal", "semifinal", "final", "3rd-place"]),
+        default=None,
+        help=(
+            "Limit to games at this stage. 'playoff' includes quarterfinal, "
+            "semifinal, final, and 3rd-place rows; the others select just one stage. "
+            "Combines with --game-key as an intersection (Issue #348)."
+        ),
+    )
+    scoresheets_parser.add_argument(
+        "--game-key",
+        action="append",
+        default=None,
+        help=(
+            "Limit to one specific stable schedule game_key (e.g. BBM-QF-1). "
+            "May be supplied multiple times for a small batch. Combines with "
+            "--stage as an intersection (Issue #348)."
+        ),
+    )
 
     # Solve-schedule command
     solve_schedule_parser = subparsers.add_parser(
@@ -2324,6 +2344,8 @@ def main() -> None:
                     roster_rows=roster_rows,
                     logo_path=logo_path,
                     score_entry_base_url=score_entry_base_url,
+                    stage=args.stage,
+                    game_keys=args.game_key,
                 )
             except ScoreSheetError as exc:
                 logger.error(f"generate-scoresheets: {exc}")

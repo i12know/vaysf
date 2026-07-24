@@ -13,8 +13,10 @@ from scoresheets import (
     SOCCER_EVENT,
     VOLLEYBALL_MEN_EVENT,
     VOLLEYBALL_WOMEN_EVENT,
+    ScoreSheetError,
     _extract_photo_ref,
     _bible_challenge_scripture_summary,
+    _filter_games,
     _friendly_location,
     build_bible_challenge_roster_index,
     build_roster_index,
@@ -122,6 +124,45 @@ def _schedule_output():
         ],
         "unscheduled": [],
     }
+
+
+def _schedule_input_with_playoffs():
+    """Base fixture plus BBM quarterfinal/semifinal rows for --stage/--game-key tests (Issue #348)."""
+    data = _schedule_input()
+    data["games"].extend([
+        {
+            "game_id": "BBM-QF-1",
+            "event": BASKETBALL_EVENT,
+            "stage": "QF",
+            "team_a_id": "BBM::RPC",
+            "team_a_label": "RPC",
+            "team_b_id": "BBM::GAC",
+            "team_b_label": "GAC",
+            "duration_minutes": 60,
+            "resource_type": "Basketball Court",
+        },
+        {
+            "game_id": "BBM-Semi-1",
+            "event": BASKETBALL_EVENT,
+            "stage": "Semi",
+            "team_a_id": "BBM::RPC",
+            "team_a_label": "RPC",
+            "team_b_id": "BBM::GAC",
+            "team_b_label": "GAC",
+            "duration_minutes": 60,
+            "resource_type": "Basketball Court",
+        },
+    ])
+    return data
+
+
+def _schedule_output_with_playoffs():
+    data = _schedule_output()
+    data["assignments"].extend([
+        {"game_id": "BBM-QF-1", "resource_id": "GYM-Sat-2-1", "slot": "Sat-2-08:00"},
+        {"game_id": "BBM-Semi-1", "resource_id": "GYM-Sat-2-1", "slot": "Sat-2-11:00"},
+    ])
+    return data
 
 
 def _logo(path):
@@ -998,3 +1039,204 @@ def test_write_bible_challenge_scoresheets_cycles_one_verse_per_game(tmp_path, m
     assert assigned_references[:2] == ["Matthew 13:23", "Colossians 2:6-7"]
     assert assigned_references[13] == "Philippians 3:14"
     assert assigned_references[14] == "Matthew 13:23"
+
+
+# ---------------------------------------------------------------------------
+# --stage / --game-key filtering (Issue #348)
+# ---------------------------------------------------------------------------
+
+def _games(stage=None):
+    return [
+        {"game_key": "BBM-01", "event": BASKETBALL_EVENT, "stage": "Pool"},
+        {"game_key": "BBM-QF-1", "event": BASKETBALL_EVENT, "stage": "QF"},
+        {"game_key": "BBM-Semi-1", "event": BASKETBALL_EVENT, "stage": "Semi"},
+        {"game_key": "BBM-Final", "event": BASKETBALL_EVENT, "stage": "Final"},
+        {"game_key": "BBM-3rd-Place", "event": BASKETBALL_EVENT, "stage": "3rd"},
+    ]
+
+
+def test_filter_games_no_filters_returns_unchanged():
+    games = _games()
+    assert _filter_games(games, "basketball") == games
+
+
+def test_filter_games_stage_playoff_excludes_pool():
+    result = _filter_games(_games(), "basketball", stage="playoff")
+    assert {g["game_key"] for g in result} == {
+        "BBM-QF-1", "BBM-Semi-1", "BBM-Final", "BBM-3rd-Place",
+    }
+
+
+def test_filter_games_stage_quarterfinal_matches_only_qf():
+    result = _filter_games(_games(), "basketball", stage="quarterfinal")
+    assert [g["game_key"] for g in result] == ["BBM-QF-1"]
+
+
+def test_filter_games_stage_3rd_place_alias_maps_to_3rd_stage():
+    result = _filter_games(_games(), "basketball", stage="3rd-place")
+    assert [g["game_key"] for g in result] == ["BBM-3rd-Place"]
+
+
+def test_filter_games_game_key_selects_one():
+    result = _filter_games(_games(), "basketball", game_keys=["BBM-QF-1"])
+    assert [g["game_key"] for g in result] == ["BBM-QF-1"]
+
+
+def test_filter_games_game_key_multiple_selects_batch():
+    result = _filter_games(_games(), "basketball", game_keys=["BBM-QF-1", "BBM-Final"])
+    assert {g["game_key"] for g in result} == {"BBM-QF-1", "BBM-Final"}
+
+
+def test_filter_games_stage_and_game_key_use_intersection():
+    """Both filters supplied: only games matching both survive."""
+    result = _filter_games(
+        _games(),
+        "basketball",
+        stage="playoff",
+        game_keys=["BBM-01", "BBM-QF-1"],
+    )
+    # BBM-01 is Pool (fails --stage playoff); only BBM-QF-1 satisfies both.
+    assert [g["game_key"] for g in result] == ["BBM-QF-1"]
+
+
+def test_filter_games_unknown_stage_raises_clear_error():
+    try:
+        _filter_games(_games(), "basketball", stage="bogus")
+    except ScoreSheetError as exc:
+        assert "Unknown --stage value" in str(exc)
+    else:
+        raise AssertionError("Expected an unknown --stage value to be rejected.")
+
+
+def test_filter_games_no_match_raises_clear_error():
+    try:
+        _filter_games(_games(), "basketball", stage="playoff", game_keys=["BBM-01"])
+    except ScoreSheetError as exc:
+        assert "No basketball games matched" in str(exc)
+    else:
+        raise AssertionError("Expected the empty stage+game-key intersection to raise.")
+
+
+def test_filter_games_missing_game_key_warns_but_returns_found_matches():
+    messages = []
+    from loguru import logger as loguru_logger
+    sink_id = loguru_logger.add(lambda msg: messages.append(msg), level="WARNING")
+    try:
+        result = _filter_games(_games(), "basketball", game_keys=["BBM-QF-1", "BBM-QF-9"])
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert [g["game_key"] for g in result] == ["BBM-QF-1"]
+    assert any("BBM-QF-9" in m for m in messages), (
+        "Expected a WARNING naming the --game-key that was not found"
+    )
+
+
+def test_write_basketball_scoresheets_pdf_stage_playoff_filter(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    input_path = tmp_path / "approved_schedule_input.json"
+    output_path = tmp_path / "approved_schedule_output.json"
+    input_path.write_text(json.dumps(_schedule_input_with_playoffs()), encoding="utf-8")
+    output_path.write_text(json.dumps(_schedule_output_with_playoffs()), encoding="utf-8")
+
+    pdf_path, page_count = write_basketball_scoresheets_pdf(
+        input_path,
+        output_path,
+        tmp_path / "scoresheets",
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+        output_filename="basketball-playoff.pdf",
+        stage="playoff",
+    )
+
+    # BBM-01 (Pool) is excluded; BBM-QF-1 and BBM-Semi-1 remain.
+    assert page_count == 2
+    assert pdf_path.exists()
+
+
+def test_write_basketball_scoresheets_pdf_game_key_filter(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    input_path = tmp_path / "approved_schedule_input.json"
+    output_path = tmp_path / "approved_schedule_output.json"
+    input_path.write_text(json.dumps(_schedule_input_with_playoffs()), encoding="utf-8")
+    output_path.write_text(json.dumps(_schedule_output_with_playoffs()), encoding="utf-8")
+
+    pdf_path, page_count = write_basketball_scoresheets_pdf(
+        input_path,
+        output_path,
+        tmp_path / "scoresheets",
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+        output_filename="basketball-one-game.pdf",
+        game_keys=["BBM-QF-1"],
+    )
+
+    assert page_count == 1
+    assert pdf_path.exists()
+
+
+def test_write_basketball_scoresheets_pdf_game_key_multiple_batch(tmp_path):
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    input_path = tmp_path / "approved_schedule_input.json"
+    output_path = tmp_path / "approved_schedule_output.json"
+    input_path.write_text(json.dumps(_schedule_input_with_playoffs()), encoding="utf-8")
+    output_path.write_text(json.dumps(_schedule_output_with_playoffs()), encoding="utf-8")
+
+    pdf_path, page_count = write_basketball_scoresheets_pdf(
+        input_path,
+        output_path,
+        tmp_path / "scoresheets",
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+        output_filename="basketball-batch.pdf",
+        game_keys=["BBM-QF-1", "BBM-Semi-1"],
+    )
+
+    assert page_count == 2
+    assert pdf_path.exists()
+
+
+def test_write_basketball_scoresheets_pdf_stage_and_game_key_no_match_raises(tmp_path):
+    input_path = tmp_path / "approved_schedule_input.json"
+    output_path = tmp_path / "approved_schedule_output.json"
+    input_path.write_text(json.dumps(_schedule_input_with_playoffs()), encoding="utf-8")
+    output_path.write_text(json.dumps(_schedule_output_with_playoffs()), encoding="utf-8")
+
+    try:
+        write_basketball_scoresheets_pdf(
+            input_path,
+            output_path,
+            tmp_path / "scoresheets",
+            score_entry_base_url=SCORE_ENTRY_URL,
+            stage="playoff",
+            game_keys=["BBM-01"],
+        )
+    except ScoreSheetError as exc:
+        assert "No basketball games matched" in str(exc)
+    else:
+        raise AssertionError("Expected the empty stage+game-key intersection to raise.")
+
+
+def test_write_basketball_scoresheets_pdf_no_filter_behavior_unchanged(tmp_path):
+    """Existing no-filter behavior is unchanged even with playoff rows present."""
+    logo = tmp_path / "logo.png"
+    _logo(logo)
+    input_path = tmp_path / "approved_schedule_input.json"
+    output_path = tmp_path / "approved_schedule_output.json"
+    input_path.write_text(json.dumps(_schedule_input_with_playoffs()), encoding="utf-8")
+    output_path.write_text(json.dumps(_schedule_output_with_playoffs()), encoding="utf-8")
+
+    pdf_path, page_count = write_basketball_scoresheets_pdf(
+        input_path,
+        output_path,
+        tmp_path / "scoresheets",
+        logo_path=logo,
+        score_entry_base_url=SCORE_ENTRY_URL,
+        output_filename="basketball-all.pdf",
+    )
+
+    assert page_count == 3
+    assert pdf_path.exists()

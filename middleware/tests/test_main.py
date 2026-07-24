@@ -464,6 +464,91 @@ def test_parse_args_generate_scoresheets_bible_challenge(monkeypatch):
     assert args.sport == "bible-challenge"
 
 
+def test_parse_args_generate_scoresheets_defaults_have_no_filters(monkeypatch):
+    """No --stage/--game-key supplied: both parse to None (Issue #348)."""
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        ["main.py", "generate-scoresheets", "--sport", "basketball"],
+    )
+    args = main.parse_args()
+    assert args.stage is None
+    assert args.game_key is None
+
+
+def test_parse_args_generate_scoresheets_stage_playoff(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        ["main.py", "generate-scoresheets", "--sport", "basketball", "--stage", "playoff"],
+    )
+    args = main.parse_args()
+    assert args.stage == "playoff"
+    assert args.game_key is None
+
+
+def test_parse_args_generate_scoresheets_game_key_single(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        ["main.py", "generate-scoresheets", "--sport", "basketball", "--game-key", "BBM-QF-1"],
+    )
+    args = main.parse_args()
+    assert args.game_key == ["BBM-QF-1"]
+
+
+def test_parse_args_generate_scoresheets_game_key_multiple(monkeypatch):
+    """--game-key may be repeated to request a small batch (Issue #348)."""
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "generate-scoresheets",
+            "--sport",
+            "basketball",
+            "--game-key",
+            "BBM-QF-1",
+            "--game-key",
+            "BBM-Semi-1",
+        ],
+    )
+    args = main.parse_args()
+    assert args.game_key == ["BBM-QF-1", "BBM-Semi-1"]
+
+
+def test_parse_args_generate_scoresheets_stage_and_game_key_combined(monkeypatch):
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        [
+            "main.py",
+            "generate-scoresheets",
+            "--sport",
+            "basketball",
+            "--stage",
+            "quarterfinal",
+            "--game-key",
+            "BBM-QF-1",
+        ],
+    )
+    args = main.parse_args()
+    assert args.stage == "quarterfinal"
+    assert args.game_key == ["BBM-QF-1"]
+
+
+def test_parse_args_generate_scoresheets_unknown_stage_rejected(monkeypatch, capsys):
+    """An unsupported --stage value is rejected at parse time, not at runtime."""
+    monkeypatch.setattr(
+        main.sys,
+        "argv",
+        ["main.py", "generate-scoresheets", "--sport", "basketball", "--stage", "bogus"],
+    )
+    with pytest.raises(SystemExit) as exc:
+        main.parse_args()
+    assert exc.value.code == 2
+
+
 def test_parse_args_publish_schedule_requires_mode(monkeypatch, capsys):
     monkeypatch.setattr(main.sys, "argv", ["main.py", "publish-schedule"])
     with pytest.raises(SystemExit) as exc:
