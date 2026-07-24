@@ -458,9 +458,9 @@ class VAYSF_Shortcodes {
     }
 
     /**
-     * Shortcode for spectator-facing confirmed semifinal/final advancement (Issue #206).
+     * Shortcode for spectator-facing confirmed playoff advancement (Issue #206).
      *
-     * "Confirmed" reflects an admin having populated the Semifinal/Final
+     * "Confirmed" reflects an admin having populated the playoff
      * schedule row's team slots after deciding pool-play qualifiers — see
      * vaysf_get_public_advancement_rows() for why no separate confirmation
      * flag is needed.
@@ -955,7 +955,7 @@ class VAYSF_Shortcodes {
     /**
      * Echo the auto-refresh script for one advancement shortcode instance.
      *
-     * Reconciles the row set in-place so newly confirmed semifinal/final rows
+     * Reconciles the row set in-place so newly confirmed playoff rows
      * appear without requiring a full page reload.
      *
      * @param string $instance_id DOM id of the shortcode's wrapper element

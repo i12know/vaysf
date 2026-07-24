@@ -775,7 +775,7 @@ function vaysf_get_public_advancement_rows($filters = array()) {
         'schedule_version = %d',
         'published_at IS NOT NULL',
         "COALESCE(game_status, '') <> 'cancelled'",
-        "stage IN ('Semifinal', 'Final')",
+        "stage IN ('Quarterfinal', 'Semifinal', '3rd Place', '3rd', 'Final')",
         "(COALESCE(team_a_key, '') <> '' OR COALESCE(team_b_key, '') <> '' OR COALESCE(team_c_key, '') <> '')",
     );
     $args = array($schedule_version);
@@ -790,7 +790,18 @@ function vaysf_get_public_advancement_rows($filters = array()) {
     $sql = "SELECT *
         FROM $table_schedules
         WHERE $where_clause
-        ORDER BY event, scheduled_time IS NULL, scheduled_time, stage, schedule_id";
+        ORDER BY event,
+            scheduled_time IS NULL,
+            scheduled_time,
+            CASE stage
+                WHEN 'Quarterfinal' THEN 10
+                WHEN 'Semifinal' THEN 20
+                WHEN '3rd Place' THEN 30
+                WHEN '3rd' THEN 30
+                WHEN 'Final' THEN 40
+                ELSE 90
+            END,
+            schedule_id";
 
     $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
     if (!is_array($rows)) {

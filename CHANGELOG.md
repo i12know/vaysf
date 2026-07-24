@@ -25,6 +25,9 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - Hotfix 1.1.06: Fixed the public `[vaysf_advancement]` shortcode so it does
   not call WordPress admin-only `hidden()` helpers on the front page. Rebuilt
   `plugins/vaysf.zip`.
+- Hotfix 1.1.07: Updated `[vaysf_advancement]` to include populated
+  Quarterfinal and 3rd-place playoff rows, and to fall back to bracket-stage
+  ordering when schedule times are still TBD. Rebuilt `plugins/vaysf.zip`.
 - Hotfix 1.1.02: Added a clearer Manager schedule error when a playoff row's
   game key already exists on a different schedule version, so stale tabs or
   version drift explain how to recover instead of surfacing as a generic save
