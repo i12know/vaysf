@@ -133,7 +133,7 @@ def _schedule_input_with_playoffs():
         {
             "game_id": "BBM-QF-1",
             "event": BASKETBALL_EVENT,
-            "stage": "QF",
+            "stage": "Quarterfinal",
             "team_a_id": "BBM::RPC",
             "team_a_label": "RPC",
             "team_b_id": "BBM::GAC",
@@ -144,7 +144,7 @@ def _schedule_input_with_playoffs():
         {
             "game_id": "BBM-Semi-1",
             "event": BASKETBALL_EVENT,
-            "stage": "Semi",
+            "stage": "Semifinal",
             "team_a_id": "BBM::RPC",
             "team_a_label": "RPC",
             "team_b_id": "BBM::GAC",
@@ -1048,10 +1048,10 @@ def test_write_bible_challenge_scoresheets_cycles_one_verse_per_game(tmp_path, m
 def _games(stage=None):
     return [
         {"game_key": "BBM-01", "event": BASKETBALL_EVENT, "stage": "Pool"},
-        {"game_key": "BBM-QF-1", "event": BASKETBALL_EVENT, "stage": "QF"},
-        {"game_key": "BBM-Semi-1", "event": BASKETBALL_EVENT, "stage": "Semi"},
+        {"game_key": "BBM-QF-1", "event": BASKETBALL_EVENT, "stage": "Quarterfinal"},
+        {"game_key": "BBM-Semi-1", "event": BASKETBALL_EVENT, "stage": "Semifinal"},
         {"game_key": "BBM-Final", "event": BASKETBALL_EVENT, "stage": "Final"},
-        {"game_key": "BBM-3rd-Place", "event": BASKETBALL_EVENT, "stage": "3rd"},
+        {"game_key": "BBM-3rd-Place", "event": BASKETBALL_EVENT, "stage": "3rd Place"},
     ]
 
 

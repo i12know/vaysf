@@ -36,15 +36,29 @@ VOLLEYBALL_MEN_EVENT = "Volleyball - Men Team"
 VOLLEYBALL_WOMEN_EVENT = "Volleyball - Women Team"
 VOLLEYBALL_EVENTS = {VOLLEYBALL_MEN_EVENT, VOLLEYBALL_WOMEN_EVENT}
 
-# --stage aliases for generate-scoresheets (Issue #348). Values are the
-# schedule_input/schedule_output "stage" strings produced by
-# scheduling/game_builder.py; "playoff" is the union of every non-pool stage.
+# --stage aliases for generate-scoresheets (Issue #348). Canonical values match
+# the stage labels exported by the current WordPress/PHP schedule publisher:
+# Quarterfinal, Semifinal, Final, and 3rd Place.
 STAGE_FILTER_ALIASES: dict[str, frozenset[str]] = {
-    "playoff": frozenset({"QF", "Semi", "Final", "3rd"}),
-    "quarterfinal": frozenset({"QF"}),
-    "semifinal": frozenset({"Semi"}),
-    "final": frozenset({"Final"}),
-    "3rd-place": frozenset({"3rd"}),
+    "playoff": frozenset({"quarterfinal", "semifinal", "final", "3rd-place"}),
+    "quarterfinal": frozenset({"quarterfinal"}),
+    "semifinal": frozenset({"semifinal"}),
+    "final": frozenset({"final"}),
+    "3rd-place": frozenset({"3rd-place"}),
+}
+SCHEDULE_STAGE_ALIASES: dict[str, str] = {
+    "quarterfinal": "quarterfinal",
+    "quarter final": "quarterfinal",
+    "qf": "quarterfinal",
+    "semifinal": "semifinal",
+    "semi final": "semifinal",
+    "semi": "semifinal",
+    "final": "final",
+    "3rd place": "3rd-place",
+    "3rd-place": "3rd-place",
+    "3rd": "3rd-place",
+    "third place": "3rd-place",
+    "third-place": "3rd-place",
 }
 PAGE_W, PAGE_H = 1275, 1650  # Letter page at 150 DPI.
 MARGIN = 70
@@ -1273,6 +1287,20 @@ def _load_json(path: Path) -> dict[str, Any]:
         raise ScoreSheetError(f"JSON file is not valid at {path}: {exc}") from exc
 
 
+def _normalize_schedule_stage(stage: Any) -> str:
+    """Return the canonical stage key for a schedule row.
+
+    WordPress exports human labels ("Quarterfinal", "Semifinal", "3rd Place").
+    A few compact legacy values are accepted defensively, but the canonical
+    comparison is based on the PHP-generated labels.
+    """
+    raw = str(stage or "").strip().lower()
+    if raw == "":
+        return ""
+    collapsed = " ".join(raw.replace("_", " ").split())
+    return SCHEDULE_STAGE_ALIASES.get(collapsed, collapsed)
+
+
 def _filter_games(
     games: list[dict[str, Any]],
     sport_label: str,
@@ -1298,7 +1326,11 @@ def _filter_games(
                 f"Unknown --stage value {stage!r}. Choose from: "
                 f"{', '.join(sorted(STAGE_FILTER_ALIASES))}."
             )
-        filtered = [game for game in filtered if str(game.get("stage") or "") in allowed_stages]
+        filtered = [
+            game
+            for game in filtered
+            if _normalize_schedule_stage(game.get("stage")) in allowed_stages
+        ]
         filter_desc.append(f"--stage {stage}")
 
     if game_keys:
