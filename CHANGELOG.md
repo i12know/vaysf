@@ -6,6 +6,12 @@
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
 
+- Scoresheets: `generate-scoresheets` now accepts `--stage` (`playoff`,
+  `quarterfinal`, `semifinal`, `final`, `3rd-place`) and repeatable
+  `--game-key` filters, applied after `merge_schedule()` so they work with
+  WordPress-exported `approved_schedule_input.json`/`approved_schedule_output.json`.
+  Combining both filters yields their intersection; existing no-filter
+  behavior is unchanged. Fixes #348.
 - Hotfix 1.1.03: Corrected the Men's Volleyball manager playoff placement
   game keys from `MVB-*` to the canonical `VBM-*` prefix used by Coordinator
   apply flows, public advancement, and middleware schedule IDs. The Manager

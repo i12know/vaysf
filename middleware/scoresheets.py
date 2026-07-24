@@ -35,6 +35,31 @@ SOCCER_EVENT = "Soccer - Coed Exhibition"
 VOLLEYBALL_MEN_EVENT = "Volleyball - Men Team"
 VOLLEYBALL_WOMEN_EVENT = "Volleyball - Women Team"
 VOLLEYBALL_EVENTS = {VOLLEYBALL_MEN_EVENT, VOLLEYBALL_WOMEN_EVENT}
+
+# --stage aliases for generate-scoresheets (Issue #348). Canonical values match
+# the stage labels exported by the current WordPress/PHP schedule publisher:
+# Quarterfinal, Semifinal, Final, and 3rd Place.
+STAGE_FILTER_ALIASES: dict[str, frozenset[str]] = {
+    "playoff": frozenset({"quarterfinal", "semifinal", "final", "3rd-place"}),
+    "quarterfinal": frozenset({"quarterfinal"}),
+    "semifinal": frozenset({"semifinal"}),
+    "final": frozenset({"final"}),
+    "3rd-place": frozenset({"3rd-place"}),
+}
+SCHEDULE_STAGE_ALIASES: dict[str, str] = {
+    "quarterfinal": "quarterfinal",
+    "quarter final": "quarterfinal",
+    "qf": "quarterfinal",
+    "semifinal": "semifinal",
+    "semi final": "semifinal",
+    "semi": "semifinal",
+    "final": "final",
+    "3rd place": "3rd-place",
+    "3rd-place": "3rd-place",
+    "3rd": "3rd-place",
+    "third place": "3rd-place",
+    "third-place": "3rd-place",
+}
 PAGE_W, PAGE_H = 1275, 1650  # Letter page at 150 DPI.
 MARGIN = 70
 LOGO_BOX = (72, 58, 182, 168)
@@ -1262,6 +1287,73 @@ def _load_json(path: Path) -> dict[str, Any]:
         raise ScoreSheetError(f"JSON file is not valid at {path}: {exc}") from exc
 
 
+def _normalize_schedule_stage(stage: Any) -> str:
+    """Return the canonical stage key for a schedule row.
+
+    WordPress exports human labels ("Quarterfinal", "Semifinal", "3rd Place").
+    A few compact legacy values are accepted defensively, but the canonical
+    comparison is based on the PHP-generated labels.
+    """
+    raw = str(stage or "").strip().lower()
+    if raw == "":
+        return ""
+    collapsed = " ".join(raw.replace("_", " ").split())
+    return SCHEDULE_STAGE_ALIASES.get(collapsed, collapsed)
+
+
+def _filter_games(
+    games: list[dict[str, Any]],
+    sport_label: str,
+    stage: Optional[str] = None,
+    game_keys: Optional[Iterable[str]] = None,
+) -> list[dict[str, Any]]:
+    """Apply --stage and/or --game-key filters to an already sport-filtered
+    game list (post merge_schedule). Combining both filters yields their
+    intersection. Raises ScoreSheetError with a clear message if a filter
+    was requested but nothing matches; a no-filter call returns games as-is.
+    """
+    if not stage and not game_keys:
+        return games
+
+    filtered = games
+    filter_desc: list[str] = []
+
+    if stage:
+        stage_key = str(stage).strip().lower()
+        allowed_stages = STAGE_FILTER_ALIASES.get(stage_key)
+        if allowed_stages is None:
+            raise ScoreSheetError(
+                f"Unknown --stage value {stage!r}. Choose from: "
+                f"{', '.join(sorted(STAGE_FILTER_ALIASES))}."
+            )
+        filtered = [
+            game
+            for game in filtered
+            if _normalize_schedule_stage(game.get("stage")) in allowed_stages
+        ]
+        filter_desc.append(f"--stage {stage}")
+
+    if game_keys:
+        wanted = [str(key).strip() for key in game_keys if str(key).strip()]
+        wanted_set = set(wanted)
+        found_set = {str(game.get("game_key") or "") for game in filtered}
+        missing = sorted(wanted_set - found_set)
+        if missing:
+            logger.warning(
+                f"generate-scoresheets: --game-key not found among {sport_label} games "
+                f"after other filters: {', '.join(missing)}"
+            )
+        filtered = [game for game in filtered if str(game.get("game_key") or "") in wanted_set]
+        filter_desc.append(f"--game-key {', '.join(wanted)}")
+
+    if not filtered:
+        raise ScoreSheetError(
+            f"No {sport_label} games matched {' and '.join(filter_desc)}."
+        )
+
+    return filtered
+
+
 def _basketball_games(schedule_input: dict[str, Any], schedule_output: dict[str, Any]) -> list[dict[str, Any]]:
     games = [
         game
@@ -1314,6 +1406,8 @@ def write_basketball_scoresheets_pdf(
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
     output_filename: Optional[str] = None,
+    stage: Optional[str] = None,
+    game_keys: Optional[Iterable[str]] = None,
 ) -> tuple[Path, int]:
     """Write one combined basketball score-sheet PDF and return (path, pages)."""
 
@@ -1322,6 +1416,7 @@ def write_basketball_scoresheets_pdf(
     games = _basketball_games(schedule_input, schedule_output)
     if not games:
         raise ScoreSheetError("No scheduled basketball games found in the supplied schedule artifacts.")
+    games = _filter_games(games, "basketball", stage=stage, game_keys=game_keys)
 
     roster_rows = list(roster_rows or [])
     _warn_if_approval_status_missing(roster_rows, "Basketball")
@@ -1353,6 +1448,8 @@ def write_bible_challenge_scoresheets_pdf(
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
     output_filename: Optional[str] = None,
+    stage: Optional[str] = None,
+    game_keys: Optional[Iterable[str]] = None,
 ) -> tuple[Path, int]:
     """Write one combined Bible Challenge score-sheet PDF and return (path, pages)."""
 
@@ -1361,6 +1458,7 @@ def write_bible_challenge_scoresheets_pdf(
     games = _bible_challenge_games(schedule_input, schedule_output)
     if not games:
         raise ScoreSheetError("No scheduled Bible Challenge games found in the supplied schedule artifacts.")
+    games = _filter_games(games, "Bible Challenge", stage=stage, game_keys=game_keys)
 
     roster_rows = list(roster_rows or [])
     _warn_if_approval_status_missing(roster_rows, "Bible Challenge")
@@ -1400,6 +1498,8 @@ def write_soccer_scoresheets_pdf(
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
     output_filename: Optional[str] = None,
+    stage: Optional[str] = None,
+    game_keys: Optional[Iterable[str]] = None,
 ) -> tuple[Path, int]:
     """Write one combined soccer score-sheet PDF and return (path, pages)."""
 
@@ -1408,6 +1508,7 @@ def write_soccer_scoresheets_pdf(
     games = _soccer_games(schedule_input, schedule_output)
     if not games:
         raise ScoreSheetError("No scheduled soccer games found in the supplied schedule artifacts.")
+    games = _filter_games(games, "soccer", stage=stage, game_keys=game_keys)
 
     roster_rows = list(roster_rows or [])
     _warn_if_approval_status_missing(roster_rows, "Soccer")
@@ -1439,6 +1540,8 @@ def write_volleyball_scoresheets_pdf(
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
     output_filename: Optional[str] = None,
+    stage: Optional[str] = None,
+    game_keys: Optional[Iterable[str]] = None,
 ) -> tuple[Path, int]:
     """Write one combined volleyball score-sheet PDF and return (path, pages)."""
 
@@ -1447,6 +1550,7 @@ def write_volleyball_scoresheets_pdf(
     games = _volleyball_games(schedule_input, schedule_output)
     if not games:
         raise ScoreSheetError("No scheduled volleyball games found in the supplied schedule artifacts.")
+    games = _filter_games(games, "volleyball", stage=stage, game_keys=game_keys)
 
     roster_rows = list(roster_rows or [])
     _warn_if_approval_status_missing(roster_rows, "Volleyball")
