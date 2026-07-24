@@ -28,6 +28,10 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - Hotfix 1.1.07: Updated `[vaysf_advancement]` to include populated
   Quarterfinal and 3rd-place playoff rows, and to fall back to bracket-stage
   ordering when schedule times are still TBD. Rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.1.08: Added public score summaries to `[vaysf_advancement]` and
+  its auto-refresh endpoint, so spectators can see reported QF/SF/Final scores
+  while winners advance into downstream playoff rows. Rebuilt
+  `plugins/vaysf.zip`.
 - Hotfix 1.1.02: Added a clearer Manager schedule error when a playoff row's
   game key already exists on a different schedule version, so stale tabs or
   version drift explain how to recover instead of surfacing as a generic save

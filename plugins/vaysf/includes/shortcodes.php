@@ -473,7 +473,7 @@ class VAYSF_Shortcodes {
             'event' => '',
             'refresh' => 60,
             'title' => __('Playoff Advancement', 'vaysf'),
-            'subtitle' => __('Confirmed semifinal and final matchups update here as coordinators advance teams.', 'vaysf'),
+            'subtitle' => __('Playoff matchups and reported scores update here as coordinators advance teams.', 'vaysf'),
         ), $atts);
 
         $event = isset($_GET['vaysf_event']) ? sanitize_text_field(wp_unslash($_GET['vaysf_event'])) : $atts['event'];
@@ -501,6 +501,7 @@ class VAYSF_Shortcodes {
                         <th><?php echo esc_html__('Event', 'vaysf'); ?></th>
                         <th><?php echo esc_html__('Stage', 'vaysf'); ?></th>
                         <th><?php echo esc_html__('Matchup', 'vaysf'); ?></th>
+                        <th><?php echo esc_html__('Score', 'vaysf'); ?></th>
                         <th><?php echo esc_html__('Time', 'vaysf'); ?></th>
                         <th><?php echo esc_html__('Location', 'vaysf'); ?></th>
                     </tr>
@@ -697,6 +698,7 @@ class VAYSF_Shortcodes {
             <td data-label="<?php echo esc_attr__('Event', 'vaysf'); ?>"><?php echo esc_html($row['event']); ?></td>
             <td data-label="<?php echo esc_attr__('Stage', 'vaysf'); ?>"><span class="vaysf-advancement-stage"><?php echo esc_html($row['stage']); ?></span></td>
             <td data-label="<?php echo esc_attr__('Matchup', 'vaysf'); ?>" class="vaysf-advancement-matchup"><?php echo esc_html($this->format_matchup_label($row)); ?></td>
+            <td data-label="<?php echo esc_attr__('Score', 'vaysf'); ?>" class="vaysf-advancement-score"><?php echo esc_html($this->format_score_label($row['score'] ?? null)); ?></td>
             <td data-label="<?php echo esc_attr__('Time', 'vaysf'); ?>" class="vaysf-advancement-time"><?php echo esc_html($this->format_scheduled_time($row)); ?></td>
             <td data-label="<?php echo esc_attr__('Location', 'vaysf'); ?>"><?php echo esc_html($row['scheduled_location']); ?></td>
         </tr>
@@ -988,6 +990,27 @@ class VAYSF_Shortcodes {
                 return labels.length ? labels.join(' vs ') : 'TBD';
             }
 
+            function formatScore(score) {
+                if (!score) { return String.fromCharCode(8212); }
+                if (score.label) { return score.label; }
+                if (score.type === 'placement') {
+                    if (Array.isArray(score.placements) && score.placements.length) {
+                        return score.placements.map(function (placement) {
+                            return String(placement.place || '') + ' ' + String(placement.church_code || '');
+                        }).join(' / ');
+                    }
+                    return String.fromCharCode(8212);
+                }
+                var parts = [score.team_a_score, score.team_b_score];
+                if (typeof score.team_c_score !== 'undefined' && score.team_c_score !== null) {
+                    parts.push(score.team_c_score);
+                }
+                parts = parts.filter(function (part) {
+                    return typeof part !== 'undefined' && part !== null;
+                });
+                return parts.length ? parts.join(' - ') : String.fromCharCode(8212);
+            }
+
             function cell(label, className, text) {
                 var td = document.createElement('td');
                 td.setAttribute('data-label', label);
@@ -1009,6 +1032,7 @@ class VAYSF_Shortcodes {
                 tr.appendChild(stageCell);
 
                 tr.appendChild(cell('Matchup', 'vaysf-advancement-matchup', matchupLabel(row)));
+                tr.appendChild(cell('Score', 'vaysf-advancement-score', formatScore(row.score)));
                 tr.appendChild(cell('Time', 'vaysf-advancement-time', row.display_time || 'TBD'));
                 tr.appendChild(cell('Location', '', row.scheduled_location || ''));
                 return tr;

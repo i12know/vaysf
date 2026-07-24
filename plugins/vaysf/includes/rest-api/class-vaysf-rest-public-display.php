@@ -73,7 +73,7 @@ class VAYSF_REST_Public_Display extends VAYSF_REST_Controller {
     }
 
     /**
-     * Public read-only confirmed semifinal/final advancement (Issue #206).
+     * Public read-only confirmed playoff advancement (Issue #206).
      *
      * @param WP_REST_Request $request Request object
      * @return WP_REST_Response Response object
