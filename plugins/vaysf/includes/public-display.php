@@ -775,7 +775,7 @@ function vaysf_get_public_advancement_rows($filters = array()) {
         'schedule_version = %d',
         'published_at IS NOT NULL',
         "COALESCE(game_status, '') <> 'cancelled'",
-        "stage IN ('Semifinal', 'Final')",
+        "stage IN ('Quarterfinal', 'Semifinal', '3rd Place', '3rd', 'Final')",
         "(COALESCE(team_a_key, '') <> '' OR COALESCE(team_b_key, '') <> '' OR COALESCE(team_c_key, '') <> '')",
     );
     $args = array($schedule_version);
@@ -787,18 +787,61 @@ function vaysf_get_public_advancement_rows($filters = array()) {
     }
 
     $where_clause = implode(' AND ', $where);
-    $sql = "SELECT *
-        FROM $table_schedules
+    $table_results = vaysf_get_table_name('results');
+    $sql = "SELECT s.*, r.result_id, r.score_json, r.public_status, r.updated_at AS result_updated_at
+        FROM $table_schedules s
+        LEFT JOIN $table_results r ON r.schedule_id = s.schedule_id
         WHERE $where_clause
-        ORDER BY event, stage, scheduled_time IS NULL, scheduled_time, schedule_id";
+        ORDER BY s.event,
+            s.scheduled_time IS NULL,
+            s.scheduled_time,
+            CASE s.stage
+                WHEN 'Quarterfinal' THEN 10
+                WHEN 'Semifinal' THEN 20
+                WHEN '3rd Place' THEN 30
+                WHEN '3rd' THEN 30
+                WHEN 'Final' THEN 40
+                ELSE 90
+            END,
+            s.schedule_id";
 
     $rows = $wpdb->get_results($wpdb->prepare($sql, $args), ARRAY_A);
     if (!is_array($rows)) {
         return array();
     }
 
+    $missing_result_rows = array();
+    foreach ($rows as $row) {
+        $has_direct_score = trim((string) ($row['score_json'] ?? '')) !== '';
+        if (!$has_direct_score && !empty($row['schedule_id'])) {
+            $missing_result_rows[] = $row;
+        }
+    }
+    $fallback_results = function_exists('vaysf_get_result_fallbacks_for_schedule_rows')
+        ? vaysf_get_result_fallbacks_for_schedule_rows($missing_result_rows)
+        : array();
+
     $public_rows = array();
     foreach ($rows as $row) {
+        $schedule_id = !empty($row['schedule_id']) ? absint($row['schedule_id']) : 0;
+        if (trim((string) ($row['score_json'] ?? '')) === '' && $schedule_id && !empty($fallback_results[$schedule_id])) {
+            $fallback = $fallback_results[$schedule_id];
+            $row['result_id'] = $fallback['result_id'] ?? '';
+            $row['score_json'] = $fallback['score_json'] ?? '';
+            $row['public_status'] = $fallback['public_status'] ?? '';
+            $row['result_updated_at'] = $fallback['updated_at'] ?? '';
+        }
+
+        $score_json = isset($row['score_json']) ? (string) $row['score_json'] : '';
+        $public_status = vaysf_normalize_public_result_status($row['public_status'] ?? '', $score_json);
+        $score = null;
+        if (in_array($public_status, array('reported', 'official', 'under_review'), true) && $score_json !== '') {
+            $decoded = json_decode($score_json, true);
+            if (is_array($decoded)) {
+                $score = vaysf_format_public_score_summary($decoded);
+            }
+        }
+
         $public_rows[] = array(
             'game_key' => isset($row['game_key']) ? (string) $row['game_key'] : '',
             'event' => isset($row['event']) ? (string) $row['event'] : '',
@@ -807,8 +850,12 @@ function vaysf_get_public_advancement_rows($filters = array()) {
             'team_b_label' => isset($row['team_b_label']) ? (string) $row['team_b_label'] : '',
             'team_c_label' => isset($row['team_c_label']) ? (string) $row['team_c_label'] : '',
             'scheduled_time' => isset($row['scheduled_time']) ? (string) $row['scheduled_time'] : '',
+            'scheduled_slot' => isset($row['scheduled_slot']) ? (string) $row['scheduled_slot'] : '',
+            'display_time' => vaysf_format_schedule_display_time($row['scheduled_time'] ?? '', $row['scheduled_slot'] ?? '', 'D g:i A'),
             'scheduled_location' => isset($row['scheduled_location']) ? (string) $row['scheduled_location'] : '',
             'game_status' => isset($row['game_status']) ? (string) $row['game_status'] : 'scheduled',
+            'public_status' => $public_status,
+            'score' => $score,
         );
     }
 

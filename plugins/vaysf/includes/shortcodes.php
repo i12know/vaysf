@@ -458,9 +458,9 @@ class VAYSF_Shortcodes {
     }
 
     /**
-     * Shortcode for spectator-facing confirmed semifinal/final advancement (Issue #206).
+     * Shortcode for spectator-facing confirmed playoff advancement (Issue #206).
      *
-     * "Confirmed" reflects an admin having populated the Semifinal/Final
+     * "Confirmed" reflects an admin having populated the playoff
      * schedule row's team slots after deciding pool-play qualifiers — see
      * vaysf_get_public_advancement_rows() for why no separate confirmation
      * flag is needed.
@@ -472,34 +472,48 @@ class VAYSF_Shortcodes {
         $atts = shortcode_atts(array(
             'event' => '',
             'refresh' => 60,
+            'title' => __('Playoff Advancement', 'vaysf'),
+            'subtitle' => __('Playoff matchups and reported scores update here as coordinators advance teams.', 'vaysf'),
         ), $atts);
 
         $event = isset($_GET['vaysf_event']) ? sanitize_text_field(wp_unslash($_GET['vaysf_event'])) : $atts['event'];
         $refresh_seconds = max(0, (int) $atts['refresh']);
+        $title = sanitize_text_field($atts['title']);
+        $subtitle = sanitize_text_field($atts['subtitle']);
         $rows = vaysf_get_public_advancement_rows(array('event' => $event));
 
         ob_start();
         $instance_id = wp_unique_id('vaysf-advancement-');
         ?>
         <div class="vaysf-advancement" id="<?php echo esc_attr($instance_id); ?>" data-refresh-seconds="<?php echo esc_attr($refresh_seconds); ?>">
-            <?php if (empty($rows)) : ?>
-                <p><?php echo esc_html__('No confirmed advancement yet.', 'vaysf'); ?></p>
-            <?php else : ?>
-                <table class="vaysf-advancement-table">
-                    <thead>
-                        <tr>
-                            <th><?php echo esc_html__('Event', 'vaysf'); ?></th>
-                            <th><?php echo esc_html__('Stage', 'vaysf'); ?></th>
-                            <th><?php echo esc_html__('Matchup', 'vaysf'); ?></th>
-                            <th><?php echo esc_html__('Time', 'vaysf'); ?></th>
-                            <th><?php echo esc_html__('Location', 'vaysf'); ?></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($rows as $row) : $this->render_advancement_row($row); endforeach; ?>
-                    </tbody>
-                </table>
-            <?php endif; ?>
+            <div class="vaysf-advancement-heading">
+                <?php if ($title !== '') : ?>
+                    <h2><?php echo esc_html($title); ?></h2>
+                <?php endif; ?>
+                <?php if ($subtitle !== '') : ?>
+                    <p><?php echo esc_html($subtitle); ?></p>
+                <?php endif; ?>
+            </div>
+            <p class="vaysf-advancement-empty"<?php echo !empty($rows) ? ' hidden' : ''; ?>><?php echo esc_html__('No confirmed advancement yet.', 'vaysf'); ?></p>
+            <table class="vaysf-advancement-table"<?php echo empty($rows) ? ' hidden' : ''; ?>>
+                <thead>
+                    <tr>
+                        <th><?php echo esc_html__('Event', 'vaysf'); ?></th>
+                        <th><?php echo esc_html__('Stage', 'vaysf'); ?></th>
+                        <th><?php echo esc_html__('Matchup', 'vaysf'); ?></th>
+                        <th><?php echo esc_html__('Score', 'vaysf'); ?></th>
+                        <th><?php echo esc_html__('Time', 'vaysf'); ?></th>
+                        <th><?php echo esc_html__('Location', 'vaysf'); ?></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($rows as $row) : $this->render_advancement_row($row); endforeach; ?>
+                </tbody>
+            </table>
+            <p class="vaysf-advancement-updated">
+                <?php echo esc_html__('Last checked:', 'vaysf'); ?>
+                <span class="vaysf-advancement-last-updated"><?php echo esc_html(vaysf_format_sports_fest_time(vaysf_get_sports_fest_now(), 'g:i:s a')); ?></span>
+            </p>
         </div>
         <?php
         $this->include_frontend_styles();
@@ -681,11 +695,12 @@ class VAYSF_Shortcodes {
     private function render_advancement_row($row) {
         ?>
         <tr data-game-key="<?php echo esc_attr($row['game_key']); ?>">
-            <td><?php echo esc_html($row['event']); ?></td>
-            <td><?php echo esc_html($row['stage']); ?></td>
-            <td><?php echo esc_html($this->format_matchup_label($row)); ?></td>
-            <td><?php echo esc_html($this->format_scheduled_time($row)); ?></td>
-            <td><?php echo esc_html($row['scheduled_location']); ?></td>
+            <td data-label="<?php echo esc_attr__('Event', 'vaysf'); ?>"><?php echo esc_html($row['event']); ?></td>
+            <td data-label="<?php echo esc_attr__('Stage', 'vaysf'); ?>"><span class="vaysf-advancement-stage"><?php echo esc_html($row['stage']); ?></span></td>
+            <td data-label="<?php echo esc_attr__('Matchup', 'vaysf'); ?>" class="vaysf-advancement-matchup"><?php echo esc_html($this->format_matchup_label($row)); ?></td>
+            <td data-label="<?php echo esc_attr__('Score', 'vaysf'); ?>" class="vaysf-advancement-score"><?php echo esc_html($this->format_score_label($row['score'] ?? null)); ?></td>
+            <td data-label="<?php echo esc_attr__('Time', 'vaysf'); ?>" class="vaysf-advancement-time"><?php echo esc_html($this->format_scheduled_time($row)); ?></td>
+            <td data-label="<?php echo esc_attr__('Location', 'vaysf'); ?>"><?php echo esc_html($row['scheduled_location']); ?></td>
         </tr>
         <?php
     }
@@ -942,9 +957,8 @@ class VAYSF_Shortcodes {
     /**
      * Echo the auto-refresh script for one advancement shortcode instance.
      *
-     * Same in-place patch approach as render_live_schedule_script(): updates
-     * matchup text for already-rendered rows, does not add newly confirmed
-     * semifinal/final rows without a page reload.
+     * Reconciles the row set in-place so newly confirmed playoff rows
+     * appear without requiring a full page reload.
      *
      * @param string $instance_id DOM id of the shortcode's wrapper element
      * @param array<string,string> $filters event filter value
@@ -976,19 +990,76 @@ class VAYSF_Shortcodes {
                 return labels.length ? labels.join(' vs ') : 'TBD';
             }
 
+            function formatScore(score) {
+                if (!score) { return String.fromCharCode(8212); }
+                if (score.label) { return score.label; }
+                if (score.type === 'placement') {
+                    if (Array.isArray(score.placements) && score.placements.length) {
+                        return score.placements.map(function (placement) {
+                            return String(placement.place || '') + ' ' + String(placement.church_code || '');
+                        }).join(' / ');
+                    }
+                    return String.fromCharCode(8212);
+                }
+                var parts = [score.team_a_score, score.team_b_score];
+                if (typeof score.team_c_score !== 'undefined' && score.team_c_score !== null) {
+                    parts.push(score.team_c_score);
+                }
+                parts = parts.filter(function (part) {
+                    return typeof part !== 'undefined' && part !== null;
+                });
+                return parts.length ? parts.join(' - ') : String.fromCharCode(8212);
+            }
+
+            function cell(label, className, text) {
+                var td = document.createElement('td');
+                td.setAttribute('data-label', label);
+                if (className) { td.className = className; }
+                td.textContent = text;
+                return td;
+            }
+
+            function buildRow(row) {
+                var tr = document.createElement('tr');
+                tr.setAttribute('data-game-key', String(row.game_key || ''));
+                tr.appendChild(cell('Event', '', row.event || ''));
+
+                var stageCell = cell('Stage', '', '');
+                var stage = document.createElement('span');
+                stage.className = 'vaysf-advancement-stage';
+                stage.textContent = row.stage || '';
+                stageCell.appendChild(stage);
+                tr.appendChild(stageCell);
+
+                tr.appendChild(cell('Matchup', 'vaysf-advancement-matchup', matchupLabel(row)));
+                tr.appendChild(cell('Score', 'vaysf-advancement-score', formatScore(row.score)));
+                tr.appendChild(cell('Time', 'vaysf-advancement-time', row.display_time || 'TBD'));
+                tr.appendChild(cell('Location', '', row.scheduled_location || ''));
+                return tr;
+            }
+
+            function reconcileRows(rows) {
+                var table = root.querySelector('.vaysf-advancement-table');
+                var body = table ? table.querySelector('tbody') : null;
+                var empty = root.querySelector('.vaysf-advancement-empty');
+                if (!table || !body || !empty) { return; }
+
+                while (body.firstChild) { body.removeChild(body.firstChild); }
+                rows.forEach(function (row) { body.appendChild(buildRow(row)); });
+                table.hidden = rows.length === 0;
+                empty.hidden = rows.length > 0;
+            }
+
             function refresh() {
-                fetch(buildUrl(), { credentials: 'omit' })
+                fetch(buildUrl(), { credentials: 'omit', cache: 'no-store' })
                     .then(function (r) { return r.json(); })
                     .then(function (rows) {
                         if (!Array.isArray(rows)) { return; }
-                        rows.forEach(function (row) {
-                            var tr = root.querySelector('tr[data-game-key="' + row.game_key + '"]');
-                            if (!tr) { return; }
-                            var cells = tr.querySelectorAll('td');
-                            if (cells.length >= 3) {
-                                cells[2].textContent = matchupLabel(row);
-                            }
-                        });
+                        reconcileRows(rows);
+                        var updated = root.querySelector('.vaysf-advancement-last-updated');
+                        if (updated) {
+                            updated.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+                        }
                     })
                     .catch(function () {});
             }
@@ -1472,8 +1543,39 @@ class VAYSF_Shortcodes {
                 }
 
                 .vaysf-scoreboard-anchor,
-                .vaysf-live-schedule {
+                .vaysf-live-schedule,
+                .vaysf-advancement {
                     scroll-margin-top: 85px;
+                }
+
+                .vaysf-advancement {
+                    margin: 28px 0;
+                }
+
+                .vaysf-advancement-heading {
+                    display: flex;
+                    align-items: flex-end;
+                    justify-content: space-between;
+                    gap: 16px;
+                    margin-bottom: 12px;
+                    border-bottom: 2px solid #1b4f72;
+                    padding-bottom: 10px;
+                }
+
+                .vaysf-advancement-heading h2 {
+                    margin: 0;
+                    color: #1b4f72;
+                    font-size: 24px;
+                    line-height: 1.2;
+                }
+
+                .vaysf-advancement-heading p {
+                    max-width: 520px;
+                    margin: 0;
+                    color: #667085;
+                    font-size: 14px;
+                    line-height: 1.4;
+                    text-align: right;
                 }
 
                 .vaysf-live-schedule-table,
@@ -1498,9 +1600,66 @@ class VAYSF_Shortcodes {
                     font-weight: bold;
                 }
 
+                .vaysf-advancement-table {
+                    border: 1px solid #d7e3f0;
+                    background: #fff;
+                }
+
+                .vaysf-advancement-table th {
+                    background-color: #edf5fb;
+                    color: #1b4f72;
+                    font-size: 13px;
+                    text-transform: uppercase;
+                }
+
+                .vaysf-advancement-table td {
+                    vertical-align: top;
+                }
+
+                .vaysf-advancement-table tbody tr:nth-child(even) {
+                    background-color: #f8fbff;
+                }
+
+                .vaysf-advancement-stage {
+                    display: inline-block;
+                    min-width: 76px;
+                    border: 1px solid #b8d8ec;
+                    background: #edf5fb;
+                    color: #1b4f72;
+                    padding: 3px 8px;
+                    text-align: center;
+                    font-size: 12px;
+                    font-weight: 700;
+                    line-height: 1.25;
+                }
+
+                .vaysf-advancement-matchup {
+                    font-weight: 700;
+                    color: #243b53;
+                }
+
+                .vaysf-advancement-time {
+                    white-space: nowrap;
+                    font-weight: 700;
+                }
+
                 .vaysf-live-schedule-updated {
                     font-size: 12px;
                     color: #667085;
+                }
+
+                .vaysf-advancement-updated {
+                    margin-top: -8px;
+                    font-size: 12px;
+                    color: #667085;
+                }
+
+                .vaysf-advancement-empty {
+                    margin: 10px 0 20px;
+                    border: 1px solid #d7e3f0;
+                    background: #f8fbff;
+                    padding: 14px;
+                    color: #34495e;
                 }
 
                 .vaysf-live-status {
@@ -1633,6 +1792,55 @@ class VAYSF_Shortcodes {
 
                     .vaysf-badges-heading {
                         display: block;
+                    }
+
+                    .vaysf-advancement-heading {
+                        display: block;
+                    }
+
+                    .vaysf-advancement-heading p {
+                        margin-top: 6px;
+                        text-align: left;
+                    }
+
+                    .vaysf-advancement-table {
+                        border: 0;
+                    }
+
+                    .vaysf-advancement-table thead {
+                        display: none;
+                    }
+
+                    .vaysf-advancement-table tbody,
+                    .vaysf-advancement-table tr,
+                    .vaysf-advancement-table td {
+                        display: block;
+                        width: 100%;
+                    }
+
+                    .vaysf-advancement-table tr {
+                        margin-bottom: 12px;
+                        border: 1px solid #d7e3f0;
+                        background: #fff;
+                    }
+
+                    .vaysf-advancement-table td {
+                        display: grid;
+                        grid-template-columns: 92px minmax(0, 1fr);
+                        gap: 10px;
+                        border-bottom: 1px solid #edf2f7;
+                    }
+
+                    .vaysf-advancement-table td::before {
+                        content: attr(data-label);
+                        color: #667085;
+                        font-size: 12px;
+                        font-weight: 700;
+                        text-transform: uppercase;
+                    }
+
+                    .vaysf-advancement-table td:last-child {
+                        border-bottom: 0;
                     }
 
                     .vaysf-badges-heading p {
