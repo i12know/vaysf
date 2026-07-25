@@ -752,11 +752,14 @@ function vaysf_get_public_schedule_rows($filters = array()) {
 }
 
 /**
- * Fetch confirmed semifinal/final advancement placeholders for public display.
+ * Fetch scheduled playoff/advancement rows for public display.
  *
  * "Confirmed" here means an admin has populated at least one team slot on the
  * Semifinal/Final schedule row after deciding pool-play qualifiers (RFC §6.3)
  * — there is no separate advancement-confirmation flag in the current schema.
+ *
+ * Empty matchup rows are included; the shortcode renders them as TBD until
+ * coordinators apply the actual advancement.
  *
  * @param array<string,string> $filters Optional 'event'
  * @return array<int,array<string,mixed>> Public-safe advancement rows
@@ -776,7 +779,6 @@ function vaysf_get_public_advancement_rows($filters = array()) {
         'published_at IS NOT NULL',
         "COALESCE(game_status, '') <> 'cancelled'",
         "stage IN ('Quarterfinal', 'Semifinal', '3rd Place', '3rd', 'Final')",
-        "(COALESCE(team_a_key, '') <> '' OR COALESCE(team_b_key, '') <> '' OR COALESCE(team_c_key, '') <> '')",
     );
     $args = array($schedule_version);
 

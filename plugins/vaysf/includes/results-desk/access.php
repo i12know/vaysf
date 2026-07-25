@@ -47,6 +47,31 @@ function vaysf_user_can_manage_team_qf_schedule($user_id = null) {
 }
 
 /**
+ * Check whether a user may apply the Bible Challenge semifinal schedule
+ * matchup. Results Desk roles cover every event; coordinator accounts are
+ * scoped to their assigned score-entry events.
+ *
+ * @param string $event Schedule event name
+ * @param int|null $user_id WordPress user id; defaults to current user
+ * @return bool
+ */
+function vaysf_user_can_manage_bible_challenge_playoff_schedule($event, $user_id = null) {
+    $user_id = $user_id === null ? get_current_user_id() : absint($user_id);
+    $event = sanitize_text_field($event);
+    if (!$user_id || $event === '' || !vaysf_results_desk_is_bible_challenge_event($event)) {
+        return false;
+    }
+
+    if (vaysf_user_can_view_results_desk($user_id)) {
+        return true;
+    }
+
+    return user_can($user_id, 'sf2025_submit_results')
+        && function_exists('vaysf_get_user_score_entry_events')
+        && in_array($event, vaysf_get_user_score_entry_events($user_id), true);
+}
+
+/**
  * Check whether a user may confirm/re-confirm cross-pool QF seeding and
  * perform coin-toss tie-breaks for one Basketball/Volleyball event. Results
  * Desk roles cover every event; coordinator accounts are scoped to their
