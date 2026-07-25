@@ -38,6 +38,9 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   its auto-refresh endpoint, so spectators can see reported QF/SF/Final scores
   while winners advance into downstream playoff rows. Rebuilt
   `plugins/vaysf.zip`.
+- Hotfix 1.1.09: Updated `[vaysf_advancement]` to show scheduled playoff rows
+  even when the matchup is still blank, so VBW and Bible Challenge slots appear
+  as `TBD` until coordinators apply advancement. Rebuilt `plugins/vaysf.zip`.
 - Hotfix 1.1.02: Added a clearer Manager schedule error when a playoff row's
   game key already exists on a different schedule version, so stale tabs or
   version drift explain how to recover instead of surfacing as a generic save
