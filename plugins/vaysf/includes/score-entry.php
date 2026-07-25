@@ -2443,7 +2443,8 @@ function vaysf_get_coordinator_score_entry_url($view = 'assigned', $event_filter
 function vaysf_get_user_team_qf_setup_events($user_id) {
     $events = vaysf_get_user_score_entry_events($user_id);
     return array_values(array_filter($events, function ($event) {
-        return vaysf_results_desk_seeding_sport_type($event) !== null;
+        return vaysf_results_desk_seeding_sport_type($event) !== null
+            || vaysf_results_desk_is_bible_challenge_event($event);
     }));
 }
 
@@ -2480,17 +2481,20 @@ function vaysf_render_coordinator_qf_setup_panel($events) {
             <h2>
                 <?php echo esc_html($event); ?>
                 <?php if (function_exists('vaysf_render_results_desk_tooltip')) : ?>
-                    <?php vaysf_render_results_desk_tooltip('?', __('Review and confirm cross-pool QF seeding for this assigned event, then preview/apply the QF schedule rows. Preview alone does not create, update, or delete schedule rows.', 'vaysf')); ?>
+                    <?php vaysf_render_results_desk_tooltip('?', __('Review confirmed advancement for this assigned event, then preview/apply the playoff schedule rows. Preview alone does not create, update, or delete schedule rows.', 'vaysf')); ?>
                 <?php endif; ?>
             </h2>
             <?php
             $reviews = vaysf_results_desk_get_confirmed_pool_reviews($event, $current_version);
             $schedule_rows = vaysf_results_desk_get_playoff_schedule_rows($event, $current_version);
-            $preview = vaysf_results_desk_build_team_qf_preview($event, $reviews, $schedule_rows);
+            $is_bible_challenge = vaysf_results_desk_is_bible_challenge_event($event);
+            $preview = $is_bible_challenge
+                ? vaysf_results_desk_build_bible_challenge_preview($reviews, $schedule_rows)
+                : vaysf_results_desk_build_team_qf_preview($event, $reviews, $schedule_rows);
             $preview['event'] = $event;
             $preview['schedule_version'] = absint($current_version);
             ?>
-            <?php if (function_exists('vaysf_render_results_desk_event_qf_seeding_panel')) : ?>
+            <?php if (!$is_bible_challenge && function_exists('vaysf_render_results_desk_event_qf_seeding_panel')) : ?>
                 <?php vaysf_render_results_desk_event_qf_seeding_panel($event, $current_version, $event_return_url); ?>
             <?php endif; ?>
 
@@ -2504,10 +2508,14 @@ function vaysf_render_coordinator_qf_setup_panel($events) {
 
             <?php if (empty($preview['can_customize'])) : ?>
                 <div class="vaysf-score-entry-notice">
-                    <p><?php esc_html_e('Confirm QF seeding above before setting up the bracket here.', 'vaysf'); ?></p>
+                    <p><?php echo esc_html($is_bible_challenge ? __('Confirm the Bible Challenge Top 9 before setting up the semifinals here.', 'vaysf') : __('Confirm QF seeding above before setting up the bracket here.', 'vaysf')); ?></p>
                 </div>
             <?php else : ?>
-                <?php vaysf_render_coordinator_team_qf_reorder_form($preview, $event); ?>
+                <?php if ($is_bible_challenge && function_exists('vaysf_render_results_desk_bible_challenge_reorder_form')) : ?>
+                    <?php vaysf_render_results_desk_bible_challenge_reorder_form($preview, array('event' => $event, 'view' => 'qf-setup')); ?>
+                <?php else : ?>
+                    <?php vaysf_render_coordinator_team_qf_reorder_form($preview, $event); ?>
+                <?php endif; ?>
 
                 <table class="vaysf-results-desk-table vaysf-playoff-preview-table">
                     <thead>
@@ -2530,7 +2538,9 @@ function vaysf_render_coordinator_qf_setup_panel($events) {
                     </tbody>
                 </table>
 
-                <?php if (function_exists('vaysf_render_results_desk_team_qf_apply_form')) : ?>
+                <?php if ($is_bible_challenge && function_exists('vaysf_render_results_desk_bible_challenge_apply_form')) : ?>
+                    <?php vaysf_render_results_desk_bible_challenge_apply_form($preview, $event_return_url); ?>
+                <?php elseif (function_exists('vaysf_render_results_desk_team_qf_apply_form')) : ?>
                     <?php vaysf_render_results_desk_team_qf_apply_form($preview, $event_return_url); ?>
                 <?php endif; ?>
             <?php endif; ?>

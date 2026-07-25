@@ -41,6 +41,15 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
 - Hotfix 1.1.09: Updated `[vaysf_advancement]` to show scheduled playoff rows
   even when the matchup is still blank, so VBW and Bible Challenge slots appear
   as `TBD` until coordinators apply advancement. Rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.1.10: Added Coed Soccer playoff rows from the approved playoff PDF
+  to the Manager playoff placement panel, including G7/G8 matchups, semifinal,
+  3rd-place, and final placeholders on the single EHS Soccer Field. The panel
+  now also flags unpublished template rows so admin-created rows can be
+  published to the front page. Rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.1.11: Let assigned Bible Challenge coordinators use the Coordinator
+  Score Entry playoff setup tab to preview/reassign/apply the Top-9 semifinal
+  matchups, matching the coordinator-owned Basketball/Volleyball apply flow.
+  Rebuilt `plugins/vaysf.zip`.
 - Hotfix 1.1.02: Added a clearer Manager schedule error when a playoff row's
   game key already exists on a different schedule version, so stale tabs or
   version drift explain how to recover instead of surfacing as a generic save

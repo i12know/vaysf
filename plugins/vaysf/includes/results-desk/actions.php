@@ -350,12 +350,13 @@ function vaysf_handle_apply_bible_challenge_preview_request() {
     }
     $return_url = remove_query_arg(array('vaysf_advancement_status', 'vaysf_advancement_message'), $return_url);
 
-    if (!vaysf_user_can_view_results_desk()) {
-        wp_die(esc_html__('You are not authorized to apply the Bible Challenge semifinal matchup.', 'vaysf'), 403);
-    }
-
     $event = isset($_POST['event']) ? sanitize_text_field(wp_unslash($_POST['event'])) : '';
     $schedule_version = isset($_POST['schedule_version']) ? absint($_POST['schedule_version']) : 0;
+
+    if (!vaysf_user_can_manage_bible_challenge_playoff_schedule($event)) {
+        wp_die(esc_html__('You are not authorized to apply the Bible Challenge semifinal matchup for this event.', 'vaysf'), 403);
+    }
+
     $nonce_action = 'vaysf_apply_bible_challenge_preview_' . $event . '_' . $schedule_version;
 
     if (empty($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), $nonce_action)) {

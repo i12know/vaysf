@@ -446,6 +446,9 @@ function vaysf_render_results_desk_bible_challenge_reorder_form($preview, $filte
     $arrangement = $preview['arrangement'] ?? array();
     ?>
     <form method="get" class="vaysf-bc-reorder-form">
+        <?php if (!empty($filters['view'])) : ?>
+            <input type="hidden" name="view" value="<?php echo esc_attr($filters['view']); ?>">
+        <?php endif; ?>
         <input type="hidden" name="event" value="<?php echo esc_attr($filters['event'] ?? ''); ?>">
         <?php if (!empty($filters['church'])) : ?>
             <input type="hidden" name="church" value="<?php echo esc_attr($filters['church']); ?>">

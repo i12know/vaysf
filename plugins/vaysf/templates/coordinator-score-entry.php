@@ -917,7 +917,7 @@ if (!$vaysf_rendering_shortcode) {
                         role="tab"
                         aria-selected="<?php echo $view === 'qf-setup' ? 'true' : 'false'; ?>"
                     >
-                        <?php esc_html_e('QF Setup', 'vaysf'); ?>
+                        <?php esc_html_e('Playoff Setup', 'vaysf'); ?>
                     </a>
                 <?php endif; ?>
             </div>
@@ -925,7 +925,7 @@ if (!$vaysf_rendering_shortcode) {
             <?php if ($view === 'qf-setup') : ?>
                 <?php if (!$qf_setup_events) : ?>
                     <div class="vaysf-score-entry-notice">
-                        <p><?php esc_html_e('No Basketball or Volleyball events are assigned to your coordinator account.', 'vaysf'); ?></p>
+                        <p><?php esc_html_e('No Basketball, Volleyball, or Bible Challenge playoff setup events are assigned to your coordinator account.', 'vaysf'); ?></p>
                     </div>
                 <?php else : ?>
                     <?php vaysf_render_coordinator_qf_setup_panel($qf_setup_events); ?>

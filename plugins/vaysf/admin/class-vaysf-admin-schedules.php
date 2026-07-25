@@ -701,6 +701,12 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
             'BC-Semi-2' => array('scheduled_time' => '2026-07-25 15:00:00', 'scheduled_slot' => 'Sat-2-15:00', 'resource_id' => 'EHS-LIBRARY', 'scheduled_location' => 'EHS Library'),
             'BC-Semi-3' => array('scheduled_time' => '2026-07-25 16:00:00', 'scheduled_slot' => 'Sat-2-16:00', 'resource_id' => 'EHS-LIBRARY', 'scheduled_location' => 'EHS Library'),
             'BC-Final' => array('scheduled_time' => '2026-07-26 14:30:00', 'scheduled_slot' => 'Sun-2-14:30', 'resource_id' => 'EHS-PRACTICE-CC', 'scheduled_location' => 'EHS Practice Gym - Center Court'),
+            'SOC-G7' => array('scheduled_time' => '2026-07-25 08:00:00', 'scheduled_slot' => 'Sat-2-08:00', 'resource_id' => 'EHS-SOCCER-FIELD', 'scheduled_location' => 'EHS Soccer Field'),
+            'SOC-G8' => array('scheduled_time' => '2026-07-25 09:00:00', 'scheduled_slot' => 'Sat-2-09:00', 'resource_id' => 'EHS-SOCCER-FIELD', 'scheduled_location' => 'EHS Soccer Field'),
+            'SOC-G9' => array('scheduled_time' => '2026-07-25 10:00:00', 'scheduled_slot' => 'Sat-2-10:00', 'resource_id' => 'EHS-SOCCER-FIELD', 'scheduled_location' => 'EHS Soccer Field'),
+            'SOC-G10' => array('scheduled_time' => '2026-07-25 11:00:00', 'scheduled_slot' => 'Sat-2-11:00', 'resource_id' => 'EHS-SOCCER-FIELD', 'scheduled_location' => 'EHS Soccer Field'),
+            'SOC-G11' => array('scheduled_time' => '2026-07-26 15:00:00', 'scheduled_slot' => 'Sun-2-15:00', 'resource_id' => 'EHS-SOCCER-FIELD', 'scheduled_location' => 'EHS Soccer Field'),
+            'SOC-G12' => array('scheduled_time' => '2026-07-26 16:00:00', 'scheduled_slot' => 'Sun-2-16:00', 'resource_id' => 'EHS-SOCCER-FIELD', 'scheduled_location' => 'EHS Soccer Field'),
         );
     }
 
@@ -711,6 +717,9 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
 
     private function placement_row_needs_values($row) {
         if (!$row) {
+            return true;
+        }
+        if (empty($row['published_at'])) {
             return true;
         }
 
@@ -735,6 +744,8 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
             $event = 'Volleyball - Women Team';
         } elseif (strpos($game_key, 'BC-') === 0) {
             $event = 'Bible Challenge - Mixed Team';
+        } elseif (strpos($game_key, 'SOC-') === 0) {
+            $event = 'Soccer - Coed Exhibition';
         }
 
         $stage = '';
@@ -746,6 +757,21 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
             $stage = '3rd Place';
         } elseif (substr($game_key, -6) === '-Final') {
             $stage = 'Final';
+        }
+
+        $soccer_metadata = array(
+            'SOC-G7' => array('stage' => 'Quarterfinal', 'round_number' => 7, 'sub_event' => 'Group A #2 vs Group B #3', 'team_a_key' => 'MWC', 'team_a_label' => 'MWC', 'team_b_key' => 'RPC', 'team_b_label' => 'RPC', 'team_ids_json' => '["MWC","RPC"]'),
+            'SOC-G8' => array('stage' => 'Quarterfinal', 'round_number' => 8, 'sub_event' => 'Group A #3 vs Group B #2', 'team_a_key' => 'GAC', 'team_a_label' => 'GAC', 'team_b_key' => 'PCC', 'team_b_label' => 'PCC', 'team_ids_json' => '["GAC","PCC"]'),
+            'SOC-G9' => array('stage' => 'Semifinal', 'round_number' => 9, 'sub_event' => 'SF1', 'team_a_key' => 'ORN', 'team_a_label' => 'ORN', 'team_b_label' => 'Winner of SOC-G7', 'team_ids_json' => '["ORN","Winner of SOC-G7"]'),
+            'SOC-G10' => array('stage' => 'Semifinal', 'round_number' => 10, 'sub_event' => 'SF2', 'team_a_key' => 'ANH', 'team_a_label' => 'ANH', 'team_b_label' => 'Winner of SOC-G8', 'team_ids_json' => '["ANH","Winner of SOC-G8"]'),
+            'SOC-G11' => array('stage' => '3rd Place', 'round_number' => 11, 'sub_event' => '3rd', 'team_a_label' => 'Loser of SOC-G9', 'team_b_label' => 'Loser of SOC-G10', 'team_ids_json' => '["Loser of SOC-G9","Loser of SOC-G10"]'),
+            'SOC-G12' => array('stage' => 'Final', 'round_number' => 12, 'sub_event' => 'Final', 'team_a_label' => 'Winner of SOC-G9', 'team_b_label' => 'Winner of SOC-G10', 'team_ids_json' => '["Winner of SOC-G9","Winner of SOC-G10"]'),
+        );
+        if (isset($soccer_metadata[$game_key])) {
+            return array_merge(
+                array('event' => $event),
+                $soccer_metadata[$game_key]
+            );
         }
 
         return array(
@@ -976,15 +1002,15 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
                     'event' => $metadata['event'],
                     'stage' => $metadata['stage'],
                     'pool_id' => null,
-                    'round_number' => null,
-                    'sub_event' => null,
-                    'team_a_key' => null,
-                    'team_a_label' => null,
-                    'team_b_key' => null,
-                    'team_b_label' => null,
-                    'team_c_key' => null,
-                    'team_c_label' => null,
-                    'team_ids_json' => null,
+                    'round_number' => $metadata['round_number'] ?? null,
+                    'sub_event' => $metadata['sub_event'] ?? null,
+                    'team_a_key' => $metadata['team_a_key'] ?? null,
+                    'team_a_label' => $metadata['team_a_label'] ?? null,
+                    'team_b_key' => $metadata['team_b_key'] ?? null,
+                    'team_b_label' => $metadata['team_b_label'] ?? null,
+                    'team_c_key' => $metadata['team_c_key'] ?? null,
+                    'team_c_label' => $metadata['team_c_label'] ?? null,
+                    'team_ids_json' => $metadata['team_ids_json'] ?? null,
                 ), array(
                     'resource_id' => $resource_id,
                     'scheduled_slot' => $scheduled_slot,
@@ -1020,15 +1046,15 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
                     'event' => $metadata['event'],
                     'stage' => $metadata['stage'],
                     'pool_id' => null,
-                    'round_number' => null,
-                    'sub_event' => null,
-                    'team_a_key' => null,
-                    'team_a_label' => null,
-                    'team_b_key' => null,
-                    'team_b_label' => null,
-                    'team_c_key' => null,
-                    'team_c_label' => null,
-                    'team_ids_json' => null,
+                    'round_number' => $metadata['round_number'] ?? null,
+                    'sub_event' => $metadata['sub_event'] ?? null,
+                    'team_a_key' => $metadata['team_a_key'] ?? null,
+                    'team_a_label' => $metadata['team_a_label'] ?? null,
+                    'team_b_key' => $metadata['team_b_key'] ?? null,
+                    'team_b_label' => $metadata['team_b_label'] ?? null,
+                    'team_c_key' => $metadata['team_c_key'] ?? null,
+                    'team_c_label' => $metadata['team_c_label'] ?? null,
+                    'team_ids_json' => $metadata['team_ids_json'] ?? null,
                     'game_status' => 'scheduled',
                     'created_at' => current_time('mysql'),
                 ), $data);
@@ -1085,12 +1111,12 @@ class VAYSF_Admin_Schedules extends VAYSF_Admin_Page {
         <div class="card" style="max-width: none; margin-top: 16px;">
             <h2>Playoff Placement From Manager Schedule</h2>
             <p>
-                Fill venue/time data for the Basketball, Volleyball, and Bible Challenge playoff rows in schedule version
+                Fill venue/time data for the Basketball, Volleyball, Bible Challenge, and Soccer playoff rows in schedule version
                 <strong><?php echo esc_html($schedule_version); ?></strong>. This only updates placement fields; teams, brackets, and results are not changed.
             </p>
             <p>
                 <a class="button" href="<?php echo esc_url($publish_export_url); ?>">Download Publish JSON ZIP after saving</a>
-                <span class="description"><?php echo esc_html($missing_count); ?> template row(s) are missing placement fields or still have stale ORN placement values.</span>
+                <span class="description"><?php echo esc_html($missing_count); ?> template row(s) are unpublished, missing placement fields, or still have stale ORN placement values.</span>
             </p>
             <form method="post">
                 <?php wp_nonce_field('save_playoff_placements_' . absint($schedule_version)); ?>
