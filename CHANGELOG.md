@@ -46,6 +46,10 @@ Builds on the pool progress rankings review shipped in #320–#323 (below).
   3rd-place, and final placeholders on the single EHS Soccer Field. The panel
   now also flags unpublished template rows so admin-created rows can be
   published to the front page. Rebuilt `plugins/vaysf.zip`.
+- Hotfix 1.1.12: Added an All Sports sport filter directly to the public
+  `[vaysf_advancement]` front-page shortcode, sharing the same `vaysf_event`
+  URL parameter as Current Schedule so both spectator tables stay in sync.
+  Rebuilt `plugins/vaysf.zip`.
 - Hotfix 1.1.11: Let assigned Bible Challenge coordinators use the Coordinator
   Score Entry playoff setup tab to preview/reassign/apply the Top-9 semifinal
   matchups, matching the coordinator-owned Basketball/Volleyball apply flow.

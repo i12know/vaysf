@@ -863,3 +863,34 @@ function vaysf_get_public_advancement_rows($filters = array()) {
 
     return $public_rows;
 }
+
+/**
+ * Return event names that have public playoff/advancement rows.
+ *
+ * Used by the spectator-facing advancement shortcode filter so the dropdown
+ * only offers sports that can currently show playoff rows.
+ *
+ * @return array<int,string>
+ */
+function vaysf_get_public_advancement_events() {
+    global $wpdb;
+
+    $schedule_version = vaysf_get_current_published_schedule_version();
+    if ($schedule_version === null) {
+        return array();
+    }
+
+    $table_schedules = vaysf_get_table_name('schedules');
+    $rows = $wpdb->get_col($wpdb->prepare(
+        "SELECT DISTINCT event
+            FROM $table_schedules
+            WHERE schedule_version = %d
+                AND published_at IS NOT NULL
+                AND COALESCE(game_status, '') <> 'cancelled'
+                AND stage IN ('Quarterfinal', 'Semifinal', '3rd Place', '3rd', 'Final')
+            ORDER BY event",
+        $schedule_version
+    ));
+
+    return is_array($rows) ? array_values(array_filter(array_map('strval', $rows))) : array();
+}

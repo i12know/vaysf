@@ -494,6 +494,7 @@ class VAYSF_Shortcodes {
                     <p><?php echo esc_html($subtitle); ?></p>
                 <?php endif; ?>
             </div>
+            <?php $this->render_advancement_filter_form($event); ?>
             <p class="vaysf-advancement-empty"<?php echo !empty($rows) ? ' hidden' : ''; ?>><?php echo esc_html__('No confirmed advancement yet.', 'vaysf'); ?></p>
             <table class="vaysf-advancement-table"<?php echo empty($rows) ? ' hidden' : ''; ?>>
                 <thead>
@@ -522,6 +523,58 @@ class VAYSF_Shortcodes {
         }
 
         return ob_get_clean();
+    }
+
+    /**
+     * Render the sport filter for spectator-facing playoff advancement.
+     *
+     * Uses the same vaysf_event query parameter as the Current Schedule
+     * filters so choosing a sport keeps both front-page sections in sync.
+     *
+     * @param string $event Selected event filter
+     */
+    private function render_advancement_filter_form($event) {
+        $events = function_exists('vaysf_get_public_advancement_events')
+            ? vaysf_get_public_advancement_events()
+            : vaysf_get_published_schedule_events();
+
+        if (empty($events) && $event === '') {
+            return;
+        }
+        if (empty($events)) {
+            $events = array($event);
+        }
+        if ($event !== '' && !in_array($event, $events, true)) {
+            $events[] = $event;
+            natcasesort($events);
+            $events = array_values($events);
+        }
+
+        $day = isset($_GET['vaysf_day']) ? vaysf_sanitize_public_day_filter($_GET['vaysf_day']) : '';
+        $church = isset($_GET['vaysf_church']) ? vaysf_sanitize_public_church_filter($_GET['vaysf_church']) : '';
+        $upcoming_only = isset($_GET['vaysf_upcoming']) && vaysf_sanitize_public_upcoming_filter($_GET['vaysf_upcoming']);
+        $onchange = 'vaysfSaveScheduleFilterPrefs(this.form); this.form.submit();';
+        ?>
+        <form method="get" class="vaysf-advancement-filters">
+            <?php if ($day !== '') : ?>
+                <input type="hidden" name="vaysf_day" value="<?php echo esc_attr($day); ?>">
+            <?php endif; ?>
+            <?php if ($church !== '') : ?>
+                <input type="hidden" name="vaysf_church" value="<?php echo esc_attr($church); ?>">
+            <?php endif; ?>
+            <?php if ($upcoming_only) : ?>
+                <input type="hidden" name="vaysf_upcoming" value="1">
+            <?php endif; ?>
+            <select name="vaysf_event" onchange="<?php echo esc_attr($onchange); ?>" aria-label="<?php echo esc_attr__('Filter Playoff Advancement by sport', 'vaysf'); ?>">
+                <option value=""><?php echo esc_html__('All Sports', 'vaysf'); ?></option>
+                <?php foreach ($events as $evt) : ?>
+                    <option value="<?php echo esc_attr($evt); ?>" <?php selected($event, $evt); ?>><?php echo esc_html($evt); ?></option>
+                <?php endforeach; ?>
+            </select>
+            <noscript><button type="submit"><?php echo esc_html__('Filter', 'vaysf'); ?></button></noscript>
+        </form>
+        <?php
+        $this->render_public_filter_cookie_script();
     }
 
     /**
@@ -1522,7 +1575,8 @@ class VAYSF_Shortcodes {
                     color: #383d41;
                 }
 
-                .vaysf-live-schedule-filters {
+                .vaysf-live-schedule-filters,
+                .vaysf-advancement-filters {
                     display: flex;
                     flex-wrap: wrap;
                     gap: 8px;
@@ -1530,8 +1584,15 @@ class VAYSF_Shortcodes {
                 }
 
                 .vaysf-live-schedule-filters select,
-                .vaysf-live-schedule-filters button {
+                .vaysf-live-schedule-filters button,
+                .vaysf-advancement-filters select,
+                .vaysf-advancement-filters button {
                     padding: 6px 10px;
+                }
+
+                .vaysf-advancement-filters {
+                    margin-top: -2px;
+                    margin-bottom: 12px;
                 }
 
                 .vaysf-live-schedule-upcoming-toggle {
