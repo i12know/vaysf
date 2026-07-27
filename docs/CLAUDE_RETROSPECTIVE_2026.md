@@ -2,9 +2,15 @@
 
 *Written 2026-07-27, two days after the event closed. A narrative account of
 what happened to this codebase between March 13 and July 27, 2026, assembled
-from 544 commits, 191 issues, and the release history. Companion to
-`ARCHITECTURE_REVIEW_2026.md`, which records the technical state; this
-document records the story.*
+from 544 commits, 191 issues, and the release history.*
+
+*This is the canonical season record. Two companion documents sit beside it:
+`ARCHITECTURE_REVIEW_2026.md` records the technical state at tag v1.12, and
+`CODEX_RETROSPECTIVE_2026.md` is an independent reflection on the same season
+written the same morning. Where this document supplies the chronology and the
+evidence, that one supplies interpretation — several of its findings are
+incorporated below and marked where the operational knowledge came from it
+rather than from the commit history.*
 
 ---
 
@@ -69,6 +75,11 @@ That episode set the working pattern for the year: when the vendor will not
 cooperate, build a diagnostic and grind. The act closed cleanly with #64,
 which pulled every scattered 429 retry into `_api_request()`.
 
+The deeper win was one of posture. API failures, 404s, 429s, and malformed
+payloads became things the system could *observe and handle* rather than
+mysteries that surfaced later as a broken spreadsheet. The parts of the
+operation that staff most depend on became boring.
+
 **What this act was really about:** buying back the foundation before anyone
 was depending on it.
 
@@ -83,6 +94,17 @@ early, $60 late — with a genuine argument over whether the deadline was
 inclusive (it is; the code now says so in a comment). Orphaned Team-group
 memberships pointing at people ChMeetings would return 404 for; traced to their
 own bug ticket #20188 and coded around rather than waited on.
+
+This phase looked unglamorous next to scheduling or live scoring, and it was
+not. It exposed how many operational assumptions hide in small corners:
+whether a deadline includes its last day, whether a ChMeetings option ID is
+current, whether a form row maps to a real Person, whether an export row
+reflects this season or old tenant residue. The Church Team export stopped
+being a report and became a **diagnostic instrument** — it tells staff where
+the data is trustworthy, where it is stale, and where a human still has to look.
+
+For Sports Fest, data cleanup is not administrative overhead. It is event
+preparation.
 
 And then #78, which deserves to be named separately. A church rep could flip a
 non-member's status to *member* and slip them past pastoral approval. The fix
@@ -118,6 +140,12 @@ for:
 
 By late May there was a working constraint solver for a real tournament.
 
+What the season proved is that Sports Fest scheduling is not "place games into
+slots." It is a negotiation between registration demand, venue geometry,
+sport-specific formats, shared-athlete conflicts, church constraints,
+coordinator preferences, leadership events, meals, ceremonies, setup and
+teardown — and a human scheduler's final authority.
+
 **What this act was really about:** proving it could be done. Hold that thought.
 
 ---
@@ -140,7 +168,10 @@ But June is also where the theme that would dominate July first surfaced:
 - #175 — profiles missing photos after form-driven creation
 
 Duplicate and merged people stopped being a nuisance and became an operational
-hazard.
+hazard. A participant, it turned out, is not just a row. People registered for
+themselves and for their children, through different forms, under different
+spellings, with church affiliations that changed and consent state that could
+be invalidated by an edit made weeks later.
 
 **What this act was really about:** the codebase getting its house in order,
 while something structural started creaking.
@@ -168,13 +199,30 @@ flagged preliminary imbalance, reconciled bye placeholders, and enforced the
 Friday-only Orange plan (#197). Publishing by `game_key` gave every downstream
 surface — scoresheets, public display, results — one shared contract.
 
-But it is worth being honest about what happened. Six weeks of solver work
-became a validator. #218 — *repair the approved preliminary schedule with
-CP-SAT for fewer conflicts* — is still open. That is the road not taken, and
-it is the most interesting open question in the repo.
+But the diagnosis underneath is sharper than "the humans won," and it is the
+best single explanation of the 2026 scheduling experience:
 
-**What this act was really about:** learning where the machine actually adds
-value in a process that humans own.
+> **The engine improved faster than the cockpit.**
+
+The solver got better all season. The operator's interface to it never did. The
+authoritative schedule was ultimately assembled from generated workbooks, manual
+Excel edits, coordinator PDFs, importer audits, sidecar JSON, and rerun chains
+that had to be executed in the right order from memory. Human authority was
+never the problem. The problem was that human decisions arrived as **forensic
+clues in colored cells** instead of as typed data the system could reason about.
+
+This is why the 2027 Scheduling Helper (#272, full PRD written) is not an
+indulgent GUI idea. It is the direct conclusion of Act III and Act V: build a
+structured authoring surface where humans stay authoritative but their decisions
+become data on the way in, not archaeology on the way out.
+
+Six weeks of solver work became a validator. #218 — *repair the approved
+preliminary schedule with CP-SAT for fewer conflicts* — is still open. That is
+the road not taken, and it is the most interesting open question in the repo.
+
+**What this act was really about:** learning that automation can assist complex
+scheduling only when the human decisions are captured in a structure the system
+can understand.
 
 ---
 
@@ -192,6 +240,11 @@ shipped by July 18.
 - Results Desk status page and event archive export (#208)
 - Badges hosted in WordPress uploads and written back to ChMeetings profiles (#186, #261)
 - A Bible verse bank, editable in WordPress, rotating one verse per scoresheet (#292, #294)
+
+This is the act where the center of gravity moved. ChMeetings remained the
+source of registration truth and the middleware remained the orchestrator, but
+**WordPress became the live operations board** — what is scheduled, what is
+scored, what is missing, what is public, what needs review, what can advance.
 
 Simultaneously — not afterward — `rest-api.php` and `admin.php` were split into
 domain modules (#265, #284). Refactoring during a sprint usually goes badly.
@@ -214,12 +267,10 @@ about the cost.
 
 Roughly forty plugin releases in eight days, 1.0.62 through 1.1.12.
 
-The event ran, and the code met reality:
-
-**Rankings and tiebreaks.** Pool progress rankings for review (#321). Head-to-head
-tiebreak added — with a tied group that head-to-head cannot fully order flagged
-`needs_manual_tiebreak` rather than resolved by alphabetical guesswork, because
-wrong output here means the wrong team advances.
+**Rankings and tiebreaks.** Pool progress rankings for review (#321).
+Head-to-head tiebreak added — with a tied group that head-to-head cannot fully
+order flagged `needs_manual_tiebreak` rather than resolved by alphabetical
+guesswork, because wrong output here means the wrong team advances.
 
 **The seeding saga.** Hotfixes 1.0.96 through 1.0.99 — four consecutive
 releases whose entire purpose was to make the code reproduce what the basketball
@@ -229,112 +280,173 @@ Schedule as *total opponent wins*, not opponent win percentage, not net W-L.
 Bye wins inferred from uneven pool schedules, counting for opponents' DoS but
 not inflating the bye team's own record.
 
-This is Act V repeating at a smaller scale, on a shorter clock: the humans had
-already decided, and the software's job was to agree with them, verifiably.
+These were not random hotfixes. They were the system learning the tournament's
+real rules under time pressure — and discovering that those rules lived in a
+coordinator's spreadsheet and a handbook interpretation, not in any written
+specification the code could have been built against.
 
 **Live-fire misses.** `MVB-` versus `VBM-` game key prefixes disagreeing across
 two screens (#341). Third-place keys not matching the advancement contract
 (#342). Admins working from cached pages saving into a newer schema — fixed
-with a version guard that blocks the save and explains why.
+with a version guard that blocks the save and explains why (1.1.04).
+
+That last one generalizes. Stale admin pages, ambiguous buttons, and hidden
+state are not cosmetic problems during an event; they are how a coordinator
+records the wrong result. **Event-day UI state, permissions, cache behavior, and
+recovery paths are operational safety features, not polish.** The no-cache
+headers and version guards shipped mid-event are the clearest evidence the
+system learned this the hard way.
 
 **Spectator-facing iteration.** The public advancement shortcode was revised
 eight times between 1.1.05 and 1.1.12 *while people were watching it*: QF rows
 included, playoff scores surfaced, blank matchups shown as TBD rather than
-hidden, Coed Soccer rows added, and — yesterday — an All Sports filter sharing
+hidden, Coed Soccer rows added, and — on July 27 — an All Sports filter sharing
 the same URL parameter as Current Schedule so both tables stay in sync.
+
+#### The Track & Field boundary
+
+The most instructive thing that happened during the event is something the
+commit log alone does not show.
+
+The code shipped final-placement plumbing for Track & Field and Tug-of-War
+(#209). But Track & Field never became a first-class digital workflow, and
+#325 — *capture Track & Field sub-event signups before schedule/results
+publication* — was filed mid-event as a blocker and remains open.
+
+The reason is not that the feature was unfinished. It is that **the upstream
+source of truth did not exist.** Most actual Track & Field participation
+happened on site or on paper; only a small fraction arrived through the online
+form. Without structured sub-event signup captured *before* event day, the
+system cannot responsibly generate start lists, heats, lanes, schedules, or
+automated result rows — and generating them anyway would have produced
+confident, wrong output.
+
+This is the cleanest lesson of the season, and it generalizes past Track &
+Field: **automation only works where the source of truth exists.** Where the
+source is structured, the system can help. Where the source is paper, memory,
+or hallway coordination, the honest move is to stay manual and solve intake
+first.
+
+*(This finding comes from operational knowledge of how the event actually ran,
+recorded in `CODEX_RETROSPECTIVE_2026.md`, not from the repository history.)*
 
 **What this act was really about:** the difference between software that is
 finished and software that is in use.
 
 ---
 
-## What the year was actually about
+## What held
 
-### 1. Three parties negotiating, and the humans won the schedule
+- **The three-tier architecture.** ChMeetings for registration, middleware for orchestration, WordPress for operations. Nothing this year required breaking that boundary.
+- **API-first.** The Selenium removal stuck. No production sync path regressed. The one browser-automation survivor is explicitly sanctioned as a diagnostic operator tool.
+- **Mock-mode testing.** 889 tests, no network, honest skips. It functioned as a real safety net through a very fast July.
+- **The plugin's ability to absorb event-day responsibility** without dissolving its boundary with the middleware.
+- **The scheduling pipeline's contracts.** `schedule_input.json`, `schedule_output.json`, and `game_key` remained useful even after human-authored schedules became authoritative — the artifacts outlived the solver's original role.
+- **The issue tracker as operational memory.** 191 issues with real titles and real closure notes is why this retrospective could be written at all.
 
-ChMeetings owns identity. The solver wanted to own time. The coordinators
-actually owned it. The code found its real role as the layer that validates and
-publishes human decisions — and that is where it added the most value all year.
-The seeding saga in Act VII is the same lesson arriving twice.
+## What bent
 
-For 2027 this is a design input, not a regret. The question is not "how do we
-make the solver win next time" but "where is the human judgment, and how do we
-serve it faster." #218 is the honest experiment.
+- **Scheduling workflow**, under the weight of Excel handoffs, manual overrides, and artifact version tracking. The engine outran the cockpit.
+- **Plugin release discipline**, under hotfix pressure. Version, zip, changelog, and tag discipline all had to be repaired after the fact on July 18.
+- **Identity assumptions**, once ChMeetings merges, duplicate people, parent/child registration, and role ambiguity entered the workflow.
+- **Track & Field**, because the signup process was never digitally structured.
+- **Results and advancement logic**, wherever written rules, coordinator spreadsheets, and event-day interpretation diverged.
+- **Plugin test coverage**, which still does not exist for REST behavior (#332).
 
-### 2. Identity is the unfinished spine
+## What we learned
 
-It appeared in June as bugs. It got named in July as epic #307 — *Identity &
-Registrant Trust* — with two RFCs (`CANONICAL_IDENTITY_RFC.md`,
-`REGISTRANT_TRUST_RFC.md`) and eleven open issues covering canonical IDs, alias
-maps, merge tolerance, duplicate detection, minor consent, guardian links, and
-contact verification.
-
-This is the single largest thing 2027 inherits, and it is the only area where
-the system currently produces *silently wrong* output rather than errors.
-
-### 3. The debt was written down, not pretended away
-
-Most projects reach an event and either ignore accumulated debt or panic-fix it
-in the last week. The July 18 review did neither — it inventoried the debt,
-justified deferring it, and shipped. The `uuid` package that breaks fresh
-installs is documented at `requirements.txt:14` with an explanation of why it
-went unnoticed and why it was left alone.
-
-### 4. Warn and continue, don't halt
-
-The operating philosophy that held all season: error counts are normal in this
-domain, and a nightly pipeline that halts on them is worse than one that reports
-them. Fail-fast gates were proposed and rejected. Every hardening change this
-year — orphan handling, null-field export, read-failure classification (#331) —
-followed the same rule: distinguish *failed* from *empty*, log it, keep going.
-
-### 5. Refactoring was survival, not vanity
-
-`church_teams_export` → `schedule_workbook` → `scheduling/` package.
-`rest-api.php` → domain controllers. `admin.php` → page-owned modules.
-`results-desk.php` → focused modules. Every one of these landed immediately
-before that area absorbed a large amount of new work. That was not luck.
+1. **API-first is not a technical preference; it is what makes the operation repeatable.** The season-reset fight was worth it precisely because it happened in April instead of July.
+2. **Data cleanup is event preparation.** The Church Team export earns its keep as a diagnostic, not a report.
+3. **The adversary model includes friendly users.** #78 turned a trust assumption into an enforced boundary.
+4. **A solver is only as good as the structured decisions fed into it.** Human authority was never the obstacle; unstructured capture of that authority was.
+5. **Excel is a fine interchange format and a poor source of truth.** Every scheduling pain this year traces back to authority living in a spreadsheet nobody could query.
+6. **Event-day UX is operational safety.** Stale pages and hidden state cause wrong results, not just confusion.
+7. **Trust is a data model, not just a human virtue.** If roles, relationships, and verification are not represented, operators carry that ambiguity in their heads — and it eventually reaches approval, eligibility, consent, badges, and rosters.
+8. **Automation is only honest where the source of truth exists.** Track & Field is the clean case study.
+9. **Policy should precede code** for eligibility, tiebreakers, advancement, and manual overrides. Four consecutive hotfixes chasing a coordinator's spreadsheet is what happens when it doesn't.
+10. **Warn and continue; don't halt.** Error counts are normal in this domain. Fail-fast gates were proposed and rejected (PR #300). Every hardening change followed the same rule — distinguish *failed* from *empty* (#331), log it, keep going.
+11. **Refactoring was survival, not vanity.** Every decomposition landed immediately before that area absorbed a large amount of new work. That was not luck.
+12. **Stay VAY-specific.** The value of this system is that it fits one real tournament.
 
 ---
 
 ## What 2027 inherits
 
-**47 issues are open, 43 of them opened in July.** Three were filed in the last
-72 hours. The system finished the event already asking for next year.
+**47 issues are open, 43 of them opened in July.** Several were filed in the
+final 72 hours. The system finished the event already asking for next year.
 
-**The epics:**
+### 1. Scheduling Helper (#272)
 
-| Epic | Scope |
-|---|---|
-| #307 | Identity & Registrant Trust — canonical IDs, roles, verified registrants, minor consent |
-| #272 | 2027 Scheduling Helper (GUI) — seven open spikes, full PRD written |
-| #202 | *Closed.* Event-day results — shipped and battle-tested |
+A localhost GUI over the existing pipeline: show artifact freshness, edit
+structured inputs, validate moves against solver constraints, rerun the right
+chain, review discrepancies, publish. Seven open spikes (#273–#279) and a full
+PRD. This is the answer to "the engine improved faster than the cockpit."
 
-**Filed in the final week, straight out of running the event:**
+### 2. Identity & Registrant Trust (#307)
 
-- #347 — standardize team-sport playoff seeding and tiebreak rules (the seeding saga, generalized)
-- #350 — capture inviter and discipleship stage on the Individual Application
-- #351 — gate all ChMeetings person creation behind identity resolution
-- #353 — revise player eligibility categories for members and non-member Christians
-- #354 — complete Sports Fest archival package export
-- #325 — capture Track & Field sub-event signups before publication (a blocker hit live)
+Alias maps (#308), merged-status tolerance (#309), reconciliation (#310),
+duplicate detection (#311), warning tripwires (#312), role-scoped contact
+storage, minor consent (#317–#319), guardian links (#316), and eventually a
+Person Resolution Gate before any automated ChMeetings person creation (#351).
+Two RFCs written. **Duplicate prevention beats duplicate repair — but
+prevention depends on fixing intake.** This is the only area where the system
+currently produces silently wrong output rather than errors.
 
-**The quick wins waiting in the debt register:** the `uuid` line, the literal
-ChMeetings field strings bypassing `CHM_FIELDS`, PHP lint and REST test coverage
-(#332).
+### 3. Track & Field intake (#325)
+
+Decide where structured sub-event signup lives — ChMeetings, WordPress, or a
+hybrid. Until it exists, Track & Field should stay manual/offline with
+post-event archival only. Do not build heats and start lists on top of an
+absent source.
+
+### 4. Rules governance (#347, #328, #353)
+
+Resolve policy *before* implementation: eligibility categories and the
+non-member/outreach framing, team-sport tiebreakers, Difficulty of Schedule
+formulas, bye handling, point-differential caps, Bible Challenge snake seeding,
+and who is authorized to approve a manual override.
+
+### 5. Release and test discipline (#332)
+
+Plugin REST tests, source/zip drift checks, dependency cleanup (starting with
+the `uuid` line at `requirements.txt:14`), and the `CHM_FIELDS` literals still
+bypassing the mapping — so event-week hotfixes stop leaving confusing
+historical state behind.
+
+### 6. An operator's manual
+
+Consolidate ChMeetings manual operations, known limitations, duplicate-person
+gotchas, form-submitter prerequisites, and operator workflows into one durable
+`ADMIN_MANUAL.md`. Much of this currently lives in issue comments and in one
+person's head.
+
+**Also filed straight out of running the event:** #350 (capture inviter and
+discipleship stage on the Individual Application) and #354 (complete Sports
+Fest archival package export).
 
 ---
 
-## Closing note
+## Closing reflection
 
 Two seasons in, the three-tier architecture held. Nothing this year required
 breaking the boundary between ChMeetings, the middleware, and WordPress —
 scheduling, badges, scoresheets, insurance intake, and event-day results all
-found homes inside the existing shape.
+found homes inside the existing shape. The system did not become generic. It
+became more specifically Sports Fest shaped.
 
 What changed is the system's understanding of its own job. It started 2026 as a
-registration and approval bridge. It ended 2026 as the thing that validates and
-publishes what a few hundred people decided together, in time for them to read
-it on a phone in a gym.
+registration and approval bridge. It ended 2026 as something closer to a
+**memory and coordination layer** for Sports Fest — a place where registration,
+validation, scheduling, approval, scoring, advancement, and public
+communication can meet without depending entirely on one person's private
+spreadsheet logic.
 
-That is a better job than the one it set out to do.
+That is both promising and sobering. The more the system can do, the more
+carefully it has to distinguish between facts, assumptions, policies, and human
+decisions. The best version of `vaysf` will not remove human judgment from
+Sports Fest. It will make the places where human judgment is required visible,
+auditable, and easier to act on — and it will refuse to fake the places where
+the underlying truth does not yet exist.
+
+2026 showed that this is possible. It also showed exactly what has to be built
+next.
