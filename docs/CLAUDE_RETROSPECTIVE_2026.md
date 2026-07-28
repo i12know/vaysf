@@ -2,7 +2,8 @@
 
 *Written 2026-07-27, two days after the event closed. A narrative account of
 what happened to this codebase between March 13 and July 27, 2026, assembled
-from 544 commits, 191 issues, and the release history.*
+from 544 commits, 191 issues, and the release history. It was reviewed and 
+approved by Bumble manually*
 
 *This is the canonical season record. Two companion documents sit beside it:
 `ARCHITECTURE_REVIEW_2026.md` records the technical state at tag v1.12, and
@@ -56,7 +57,8 @@ timeline
 ### Act I — The ground moves (Mar 13 – Apr 22, 77 commits)
 
 The season did not open with features. It opened with ChMeetings replacing its
-API underneath us.
+API underneath us. (This is not bad, but the evidence of a growing product, the
+reason why we moved our platform from Podio to ChMeetings as system of record.)
 
 March and April are almost entirely repair work: authentication header casing
 (#57), `get_person()` response unwrapping (#56, filed CRITICAL), pagination
@@ -69,7 +71,9 @@ The hard fight was **season reset** (#63): twelve commits over three days
 trying to convince ChMeetings to *clear* a custom field. PUT, then PATCH, then
 a three-strategy fallback, then a `--probe` diagnostic written for the sole
 purpose of discovering which payload shape the server would accept. It was
-documented as a known API limitation, then revisited and solved.
+documented as a known API limitation, then revisited and solved. (This is
+significant if we want to track participants' records over the years for
+discipleship purposes.)
 
 That episode set the working pattern for the year: when the vendor will not
 cooperate, build a diagnostic and grind. The act closed cleanly with #64,
@@ -81,19 +85,21 @@ mysteries that surfaced later as a broken spreadsheet. The parts of the
 operation that staff most depend on became boring.
 
 **What this act was really about:** buying back the foundation before anyone
-was depending on it.
+was depending on it. (This should always be pre-seasonal API/vendors-dependecies 
+checks.)
 
 ---
 
 ### Act II — Real humans arrive (Apr 22 – May 12)
 
-Registration opened and the data grew sharp edges.
+Registration opened, and the data grew sharp edges.
 
 Table Tennis 35+. Coed Soccer as an exhibition event. Athlete fee tiers — $30
 early, $60 late — with a genuine argument over whether the deadline was
 inclusive (it is; the code now says so in a comment). Orphaned Team-group
 memberships pointing at people ChMeetings would return 404 for; traced to their
-own bug ticket #20188 and coded around rather than waited on.
+own bug ticket #20188 and coded around rather than waited on. (And ChMeetings
+was super responsive in resolving these types of issues within the week.)
 
 This phase looked unglamorous next to scheduling or live scoring, and it was
 not. It exposed how many operational assumptions hide in small corners:
@@ -121,6 +127,18 @@ includes friendly users.
 ### Act III — The scheduling epic (May 13 – May 25, 164 commits in May)
 
 The most ambitious thing built all year, and it happened in roughly twelve days.
+
+(For the uninitiated, Sports Fest scheduling is a large-scale constraint
+optimization problem: thousands of interconnected requirements involving
+venues, time slots, teams, athletes, officials, rest periods, conflicts, and
+fairness must be reconciled simultaneously. The number of possible schedules
+grows explosively as games and constraints are added, placing the problem in
+the NP-hard family of combinatorial optimization problems. Rather than relying
+only on handcrafted scheduling rules, the system used 
+[Google's OR-Tools](https://github.com/google/or-tools)
+CP-SAT solver to search this enormous solution space for schedules that
+satisfied the hard constraints while optimizing competing goals such as
+fairness, rest time, travel, and facility utilization.)
 
 The progression: a Court-Schedule-Sketch tab, then a Pod-Resource-Estimate, then
 an OR-Tools proof of concept (#90), then a hardened `schedule_input.json`
@@ -170,7 +188,7 @@ But June is also where the theme that would dominate July first surfaced:
 Duplicate and merged people stopped being a nuisance and became an operational
 hazard. A participant, it turned out, is not just a row. People registered for
 themselves and for their children, through different forms, under different
-spellings, with church affiliations that changed and consent state that could
+spellings, with church affiliations that changed and consent states that could
 be invalidated by an edit made weeks later.
 
 **What this act was really about:** the codebase getting its house in order,
@@ -183,15 +201,15 @@ while something structural started creaking.
 The turn in the story, and the most important thing to carry into 2027.
 
 Issues #190, #191, #196, #214, and #233 are all variations on a single move:
-*import the coordinators' hand-built schedule workbook and treat it as the
+*Import the coordinators' hand-built schedule workbook and treat it as the
 master override.* First the manual BB/MVB/VBW matchup workbook. Then the main
 schedule workbook as master allocation override. Then draft 12. Then #217 —
 import approved preliminary games and publish them to WordPress by `game_key`.
 
 **The CP-SAT solver built in May did not produce the schedule that ran the
-tournament.** What ran was a spreadsheet that humans argued into existence over
-weeks of meetings. The code's job quietly changed from *generating* the schedule
-to *ingesting, validating, and publishing* it.
+tournament.** What ran was a spreadsheet that humans collaborated into existence
+over meetings and emails. The code's job quietly changed from *generating* the 
+schedule to *ingesting, validating, and publishing* it.
 
 That is not a failure, and it should not be recorded as one. The validation
 layer earned its keep immediately: it caught table tennis roster mismatches,
@@ -213,7 +231,7 @@ clues in colored cells** instead of as typed data the system could reason about.
 
 This is why the 2027 Scheduling Helper (#272, full PRD written) is not an
 indulgent GUI idea. It is the direct conclusion of Act III and Act V: build a
-structured authoring surface where humans stay authoritative but their decisions
+structured authoring surface where humans stay authoritative, but their decisions
 become data on the way in, not archaeology on the way out.
 
 Six weeks of solver work became a validator. #218 — *repair the approved
@@ -253,9 +271,9 @@ got hammered with new work.
 
 Then on July 18, the eve of the event, the work stopped and got written down.
 Tag v1.12 cut, v1.10 and v1.11 backfilled, the CHANGELOG repaired, and
-`ARCHITECTURE_REVIEW_2026.md` written — a debt register that explicitly states
-*these are not fixed, and that is on purpose*, including the `uuid` line in
-`requirements.txt` that would break a fresh install. Two RFCs went in the same
+[ARCHITECTURE_REVIEW_2026.md](ARCHITECTURE_REVIEW_2026.md) written — a debt register that 
+explicitly states *these are not fixed, and that is on purpose*, including the `uuid` line
+in `requirements.txt` that would break a fresh install. Two RFCs went in the same
 day, naming June's tremors as a design problem rather than a pile of bugs.
 
 **What this act was really about:** shipping under a deadline without lying
@@ -269,7 +287,7 @@ Roughly forty plugin releases in eight days, 1.0.62 through 1.1.12.
 
 **Rankings and tiebreaks.** Pool progress rankings for review (#321).
 Head-to-head tiebreak added — with a tied group that head-to-head cannot fully
-order flagged `needs_manual_tiebreak` rather than resolved by alphabetical
+order, flagged `needs_manual_tiebreak` rather than resolved by alphabetical
 guesswork, because wrong output here means the wrong team advances.
 
 **The seeding saga.** Hotfixes 1.0.96 through 1.0.99 — four consecutive
@@ -373,7 +391,7 @@ finished and software that is in use.
 ## What 2027 inherits
 
 **47 issues are open, 43 of them opened in July.** Several were filed in the
-final 72 hours. The system finished the event already asking for next year.
+final 72 hours. The system already finished the event and is asking for next year.
 
 ### 1. Scheduling Helper (#272)
 
