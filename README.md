@@ -140,6 +140,10 @@ For detailed setup and usage instructions, see the [Installation Guide](docs/INS
 - [Contributing](docs/CONTRIBUTING.md)
 - [2026 Architecture Review](docs/ARCHITECTURE_REVIEW_2026.md)
 
+### Project history
+
+- [Retrospectives index](docs/RETROSPECTIVES.md) — narrative history of the system from 2016 to 2026, covering the Podio/Globiflow era, the 2025 rebuild, and the 2026 season. Start here for *how the system got this way*; see the Architecture Review for *what it is now*.
+
 ## Project Status
 
 The system is actively maintained and in production for Sports Fest 2026. Current release: **v1.12** (2026-07-18), with WordPress plugin **1.0.46** — see [CHANGELOG.md](CHANGELOG.md) for the full history. All core functionality is implemented and tested (889 tests in mock mode):

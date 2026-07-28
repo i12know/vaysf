@@ -4,16 +4,23 @@
 2025-07-17, the CHANGELOG's version history back to 2025-03-10, and the shape
 of what 2026 inherited.*
 
-*This is the prequel to `CLAUDE_RETROSPECTIVE_2026.md`. That document opens with
-ChMeetings pulling its API out from under a working system. This one explains
-what that system was, how it got built, and why so much of 2026's spring was
-spent paying its debts.*
+*Drafted by Claude; reviewed and approved by Bumble.*
 
-The central achievement of 2025 was not full automation. It was turning an
-operation carried in screens, spreadsheets, email threads, and one person's
-memory into a shared memory surface: this participant exists; this church owns
-the record; these are the sports and validation issues; this approval is pending.
-That first act of making the work legible is what later automation had to build on.
+*This sits between two other records. `RETROSPECTIVE_PODIO_2016_2024.md` covers
+the nine seasons before this repository existed, when Sports Fest ran on Podio
+and Globiflow. `RETROSPECTIVE_2026.md` opens with ChMeetings pulling its API out
+from under a working system. This one explains what that system was, how it got
+built, and why so much of 2026's spring was spent paying its debts. See
+`RETROSPECTIVES.md` for the full series and reading order.*
+
+The central achievement of 2025 was not full automation. It was moving Sports
+Fest's operational memory onto infrastructure VAY owned end to end — this
+participant exists; this church owns the record; these are the sports and
+validation issues; this approval is pending — and making the *rules* behind that
+memory readable, testable, and versioned for the first time. Podio had held the
+records for nine years; what it could not hold was its own logic in a form anyone
+could review. That act of making the work legible is what later automation had to
+build on.
 
 ---
 
@@ -49,6 +56,19 @@ to whatever the season broke next, and then silence.
 The most important fact about the pre-2026 codebase is that its design does not
 appear in the repository at all.
 
+Two things sit outside git here, and they are different in kind. The first is
+**nine seasons of prior operation**: from roughly 2016 through 2024, Sports Fest
+ran on Podio and Globiflow, and before that on Microsoft Access. That system knew
+what the tournament was — churches, athletes, pastors, church reps, signatures,
+medical releases, badges, rosters, score sheets, gyms, fees, deadlines,
+volunteers, Bible verses — and it is documented separately in
+`RETROSPECTIVE_PODIO_2016_2024.md`. This repository did not invent the domain. It
+inherited it.
+
+The second is the **eighteen days in March 2025** when that inherited knowledge
+was translated into a new architecture, in conversation, before a repository
+existed to record it.
+
 `CHANGELOG.md` documents ten versions — 0.1 through 1.00 — dated March 10
 through March 28, 2025. The repository's first commit is March 28. Every one of
 those versions predates version control:
@@ -77,8 +97,17 @@ This is the sharpest contrast with 2026. The 2026 retrospective could be written
 *because* 191 issues carried their own argument. The 2025 design phase left ten
 bullet lists.
 
-**What this act was really about:** the system was designed somewhere git could
-not see.
+It is worth being precise about what was lost and what was not. The *domain*
+knowledge was not lost — it had been accumulating in Podio since 2016 and was
+still running the 2024 season. What vanished was the **translation layer**: the
+reasoning that turned a decade of no-code operational practice into a three-tier
+architecture with JSON validation and a `church_code` key. Why the schema went
+from 11 tables to 8 in a single day, why email moved tiers, why `church_code`
+displaced `church_id` — those were the decisions that converted inherited
+experience into a new shape, and they are the ones with no record.
+
+**What this act was really about:** a decade of operational knowledge being
+translated into a new architecture, somewhere git could not see.
 
 ---
 
@@ -116,17 +145,27 @@ WordPress owning tokens and email. All five survive intact into 2026 — the 202
 retrospective's "What Held" section is, almost entirely, a list of decisions made
 before this repository existed.
 
-The 1.0 release also gave Sports Fest something it had not previously possessed:
-a shared place to remember operational truth. The bridge could now hold a
-participant, church ownership, sports, validation issues, roster membership, and
-pastoral approval state together. It did not eliminate the clipboard world, but
-it began replacing scattered recollection with a common record.
+The 1.0 release re-established, on a new stack, something Sports Fest had held
+since 2016 and could not afford to lose: a shared place to remember operational
+truth. Podio had provided that for nine seasons — visible records, configurable
+views, comments and files beside the data. The 2025 bridge had to earn it back
+from zero, and at first it held less: a participant, church ownership, sports,
+validation issues, roster membership, and pastoral approval state, together in
+one record. What it added was not the idea of shared memory but a place where
+that memory's *rules* could be read, tested, and versioned.
 
-It arrived fully formed because it had been fully designed elsewhere. That is
-the strength and the weakness in the same sentence.
+That is the honest frame for the whole year. 2025 was not a first system. It was
+a **replacement in its first season**, competing against a decade-matured
+incumbent that still did document generation, badges, and e-signature better than
+the new one would for years.
+
+It arrived fully formed because it had been fully designed elsewhere — and
+because the domain had been understood for nine years before that. That is the
+strength and the weakness in the same sentence.
 
 **What this act was really about:** a good architecture arriving without its
-reasoning attached, and manual operations gaining their first shared memory.
+reasoning attached, and a decade-old operation beginning its move onto rails that
+could be versioned.
 
 ---
 
@@ -290,7 +329,7 @@ Nearly everything structural, which is the striking part.
 - **`church_code` as the human-readable identifier**, with `church_id` kept as the database key.
 - **WordPress owning tokens and email**, moved there in v0.4 for "better process flow" — the decision that later let WordPress absorb the entire event-day arena.
 - **The Excel export as a staff-facing artifact.** As an output and review surface, it met volunteers where they were; in 2026 it grew into a diagnostic instrument.
-- **The first shared memory surface.** Participants, churches, rosters, validation, and approval state became parts of one operational record instead of facts scattered across screens and personal memory.
+- **A shared memory surface, rebuilt on owned infrastructure.** Participants, churches, rosters, validation, and approval state became one operational record again — this time in a place where the rules behind it could be read, tested, and versioned.
 
 ## What bent
 
@@ -314,6 +353,7 @@ Nearly everything structural, which is the striking part.
 8. **Agents need a legible repository more than they need a better model.** Codex was here in June 2025 and fixed README links, because that was all the repository could describe of itself.
 9. **Annual software still needs a heartbeat.** Eight dormant months turned a vendor API change into a 77-commit emergency.
 10. **Tag the thing that ran the event.** Four releases ran a real tournament and none of them are findable in git.
+11. **A first season is not a first system.** 2025 replaced a decade-matured incumbent. Judged as a greenfield build it looks thin; judged as year one of a migration off nine years of Podio and Globiflow, the surprise is how much of the domain it already had right.
 
 ---
 
@@ -353,6 +393,16 @@ before this repository existed, and required no structural change to absorb
 scheduling, badges, scoresheets, live scoring, and public advancement displays a
 year later. That is an unusually good call, made early, by someone thinking
 carefully without a tool watching.
+
+It was also not a guess. Nine years of Podio had already established what the
+tournament needed and, more usefully, where a platform-configured system breaks:
+meaning hidden in display labels, logic parsed out of category text, validation
+buried in long visual flow chains, annual behavior copied forward instead of
+versioned. Read against `RETROSPECTIVE_PODIO_2016_2024.md`, the March 2025
+architecture looks less like inspiration and more like a set of deliberate
+countermeasures — `CHM_FIELDS` against label-encoded meaning, JSON rules against
+flow-buried validation, git against copy-forward configuration. The good call was
+real. It was also informed.
 
 Nor should the manual character of 2025 be mistaken for absence of progress.
 The system learned the real tournament before it tried to optimize it. It
