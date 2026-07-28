@@ -2,7 +2,9 @@
 
 *Drafted by Codex on 2026-07-28 from a read-only archaeology pass through the
 VAY-SM Dropbox archive and a temporary copy of `SM2015.mdb`. Reviewed and
-approved by Bumble.*
+approved by Bumble, hat tipped to [Phillip Vu Phan](https://www.facebook.com/phillip.phan413)
+(the Graphics Designer/Access Developer who created the Access database and
+all the printable artifacts in 1998 during the Sports Fest reorganization.)*
 
 *This is the earliest document in the retrospective set — see
 `RETROSPECTIVES.md` for the full series and reading order.
