@@ -2,9 +2,10 @@
 
 *Drafted by Codex on 2026-07-28 from a read-only archaeology pass through the
 VAY Sports Fest Podio workspace and its Globiflow automation screens. Reviewed
-and approved by Bumble.*
+and approved by Bumble, with hattip to [Jerry Phan](https://www.facebook.com/jerry.phan.507) 
+(the housemate who helped me with the Podio management and cloud-workflowing.)*
 
-*This is the earliest document in the retrospective set — see
+*This is the second document in the retrospective set — see
 `RETROSPECTIVES.md` for the full series and reading order. It covers the nine
 seasons before this repository existed; `RETROSPECTIVE_2025.md` picks up where
 it ends.*
@@ -17,11 +18,11 @@ The 2024 Sports Fest season appears to have been the last year when the tourname
 
 The Access system represented the first era: a locally controlled custom database where one technically capable operator could model churches, athletes, teams, forms, reports, and annual rules. That was powerful, but it was centered on local files, desktop workflows, and manual distribution. It could support a ministry event, but it was not naturally built for many churches, remote representatives, web intake, mobile access, or simultaneous volunteer collaboration. That era is documented in full in `RETROSPECTIVE_ACCESS_1998_2015.md`, which also records something relevant here: Podio replaced the Access *database*, but the Office and Adobe *publishing stack* — badge artwork, print packets, ranking boards, schedule images — carried on largely unchanged well into the Podio years.
 
-Podio represented the second era. Around the 2016 Sports Fest cycle, VAY moved the operation into a cloud workspace where church representatives and volunteers could interact with shared records instead of passing spreadsheets and database exports around. In its time, that was a very strong architectural choice. Podio gave a volunteer-run ministry a shared cloud database, public forms, relational-ish records, app views, comments, file attachments, and distributed access before modern no-code platforms became normal. Globiflow then supplied the missing programming layer: triggers, filters, calculations, item updates, PDF generation, emails, SMS messages, webhooks, and e-signature handoffs.
+[Podio](https://podio.com/) represented the second era. Around the 2016 Sports Fest cycle, VAY moved the operation into a cloud workspace where church representatives and volunteers could interact with shared records instead of passing spreadsheets and database exports around. In its time, that was a very strong architectural choice. Podio gave a volunteer-run ministry a shared cloud database, public forms, relational-ish records, app views, comments, file attachments, and distributed access before modern no-code platforms became normal. [Globiflow (now acquired by Podio)](https://workflow-automation.podio.com/) then supplied the missing programming layer: triggers, filters, calculations, item updates, PDF generation, emails, SMS messages, webhooks, and e-signature handoffs.
 
 The current `vaysf` system is the third era. It began in 2025 and matured sharply in 2026, but it should be understood as a rebuild-in-progress rather than a completed one-for-one replacement. The 2026 system surpassed Podio in important areas: API sync, source control, validation, scheduling artifacts, event-day score entry, Results Desk review, public results, and issue-tracked release discipline. But it has not yet rebuilt every mature Podio-era capability. Some Podio workflows, especially around registration packets, e-signature document generation, badge production, volunteer SMS/voting, and operator-facing dashboard views, were deeply developed by 2024.
 
-The 2024 artifacts show a system that had accumulated almost ten years of operational intelligence. They also show why the next system had to be built differently. Podio could hold records and make them approachable. Globiflow could automate workflows quickly. But by 2024, Sports Fest needed canonical identity, source-controlled rules, testable validation, explicit schedule/result models, and an event-day UI that was shaped around the tournament itself.
+The 2024 artifacts show a system that had accumulated almost ten years of operational intelligence. They also show why the next system had to be built differently. Podio could hold records and make them approachable. Globiflow could automate workflows quickly. But by 2024, Sports Fest needed canonical identity, source-controlled rules, testable validation, explicit schedule/result models, and an event-day UI that was shaped around the tournament itself. The long [stagnation from Podio](https://www.reddit.com/r/podio/comments/1c10l7j/whats_your_confidence_for_the_future_with_podio/) forced us to a new direction.
 
 This is not a failure story. It is the story of a good bridge carrying more and more traffic until the organization finally needed a road.
 
@@ -85,7 +86,7 @@ Operationally, this app carried the church-level commitments:
 - Which sports and events the church intended to enter.
 - Whether the church had late fees or flag fees.
 - Whether the church registration packet had been generated.
-- Whether pastor signature was complete.
+- Whether the pastor's signature was complete.
 - Whether church files should be emailed.
 - Whether athlete badges should be generated.
 
@@ -173,9 +174,9 @@ This was the ancestor of the 2026 schedule-driven score-sheet and Results Desk w
 
 ### `Bible Verses`
 
-`Bible Verses` was a verse bank used by Bible Challenge. The captured app showed 126 records, with records last edited before the 2024-to-2026 migration period.
+`Bible Verses` was a verse bank used by the score sheets. The captured app showed 126 records, with records last edited before the 2024-to-2026 migration period.
 
-This is a direct ancestor of the later WordPress Bible Challenge verse-management work. Podio had the data; the new system needed the event-day editing, seed/import behavior, and schedule/results integration.
+This is a direct ancestor of the later WordPress Bible verse-management work. Podio had the data; the new system needed the event-day editing, seed/import behavior, and schedule/results integration.
 
 ## The Globiflow Programming Layer
 
@@ -211,7 +212,7 @@ This is the key technical insight: Globiflow was not an accessory. It was the pr
 
 A church registration item entered `ChurchReg`. Creation and update flows generated church-registration PDF packets, shared or emailed files, and sent the registration form for pastor signature through RightSignature.
 
-When a pastor signed, an external-signature flow updated the church record and sent follow-up email. Additional update-triggered flows handled "Update Now" style commands for regenerating registration files and emailing them back to the church representative.
+When a pastor signed, an external-signature flow updated the church record and sent a follow-up email. Additional update-triggered flows handled "Update Now" style commands for regenerating registration files and emailing them back to the church representative.
 
 Badge generation also hung from `ChurchReg`. The 2024 badge flow was large: over 120 steps, mostly custom expression blocks and filters. It pulled related athlete data, prepared badge-specific output, generated PDFs, emailed results, and called remote services for image or badge handling.
 
@@ -222,15 +223,15 @@ An athlete registration item entered `PlayerReg`. Creation flows initialized der
 Update flows responded to key changes:
 
 - Recalculate athlete sports.
-- Process photo and cropped-photo URL fields.
+- Process photo, cropped-photo URL fields, and performed facial recognition validation through Cloudinary services.
 - Prevent unauthorized updates of ID-critical fields.
 - Generate adult/minor registration PDFs.
-- Send e-signature packets.
+- Send e-signature packets through RightSignature.
 - Mark an athlete as electronically signed.
 - Send registration forms for pastor signature.
 - Re-run generation when an operator pressed an update field.
 
-The athlete workflow was sophisticated, but it was also tightly coupled to field labels and option text. Sport validation and category derivation lived as procedural string logic across many Globiflow steps.
+The athlete workflow was very sophisticated, but it was also tightly coupled to field labels and option text. Sport validation and category derivation lived as procedural string logic across many Globiflow steps.
 
 ### 3. Sport Derivation And Validation
 
@@ -259,15 +260,15 @@ That one detail explains a lot about why the current codebase cares so much abou
 
 ### 4. Pastor Approval
 
-The `Approval Records` app generated yes/no links and processed external link hits. A yes link updated an approval record as approved. A no link updated it as denied. Email update flows then notified the relevant people.
+The `Approval Records` app generated yes/no links and processed external link hits through a webhook. A yes link updated an approval record as approved. A no link updated it as denied. Email update flows then notified the relevant people.
 
-This was a clever low-code approval surface, but it depended on link-generated workflow state rather than a purpose-built approval UI. The 2026 WordPress pastor approval workflow is the same ministry need expressed in a more explicit application layer.
+This was a clever low-code approval surface, but it depended on link-generated workflow state rather than a purpose-built approval UI. The 2026 WordPress pastor approval workflow is the same ministry need expressed in a more explicit API layer.
 
 ### 5. Score Sheet Generation
 
 `ScoreSheets` items carried game, teams, church codes, date/time/gym, format, and roster references. Update-triggered flows generated PDFs for general games, volleyball, badminton, and ping pong/table tennis.
 
-The large score-sheet flows searched Podio records, sorted and collected related athletes, prepared roster tables, and generated PDFs. This explains the historical continuity between Podio-era generated score sheets and the 2026 `vaysf` score-sheet pipeline.
+The large score-sheet flows searched Podio records, sorted and collected related athletes, prepared roster tables, and generated PDFs. This explains the historical continuity between Podio-era-generated score sheets and the 2026 `vaysf` score-sheet pipeline.
 
 The difference is that 2026 made schedule rows, coordinator score entry, result manifests, protected uploads, and public results first-class operational surfaces. Podio could generate the paper. The new system needed to run the live event.
 
@@ -275,7 +276,7 @@ The difference is that 2026 made schedule rows, coordinator score entry, result 
 
 `VolunteerReg` and `Annual Parameters` included SMS and voting flows. One flow sent voting prompts. Another captured SMS replies. A third updated voting totals on the annual-parameter record.
 
-This is a good example of what Podio and Globiflow did well: a custom operational workflow could be assembled without building a full application from scratch.
+This was used with SMS provider to pilot Sportsmanship SMS voting for the staff. This is a good example of what Podio and Globiflow did well: a custom operational workflow could be assembled without building a full application from scratch.
 
 ## What Worked Well
 
@@ -383,3 +384,7 @@ Open questions for future planning:
 - Which Podio views are worth recreating as WordPress dashboards because operators still need that at-a-glance view?
 
 The practical lesson is that `vaysf` should not chase parity for its own sake. It should pursue continuity where the old system embodied real operational wisdom, and replacement where the old system encoded that wisdom in fragile platform configuration.
+
+*Thus spake the Master: “The coder trained for the Kingdom neither clings to the old nor chases after the new. From the repository he brings forth both, each in its proper season, and the work is made whole.”*
+
+Up to [RETROSPECTIVES.md](RETROSPECTIVES.md), back to [Access 1997 Era](RETROSPECTIVE_ACCESS_1998_2015.md), or forward to [GitHub Era, 1st year 2025](RETROSPECTIVE_2025.md)?
