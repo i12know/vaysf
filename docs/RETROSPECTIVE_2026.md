@@ -2,16 +2,18 @@
 
 *Written 2026-07-27, two days after the event closed. A narrative account of
 what happened to this codebase between March 13 and July 27, 2026, assembled
-from 544 commits, 191 issues, and the release history. It was reviewed and 
-approved by Bumble manually*
+from 544 commits, 191 issues, and the release history. Drafted by Claude;
+reviewed and approved manually by Bumble.*
 
 *This is the canonical season record. Two companion documents sit beside it:
 `ARCHITECTURE_REVIEW_2026.md` records the technical state at tag v1.12, and
-`CODEX_RETROSPECTIVE_2026.md` is an independent reflection on the same season
-written the same morning. Where this document supplies the chronology and the
-evidence, that one supplies interpretation — several of its findings are
+`RETROSPECTIVE_2026_COMPANION.md` is an independent reflection on the same
+season written the same morning. Where this document supplies the chronology and
+the evidence, that one supplies interpretation — several of its findings are
 incorporated below and marked where the operational knowledge came from it
-rather than from the commit history.*
+rather than from the commit history. See `RETROSPECTIVES.md` for the full series
+and reading order; `RETROSPECTIVE_2025.md` and `RETROSPECTIVE_PODIO_2016_2024.md`
+cover the years before this one.*
 
 ---
 
@@ -346,7 +348,7 @@ or hallway coordination, the honest move is to stay manual and solve intake
 first.
 
 *(This finding comes from operational knowledge of how the event actually ran,
-recorded in `CODEX_RETROSPECTIVE_2026.md`, not from the repository history.)*
+recorded in `RETROSPECTIVE_2026_COMPANION.md`, not from the repository history.)*
 
 **What this act was really about:** the difference between software that is
 finished and software that is in use.

@@ -1,4 +1,17 @@
-# VAYSF 2026 Retrospective
+# VAYSF 2026 Retrospective — Companion Reflection
+
+*Drafted by Codex on 2026-07-27, the same morning as the canonical season
+record. Reviewed and approved by Bumble.*
+
+*This is a companion to `RETROSPECTIVE_2026.md`, not a replacement for it. That
+document is the canonical 2026 record and supplies the chronology, the commit
+and issue evidence, and the dated act structure; several findings below are
+folded into it and attributed there. This one is preserved as an independent
+reading of the same season and as provenance for the operational knowledge it
+contributed — most importantly the Track & Field boundary. See
+`RETROSPECTIVES.md` for the full series and reading order.*
+
+---
 
 ## From Registration Bridge To Event Operations
 
