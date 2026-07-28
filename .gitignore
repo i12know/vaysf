@@ -238,6 +238,7 @@ middleware/logs/
 # Pytest temp and run artifacts
 middleware/temp/
 middleware/.pytest_tmp*/
+middleware/scratch/podio-globiflow-archive-2024/
 middleware/data/*_audit.xlsx
 middleware/data/team_group_*.xlsx
 middleware/data/form_people_repair*.xlsx
