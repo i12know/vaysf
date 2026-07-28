@@ -15,7 +15,8 @@ off.*
 > later: `SM2015.mdb` is the database that survived, and the Bible Challenge
 > game files date from the same season. The 1998 start is attested by
 > operational memory rather than by any file in the archive — earlier databases
-> and their working files did not survive migration across machines and storage
+> and their working files typically were just renamed and repopulated and 
+> not always survived the migration across machines and storage
 > generations. Treat the schema, counts, and query names below as firmly
 > evidenced for 2015, and the seventeen years before it as a period this
 > document knows happened but cannot show.
@@ -26,7 +27,7 @@ Before Podio, before ChMeetings, before the current `vaysf` middleware and WordP
 
 That matters because the current system did not invent the VAY Sports Fest operating model in 2026. Podio did not invent it in 2016 either. The operational grammar was already present in the Access era: churches, athletes, church reps, pastors, player numbers, primary and secondary sports, gender divisions, rosters, score sheets, Bible Challenge verses, rankings, staff, surveys, ceremonies, handbooks, deadlines, fees, badges, maps, and print packets.
 
-The innovation of the Access/Office era was that VAY used the tools available at the time to turn a large, multi-church youth event into a database-backed operation. In the late 1990s and early 2000s, Microsoft Access was one of the few practical ways for a local ministry operator to build a custom application without hiring a software team. Access 97-era thinking was radical in a quiet way: tables, queries, forms, and reports could be assembled by one technically capable person into a working line-of-business application.
+The innovation of the Access/Office era was that VAY used the tools available in 1998 to [reorganize the unorganized and fractured church Sports Tournament](https://sportsfest.vayhub.us/vay-sports-fest-reflection-2022/) into a large, multi-church Sports Fest annual event. In the late 1990s and early 2000s, Microsoft Access was one of the few practical ways for a local ministry operator to build a custom application without hiring a software team. Access 97-era thinking was radical in a quiet way: tables, queries, forms, and reports could be assembled by one technically capable person into a working line-of-business application.
 
 For Sports Fest, that meant the event could be more than a stack of paper forms. It could have a data model.
 
@@ -54,7 +55,7 @@ I also inspected the surrounding artifact ecosystem:
 - Photoshop, Illustrator, JPEG, GIF, and PNG files for badges, signage, ranking boards, name tags, and ceremony graphics.
 - PowerPoint files for Bible Challenge games, opening/closing ceremonies, and later Bible quizzing/Jeopardy-style game flows.
 
-The Dropbox folder currently contains hundreds of historical artifacts. By file type, it includes 135 PDFs, 88 PSD files, 57 XLSX workbooks, 46 PPTM files, 22 MDB databases, 18 DOC files, 17 PPT files, 16 CSV files, 15 AI files, and many image/audio/template files.
+The Dropbox folder currently contains hundreds of historical artifacts. By file type, it includes 135 PDFs, 88 PSD files, 57 XLSX workbooks, 46 PPTM files, 22 MDB databases, 18 DOC files, 17 PPT files, 16 CSV files, 15 Adobe Illustrator files, and many image/audio/template files.
 
 That distribution is itself part of the story. Access was the structured data core, but Office and Adobe files were the publication, ceremony, and print-production system around it.
 
@@ -226,9 +227,11 @@ One representative game database, `Prelim 1.mdb`, contained:
 - `tblCategories`: 6 rows.
 - `tblQuestions`: 26 rows.
 
-This shows that Bible Challenge was not merely another sport inside the main database. It had its own content-management and game-production workflow. Questions were authored in Word/Excel, converted into Access-like game databases, exported into PDFs or PowerPoint decks, and then used in live competition.
+This shows that Bible Challenge was not merely another sport inside the main database. It had its own content-management and game-production workflow. Questions were authored in Word/Excel, converted into Access-like game databases, consumed by the PowerPoint 97 decks with VBA, and then used in live competition.
 
-That is the historical ancestor of the later Bible Challenge verse bank in Podio and the 2026 WordPress Bible Challenge verse-management and scoring work.
+That is the historical ancestor of the later [Bible Challenge PowerPoint 365 system](https://GitHub.com/i12know.vaybc), after we found an AGPL version to replace the ancient PowerPoint 97 version.
+
+The 208 verses in the Bible verses table were exported and used for all PDF score sheets and gave birth to the Bible verse bank in Podio and the 2026 WordPress Bible verse management used for the same purpose.
 
 The deeper continuity is not technical; it is operational. Bible Challenge always needed:
 
@@ -422,13 +425,11 @@ It took a large, complicated, multi-church event and gave it a custom operationa
 
 The best way to honor that era is not nostalgia and not replacement for replacement's sake. It is careful translation.
 
-When `vaysf` turns a printed score sheet into a structured result, it is translating the Access report era.
+- When `vaysf` turns a printed score sheet into a structured result, it is translating the Access report era.
+- When it turns a badge PSD and roster table into a generated hosted badge image, it is translating the print-production era.
+- When it turns a sport text field into a canonical sport code, it is translating the make-table query era.
+- When it turns Bible Challenge decks and question sheets into manageable seed data and scoring workflows, it is translating the Bible Challenge side system.
 
-When it turns a badge PSD and roster table into a generated hosted badge image, it is translating the print-production era.
+*The past was more sophisticated than it first looks. The future will be better if we remember that.*
 
-When it turns a sport text field into a canonical sport code, it is translating the make-table query era.
-
-When it turns Bible Challenge decks and question sheets into manageable seed data and scoring workflows, it is translating the Bible Challenge side system.
-
-The past was more sophisticated than it first looks. The future will be better if it remembers that.
-
+Back to [RETROSPECTIVES.md](RETROSPECTIVES.md) or on to [Podio Era](RETROSPECTIVE_PODIO_2016_2024.md)?
