@@ -1,5 +1,23 @@
 # VAYSF Access/Office Era Retrospective, 1998-2015
 
+*Drafted by Codex on 2026-07-28 from a read-only archaeology pass through the
+VAY-SM Dropbox archive and a temporary copy of `SM2015.mdb`. Reviewed and
+approved by Bumble.*
+
+*This is the earliest document in the retrospective set — see
+`RETROSPECTIVES.md` for the full series and reading order.
+`RETROSPECTIVE_PODIO_2016_2024.md` picks up where the Access database leaves
+off.*
+
+> **On the date range.** The surviving artifacts are concentrated in 2015 and
+> later: `SM2015.mdb` is the database that survived, and the Bible Challenge
+> game files date from the same season. The 1998 start is attested by
+> operational memory rather than by any file in the archive — earlier databases
+> and their working files did not survive migration across machines and storage
+> generations. Treat the schema, counts, and query names below as firmly
+> evidenced for 2015, and the seventeen years before it as a period this
+> document knows happened but cannot show.
+
 ## The First Digital Sports Fest Operating System
 
 Before Podio, before ChMeetings, before the current `vaysf` middleware and WordPress plugin, VAY Sports Fest already had a digital operating system. It was built from Microsoft Access, Excel, Word, PowerPoint, PDFs, Photoshop files, printed forms, score sheets, badges, signage, and a lot of human judgment.
@@ -69,6 +87,8 @@ The main athlete table used the essential fields that still echo through the cur
 The raw and blank athlete tables had a wider intake model, including phone, address, city, state, zip, emergency contact, emergency phone, emergency relationship, status, email, notes, Track & Field, swimming, medical release, signature, balance, payment, late payment, lost name tag, qualified, staff ID, photo, and ID badge fields.
 
 That is striking. The Access-era model already understood that a participant was more than a name on a roster. A participant had identity, eligibility, emergency contact, consent, payment, notes, photo/badge output, and status.
+
+It is worth stating the implication directly, because it changes how a piece of current work should be read. `REGISTRANT_TRUST_RFC.md` (epic #307) is the 2026 effort to give `vaysf` a first-class model of roles, verification, consent, and guardian relationships. Set against this table, that RFC is not introducing a new concept — it is **recovering one the operation had in 2015 and lost across two migrations**. Emergency contact and relationship, medical release, signature, qualified status, and payment state were all columns in a single Access table. They became scattered across Podio apps and Globiflow flows, then across ChMeetings fields, WordPress rows, and consent forms. The 2026 work is closing a loop, not opening one.
 
 ## The 2015 Season In The Database
 
@@ -236,13 +256,23 @@ The surrounding files show a full event-publishing stack:
 - Survey PDFs.
 - Maps, campsite assignments, and handbooks.
 
-The `NameTag.jpg` artifact from 2017 shows a badge background with annual theme, logo, year, venue, and empty space for participant-specific data. That pattern later reappears in Podio badge-generation flows and the current `vaysf` hosted-badge/badge-image work.
-
-The 2018 ranking graphics show bracket boards with seeds, church codes, game times, courts, quarterfinals, semifinals, final, and third-place game. That pattern later reappears in playoff advancement and public bracket/display questions.
-
-The 2019 schedule image shows the schedule grammar that still exists today: multiple weekends, venue columns, time rows, setup blocks, opening ceremony, dinner and chapel hour, community time, sport colors, playoffs, finals, and a version marker.
-
 In other words, a lot of what looks "new" in the 2026 application is actually old Sports Fest knowledge moving from static printable artifacts into structured software.
+
+## The Publishing Stack Outlived Two Migrations
+
+The most consequential thing the archive shows is something the era boundaries obscure.
+
+Podio replaced the Access **database** around 2016. It did not replace the Office and Adobe **publishing stack**, which kept running largely unchanged for years afterward — which is why several of the clearest artifacts in this archive are dated well inside the Podio era:
+
+- **`NameTag.jpg` (2017)** — a badge background carrying annual theme, logo, year, and venue, with empty space reserved for participant-specific data. The same pattern reappears in Podio badge-generation flows and again in the 2026 `vaysf` hosted-badge work.
+- **Ranking graphics (2018)** — bracket boards with seeds, church codes, game times, courts, quarterfinals, semifinals, final, and third-place game. The direct ancestor of 2026 playoff advancement and the public bracket display.
+- **Schedule image (2019)** — the schedule grammar that still exists today: multiple weekends, venue columns, time rows, setup blocks, opening ceremony, dinner and chapel hour, community time, sport colors, playoffs, finals, and a version marker.
+
+These are catalogued here rather than in `RETROSPECTIVE_PODIO_2016_2024.md` because they belong to a lineage that begins in the Access era and does not break at the platform boundary. Read across the whole series, the pattern is clear enough to state plainly:
+
+> The database migrated twice. The publishing pipeline did not migrate at all — it was carried forward by hand, season after season, in Photoshop and Illustrator files.
+
+That is why badge generation, score sheets, ranking boards, and printable schedules were among the *last* capabilities to be absorbed into software, arriving only with the 2026 badge-image, scoresheet, and public-display work. It also explains why `RETROSPECTIVE_PODIO_2016_2024.md` lists badge generation and document production among the Podio-era capabilities `vaysf` had not yet fully rebuilt: those workflows were never fully in Podio either. They lived in design files and an operator's hands from the Access era straight through to 2026.
 
 ## The Handbook And Policy Layer
 

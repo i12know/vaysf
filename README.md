@@ -142,7 +142,7 @@ For detailed setup and usage instructions, see the [Installation Guide](docs/INS
 
 ### Project history
 
-- [Retrospectives index](docs/RETROSPECTIVES.md) — narrative history of the system from 2016 to 2026, covering the Podio/Globiflow era, the 2025 rebuild, and the 2026 season. Start here for *how the system got this way*; see the Architecture Review for *what it is now*.
+- [Retrospectives index](docs/RETROSPECTIVES.md) — narrative history of the system from 1998 to 2026, covering the Access/Office era, the Podio/Globiflow years, the 2025 rebuild, and the 2026 season. Start here for *how the system got this way*; see the Architecture Review for *what it is now*.
 
 ## Project Status
 
