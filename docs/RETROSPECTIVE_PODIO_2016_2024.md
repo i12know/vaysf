@@ -1,5 +1,16 @@
 # VAYSF Podio Era Retrospective, 2016-2024
 
+*Drafted by Codex on 2026-07-28 from a read-only archaeology pass through the
+VAY Sports Fest Podio workspace and its Globiflow automation screens. Reviewed
+and approved by Bumble.*
+
+*This is the earliest document in the retrospective set — see
+`RETROSPECTIVES.md` for the full series and reading order. It covers the nine
+seasons before this repository existed; `RETROSPECTIVE_2025.md` picks up where
+it ends.*
+
+---
+
 ## From Access To Podio To `vaysf`
 
 The 2024 Sports Fest season appears to have been the last year when the tournament operated primarily through Podio and Globiflow. That matters historically because Podio was not merely an old database that happened to be replaced. For VAY, it was the cloud bridge between the Microsoft Access era and the current ChMeetings + middleware + WordPress system.
