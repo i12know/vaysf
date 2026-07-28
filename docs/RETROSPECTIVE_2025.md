@@ -9,6 +9,12 @@ ChMeetings pulling its API out from under a working system. This one explains
 what that system was, how it got built, and why so much of 2026's spring was
 spent paying its debts.*
 
+The central achievement of 2025 was not full automation. It was turning an
+operation carried in screens, spreadsheets, email threads, and one person's
+memory into a shared memory surface: this participant exists; this church owns
+the record; these are the sports and validation issues; this approval is pending.
+That first act of making the work legible is what later automation had to build on.
+
 ---
 
 ## By the numbers
@@ -110,11 +116,17 @@ WordPress owning tokens and email. All five survive intact into 2026 — the 202
 retrospective's "What Held" section is, almost entirely, a list of decisions made
 before this repository existed.
 
+The 1.0 release also gave Sports Fest something it had not previously possessed:
+a shared place to remember operational truth. The bridge could now hold a
+participant, church ownership, sports, validation issues, roster membership, and
+pastoral approval state together. It did not eliminate the clipboard world, but
+it began replacing scattered recollection with a common record.
+
 It arrived fully formed because it had been fully designed elsewhere. That is
 the strength and the weakness in the same sentence.
 
 **What this act was really about:** a good architecture arriving without its
-reasoning attached.
+reasoning attached, and manual operations gaining their first shared memory.
 
 ---
 
@@ -153,6 +165,12 @@ place this system stopped assuming everyone using it was acting in good faith."
 2025 is the year it could not yet reliably serve users acting in *perfect* good
 faith.
 
+These failures also show that validation and approval were never merely technical
+correctness. They were communication among staff, pastors, church reps, and the
+registration source of truth. A consent error could hide a minor from pastoral
+review. A pagination defect could erase a church from an email. A membership
+flag could misstate the very fact a pastor was being asked to affirm.
+
 Two other things stand out about how this work was done.
 
 **Debugging ran on human reports.** Branch names are the evidence:
@@ -161,8 +179,9 @@ Two other things stand out about how this work was done.
 participants — *"Check for Jasen Pham and Matthew Demegillo who registered for
 Scripture Memorization."* There was no monitoring, no reconciliation report, no
 audit command. A problem became visible when a person noticed and said something.
-The 2026 Church Team export becoming a "diagnostic instrument" is the direct
-answer to this, and it is why that mattered.
+The system learned Sports Fest by following the smoke. The 2026 Church Team
+export becoming a "diagnostic instrument" is the direct answer to this, and it is
+why that mattered.
 
 **The operator was the integration layer.** `run-me.bat` is two lines:
 
@@ -180,12 +199,20 @@ was a manual check. Per ChMeetings ticket #11991, forms that failed to
 auto-link had to be connected by hand. The Photo column shipped with an
 instruction to press Ctrl+H in Excel to repair the formula the exporter wrote.
 
+Excel deserves a precise judgment here. As an **output and review surface**, it
+was humane and effective: Church Reps could inspect, annotate, forward, compare,
+and understand a workbook without learning the system internals. As a **workflow
+stage**, where a generated file had to be repaired, changed, and re-imported, it
+was fragile. Excel was both mercy and debt, depending on which side of that line
+it occupied.
+
 And underneath it all, `backend_connector.py` opened Chrome — Selenium login,
 `WebDriverWait`, `find_element(By.ID, "password")`, and a `save_screenshot()`
 call for when authentication failed. Screenshots as a debugging channel.
 
 **What this act was really about:** a system that worked, provided a person
-stood in the middle of it.
+stood in the middle of it — but one that was already making that person's hidden
+work visible enough to improve.
 
 ---
 
@@ -262,26 +289,31 @@ Nearly everything structural, which is the striking part.
 - **Mock-mode testing with a `LIVE_TEST` toggle.** 23 tests became 889 on the same convention, laid down in v0.6 on March 15, 2025.
 - **`church_code` as the human-readable identifier**, with `church_id` kept as the database key.
 - **WordPress owning tokens and email**, moved there in v0.4 for "better process flow" — the decision that later let WordPress absorb the entire event-day arena.
-- **The Excel export as staff-facing artifact**, which in 2026 grew into a diagnostic instrument.
+- **The Excel export as a staff-facing artifact.** As an output and review surface, it met volunteers where they were; in 2026 it grew into a diagnostic instrument.
+- **The first shared memory surface.** Participants, churches, rosters, validation, and approval state became parts of one operational record instead of facts scattered across screens and personal memory.
 
 ## What bent
 
 - **Selenium**, present from the first connector commit, removed root and branch in 2026's v1.05.
-- **Excel as a workflow stage** rather than an output — church intake, group assignment, and consent all round-tripped through a human and a spreadsheet.
+- **Excel as a workflow stage rather than an output.** Church intake, group assignment, and consent all round-tripped through a human and a spreadsheet. The same format that served people well for review became risky when treated as an intermediate source of truth.
 - **Pagination**, wrong in #32 in May 2025 and still wrong enough to need rebuilding around `total_count` in #58 a year later.
 - **Commit hygiene** — `"asdf"`, `"Config"`, `"No code changes made."`, `"Simple change to test push permission"`, the same fix committed twice under one message, `"Total Denided"` corrected by a follow-up commit.
 - **Release discipline**, which did not exist: no tags, no CI, no lint, a version declared eight months before it was finalized.
 - **The dependency list**, which shipped `uuid>=1.30` on day one.
+- **Operational observability.** Without reconciliation reports or audit commands, human complaints and named-person investigations became the monitoring system.
 
 ## What we learned
 
 1. **Designing outside version control costs the reasoning, not the design.** The architecture was right and survived two seasons. Why the schema went 11 tables to 8 is simply gone.
-2. **A commit message that does not match its diff is a workflow smell.** Files pasted one at a time produce messages describing intent rather than content.
-3. **Manual re-import loops are where seasons are lost.** "Generate a spreadsheet, then upload it yourself" is a step that fails silently and only on the busiest day.
-4. **Without monitoring, your bug tracker is a list of people who complained.** Branches named after participants are a diagnostic gap, not a naming convention.
-5. **Agents need a legible repository more than they need a better model.** Codex was here in June 2025 and fixed README links, because that was all the repository could describe of itself.
-6. **Annual software still needs a heartbeat.** Eight dormant months turned a vendor API change into a 77-commit emergency.
-7. **Tag the thing that ran the event.** Four releases ran a real tournament and none of them are findable in git.
+2. **The first step away from manual work is faithful capture, not complete automation.** Before the system could optimize Sports Fest, it had to name and preserve the workflow people were already carrying.
+3. **A commit message that does not match its diff is a workflow smell.** Files pasted one at a time produce messages describing intent rather than content.
+4. **Excel is a bridge when it is an output and a trap when it becomes a workflow stage.** A workbook can be the right human interface while manual re-import still creates the season's most fragile handoffs.
+5. **Validation is communication, not merely correctness.** Consent, membership, eligibility, approval, and roster state shape what pastors and church reps are being told about real people.
+6. **Without monitoring, your bug tracker is a list of people who complained.** Branches named after participants are a diagnostic gap, not a naming convention.
+7. **Narrow repair tools matter.** A one-participant sync or targeted investigation is operationally safer than rerunning the whole universe to diagnose one record.
+8. **Agents need a legible repository more than they need a better model.** Codex was here in June 2025 and fixed README links, because that was all the repository could describe of itself.
+9. **Annual software still needs a heartbeat.** Eight dormant months turned a vendor API change into a 77-commit emergency.
+10. **Tag the thing that ran the event.** Four releases ran a real tournament and none of them are findable in git.
 
 ---
 
@@ -321,6 +353,14 @@ before this repository existed, and required no structural change to absorb
 scheduling, badges, scoresheets, live scoring, and public advancement displays a
 year later. That is an unusually good call, made early, by someone thinking
 carefully without a tool watching.
+
+Nor should the manual character of 2025 be mistaken for absence of progress.
+The system learned the real tournament before it tried to optimize it. It
+translated hidden labor into fields, rules, states, exports, and repair commands.
+Excel made the operation more visible to volunteers. WordPress gave approval a
+home. Validation turned judgment into a conversation the system could preserve.
+The bridge's first victory was not replacing the operator; it was reducing how
+much of Sports Fest had to exist only in the operator's head.
 
 What 2025 lacked was not judgment. It was **legibility and leverage**. The
 decisions were sound and unrecorded. The operator was load-bearing and
