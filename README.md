@@ -4,6 +4,8 @@
 
 The Sports Fest ChMeetings Integration is a comprehensive system for managing the Vietnamese Alliance Youth (VAY) Sports Festival participant registration, validation, and approval. It bridges ChMeetings (for registration and profile management) with WordPress (for operations) using a Windows-based Python middleware.
 
+> **New here?** Read [**Beyond the Tournament: A Vision for Sports Fest Discipleship**](docs/VISION_DISCIPLESHIP.md) first. It explains why this project exists and what we hope it becomes — the tournament is the front porch, not the destination. If that resonates, we would love your help.
+
 ### Key Features
 
 - Complete registration management through ChMeetings
@@ -129,6 +131,7 @@ For detailed setup and usage instructions, see the [Installation Guide](docs/INS
 
 ## Documentation
 
+- [Vision: Beyond the Tournament](docs/VISION_DISCIPLESHIP.md) — why this project exists, and the discipleship future it is building toward
 - [Chatable DeepWiki](https://deepwiki.com/i12know/vaysf) powerered by [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/i12know/vaysf)
 - [Installation Guide](docs/INSTALLATION.md)
 - [Architecture Overview](docs/ARCHITECTURE.md)
@@ -139,6 +142,10 @@ For detailed setup and usage instructions, see the [Installation Guide](docs/INS
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Contributing](docs/CONTRIBUTING.md)
 - [2026 Architecture Review](docs/ARCHITECTURE_REVIEW_2026.md)
+
+### Project history
+
+- [Retrospectives index](docs/RETROSPECTIVES.md) — narrative history of the system from 1998 to 2026, covering the Access/Office era, the Podio/Globiflow years, the 2025 rebuild, and the 2026 season. Start here for *how the system got this way*; see the Architecture Review for *what it is now*.
 
 ## Project Status
 

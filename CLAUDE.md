@@ -56,7 +56,13 @@ vaysf/
 │   ├── SEASON_TRANSITION.md
 │   ├── CHMEETINGS_API_MIGRATION.md
 │   ├── TROUBLESHOOTING.md
-│   └── CONTRIBUTING.md
+│   ├── CONTRIBUTING.md
+│   ├── RETROSPECTIVES.md            # index + reading order for the five retrospectives below
+│   ├── RETROSPECTIVE_ACCESS_1998_2015.md # Access/Office era, first digital Sports Fest
+│   ├── RETROSPECTIVE_PODIO_2016_2024.md  # Podio/Globiflow era, pre-repo history
+│   ├── RETROSPECTIVE_2025.md        # season one: the rebuild off Podio
+│   ├── RETROSPECTIVE_2026.md        # canonical 2026 season record
+│   └── RETROSPECTIVE_2026_COMPANION.md   # independent 2026 reflection
 ├── middleware/                      # Python, all middleware code lives here
 │   ├── .env.template                # committed; real .env is gitignored
 │   ├── requirements.txt
