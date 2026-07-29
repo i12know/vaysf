@@ -434,4 +434,4 @@ That is the real distance traveled between the two seasons.
 *Thus spake the Master: “Write the work plainly, that the next steward may run; 
 record the journey, that a generation yet to come may remember.” (Ha.2:2, Ps.102:18)*
 
-Up to [RETROSPECTIVES.md](RETROSPECTIVES.md), back to [GitHub Era, 1st year 2025](RETROSPECTIVE_2025.md), or forward to [GitHub Ere, 2nd year 2026](RETROSPECTIVE_2026.md)?
+Up to [RETROSPECTIVES.md](RETROSPECTIVES.md), back to [GitHub Era, 1st year 2025](RETROSPECTIVE_2025.md), or forward to [GitHub Era, 2nd year 2026](RETROSPECTIVE_2026.md)?
