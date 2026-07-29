@@ -6,9 +6,7 @@ At first glance, `vaysf` is software for running a sports tournament.
 
 It manages registrations, churches, rosters, approvals, schedules, badges, score sheets, results, and standings. It helps coordinators know where teams should be, helps church representatives find problems before event day, and helps spectators follow what is happening.
 
-All of that matters.
-
-But it is not the deepest reason this project exists.
+All of that matters. But it is not the deepest reason this project exists.
 
 *Sports Fest has never been only about sports.* For decades, it has created a place where churches gather, young people reconnect, friendships form, leaders emerge, and people who may be distant from church step back into Christian community.
 
