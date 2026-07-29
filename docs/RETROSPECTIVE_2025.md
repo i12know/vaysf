@@ -4,7 +4,7 @@
 2025-07-17, the CHANGELOG's version history back to 2025-03-10, and the shape
 of what 2026 inherited.*
 
-*Drafted by Claude; reviewed and approved by Bumble.*
+*Drafted by Claude; reviewed and approved by Bumble 07/28/2026.*
 
 *This sits between two other records. `RETROSPECTIVE_PODIO_2016_2024.md` covers
 the nine seasons before this repository existed, when Sports Fest ran on Podio
@@ -57,8 +57,9 @@ The most important fact about the pre-2026 codebase is that its design does not
 appear in the repository at all.
 
 Two things sit outside git here, and they are different in kind. The first is
-**nine seasons of prior operation**: from roughly 2016 through 2024, Sports Fest
-ran on Podio and Globiflow, and before that on Microsoft Access. That system knew
+**nine seasons of prior operation**: from roughly 2016 through 2024, [Sports Fest
+ran on Podio and Globiflow](RETROSPECTIVE_PODIO_2016_2024.md), and before that 
+another [two decades on Microsoft Access](RETROSPECTIVE_ACCESS_1998_2015.md). That system knew
 what the tournament was — churches, athletes, pastors, church reps, signatures,
 medical releases, badges, rosters, score sheets, gyms, fees, deadlines,
 volunteers, Bible verses — and it is documented separately in
@@ -87,8 +88,9 @@ those versions predates version control:
 | 1.00 | Mar 28 | Consolidated into final implementation |
 
 Eighteen days of architecture — including decisions still load-bearing today —
-happened in conversation and landed as prose. The schema going from 11 tables to
-8 in one day, email relocating tiers on another, `church_code` displacing
+happened in many conversations with GPT 4 and Claude 3.5 (both verbal and textual)
+during recovery from a retina detachment and landed as prose. The schema going from 11
+tables to 8 in one day, email relocating tiers on another, `church_code` displacing
 `church_id` as the operator-facing identifier on a third: these are real design
 iterations with real reasoning behind them, and none of that reasoning survives.
 Only the conclusions do.
@@ -119,7 +121,9 @@ Fifteen commits on March 28 deposited roughly 13,000 lines: docs first
 (ARCHITECTURE, CONTRIBUTING, INSTALLATION, TROUBLESHOOTING, USAGE), then config,
 then the connectors, then a single "RC commit for 1.0 release" carrying 8,800+
 lines — the entire WordPress plugin, the validation package, the sync package,
-and all the tests, in one commit.
+and all the tests, in one commit. It was the first time I used GitHub after
+decades-long absence from SourceForge. Google's AIstudio walked me through
+VSCode installation and then the first commit on GitHub.
 
 The transcription shows its seams, and they are worth recording precisely
 because they are the fingerprints of the workflow:
@@ -143,7 +147,8 @@ tiers with narrow jobs. JSON-driven validation with Pydantic models. Mock-mode
 tests with a `LIVE_TEST` toggle. `church_code` as the human-readable key.
 WordPress owning tokens and email. All five survive intact into 2026 — the 2026
 retrospective's "What Held" section is, almost entirely, a list of decisions made
-before this repository existed.
+before this repository existed. I have never coded in Python before, but both ChatGPT
+and Claude agreed that this would be the right choice for what we need.
 
 The 1.0 release re-established, on a new stack, something Sports Fest had held
 since 2016 and could not afford to lose: a shared place to remember operational
@@ -163,9 +168,9 @@ It arrived fully formed because it had been fully designed elsewhere — and
 because the domain had been understood for nine years before that. That is the
 strength and the weakness in the same sentence.
 
-**What this act was really about:** a good architecture arriving without its
-reasoning attached, and a decade-old operation beginning its move onto rails that
-could be versioned.
+**What this act was really about:** a good architecture arriving with years of
+secular work experience attached, and a decade-old operation beginning its move 
+onto rails that could be versioned.
 
 ---
 
@@ -229,21 +234,22 @@ python main.py sync --type full
 python main.py export-church-teams
 ```
 
-Everything else was hands. `USAGE.md` states it plainly at line 146: *"After
+Everything else was manual. `USAGE.md` states it plainly at line 146: *"After
 running this command, you should import the generated file into ChMeetings (or
 manually add the people to groups)."* Group assignment generated a spreadsheet
 for a human to re-upload. Churches entered through
 `sync-churches --file "data/Church Application Form.xlsx"`. Consent verification
-was a manual check. Per ChMeetings ticket #11991, forms that failed to
+was a manual check. Per ChMeetings' ticket #11991, forms that failed to
 auto-link had to be connected by hand. The Photo column shipped with an
-instruction to press Ctrl+H in Excel to repair the formula the exporter wrote.
+instruction to press Ctrl+H in Excel to manually load the formula the exporter 
+wrote to maintain compatibility with pre-365 versions of Excel.
 
-Excel deserves a precise judgment here. As an **output and review surface**, it
-was humane and effective: Church Reps could inspect, annotate, forward, compare,
-and understand a workbook without learning the system internals. As a **workflow
-stage**, where a generated file had to be repaired, changed, and re-imported, it
-was fragile. Excel was both mercy and debt, depending on which side of that line
-it occupied.
+The Excel spreadsheets Church_Team_Status_*.xlsx files deserve a precise judgment 
+here. As an **output and review surface**, it was humane and effective: Church 
+Reps could inspect, annotate, forward, compare, and understand a workbook without 
+learning the system internals. As a **workflow stage**, where a generated file 
+had to be repaired, changed, and re-imported, it was fragile. Excel was both 
+mercy and debt, depending on which side of that line it occupied.
 
 And underneath it all, `backend_connector.py` opened Chrome — Selenium login,
 `WebDriverWait`, `find_element(By.ID, "password")`, and a `save_screenshot()`
@@ -257,9 +263,8 @@ work visible enough to improve.
 
 ## Act III — The first agent (June 2025)
 
-Your recollection is that this era ran on manual copy-paste with no agentic
-tooling. The first half is right, and the evidence is stronger than memory
-suggests. The second half is not quite.
+I recollect that this era ran on manual copy-paste with no agentic tooling. The 
+evidence has some exceptions of that as memory suggests.
 
 Four merged branches carry the `codex/` prefix:
 
@@ -274,7 +279,7 @@ Agentic tooling entered this repository in **June 2025**, not 2026. But look at
 the scope: fix README links, fix a config default for tests, correct a person ID
 in a test, find one participant's approval email. Small, bounded, verifiable in
 seconds. Meanwhile the 2,374-line `rest-api.php` and the 554-line sync manager
-were hand-carried.
+were hand-carried. This was Codex's first release, and I was just kicking the tires.
 
 That is the honest characterization of the era. Not "no agents" — rather, agents
 were trusted with errands while the load-bearing work stayed manual. There was
@@ -300,7 +305,7 @@ Eight months. Zero commits.
 The last 2025 commit fixes gendered team mapping four days before the event. Then
 the repository stops. `CHANGELOG.md` declares *"Version 1.04 (2025-07-17)"* — but
 the commit that actually finalizes v1.04 is dated **2026-03-13**, eight months
-after the version it closes. The season ended mid-sentence and the note was
+after the version it closes. The season ended mid-sentence, and the note was
 written the following spring.
 
 Nothing was tagged. There is no `v1.04` in `git tag` — the first tag in this
@@ -343,17 +348,17 @@ Nearly everything structural, which is the striking part.
 
 ## What we learned
 
-1. **Designing outside version control costs the reasoning, not the design.** The architecture was right and survived two seasons. Why the schema went 11 tables to 8 is simply gone.
+1. **Designing outside version control costs the reasoning, not the design.** The architecture was right and survived two seasons. Why the schema went from 11 tables to 8 is simply gone.
 2. **The first step away from manual work is faithful capture, not complete automation.** Before the system could optimize Sports Fest, it had to name and preserve the workflow people were already carrying.
 3. **A commit message that does not match its diff is a workflow smell.** Files pasted one at a time produce messages describing intent rather than content.
 4. **Excel is a bridge when it is an output and a trap when it becomes a workflow stage.** A workbook can be the right human interface while manual re-import still creates the season's most fragile handoffs.
 5. **Validation is communication, not merely correctness.** Consent, membership, eligibility, approval, and roster state shape what pastors and church reps are being told about real people.
 6. **Without monitoring, your bug tracker is a list of people who complained.** Branches named after participants are a diagnostic gap, not a naming convention.
 7. **Narrow repair tools matter.** A one-participant sync or targeted investigation is operationally safer than rerunning the whole universe to diagnose one record.
-8. **Agents need a legible repository more than they need a better model.** Codex was here in June 2025 and fixed README links, because that was all the repository could describe of itself.
+8. **Agents need a legible repository more than they need a better model.** Codex was here in June 2025 and fixed README links, because new tools are often not mature.
 9. **Annual software still needs a heartbeat.** Eight dormant months turned a vendor API change into a 77-commit emergency.
-10. **Tag the thing that ran the event.** Four releases ran a real tournament and none of them are findable in git.
-11. **A first season is not a first system.** 2025 replaced a decade-matured incumbent. Judged as a greenfield build it looks thin; judged as year one of a migration off nine years of Podio and Globiflow, the surprise is how much of the domain it already had right.
+10. **Tag the thing that ran the event.** Four releases ran a real tournament, and none of them are findable in git.
+11. **A first season is not a first system.** 2025 replaced a decade-matured incumbent. Judged as a greenfield build, it looks thin; judged as year one of a migration off nine years of Podio and Globiflow, the surprise is how much of the domain it already had right.
 
 ---
 
@@ -425,3 +430,8 @@ that shift: **2026 can be narrated because 2026 wrote things down.** 2025 has to
 be reconstructed from filename extensions and mismatched commit messages.
 
 That is the real distance traveled between the two seasons.
+
+*Thus spake the Master: “Write the work plainly, that the next steward may run; 
+record the journey, that a generation yet to come may remember.” (Ha.2:2, Ps.102:18)*
+
+Up to [RETROSPECTIVES.md](RETROSPECTIVES.md), back to [GitHub Era, 1st year 2025](RETROSPECTIVE_2025.md), or forward to [GitHub Ere, 2nd year 2026](RETROSPECTIVE_2026.md)?
