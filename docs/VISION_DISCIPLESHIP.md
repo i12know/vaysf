@@ -14,7 +14,7 @@ Some participants arrive because they love basketball, volleyball, badminton, ru
 
 *The tournament is not the ministry’s destination. It is the front porch.*
 
-The long-term vision for `vaysf` is therefore larger than building better tournament software. We are building the technological foundation for a district-wide discipleship network—one that happens to express itself through sports.
+The long-term vision for `vaysf` is therefore larger than building better tournament software. We are building the technological foundation for a district-wide discipleship network—one that happens to express itself through sports. If you don't need more convincing, jump to [RETROSPECTIVE_2026.md](RETROSPECTIVE_2026.md) and see what is needed for 2027. But if you need more info, read on...
 
 ## The Question That Should Guide Us
 
