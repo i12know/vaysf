@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+_Nothing yet — the next changes land here._
+
+## Version 1.1.12 (2026-07-27) — Sports Fest 2026 playoff and results-desk hardening
+
+Consolidates all middleware and WordPress-plugin work since v1.12 (2026-07-18):
+event-day results/schedule polish (Pools Progress review, timezone and slot
+fallback fixes, negative-score handling, Results Desk dead-code cleanup), the
+public live-schedule "Upcoming games only" filter, and the playoff advancement
+series — head-to-head tiebreak and Track & Field/Tug-of-War placement entry
+(#207, #209), stage/game-key filtering for `generate-scoresheets` (#348), and
+WordPress plugin hotfixes 1.1.00 through 1.1.12 covering playoff placement,
+the public `[vaysf_advancement]` shortcode, and Coed Soccer/Bible Challenge
+playoff setup. Plugin header/version progressed from 1.0.46 to 1.1.12
+(`plugins/vaysf.zip` matches). Subsections below are kept in
+reverse-chronological order as originally logged.
+
 ### Advancement confirmation, head-to-head tiebreak, and Track & Field / Tug-of-War placement entry (#207, #209)
 
 Builds on the pool progress rankings review shipped in #320–#323 (below).
