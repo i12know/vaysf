@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-_Nothing yet — the next changes land here._
+- Hotfix 1.1.13: Added a Sports Fest Admin setting and `[vaysf_badges display="..."]`
+  override for public badge display. The default `list` mode replaces photo
+  badge images with an approved-participants table showing names, primary
+  sport, secondary sport, and other events; `photos` restores the existing
+  badge gallery for future seasons.
 
 ## Version 1.1.12 (2026-07-27) — Sports Fest 2026 playoff and results-desk hardening
 

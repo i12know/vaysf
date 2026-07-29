@@ -258,11 +258,13 @@ class VAYSF_Shortcodes {
             'church_code' => '',
             'columns' => 4,
             'show_names' => 'yes',
+            'display' => 'setting',
         ), $atts);
 
         $church_code = $this->resolve_badges_church_code($atts['church_code']);
         $columns = max(1, min(6, absint($atts['columns'])));
         $show_names = $this->is_truthy($atts['show_names']);
+        $display_mode = $this->resolve_badge_display_mode($atts['display']);
 
         ob_start();
 
@@ -280,6 +282,12 @@ class VAYSF_Shortcodes {
         }
 
         $participants = $this->get_badges_participants($church_code);
+        if ($display_mode === 'list') {
+            $this->render_badges_participant_list($church, $church_code, $participants);
+            $this->include_frontend_styles();
+            return ob_get_clean();
+        }
+
         $badges = array();
         $missing = 0;
         foreach ($participants as $participant) {
@@ -1247,7 +1255,7 @@ class VAYSF_Shortcodes {
 
         return $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT participant_id, chmeetings_id, church_code, first_name, last_name, primary_sport
+                "SELECT participant_id, chmeetings_id, church_code, first_name, last_name, primary_sport, secondary_sport, other_events
                 FROM {$wpdb->prefix}sf_participants
                 WHERE church_code = %s AND approval_status = %s
                 ORDER BY last_name ASC, first_name ASC, participant_id ASC",
@@ -1256,6 +1264,91 @@ class VAYSF_Shortcodes {
             ),
             ARRAY_A
         );
+    }
+
+    /**
+     * Resolve whether the public badge shortcode should show photos or a text list.
+     *
+     * @param string $display_attr Shortcode display attribute
+     * @return string "photos" or "list"
+     */
+    private function resolve_badge_display_mode($display_attr) {
+        $display = strtolower(trim((string) $display_attr));
+        if (in_array($display, array('photo', 'photos', 'gallery'), true)) {
+            return 'photos';
+        }
+        if (in_array($display, array('list', 'names', 'participants'), true)) {
+            return 'list';
+        }
+
+        $setting = strtolower(trim((string) get_option('vaysf_badge_display_mode', 'list')));
+        return in_array($setting, array('photos', 'list'), true) ? $setting : 'list';
+    }
+
+    /**
+     * Render approved participants without exposing hosted badge image URLs.
+     *
+     * @param array $church Church row
+     * @param string $church_code Church code
+     * @param array $participants Participant rows
+     */
+    private function render_badges_participant_list($church, $church_code, $participants) {
+        echo '<div class="vaysf-badges vaysf-badges-list">';
+        echo '<div class="vaysf-badges-heading">';
+        echo '<h2>' . esc_html($church['church_name']) . ' (' . esc_html($church_code) . ')</h2>';
+        echo '<p>' . esc_html(sprintf(
+            _n('%d approved participant', '%d approved participants', count($participants), 'vaysf'),
+            count($participants)
+        )) . '</p>';
+        echo '</div>';
+
+        if (empty($participants)) {
+            echo '<p class="vaysf-badges-empty">' . esc_html__('No approved participants are available for this church yet.', 'vaysf') . '</p>';
+            echo '</div>';
+            return;
+        }
+
+        echo '<table class="vaysf-badges-list-table">';
+        echo '<thead><tr>';
+        echo '<th>' . esc_html__('Name', 'vaysf') . '</th>';
+        echo '<th>' . esc_html__('Primary Sport', 'vaysf') . '</th>';
+        echo '<th>' . esc_html__('Secondary Sport', 'vaysf') . '</th>';
+        echo '<th>' . esc_html__('Other Events', 'vaysf') . '</th>';
+        echo '</tr></thead>';
+        echo '<tbody>';
+        foreach ($participants as $participant) {
+            $name = trim(($participant['first_name'] ?? '') . ' ' . ($participant['last_name'] ?? ''));
+            echo '<tr>';
+            echo '<td class="vaysf-badges-list-name" data-label="' . esc_attr__('Name', 'vaysf') . '">' . esc_html($name ?: __('Unnamed participant', 'vaysf')) . '</td>';
+            echo '<td data-label="' . esc_attr__('Primary Sport', 'vaysf') . '">' . esc_html($this->format_badge_sport_value($participant['primary_sport'] ?? '')) . '</td>';
+            echo '<td data-label="' . esc_attr__('Secondary Sport', 'vaysf') . '">' . esc_html($this->format_badge_sport_value($participant['secondary_sport'] ?? '')) . '</td>';
+            echo '<td data-label="' . esc_attr__('Other Events', 'vaysf') . '">' . esc_html($this->format_badge_other_events($participant['other_events'] ?? '')) . '</td>';
+            echo '</tr>';
+        }
+        echo '</tbody></table>';
+        echo '</div>';
+    }
+
+    /**
+     * Format one sport cell for the public participant list.
+     *
+     * @param string $value Raw sport value
+     * @return string
+     */
+    private function format_badge_sport_value($value) {
+        $value = trim((string) $value);
+        return $value === '' ? '-' : $value;
+    }
+
+    /**
+     * Format comma-separated "other events" for the public participant list.
+     *
+     * @param string $value Raw other_events value
+     * @return string
+     */
+    private function format_badge_other_events($value) {
+        $events = array_filter(array_map('trim', explode(',', (string) $value)));
+        return empty($events) ? '-' : implode(', ', $events);
     }
 
     /**
@@ -1788,6 +1881,32 @@ class VAYSF_Shortcodes {
                     gap: 18px;
                 }
 
+                .vaysf-badges-list-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-top: 12px;
+                    font-size: 14px;
+                }
+
+                .vaysf-badges-list-table th,
+                .vaysf-badges-list-table td {
+                    border-bottom: 1px solid #e4e7ec;
+                    padding: 10px 12px;
+                    text-align: left;
+                    vertical-align: top;
+                }
+
+                .vaysf-badges-list-table th {
+                    background: #f8fbff;
+                    color: #34495e;
+                    font-weight: 700;
+                }
+
+                .vaysf-badges-list-name {
+                    font-weight: 700;
+                    color: #243b53;
+                }
+
                 .vaysf-badge-card {
                     margin: 0;
                     break-inside: avoid;
@@ -1910,6 +2029,40 @@ class VAYSF_Shortcodes {
 
                     .vaysf-badges-grid {
                         grid-template-columns: repeat(2, minmax(0, 1fr));
+                    }
+
+                    .vaysf-badges-list-table,
+                    .vaysf-badges-list-table thead,
+                    .vaysf-badges-list-table tbody,
+                    .vaysf-badges-list-table tr,
+                    .vaysf-badges-list-table th,
+                    .vaysf-badges-list-table td {
+                        display: block;
+                    }
+
+                    .vaysf-badges-list-table thead {
+                        display: none;
+                    }
+
+                    .vaysf-badges-list-table tr {
+                        border: 1px solid #e4e7ec;
+                        margin-bottom: 10px;
+                        padding: 10px 12px;
+                    }
+
+                    .vaysf-badges-list-table td {
+                        border: 0;
+                        display: flex;
+                        gap: 12px;
+                        justify-content: space-between;
+                        padding: 3px 0;
+                    }
+
+                    .vaysf-badges-list-table td::before {
+                        content: attr(data-label);
+                        flex: 0 0 120px;
+                        color: #667085;
+                        font-weight: 700;
                     }
                 }
 

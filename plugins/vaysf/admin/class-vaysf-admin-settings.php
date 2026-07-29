@@ -27,6 +27,11 @@ class VAYSF_Admin_Settings extends VAYSF_Admin_Page {
 			'sanitize_callback' => 'rest_sanitize_boolean'
 		));
         register_setting('vaysf_settings', 'vaysf_sports_fest_date');        
+        register_setting('vaysf_settings', 'vaysf_badge_display_mode', array(
+            'type' => 'string',
+            'default' => 'list',
+            'sanitize_callback' => array($this, 'sanitize_badge_display_mode')
+        ));
 
 		add_settings_field(
 			'vaysf_log_emails',
@@ -56,6 +61,14 @@ class VAYSF_Admin_Settings extends VAYSF_Admin_Page {
             'vaysf_sports_fest_date',
             'Sports Fest Date',
             array($this, 'display_field_sports_fest_date'),
+            'vaysf_settings',
+            'vaysf_section_event'
+        );
+
+        add_settings_field(
+            'vaysf_badge_display_mode',
+            'Public Badge Display',
+            array($this, 'display_field_badge_display_mode'),
             'vaysf_settings',
             'vaysf_section_event'
         );
@@ -378,5 +391,37 @@ class VAYSF_Admin_Settings extends VAYSF_Admin_Page {
         $value = get_option('vaysf_sports_fest_date', '2026-07-18');
         echo '<input type="date" id="vaysf_sports_fest_date" name="vaysf_sports_fest_date" value="' . esc_attr($value) . '" class="regular-text">';
         echo '<p class="description">The date of the Sports Fest event (stored as YYYY-MM-DD).</p>';
+    }
+
+    /**
+     * Display public badge display mode field
+     */
+    public function display_field_badge_display_mode() {
+        $value = get_option('vaysf_badge_display_mode', 'list');
+        ?>
+        <fieldset>
+            <label>
+                <input type="radio" name="vaysf_badge_display_mode" value="list" <?php checked($value, 'list'); ?>>
+                Participant list only
+            </label>
+            <br>
+            <label>
+                <input type="radio" name="vaysf_badge_display_mode" value="photos" <?php checked($value, 'photos'); ?>>
+                Photo badge gallery
+            </label>
+            <p class="description">Controls the public <code>[vaysf_badges]</code> shortcode and <code>/badges/</code> page. Participant list mode keeps names and sports visible without rendering hosted badge images.</p>
+        </fieldset>
+        <?php
+    }
+
+    /**
+     * Sanitize public badge display mode.
+     *
+     * @param string $value Raw setting value
+     * @return string
+     */
+    public function sanitize_badge_display_mode($value) {
+        $value = strtolower(trim((string) $value));
+        return in_array($value, array('photos', 'list'), true) ? $value : 'list';
     }
 }
