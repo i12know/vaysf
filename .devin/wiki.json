@@ -1,0 +1,301 @@
+{
+  "repo_notes": [
+    {
+      "content": "Notes for VAY Sports Fest integration system"
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "High-level introduction to the VAYSF Sports Fest management system: its purpose, three-tier architecture, key components, and how the major subsystems relate. Links to child pages for deeper coverage.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Getting Started",
+      "purpose": "Installation prerequisites, environment setup (.env configuration), running tests in mock vs. live mode, and the daily-run workflow for operators.",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "CLI Reference (main.py)",
+      "purpose": "Comprehensive reference for every sub-command exposed by middleware/main.py: sync, export-church-teams, build-schedule-workbook, solve-schedule, produce-schedule, generate-badges, check-consent, audit-team-groups, reset-season, import-approved-games, import-team-matchups, and maintenance utilities.",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Core Architecture",
+      "purpose": "Overview of the three-tier architecture (ChMeetings → Python Middleware → WordPress), data flow between tiers, key configuration constants, and the central Config class. Links to child pages for each tier.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Configuration and Constants",
+      "purpose": "Deep dive into middleware/config.py: sport types, formats, approval statuses, fee tiers, field ID mappings (SF_FIELD_IDS, CHM_FIELDS), venue estimation constants, solver seeds, and environment variable validation.",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "WordPress Plugin (VAYSF)",
+      "purpose": "Architecture of the plugins/vaysf WordPress plugin: database schema (sf_churches, sf_participants, sf_rosters, sf_validation_issues, sf_pool_advancement), REST API endpoints, admin dashboard, pastor approval workflow, insurance upload, shortcodes ([vaysf_live_schedule], [vaysf_advancement], [coordinator_score_entry]), and the event-day results workflow.",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "ChMeetings API Connector",
+      "purpose": "How the middleware communicates with ChMeetings: authentication, pagination, rate-limit backoff (429 retries), person CRUD operations, group membership management, photo uploads, and the PERSON_PUT_EXCLUDE/PERSON_PUT_WRITABLE_FIELDS safety filters.",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "WordPress REST Connector",
+      "purpose": "How the middleware communicates with the WordPress plugin REST API: participant CRUD, roster management, validation issue sync, approval token creation, email sending, retry/backoff logic, and the REST API controller classes (class-vaysf-rest-*.php).",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Data Synchronization",
+      "purpose": "Overview of the full sync pipeline: how data flows from ChMeetings through the middleware into WordPress and back. Links to child pages covering each sync subsystem.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "SyncManager and Participant Sync",
+      "purpose": "Detailed coverage of SyncManager orchestration and ParticipantSyncer: the full sync pipeline (mapping, status preservation, drift detection, membership integrity, validation, roster sync), approval status state machine, and the Pastor Approval workflow.",
+      "parent": "Data Synchronization",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Church and Group Management",
+      "purpose": "Church data sync from Excel (ChurchSyncer), group assignment logic (assign_people_to_church_team_groups), identity matching tiers, hydration engine, orphaned membership auditing, and the Lost-and-Found group fallback.",
+      "parent": "Data Synchronization",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Identity Drift and Consent Checking",
+      "purpose": "How the middleware detects hard vs. soft identity drift after approval, the membership-flip exploit prevention, consent checker (fuzzy matching of consent form exports to participants), and the consent-404 investigator for stale profile merges.",
+      "parent": "Data Synchronization",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Season Reset and Lifecycle Management",
+      "purpose": "The SeasonResetter utility: archiving custom fields to ChMeetings profile notes, clearing fields for the next season, idempotency checks, ChMeetings PUT full-replace constraints, and the season transition workflow documented in SEASON_TRANSITION.md.",
+      "parent": "Data Synchronization",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Validation Engine",
+      "purpose": "Overview of the three-layer validation framework (Individual, Team, Church) and how rules are loaded from JSON. Links to child pages for each layer and the doubles resolver.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Individual and Team Validators",
+      "purpose": "IndividualValidator (age calculation, consent, photo, partner checks), TeamValidator (min team size, non-member limits, reciprocal partner matching), ChurchValidator (entry quotas), and the summer_2026.json ruleset structure.",
+      "parent": "Validation Engine",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Doubles Resolver and Name Matching",
+      "purpose": "The canonical doubles resolver algorithm: two-phase partner matching (exact, unique candidate, reciprocal), UnresolvedRecord states (AmbiguousPartner, NonReciprocal, SelfPaired, PartnerNotFound), name normalization with parenthetical aliases, and stable entry_id generation.",
+      "parent": "Validation Engine",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Schedule Diagnostics and Conflict Audit",
+      "purpose": "The schedule_diagnostics module: detecting shared-athlete conflicts in the produced schedule, primary vs. secondary overlap classification, and the Conflict-Audit report tab in the output workbook.",
+      "parent": "Validation Engine",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Scheduling System",
+      "purpose": "Overview of the multi-stage scheduling pipeline: Layer 1 planning, approved-games import, Stage-A gym allocation, Stage-B CP-SAT solving, and production output. Links to child pages for each stage.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Schedule Workbook Builder (Layer 1 Planning)",
+      "purpose": "ScheduleWorkbookBuilder class: generating the Schedule_Workbook Excel (Venue-Estimator, Pool-Assignment, Pod-Divisions, Court-Schedule-Sketch tabs), pool generation policies (2-game vs 3-game), serpentine fill, Bible Challenge no-repeat triplets, and the sidecar injection pattern into ChurchTeamsExporter.",
+      "parent": "Scheduling System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Gym Allocator (Stage A)",
+      "purpose": "The GymAllocator greedy pre-allocation: GymBlock and AllocationDecision data structures, scarcity-aware mode priority, gym selection heuristics (specialization, switch penalty, capacity), physical window fragmentation, and the venue_input.xlsx template.",
+      "parent": "Scheduling System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "CP-SAT Solver (Stage B)",
+      "purpose": "The scheduler.py CP-SAT engine: pool decomposition strategy, solve order (BC → Soccer → Gym Core → Racquet), constraints C1–C7 (assignment, resource uniqueness, team uniqueness, cross-pool avoidance, court routing, minimum rest, multi-slot), six-tier lexicographic objective, pinned playoff slots, and determinism via fixed random seed.",
+      "parent": "Scheduling System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Schedule Contracts, Approved Games, and Output Production",
+      "purpose": "Pydantic-based schedule_contracts validation (input and output), the approved_games.py importer for operator-authored workbooks (main schedule, Badminton, Soccer, Table Tennis), match_schedule_overrides.py visual grid parser, manual_matchups.py team assignment import, schedule_publisher.py diff/protect logic, planning_tabs.py workbook generation, master_schedule.py manual override parsing, output_report.py Master-Schedule grid rendering, and the produce-schedule command.",
+      "parent": "Scheduling System",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Reporting and Exports",
+      "purpose": "Overview of the reporting subsystem: church team Excel workbooks, multi-sport matrix, venue estimator, scoresheet generation, and badge generation. Links to child pages for each report type.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Church Teams Exporter",
+      "purpose": "ChurchTeamsExporter class: data aggregation pipeline (ChMeetings + WordPress join), Excel workbook tabs (Summary, Contacts-Status, Roster, Validation-Issues, Multi-Sport-Matrix), athlete fee calculation with timezone normalization, reverse partner suggestion lookup, and the force-resend approval workflow.",
+      "parent": "Reporting and Exports",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Athlete Badge Generation",
+      "purpose": "BadgeGenerator rendering pipeline (template, identity layer, QR block, dynamic event card stack), BadgeRunner orchestration (photo fetching with ChMeetings/WordPress fallback), SHA-256 fingerprinting for incremental renders, HMAC-based deterministic filenames, consent alert and minor status tags, font management, and badge hosting via WordPress REST API.",
+      "parent": "Reporting and Exports",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Scoresheet Generation and Data Maintenance",
+      "purpose": "The scoresheets.py PDF generation pipeline (basketball, soccer, volleyball, bible-challenge), --stage and --game-key filters for playoff scoresheets, bible_verse_sets.json integration, the photo_repair utility for correcting mismatched or missing participant photos, the chrome_export_vaysf_forms.py script for scraping ChMeetings form exports via Chrome remote debugging, and the consent-404 investigator for resolving stale profile merge references.",
+      "parent": "Reporting and Exports",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Event-Day Operations",
+      "purpose": "Overview of the WordPress-based event-day system: score entry, results desk, pool advancement, QF seeding, playoff preview, and the public-facing live schedule and advancement shortcodes. Links to child pages for each subsystem.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Coordinator Score Entry and Results Desk",
+      "purpose": "The coordinator-score-entry dashboard (tabbed interface: needs/submitted/assigned/qf-setup), sport-specific score forms (simple, three_team, volleyball, placement), vaysf_persist_score_result transaction pipeline, result revision audit trail, scoresheet scan file vault, and the Results Desk manager interface for reviewing disputed scores and confirming pool advancement.",
+      "parent": "Event-Day Operations",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Pool Progress, QF Seeding, and Playoff Advancement",
+      "purpose": "Pool standings calculation (W/L/diff/DoS tiebreaks for Basketball and Volleyball), head-to-head tiebreak resolution, coin-toss flip mechanism, cross-pool QF seeding (vaysf_results_desk_sort_pool_rankings), Bible Challenge Top-9 semifinal matchup assignment, playoff-preview builders, vaysf_apply_playoff_advancement_from_result automatic placeholder resolution, and the [vaysf_advancement] public shortcode.",
+      "parent": "Event-Day Operations",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Testing Infrastructure",
+      "purpose": "Overview of the pytest-based test suite: mock vs. live vs. live-mutation modes, conftest fixtures, test data files, and the TEST_PLAN_V105 document. Links to child pages for each major test area.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    }
+  ]
+}
