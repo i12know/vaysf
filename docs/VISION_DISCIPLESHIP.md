@@ -10,13 +10,11 @@ All of that matters.
 
 But it is not the deepest reason this project exists.
 
-Sports Fest has never been only about sports. For decades, it has created a place where churches gather, young people reconnect, friendships form, leaders emerge, and people who may be distant from church step back into Christian community.
+*Sports Fest has never been only about sports.* For decades, it has created a place where churches gather, young people reconnect, friendships form, leaders emerge, and people who may be distant from church step back into Christian community.
 
 Some participants arrive because they love basketball, volleyball, badminton, running, or competition. Some come because their friends invited them. Some grew up in church but have slowly drifted away. Some do not yet know Christ. Some will compete for a weekend and disappear unless someone notices them, remembers them, and follows up.
 
-The tournament is not the ministry’s destination.
-
-It is the front porch.
+*The tournament is not the ministry’s destination. It is the front porch.*
 
 The long-term vision for `vaysf` is therefore larger than building better tournament software. We are building the technological foundation for a district-wide discipleship network—one that happens to express itself through sports.
 
@@ -30,21 +28,17 @@ We should also ask:
 
 > Can Sports Fest help each participant move one step closer to Christ?
 
-That question changes how we design software.
+That question changes how we design software. Because...
 
-A registration record is no longer merely a row in a database. It represents a person known by a church.
+- A registration record is no longer merely a row in a database. It represents a person known by a church.
+- A roster is not merely a list of eligible players. It is a picture of relationships, pastoral responsibility, and belonging.
+- A badge is not merely an event credential. It connects a name and face to a church community.
+- A schedule is not merely the allocation of games. It creates opportunities for people to gather, serve, encourage, compete, reconcile, and worship.
+- A mobile notification is not merely a reminder that Court 3 begins at 10:15. It may also become an invitation to pray for another team, read a devotional, reconnect with a church leader, or take a next step after the event ends.
 
-A roster is not merely a list of eligible players. It is a picture of relationships, pastoral responsibility, and belonging.
+*Technology cannot make disciples.*
 
-A badge is not merely an event credential. It connects a name and face to a church community.
-
-A schedule is not merely the allocation of games. It creates opportunities for people to gather, serve, encourage, compete, reconcile, and worship.
-
-A mobile notification is not merely a reminder that Court 3 begins at 10:15. It may also become an invitation to pray for another team, read a devotional, reconnect with a church leader, or take a next step after the event ends.
-
-Technology cannot make disciples.
-
-But it can help the Church notice people, remember commitments, reduce administrative friction, and create more space for relationships.
+*But it can help the Church notice people, remember commitments, reduce administrative friction, and create more space for relationships.*
 
 ## From an Annual Event to a Year-Round Journey
 
@@ -116,7 +110,7 @@ The purpose is to help churches see people clearly enough to shepherd them faith
 
 The future architecture should not become one enormous application that tries to do everything. Each platform should serve a distinct ministry purpose.
 
-### ChMeetings: The Person and Church Record
+### [ChMeetings](https://chmeetings.com): The Person and Church Record - from [vay.chmeetings.com](https://vay.chmeetings.com)
 
 ChMeetings should remain the canonical system for people and their relationships to local churches.
 
@@ -133,7 +127,7 @@ ChMeetings should not merely store a Sports Fest registration. It should help th
 
 At the same time, Sports Fest must use this information carefully. Pastoral data is not tournament data by default. Access must be limited by role, purpose, and genuine ministry responsibility.
 
-### WordPress: The Public Ministry and Event Platform
+### [WordPress](https://wordpress.org): The Public Ministry and Event Platform - from [vaysm.org](https://sportsfest.vayhub.us)
 
 WordPress should continue developing into the shared ministry surface for Sports Fest.
 
@@ -158,7 +152,7 @@ During Sports Fest, it becomes the live operations board.
 
 Throughout the year, it can become the public discipleship and resource platform.
 
-### Middleware: The Trusted Orchestrator
+### Middleware: The Trusted Orchestrator - running on an operator's desktop, mostly as a local repo
 
 The `vaysf` middleware exists because no single vendor understands Sports Fest.
 
@@ -180,7 +174,7 @@ The middleware should understand the difference between:
 
 This layer must remain source-controlled, testable, observable, and documented. Future contributors should be able to understand why a rule exists, not merely discover that a script behaves a certain way.
 
-### A Mobile App: The Participant’s Field Companion
+### A Mobile App: The Participant’s Field Companion - (not yet existing)
 
 A future mobile app should not be imagined as merely a smaller version of the website.
 
@@ -264,7 +258,7 @@ In earlier eras, creating a custom system required either a large budget or a hi
 * a church packet generator
 * a discipleship-content recommendation
 
-This restores one of the great strengths of the Microsoft Access era: the system can evolve quickly in response to actual ministry needs.
+This restores one of the great strengths of [VAY-SM in the Microsoft Access era](RETROSPECTIVE_ACCESS_1998_2015.md): the system can evolve quickly in response to actual ministry needs.
 
 But now those improvements can also be:
 
@@ -439,45 +433,30 @@ Instead, they see:
 
 > Welcome back. Sports Fest was never the finish line.
 
-Some are invited to a youth gathering.
-
-Some receive a devotional connected to the weekend’s message.
-
-Some are introduced to a local church leader.
-
-Some are asked whether they would like prayer.
-
-Some are invited to serve next year.
-
-Some simply receive a reminder that the church remembers their name.
+* Some are invited to a youth gathering.
+* Some receive a devotional connected to the weekend’s message.
+* Some are introduced to a local church leader.
+* Some are asked whether they would like prayer.
+* Some are invited to serve next year.
+* Some simply receive a reminder that the church remembers their name.
 
 Months later, a person who first arrived as an outsider returns as a volunteer.
 
-A volunteer becomes a coach.
-
-A coach begins mentoring younger participants.
-
-A church representative becomes a ministry coordinator.
-
-A drifting believer reconnects with Christian community.
-
-A person who came for sports begins asking questions about Jesus.
+* A volunteer becomes a coach.
+* A coach begins mentoring younger participants.
+* A church representative becomes a ministry coordinator.
+* A drifting believer reconnects with Christian community.
+* A person who came for sports begins asking questions about Jesus.
 
 The software did not accomplish those things.
 
-God worked through His people.
-
-But the system helped those people notice, remember, communicate, organize, and follow through.
+*God worked through His people. But the system helped those people notice, remember, communicate, organize, and follow through.*
 
 That is the dream.
 
 ## Our North Star
 
-`vaysf` began as tournament middleware.
-
-It is becoming an operational platform.
-
-It may eventually become part of a much larger discipleship ecosystem.
+`vaysf` began as tournament middleware. It is becoming an operational platform. It may eventually become part of a much larger discipleship ecosystem.
 
 As the codebase grows, we should keep one question in front of every issue, pull request, feature, and architectural decision:
 
