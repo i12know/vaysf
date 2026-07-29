@@ -470,3 +470,5 @@ the underlying truth does not yet exist.
 
 2026 showed that this is possible. It also showed exactly what has to be built
 next.
+
+Up to [RETROSPECTIVES.md](RETROSPECTIVES.md), back to [GitHub Era, 2nd year 2026](RETROSPECTIVE_2026.md), or forward to [the Discipleship Vision of vaysf](VISION_DISCIPLESHIP.md)?
