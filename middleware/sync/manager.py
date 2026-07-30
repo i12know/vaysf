@@ -599,7 +599,11 @@ class SyncManager:
                 failed_count += 1
                 logger.warning(f"Failed to add participant ChM_ID {chm_id} to group {group_id}.")
 
-        logger.info(f"API sync completed: {added_count} added, {failed_count} failed, {marked_synced_count} marked synced.")
+        logger.info(
+            f"API sync completed: {added_count} added, {failed_count} failed, "
+            f"{marked_synced_count} marked synced, {skipped_already_synced} skipped "
+            "(no unsynced approval record)."
+        )
         return failed_count == 0
 
     def _sync_approvals_via_excel(

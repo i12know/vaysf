@@ -2140,11 +2140,21 @@ def test_sync_approvals_skips_participants_without_unsynced_approval(sync_manage
     )
     mocker.patch("sync.manager.Config.APPROVED_GROUP_NAME", "2026 Sports Fest")
 
-    result = sync_manager.sync_approvals_to_chmeetings()
+    messages = []
+    from loguru import logger as loguru_logger
+    sink_id = loguru_logger.add(lambda msg: messages.append(msg), level="INFO")
+    try:
+        result = sync_manager.sync_approvals_to_chmeetings()
+    finally:
+        loguru_logger.remove(sink_id)
 
     assert result is True
     mock_add.assert_called_once_with("999", "CHM2")
     mock_update.assert_called_once_with(20, {"synced_to_chmeetings": True})
+    # closes #66: the added/marked-synced gap must be visible, not silent
+    assert any(
+        "API sync completed" in m and "1 skipped" in m for m in messages
+    ), "Expected the completion summary to report the skipped-participant count"
 
 
 def test_sync_approvals_no_unsynced_records_makes_no_group_calls(sync_manager, mocker):

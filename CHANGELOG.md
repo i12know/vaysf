@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `_sync_approvals_via_api()` completion summary now reports the skipped-participant
+  count alongside added/failed/marked-synced, closing the observability gap from #66.
+  The underlying silent-skip root cause was already fixed earlier (approvals without
+  an unsynced record are filtered out before the ChMeetings group-add loop runs, so
+  the count is now always known up front); this closes the remaining gap where that
+  skip count wasn't folded into the final log line an operator would scan. Added
+  `test_sync_approvals_skips_participants_without_unsynced_approval` assertion on the
+  log message text.
 - Hotfix 1.1.13: Added a Sports Fest Admin setting and `[vaysf_badges display="..."]`
   override for public badge display. The default `list` mode replaces photo
   badge images with an approved-participants table showing names, primary
