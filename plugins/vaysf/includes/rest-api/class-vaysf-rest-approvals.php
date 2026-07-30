@@ -501,9 +501,13 @@ public function update_approval($request) {
 			array('%d')
 		);
 
-//// DEBUG CODE BEFORE PARTICIPANT UPDATE        
+//// DEBUG CODE BEFORE PARTICIPANT UPDATE
+        // Issue #181: a wpdb->update() failure here must not be silently reported
+        // as success below — track it so the response reflects reality.
+        $db_update_failed = false;
         if ($approval_result === false) {
             error_log('ERROR: Failed to update approval status: ' . $wpdb->last_error);
+            $db_update_failed = true;
         } else {
             error_log('SUCCESS: Updated approval status for ID ' . $approval->approval_id . ' to ' . $status);
         }
@@ -534,9 +538,10 @@ public function update_approval($request) {
                 array('%d')
             );
 
-//// DEBUG CODE 
+//// DEBUG CODE
             if ($participant_result === false) {
                 error_log('ERROR: Failed to update participant status: ' . $wpdb->last_error);
+                $db_update_failed = true;
             } else {
                 error_log('SUCCESS: Updated participant status for ID ' . $approval->participant_id . ' to ' . $status);
                 // Double-check the update was applied
@@ -654,6 +659,20 @@ public function update_approval($request) {
 		}
 
         // Ensure proper status return at the end of process_approval_token function
+        //
+        // Issue #181: previously this always returned success=true even when
+        // $approval_result or $participant_result was false (a real DB write
+        // failure), so a partial failure looked identical to a clean approval
+        // from the pastor's point of view. Surface the failure instead.
+        if ($db_update_failed) {
+            error_log('ERROR: Returning failure response — approval/participant DB update did not complete for approval_id ' . $approval->approval_id);
+            return new WP_Error(
+                'rest_approval_update_failed',
+                esc_html__('Your decision was received, but saving it failed. Please try the link again or contact Sports Fest staff.', 'vaysf'),
+                array('status' => 500)
+            );
+        }
+
         error_log('DEBUG: Returning success response with status: ' . $status); //// Add debug logging
         return rest_ensure_response(array(
             'success' => true,

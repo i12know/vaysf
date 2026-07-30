@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat
+  under-reporting real approved-athlete counts (#181). `VAYSF_Statistics::get_overall_stats()`
+  was counting `sf_approvals.approval_status = 'approved'` (a pastor-approval-token/sync
+  bookkeeping table that isn't guaranteed to be a complete historical list — legacy
+  data, admin repairs, and import/repair scripts can leave `sf_participants` approved
+  without a matching approved `sf_approvals` row) instead of `sf_participants.approval_status
+  = 'approved'` (the actual athlete record table), causing the site to show far fewer
+  approved athletes than the daily ALL CHURCH export for the same day (110 vs. 290 on
+  2026-07-07). `[vaysf_stats]` and the admin dashboard both already shared this method,
+  so both pick up the fix automatically. Also fixed `process_approval_token()` in
+  `includes/rest-api/class-vaysf-rest-approvals.php`: it already captured
+  `$approval_result`/`$participant_result` from its two `$wpdb->update()` calls and logged
+  failures, but still unconditionally returned `success: true` at the end regardless —
+  a pastor whose approval/deny click hit a DB write failure got no indication anything
+  went wrong. Now returns a 500 `WP_Error` when either update fails. Rebuilt `plugins/vaysf.zip`.
 - Aligned ChMeetings 429/backoff and inter-call pacing with the conservative
   reading of ChMeetings' newly-published (and self-conflicting) rate limit
   (#296). `backend_connector.py`'s `_api_request()` retry schedule widened

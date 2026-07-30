@@ -38,7 +38,12 @@ class VAYSF_Statistics {
                 'icon'  => 'clock'
             ),
             'approved' => array(
-                'count' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_approvals WHERE approval_status = 'approved'"),
+                // sf_approvals is the pastor-approval-token/sync-bookkeeping table, not a
+                // complete historical list of every approved athlete (legacy data, admin
+                // repairs, and import/repair scripts can leave sf_participants approved
+                // without a matching approved sf_approvals row). Count the athlete record
+                // table directly. See issue #181.
+                'count' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_participants WHERE approval_status = 'approved'"),
                 'label' => 'Approved Participants',
                 'icon'  => 'yes'
             ),
