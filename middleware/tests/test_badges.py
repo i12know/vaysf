@@ -53,6 +53,13 @@ def generator(tmp_path):
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_real_sleep(monkeypatch):
+    """BadgeRunner paces ChMeetings calls with a real time.sleep (issue #296);
+    keep the mock suite fast by not actually pausing."""
+    monkeypatch.setattr("badges.runner.time.sleep", lambda *a, **k: None)
+
+
 def _participant(**overrides):
     base = {
         "chmeetings_id": "3139537",

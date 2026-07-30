@@ -283,21 +283,23 @@ CREATE TABLE sf_validation_issues (
 Provides API access to ChMeetings data.
 ```python
 class ChMeetingsConnector:
-    def authenticate(self)                                    # no 429 retry (Issue #64)
-    def get_people(self, params=None)                         # paginates via total_count; sends include_additional_fields=True; no 429 retry (Issue #64)
-    def get_person(self, person_id)                           # unwraps {"data": {...}} envelope; 429-aware retry (2/5/10s)
-    def get_groups(self, params=None)                         # no 429 retry (Issue #64)
-    def get_group_people(self, group_id)                      # no 429 retry (Issue #64)
-    def get_person_notes(self, person_id)                     # GET /api/v1/people/{id}/notes; 429-aware retry (2/5/10s)
-    def get_fields(self)                                      # GET /api/v1/people/fields → field_id / field_type map; no 429 retry (Issue #64)
-    def add_person_to_group(self, group_id, person_id)        # POST /api/v1/groups/{id}/memberships; 429-aware retry (2/5/10s)
-    def remove_person_from_group(self, group_id, person_id)   # DELETE /api/v1/groups/{id}/memberships/{person_id}; no 429 retry (Issue #64)
-    def add_member_note(self, person_id, note_text)           # POST /api/v1/people/{id}/notes; 429-aware retry (2/5/10s)
+    def authenticate(self)
+    def get_people(self, params=None)                         # paginates via total_count; sends include_additional_fields=True
+    def get_person(self, person_id)                           # unwraps {"data": {...}} envelope
+    def get_groups(self, params=None)
+    def get_group_people(self, group_id)
+    def get_person_notes(self, person_id)                     # GET /api/v1/people/{id}/notes
+    def get_fields(self)                                      # GET /api/v1/people/fields → field_id / field_type map
+    def add_person_to_group(self, group_id, person_id)        # POST /api/v1/groups/{id}/memberships
+    def remove_person_from_group(self, group_id, person_id)   # DELETE /api/v1/groups/{id}/memberships/{person_id}
+    def add_member_note(self, person_id, note_text)           # POST /api/v1/people/{id}/notes
     def update_person(self, person_id, first_name,
-                      last_name, additional_fields)           # PUT /api/v1/people/{id} → reset custom fields; no 429 retry (Issue #64)
+                      last_name, additional_fields)           # PUT /api/v1/people/{id} → reset custom fields
 ```
 
-> **Rate-limit coverage**: 4 of 11 methods have 429 retry with 2/5/10s exponential backoff. Full centralization into a single `_api_request()` helper is tracked in **Issue #64**.
+> **Rate-limit coverage**: all methods route through a single `_api_request()` helper (centralized in **Issue #64**, closed 2026-04-16). It retries HTTP 429 on a bounded exponential schedule — `CHM_429_RETRY_WAITS_SECONDS = [2, 4, 8, 16, 32, 60]` (6 retries, 2s → 60s cap) — and logs every 429 tagged `[VAY SM]` with the endpoint hit, so persistent rate-limiting is visible in logs rather than silently absorbed.
+>
+> **Inter-call pacing**: bulk loops in `group_assignment.py`, `season_reset.py`, and `sync/manager.py` sleep `CHM_MIN_REQUEST_INTERVAL_SECONDS` (0.2s ≈ 5 req/s) between ChMeetings calls — a single named constant in `backend_connector.py` that all three files import, replacing what used to be inconsistent hardcoded literals (one caller used 0.3s). Both constants are designed to the conservative reading of ChMeetings' published limit: as of 2026-07 their docs conflict — the Developer API Guide says "100 requests per second" while the Configure Webhooks article says "100 requests per 20s" — and `vay-chmeetings-skill` 0.1.5 §4 recommends assuming the stricter 100 req/20s (~5 req/s sustained) until ChMeetings reconciles the two. If they do, both constants are one-line changes in `backend_connector.py`. (Issue #296)
 
 See [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md) for the full history of API breaking changes and the fixes applied in v1.05.
 

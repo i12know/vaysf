@@ -24,7 +24,9 @@ from config import (
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
-from chmeetings.backend_connector import ChMeetingsConnector, ChMeetingsReadError
+from chmeetings.backend_connector import (
+    ChMeetingsConnector, ChMeetingsReadError, CHM_MIN_REQUEST_INTERVAL_SECONDS,
+)
 from wordpress.frontend_connector import WordPressConnector
 
 
@@ -793,7 +795,7 @@ def repair_form_people(
                 additional_fields=payload.get("additional_fields"),
                 extra_fields=payload.get("extra_fields"),
             )
-            time.sleep(0.3)
+            time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)
 
             if not created_person:
                 counts["errored"] += 1
@@ -821,7 +823,7 @@ def repair_form_people(
             group_note = ""
             if group_id and new_id:
                 ok = chm_connector.add_person_to_group(group_id, new_id)
-                time.sleep(0.2)
+                time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)
                 group_note = (
                     f", added to {group_name}" if ok
                     else f", failed to add to {group_name}"
@@ -1423,7 +1425,7 @@ def _assign_people_to_church_team_groups_legacy(
                     outcome = "dry_run"
                 else:
                     ok = chm_connector.add_person_to_group(group_id, person["person_id"])
-                    time.sleep(0.2)
+                    time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)
                     if ok:
                         logger.info(
                             f"[REVIEW NEEDED] Added {person['first_name']} {person['last_name']} "
@@ -1452,7 +1454,7 @@ def _assign_people_to_church_team_groups_legacy(
             else:
                 group_id = team_group_by_name[target_group_name]
                 ok = chm_connector.add_person_to_group(group_id, person["person_id"])
-                time.sleep(0.2)  # 200 ms between calls — avoids 429 rate limit
+                time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)  # paced to ChMeetings' conservative rate limit
                 if ok:
                     added += 1
                     outcome = "added"
@@ -1609,7 +1611,7 @@ def assign_people_to_church_team_groups(
                         continue
                 if source_row:
                     fresh_person = chm_connector.get_person(person_id)
-                    time.sleep(0.2)
+                    time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)
                     if not fresh_person:
                         hydration = _hydration_audit(
                             "blocked",
@@ -1664,7 +1666,7 @@ def assign_people_to_church_team_groups(
                                 update_fields,
                                 extra_person_data=person,
                             )
-                            time.sleep(0.2)
+                            time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)
                             if ok:
                                 hydrated += 1
                                 hydration["outcome"] = (
@@ -1854,7 +1856,7 @@ def assign_people_to_church_team_groups(
                     outcome = "dry_run"
                 else:
                     ok = chm_connector.add_person_to_group(group_id, person["person_id"])
-                    time.sleep(0.2)
+                    time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)
                     if ok:
                         logger.info(
                             f"[REVIEW NEEDED] Added {person['first_name']} {person['last_name']} "
@@ -1883,7 +1885,7 @@ def assign_people_to_church_team_groups(
             else:
                 group_id = team_group_by_name[target_group_name]
                 ok = chm_connector.add_person_to_group(group_id, person["person_id"])
-                time.sleep(0.2)
+                time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)
                 if ok:
                     added += 1
                     outcome = "added"
@@ -2007,7 +2009,7 @@ def clear_team_groups(
                     ok = chm_connector.remove_person_from_group(
                         group_id, person_id, not_found_ok=True
                     )
-                    time.sleep(0.2)  # 200 ms between calls - avoids 429 rate limit
+                    time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)  # paced to ChMeetings' conservative rate limit
                     if ok:
                         delete_status = getattr(
                             chm_connector, "last_group_membership_delete_status", "removed"
@@ -2131,7 +2133,7 @@ def audit_team_groups(church_code: Optional[str] = None,
                 membership_email = person.get("email", "")
 
                 resolved_person = chm_connector.get_person(person_id) if person_id else None
-                time.sleep(0.2)
+                time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)
 
                 lookup_status = getattr(chm_connector, "last_get_person_status", "failed")
                 resolved_first_name = ""

@@ -85,6 +85,22 @@ PERSON_PUT_DATE_FIELDS = frozenset({
     "baptism_date",
 })
 
+# ChMeetings publishes conflicting rate-limit numbers as of 2026-07: the
+# Developer API Guide (updated 2026-07-08) says "100 requests per second"
+# while the Configure Webhooks help article (updated 2026-04-02) says "100
+# requests per 20s". Design to the conservative reading per
+# vay-chmeetings-skill 0.1.5 §4: 100 req/20s ~= 5 req/s sustained. If
+# ChMeetings reconciles their docs, update this constant (and this note) to
+# match the primary source.
+#
+# Every bulk ChMeetings-call loop should pace its inter-call sleep from this
+# one constant rather than a scattered hardcoded literal (issue #296).
+CHM_MIN_REQUEST_INTERVAL_SECONDS = 0.2  # 1 / 5 req/s
+
+# Bounded exponential backoff for HTTP 429 in _api_request(): 2s -> 60s cap,
+# 6 retries max, per the same conservative guidance.
+CHM_429_RETRY_WAITS_SECONDS = [2, 4, 8, 16, 32, 60]
+
 class ChMeetingsConnector:
     """Connector for ChMeetings API."""
 
@@ -128,14 +144,17 @@ class ChMeetingsConnector:
         return None
 
     def _api_request(self, method: str, url_suffix: str, **kwargs) -> requests.Response:
-        """Execute an HTTP request with automatic 429 retry (2s, 5s, 10s backoff).
+        """Execute an HTTP request with automatic 429 retry.
+
+        Backoff schedule is CHM_429_RETRY_WAITS_SECONDS (2s -> 60s cap, 6
+        retries max) — see the module-level comment for why.
 
         Raises requests.RequestException on network errors or after exhausting
         retries on HTTP 429.  Callers are responsible for checking other
         non-2xx status codes via response.raise_for_status() or by inspecting
         response.status_code directly.
         """
-        retry_waits = [2, 5, 10]
+        retry_waits = CHM_429_RETRY_WAITS_SECONDS
         url = urljoin(self.api_url, url_suffix)
         http_fn = getattr(self.session, method.lower())
         for attempt in range(len(retry_waits) + 1):
@@ -144,11 +163,15 @@ class ChMeetingsConnector:
                 if attempt < len(retry_waits):
                     wait = retry_waits[attempt]
                     logger.warning(
-                        f"Rate limited ({method.upper()} {url_suffix}). "
+                        f"[VAY SM] Rate limited (429) on {method.upper()} {url_suffix}. "
                         f"Waiting {wait}s (retry {attempt + 1}/{len(retry_waits)})..."
                     )
                     time.sleep(wait)
                     continue
+                logger.warning(
+                    f"[VAY SM] Rate limited (429) on {method.upper()} {url_suffix}: "
+                    f"exhausted all {len(retry_waits)} retries."
+                )
                 response.raise_for_status()
             return response
         return response  # unreachable but satisfies linters

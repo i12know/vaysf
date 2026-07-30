@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Aligned ChMeetings 429/backoff and inter-call pacing with the conservative
+  reading of ChMeetings' newly-published (and self-conflicting) rate limit
+  (#296). `backend_connector.py`'s `_api_request()` retry schedule widened
+  from a flat `[2, 5, 10]` (3 retries) to a bounded exponential
+  `CHM_429_RETRY_WAITS_SECONDS = [2, 4, 8, 16, 32, 60]` (6 retries, 2s -> 60s
+  cap), and every 429 is now logged tagged `[VAY SM]` with the endpoint hit.
+  Introduced a single named `CHM_MIN_REQUEST_INTERVAL_SECONDS` (0.2s ~= 5
+  req/s) constant in `backend_connector.py`; `group_assignment.py`,
+  `season_reset.py`, and `sync/manager.py` now import it instead of each
+  hardcoding their own inter-call sleep literal (one caller, `group_assignment.py`'s
+  `create_person` repair path, had silently drifted to 0.3s). Also found and
+  fixed a real burst-risk gap while auditing bulk paths per the issue's own
+  checklist: `badges/runner.py`'s photo-fetch and badge-URL write-back loop
+  made up to 3 unpaced ChMeetings calls per participant; it now paces each
+  one with the same shared constant. `docs/ARCHITECTURE.md`'s
+  `ChMeetingsConnector` method table was still describing the pre-#64 state
+  (4 of 11 methods with retry, centralization "tracked"); corrected it to
+  reflect that all methods route through `_api_request()` (#64 closed
+  2026-04-16) and documented which published number the constants are
+  designed to, so a future doc reconciliation is a one-line change. Added
+  429-retry/backoff mock tests (`test_chmeetings_connector.py`) and an
+  autouse sleep-mock fixture in `test_badges.py` to keep the mock suite fast.
 - `_sync_approvals_via_api()` completion summary now reports the skipped-participant
   count alongside added/failed/marked-synced, closing the observability gap from #66.
   The underlying silent-skip root cause was already fixed earlier (approvals without

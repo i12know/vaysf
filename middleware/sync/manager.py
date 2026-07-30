@@ -13,7 +13,7 @@ from loguru import logger
 from config import (Config, DATA_DIR, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION,
                    SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, CHM_FIELDS,
                    VALIDATION_SEVERITY, VALIDATION_STATUS, RULE_LEVEL)
-from chmeetings.backend_connector import ChMeetingsConnector
+from chmeetings.backend_connector import ChMeetingsConnector, CHM_MIN_REQUEST_INTERVAL_SECONDS
 from wordpress.frontend_connector import WordPressConnector
 from sync.churches import ChurchSyncer
 from sync.participants import ParticipantSyncer
@@ -580,7 +580,7 @@ class SyncManager:
             wp_id_str = str(participant["participant_id"])
 
             success = self.chm_connector.add_person_to_group(group_id, chm_id)
-            time.sleep(0.2)  # 200 ms between calls → ~5 req/s, avoids 429 rate limit
+            time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)  # paced to ChMeetings' conservative rate limit
             if success:
                 added_count += 1
                 # Mark approval as synced in WordPress

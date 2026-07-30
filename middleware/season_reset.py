@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 from tqdm import tqdm
 
-from chmeetings.backend_connector import ChMeetingsConnector
+from chmeetings.backend_connector import ChMeetingsConnector, CHM_MIN_REQUEST_INTERVAL_SECONDS
 from wordpress.frontend_connector import WordPressConnector
 from config import (
     Config,
@@ -249,7 +249,7 @@ class SeasonResetter:
                 if dry_run:
                     logger.info(f"[DRY RUN] Would archive {first_name} {last_name} ({pid}):\n  {note}")
                 else:
-                    time.sleep(0.2)  # 200 ms between persons — stay under rate limit
+                    time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)  # paced to ChMeetings' conservative rate limit
                     # Guard against duplicates: skip if an archive note for this
                     # year already exists on the profile.
                     existing_notes = self.chm.get_person_notes(pid)
@@ -497,7 +497,7 @@ class SeasonResetter:
                 enriched.append(m)
                 continue
             full = self.chm.get_person(pid)
-            time.sleep(0.2)  # 200 ms between calls — stay under ChMeetings rate limit
+            time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)  # paced to ChMeetings' conservative rate limit
             if full:
                 enriched.append(full)
             else:

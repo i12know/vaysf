@@ -17,6 +17,7 @@ Pipeline per participant:
 from __future__ import annotations
 
 import io
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,6 +28,7 @@ from tqdm import tqdm
 
 from badges.generator import BadgeGenerator
 from badges.uploader import WordPressBadgeUploader
+from chmeetings.backend_connector import CHM_MIN_REQUEST_INTERVAL_SECONDS
 from config import CHECK_BOXES, CHM_FIELDS, SF_CHECKLIST_OPTIONS, SF_FIELD_IDS, Config
 
 # Approval statuses that count as "approved" for badge eligibility.
@@ -204,6 +206,7 @@ class BadgeRunner:
         badge_profile_value = self._badge_url_profile_value(badge_url)
 
         person = self.chm.get_person(chm_id)
+        time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)  # paced to ChMeetings' conservative rate limit
         if not person:
             raise ValueError(f"ChMeetings person {chm_id} was not found.")
 
@@ -226,6 +229,7 @@ class BadgeRunner:
             additional_fields,
             extra_person_data=person,
         )
+        time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)  # paced to ChMeetings' conservative rate limit
         if not ok:
             raise ValueError(f"ChMeetings badge URL update failed for person {chm_id}.")
         logger.info(f"Badge URL written to ChMeetings chm_id={chm_id}")
@@ -312,6 +316,7 @@ class BadgeRunner:
 
         if chm_id:
             person = self.chm.get_person(chm_id)
+            time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)  # paced to ChMeetings' conservative rate limit
             if person:
                 chm_photo = person.get("photo")
                 if chm_photo and str(chm_photo).startswith(("http://", "https://")):

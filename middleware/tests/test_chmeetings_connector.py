@@ -4,7 +4,10 @@ import pytest
 import sys
 import time
 import requests
-from chmeetings.backend_connector import ChMeetingsConnector, ChMeetingsReadError
+from chmeetings.backend_connector import (
+    ChMeetingsConnector, ChMeetingsReadError,
+    CHM_429_RETRY_WAITS_SECONDS, CHM_MIN_REQUEST_INTERVAL_SECONDS,
+)
 from conftest import require_live_mutation_test
 from loguru import logger
 
@@ -686,3 +689,76 @@ def test_update_person_returns_false_on_error(chm_connector, mocker):
         mp.setattr("requests.Session.put", raise_error)
         result = chm_connector.update_person("123", "A", "B", [])
         assert result is False
+
+
+# --- 429 backoff coverage (issue #296) --------------------------------- #
+
+def test_api_request_retries_on_429_then_succeeds(chm_connector, mocker):
+    """A 429 is retried per the bounded schedule and returns the eventual 2xx."""
+    sleeps = []
+    mocker.patch("chmeetings.backend_connector.time.sleep", side_effect=sleeps.append)
+
+    rate_limited = mocker.Mock(status_code=429)
+    ok_response = mocker.Mock(status_code=200)
+    responses = iter([rate_limited, rate_limited, ok_response])
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("requests.Session.get", lambda *a, **k: next(responses))
+        response = chm_connector._api_request("GET", "api/v1/people")
+
+    assert response is ok_response
+    # First two entries of the bounded backoff schedule, not a fixed guess.
+    assert sleeps == CHM_429_RETRY_WAITS_SECONDS[:2]
+
+
+def test_api_request_exhausts_429_retries_and_raises(chm_connector, mocker):
+    """After exhausting every retry in the bounded schedule, raise_for_status fires."""
+    sleeps = []
+    mocker.patch("chmeetings.backend_connector.time.sleep", side_effect=sleeps.append)
+
+    rate_limited = mocker.Mock(status_code=429)
+    rate_limited.raise_for_status.side_effect = requests.HTTPError("429 Too Many Requests")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("requests.Session.get", lambda *a, **k: rate_limited)
+        with pytest.raises(requests.HTTPError):
+            chm_connector._api_request("GET", "api/v1/people")
+
+    # Every wait in the schedule was used, in order, before giving up.
+    assert sleeps == CHM_429_RETRY_WAITS_SECONDS
+
+
+def test_api_request_logs_tenant_and_endpoint_on_429(chm_connector, mocker):
+    """Every 429 is logged with the VAY SM tenant tag and the endpoint that was hit."""
+    mocker.patch("chmeetings.backend_connector.time.sleep")
+
+    rate_limited = mocker.Mock(status_code=429)
+    ok_response = mocker.Mock(status_code=200)
+    responses = iter([rate_limited, ok_response])
+
+    messages = []
+    from loguru import logger as loguru_logger
+    sink_id = loguru_logger.add(lambda msg: messages.append(msg), level="WARNING")
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("requests.Session.get", lambda *a, **k: next(responses))
+            chm_connector._api_request("GET", "api/v1/people")
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert any(
+        "[VAY SM]" in m and "429" in m and "api/v1/people" in m for m in messages
+    ), "Expected a 429 WARNING tagged with tenant and endpoint"
+
+
+def test_api_request_no_sleep_on_first_try_success(chm_connector, mocker):
+    """A normal 2xx response on the first attempt never invokes the backoff sleep."""
+    mock_sleep = mocker.patch("chmeetings.backend_connector.time.sleep")
+    ok_response = mocker.Mock(status_code=200)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("requests.Session.get", lambda *a, **k: ok_response)
+        response = chm_connector._api_request("GET", "api/v1/people")
+
+    assert response is ok_response
+    mock_sleep.assert_not_called()
