@@ -23,7 +23,13 @@
   `middleware/data/person_aliases.json` is the example, and real entries live
   in the git-ignored `middleware/data/person_aliases.local.json` (guardrail G5).
   An empty or missing map is byte-for-byte today's behavior — the existing mock
-  suite passes unchanged.
+  suite passes unchanged. The full Team-group sync now also dedupes on the
+  *resolved* canonical ID: a duplicated person is typically a member of the
+  Team group under both their stale and their canonical ID (that being the
+  disease the alias map cures), so without dedup, resolution would collapse
+  both memberships onto the canonical ID and sync that person twice — wasted
+  ChMeetings/WordPress calls and double-counted sync stats. Roster sync was
+  already idempotent, so this never produced duplicate roster rows.
 
 - Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat
   under-reporting real approved-athlete counts (#181). `VAYSF_Statistics::get_overall_stats()`

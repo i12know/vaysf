@@ -718,6 +718,12 @@ class ParticipantSyncer:
             logger.info(f"Found {len(team_groups)} '{Config.TEAM_PREFIX}' groups for full sync.")
             
             all_participants_processed_successfully = True # Assume success unless a participant fails
+            # Canonical IDs already synced this run (Issue #308). A duplicate person is
+            # typically in the Team group under *both* their stale and canonical IDs —
+            # that is the disease the alias map cures — so without this, alias resolution
+            # would collapse both memberships onto the canonical ID and sync that person
+            # twice: wasted ChMeetings/WordPress calls and double-counted stats.
+            processed_chm_ids: set[str] = set()
 
             for group in team_groups:
                 if hasattr(self.chm_connector, "last_get_group_people_status"):
@@ -745,6 +751,23 @@ class ParticipantSyncer:
                         all_participants_processed_successfully = False # Mark overall as not entirely successful
                         continue
                     
+                    # Resolve first so the dedup key is the canonical identity; the
+                    # authoritative resolution still happens inside
+                    # _sync_single_participant (guardrail G1), where it is idempotent.
+                    resolved_chm_id = (
+                        resolve_chm_id(current_chm_id, self.person_aliases)
+                        if self.person_aliases
+                        else current_chm_id
+                    )
+                    if resolved_chm_id in processed_chm_ids:
+                        logger.info(
+                            f"[VAY SM] Skipping duplicate Team-group membership for canonical "
+                            f"chm_id={resolved_chm_id} (seen again as {current_chm_id} in "
+                            f"'{group['name']}'); already synced this run."
+                        )
+                        continue
+                    processed_chm_ids.add(resolved_chm_id)
+
                     # Call the helper method for each person_chm_id
                     # TARGET_CHM_ID_FOR_DEBUG is passed for detailed logging if current_chm_id matches
                     if not self._sync_single_participant(
