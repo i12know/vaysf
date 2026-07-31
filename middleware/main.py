@@ -145,6 +145,17 @@ def parse_args() -> argparse.Namespace:
         help="Remove orphaned memberships from ChMeetings after identifying them (irreversible)",
     )
 
+    apply_aliases_parser = subparsers.add_parser(
+        "apply-aliases",
+        help="Reconcile WordPress rows for stale ChMeetings IDs retired by the person alias map (Issue #310)",
+    )
+    apply_aliases_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually delete stale roster rows and tombstone the participant/approval "
+             "rows as 'merged' (irreversible from the UI). Without this flag, report only.",
+    )
+
     # Export command
     export_parser = subparsers.add_parser("export-church-teams", help="Export church team status reports")
     export_parser.add_argument("--church-code", help="Export for specific church code (if omitted, exports for all churches)")
@@ -1541,6 +1552,11 @@ def main() -> None:
                                     remove_orphans=args.remove_orphans)
         if success:
             logger.info("Team-group audit complete. Check data/team_group_orphan_audit.xlsx for the audit log.")
+    elif args.command == "apply-aliases":
+        from sync.alias_reconciler import apply_aliases
+        success = apply_aliases(execute=args.execute)
+        if success:
+            logger.info("Alias reconciliation complete. Check data/alias_reconciliation_audit.xlsx for the audit log.")
     elif args.command == "export-church-teams":
         output_path = Path(args.output) 
         try:

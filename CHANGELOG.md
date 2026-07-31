@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Added the `apply-aliases` reconciliation command — Phase 2 of
+  `docs/CANONICAL_IDENTITY_RFC.md` §4.3 ("retire, don't delete"), Track A3 of
+  epic #307 (#310). New `middleware/sync/alias_reconciler.py` reconciles the
+  WordPress row for every stale ChMeetings ID already known to the person
+  alias map (#308): deletes its roster rows, tombstones the participant and
+  its approval record as `approval_status='merged'` (safe everywhere per
+  #309's audit), and resolves its open validation issues. Report-only by
+  default, mirroring `audit-team-groups --remove-orphans`; `--execute` performs
+  the writes. Verifies the canonical WordPress row exists first (warns "run
+  sync first" and skips otherwise), and if the stale row was pastor-approved
+  but the canonical row is not, logs a loud warning and does **not**
+  auto-copy the approval — an identity change invalidates approval, matching
+  the drift-guard philosophy (#171). Prints the stale badge filename for
+  manual deletion after each reconciliation. Idempotent: an alias entry whose
+  stale row is already `merged` is skipped with no further writes, so a
+  second run is a no-op. Deliberately WordPress-only — no ChMeetings-side
+  writes and no edits to the alias map itself (guardrail G3); whether
+  `apply-aliases` should also clean ChMeetings Team groups remains an open
+  RFC §8 decision for a future issue. Added `APPROVAL_STATUS["MERGED"]` to
+  `middleware/config.py` and wired `apply-aliases [--execute]` into `main.py`.
+  9 new mock tests cover the report-only/execute split, the
+  missing-canonical-row block, the approval-mismatch warning, the roster-
+  delete-failure error path, and idempotency on a second run; 2 more pin the
+  new CLI argument parsing.
+
 - Added the canonical ChMeetings identity layer — Phase 1 of
   `docs/CANONICAL_IDENTITY_RFC.md` §4.1–§4.2, Track A1 of epic #307 (#308).
   New `middleware/sync/person_aliases.py` provides `load_person_aliases()`

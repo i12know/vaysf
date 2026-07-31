@@ -102,6 +102,20 @@ def test_parse_args_diagnose_schedule_defaults(monkeypatch):
     assert args.output is None
 
 
+def test_parse_args_apply_aliases_defaults_to_report_only(monkeypatch):
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "apply-aliases"])
+    args = main.parse_args()
+    assert args.command == "apply-aliases"
+    assert args.execute is False
+
+
+def test_parse_args_apply_aliases_execute(monkeypatch):
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "apply-aliases", "--execute"])
+    args = main.parse_args()
+    assert args.command == "apply-aliases"
+    assert args.execute is True
+
+
 def test_parse_args_approval_drift_history(monkeypatch):
     monkeypatch.setattr(
         main.sys,

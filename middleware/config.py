@@ -392,6 +392,7 @@ APPROVAL_STATUS = {
     "APPROVED": "approved",                 ## Set when a pastor explicitly approves a participant
     "DENIED": "denied",                     ## Set when a pastor explicitly denies a participant
     "REAPPROVAL_REQUIRED": "reapproval_required",  ## Approval invalidated by post-approval identity drift; participant must be re-approved by pastor.
+    "MERGED": "merged",                     ## Tombstone set by apply-aliases (#310) on a stale row retired by the canonical-identity alias map; not a real applicant status.
 }
 
 # Validation Severity Constants
