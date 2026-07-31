@@ -34,18 +34,27 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                         $resend_id = absint($_GET['id']);
                         $approval = $wpdb->get_row(
                                 $wpdb->prepare(
-                                        "SELECT a.*, p.first_name, p.last_name, c.church_name FROM $table_approvals a JOIN $table_participants p ON a.participant_id = p.participant_id JOIN $table_churches c ON a.church_id = c.church_id WHERE a.approval_id = %d",
+                                        "SELECT a.*, p.first_name, p.last_name, p.approval_status AS participant_approval_status, c.church_name FROM $table_approvals a JOIN $table_participants p ON a.participant_id = p.participant_id JOIN $table_churches c ON a.church_id = c.church_id WHERE a.approval_id = %d",
                                         $resend_id
                                 ),
                                 ARRAY_A
                         );
                         if (!$approval) {
                                 echo '<div class="notice notice-error"><p>Approval record not found.</p></div>';
-                        } elseif ($approval['approval_status'] === 'merged') {
+                        } elseif (
+                                $approval['approval_status'] === 'merged'
+                                || $approval['participant_approval_status'] === 'merged'
+                        ) {
                                 // Issue #309 (guardrail G4): a merged/tombstoned approval belongs to a
                                 // retired duplicate identity. Resending would reset it to 'pending' and
                                 // mail a fresh token, resurrecting exactly what the reconciler (#310)
                                 // retired it to prevent.
+                                //
+                                // The participant's status is checked as well as the approval's, and is
+                                // the more reliable signal: apply-aliases tombstones the participant
+                                // before the approval rows, so a partially-failed run leaves the
+                                // participant 'merged' while its approval is still 'pending'. Guarding
+                                // on the approval row alone would let precisely that row be resent.
                                 echo '<div class="notice notice-error"><p>Cannot resend: this approval belongs to a merged (retired duplicate) participant.</p></div>';
                         } else {
                                 if (vaysf_resend_approval_email($approval)) {
@@ -62,11 +71,11 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
         
         // Get approvals
         $approvals = $wpdb->get_results(
-            "SELECT a.*, p.first_name, p.last_name, c.church_name 
-            FROM $table_approvals a 
-            JOIN $table_participants p ON a.participant_id = p.participant_id 
-            JOIN $table_churches c ON a.church_id = c.church_id 
-            $where_clause 
+            "SELECT a.*, p.first_name, p.last_name, p.approval_status AS participant_approval_status, c.church_name
+            FROM $table_approvals a
+            JOIN $table_participants p ON a.participant_id = p.participant_id
+            JOIN $table_churches c ON a.church_id = c.church_id
+            $where_clause
             ORDER BY a.created_at DESC",
             ARRAY_A
         );
@@ -130,7 +139,7 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                                 <td><?php echo esc_html(date('Y-m-d H:i', strtotime($approval['created_at']))); ?></td>
                                 <td><?php echo esc_html(date('Y-m-d H:i', strtotime($approval['token_expiry']))); ?></td>
                                 <td>
-                                    <?php if ($approval['approval_status'] === 'merged') : ?>
+                                    <?php if ($approval['approval_status'] === 'merged' || $approval['participant_approval_status'] === 'merged') : ?>
                                         <span class="description">Merged — resend disabled</span>
                                     <?php else : ?>
                                         <a href="<?php echo admin_url('admin.php?page=vaysf-approvals&action=resend&id=' . $approval['approval_id']); ?>" class="button button-small">Resend Email</a>
