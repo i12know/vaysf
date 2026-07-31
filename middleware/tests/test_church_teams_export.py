@@ -191,6 +191,73 @@ def test_handle_force_resend_includes_reapproval_required(mock_connectors, mocke
     assert resend_count == 1
 
 
+def test_handle_force_resend_excludes_merged(mock_connectors, mocker):
+    """Guardrail G4 (#309): a tombstoned 'merged' row must never get a fresh
+    approval email — that would resurrect a retired duplicate identity."""
+    fake_sync_manager = MagicMock()
+    fake_sync_manager.wordpress_connector.get_churches.return_value = [
+        {"church_code": "RPC", "pastor_email": "pastor@rpc.org", "church_rep_email": "rep@rpc.org"}
+    ]
+    fake_sync_manager.__enter__.return_value = fake_sync_manager
+    fake_sync_manager.__exit__.return_value = None
+
+    mocker.patch("sync.manager.SyncManager", return_value=fake_sync_manager)
+
+    exporter = ChurchTeamsExporter()
+    contacts = [{
+        "ChMeetings ID": "3634001",
+        "First Name": "Ngoc",
+        "Last Name": "Le",
+        "Church Team": "RPC",
+        "Email": "ngoc@example.com",
+        "Approval_Status (WP)": "merged",
+    }]
+
+    resend_count = exporter._handle_force_resend(
+        contacts,
+        force_pending=True,
+        force_validated1=True,
+        force_validated2=True,
+        dry_run=True,
+    )
+
+    assert resend_count == 0
+
+
+def test_handle_force_resend_targeted_merged_id_is_still_excluded(mock_connectors, mocker):
+    """Even a targeted --resend-chm-id for a merged row's ChM ID resends nothing,
+    since the merged status never enters the resend candidate set (#309)."""
+    fake_sync_manager = MagicMock()
+    fake_sync_manager.wordpress_connector.get_churches.return_value = [
+        {"church_code": "RPC", "pastor_email": "pastor@rpc.org", "church_rep_email": "rep@rpc.org"}
+    ]
+    fake_sync_manager.__enter__.return_value = fake_sync_manager
+    fake_sync_manager.__exit__.return_value = None
+
+    mocker.patch("sync.manager.SyncManager", return_value=fake_sync_manager)
+
+    exporter = ChurchTeamsExporter()
+    contacts = [{
+        "ChMeetings ID": "3634001",
+        "First Name": "Ngoc",
+        "Last Name": "Le",
+        "Church Team": "RPC",
+        "Email": "ngoc@example.com",
+        "Approval_Status (WP)": "merged",
+    }]
+
+    resend_count = exporter._handle_force_resend(
+        contacts,
+        force_pending=True,
+        force_validated1=True,
+        force_validated2=True,
+        dry_run=True,
+        target_resend_chm_id="3634001",
+    )
+
+    assert resend_count == 0
+
+
 def test_resend_logs_existing_approval_metadata(mock_connectors, mocker):
     _, wp_connector = mock_connectors
 

@@ -39,14 +39,20 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                                 ),
                                 ARRAY_A
                         );
-                        if ($approval) {
+                        if (!$approval) {
+                                echo '<div class="notice notice-error"><p>Approval record not found.</p></div>';
+                        } elseif ($approval['approval_status'] === 'merged') {
+                                // Issue #309 (guardrail G4): a merged/tombstoned approval belongs to a
+                                // retired duplicate identity. Resending would reset it to 'pending' and
+                                // mail a fresh token, resurrecting exactly what the reconciler (#310)
+                                // retired it to prevent.
+                                echo '<div class="notice notice-error"><p>Cannot resend: this approval belongs to a merged (retired duplicate) participant.</p></div>';
+                        } else {
                                 if (vaysf_resend_approval_email($approval)) {
                                         echo '<div class="notice notice-success"><p>Approval email resent successfully.</p></div>';
                                 } else {
                                         echo '<div class="notice notice-error"><p>Failed to resend approval email.</p></div>';
                                 }
-                        } else {
-                                echo '<div class="notice notice-error"><p>Approval record not found.</p></div>';
                         }
                 }
         
@@ -109,6 +115,9 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                                         case 'denied':
                                             $status_class = 'status-denied';
                                             break;
+                                        case 'merged':
+                                            $status_class = 'status-merged';
+                                            break;
                                         default:
                                             $status_class = 'status-pending';
                                             break;
@@ -121,7 +130,11 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                                 <td><?php echo esc_html(date('Y-m-d H:i', strtotime($approval['created_at']))); ?></td>
                                 <td><?php echo esc_html(date('Y-m-d H:i', strtotime($approval['token_expiry']))); ?></td>
                                 <td>
-                                    <a href="<?php echo admin_url('admin.php?page=vaysf-approvals&action=resend&id=' . $approval['approval_id']); ?>" class="button button-small">Resend Email</a>
+                                    <?php if ($approval['approval_status'] === 'merged') : ?>
+                                        <span class="description">Merged — resend disabled</span>
+                                    <?php else : ?>
+                                        <a href="<?php echo admin_url('admin.php?page=vaysf-approvals&action=resend&id=' . $approval['approval_id']); ?>" class="button button-small">Resend Email</a>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -129,6 +142,31 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                 </tbody>
             </table>
         </div>
+        <style>
+            .approval-status {
+                display: inline-block;
+                padding: 5px 10px;
+                border-radius: 3px;
+                font-weight: bold;
+            }
+            .status-approved {
+                background-color: #d4edda;
+                color: #155724;
+            }
+            .status-denied {
+                background-color: #f8d7da;
+                color: #721c24;
+            }
+            .status-pending {
+                background-color: #e2e3e5;
+                color: #383d41;
+            }
+            .status-merged {
+                background-color: #dcdcdc;
+                color: #55595c;
+                text-decoration: line-through;
+            }
+        </style>
         <?php
     }
 }

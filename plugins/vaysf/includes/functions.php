@@ -404,6 +404,10 @@ function vaysf_format_approval_status($status) {
             return '<span class="approval-status status-validated">' . esc_html__('Validated', 'vaysf') . '</span>';
         case 'pending_approval':
             return '<span class="approval-status status-pending-approval">' . esc_html__('Pending Approval', 'vaysf') . '</span>';
+        case 'merged':
+            // Tombstoned by the canonical-identity reconciler (Issue #310): a retired
+            // duplicate row, not an athlete awaiting a decision. Must not read as "Pending".
+            return '<span class="approval-status status-merged">' . esc_html__('Merged', 'vaysf') . '</span>';
         case 'pending':
         default:
             return '<span class="approval-status status-pending">' . esc_html__('Pending', 'vaysf') . '</span>';

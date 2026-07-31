@@ -419,6 +419,29 @@ def test_runner_filters_out_non_approved(generator):
     assert any("3139537" in p.name for p in pngs)
 
 
+def test_runner_filters_out_merged(generator):
+    """Guardrail G4 (#309): a tombstoned 'merged' duplicate never gets a badge."""
+    parts = [_participant(), _participant(chmeetings_id="999", approval_status="merged")]
+    runner, chm, wp = _make_runner(parts, generator)
+    runner.run(force=True)
+    pngs = list(generator.output_dir.glob("*.png"))
+    assert len(pngs) == 1
+    assert any("3139537" in p.name for p in pngs)
+    assert not any("999" in p.name for p in pngs)
+
+
+def test_runner_targeted_chm_id_skips_merged(generator):
+    """The single-participant (--chm-id) badge path also re-checks approval status,
+    so a merged row targeted directly still produces nothing (#309)."""
+    participant = _participant(approval_status="merged")
+    runner, chm, wp = _make_runner([participant], generator)
+
+    ok = runner.run(force=True, chm_id="3139537")
+
+    assert ok is True
+    assert not list(generator.output_dir.glob("*.png"))
+
+
 def test_runner_uses_approval_only_when_payment_status_is_unreliable(generator):
     participant = _participant(payment_status="pending")
     runner, chm, wp = _make_runner([participant], generator)
