@@ -117,6 +117,9 @@ public function display_participants_page() {
                                     case 'pending_approval':
                                         $status_class = 'status-pending-approval';
                                         break;
+                                    case 'merged':
+                                        $status_class = 'status-merged';
+                                        break;
                                     case 'pending':
                                     default:
                                         $status_class = 'status-pending';
@@ -164,6 +167,11 @@ public function display_participants_page() {
         .status-pending {
             background-color: #e2e3e5;
             color: #383d41;
+        }
+        .status-merged {
+            background-color: #dcdcdc;
+            color: #55595c;
+            text-decoration: line-through;
         }
     </style>
     <?php

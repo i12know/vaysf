@@ -2272,6 +2272,60 @@ def test_sync_approvals_targeted_skips_non_approved(sync_manager, mocker):
     mock_get_approvals.assert_not_called()
     mock_update.assert_not_called()
 
+def test_sync_approvals_targeted_skips_merged(sync_manager, mocker):
+    """Guardrail G4 (#309): a tombstoned 'merged' participant must not sync to ChMeetings."""
+    participant = {
+        "participant_id": 75,
+        "chmeetings_id": "4363699",
+        "approval_status": "merged",
+        "first_name": "Janice",
+        "last_name": "Vu",
+    }
+    mock_get_participants = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=[participant],
+    )
+    mock_get_groups = mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=[])
+    mock_add = mocker.patch.object(sync_manager.chm_connector, "add_person_to_group", return_value=True)
+    mock_get_approvals = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_approvals",
+        return_value=[],
+    )
+    mock_update = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_approval",
+        return_value=True,
+    )
+
+    result = sync_manager.sync_approvals_to_chmeetings(chm_id_to_target="4363699")
+
+    assert result is True
+    mock_get_participants.assert_called_once_with(params={"chmeetings_id": "4363699"})
+    mock_get_groups.assert_not_called()
+    mock_add.assert_not_called()
+    mock_get_approvals.assert_not_called()
+    mock_update.assert_not_called()
+
+
+def test_sync_approvals_bulk_fetch_never_requests_merged(sync_manager, mocker):
+    """The bulk approval-sync page fetch filters server-side on approval_status=approved,
+    so a 'merged' row is never even requested (#309)."""
+    mock_get_participants = mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=[],
+    )
+    mocker.patch.object(sync_manager.chm_connector, "get_groups", return_value=[])
+
+    sync_manager.sync_approvals_to_chmeetings()
+
+    mock_get_participants.assert_called_once_with(
+        params={"approval_status": "approved", "page": 1, "per_page": 100}
+    )
+
+
 def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
     """Soccer - Coed Exhibition arrives via the other_events checkbox; the comma-split
     loop must produce a single roster row with sport_format=Team and sport_gender=Mixed,

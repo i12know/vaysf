@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+- Verified `merged`-status tolerance across every consumer of `approval_status`
+  ahead of the reconciliation command (#310) — Track A2 of epic #307,
+  guardrail G4 of `docs/CANONICAL_IDENTITY_RFC.md` (#309). Audit checklist:
+  - **Safe as-is (exact-match/whitelist filters, verified with new tests where
+    applicable):** badge generation (`badges/runner.py`, double-filtered
+    server- and client-side against `{"approved"}` for both the bulk and
+    targeted `--chm-id` paths); `sync --type approvals`
+    (`sync/manager.py`, exact `!= APPROVAL_STATUS["APPROVED"]` skip for a
+    targeted sync and a server-side `approval_status=approved` filter for the
+    bulk fetch); `church_teams_export.py`'s force-resend categorization
+    (`_handle_force_resend`, an explicit whitelist of
+    pending/pending_approval/reapproval_required/validated); the `[vaysf_churches]`
+    and `[vaysf_badges]` shortcodes and the admin dashboard stat tiles
+    (`class-vaysf-statistics.php`, exact `approval_status = 'approved'`/`'denied'`
+    SQL matches); the REST `process-token` handler
+    (`class-vaysf-rest-approvals.php`), which already rejects any
+    non-`'pending'` approval — including `merged` — with a generic
+    "already processed" error, so a stale pastor-approval email token can't
+    resurrect a tombstoned row; validation-issue sync
+    (`sync/participants.py`), which is keyed by `participant_id` and never
+    branches on `approval_status`, and which — once #308's alias resolution
+    is live — never revisits a stale/merged `chm_id` during normal sync in
+    the first place.
+  - **Fixed (misrendered "Merged" as "Pending", or worse):** the admin
+    participants list, admin approvals list, and the `[vaysf_participants]`
+    shortcode (found during this audit; shares the same status-class helper)
+    all fell through their `switch`/`case` status-styling to the `pending`
+    bucket for any unrecognized status — a tombstoned duplicate would have
+    displayed as "awaiting action". Added an explicit `merged` case (and a
+    `.status-merged` style) to `get_status_class()` in
+    `includes/shortcodes.php`, `vaysf_format_approval_status()` in
+    `includes/functions.php`, and the inline switches in
+    `admin/class-vaysf-admin-participants.php` and
+    `admin/class-vaysf-admin-approvals.php`.
+  - **Fixed (functional hazard, not just cosmetic):** the admin Approvals
+    page's "Resend Email" action
+    (`admin/class-vaysf-admin-approvals.php` -> `vaysf_resend_approval_email()`
+    in `includes/functions.php`) unconditionally reset `approval_status` back
+    to `'pending'` and minted a fresh token/email — for *any* approval row,
+    including a `merged` one. Clicking Resend on a tombstoned duplicate would
+    have undone the reconciler's tombstone (RFC §4.3 step 3: "so an old email
+    token can't resurrect it") and mailed the pastor a stale approval link.
+    The row's "Resend Email" button is now hidden for `merged` approvals, and
+    the `action=resend` handler independently rejects the request with a
+    notice, so a direct URL hit can't bypass the UI guard either.
+  - The plugin schema needs no migration for any of this — `approval_status`
+    is already a plain VARCHAR(50) (`vaysf.php`) and the REST participant/
+    approval endpoints sanitize `approval_status` with `sanitize_text_field()`
+    rather than validating against an enum, so `merged` writes through with
+    zero plugin changes, exactly as the RFC anticipated.
+  - 6 new mock tests (`test_sync_manager.py`, `test_badges.py`,
+    `test_church_teams_export.py`) pin the middleware-side tolerance; the 4
+    touched PHP files pass `php -l`. No PHPUnit harness exists yet for the
+    plugin (tracked separately), so the PHP fixes are verified by lint plus
+    manual review of the audited call paths.
+
 - Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat
   under-reporting real approved-athlete counts (#181). `VAYSF_Statistics::get_overall_stats()`
   was counting `sf_approvals.approval_status = 'approved'` (a pastor-approval-token/sync
