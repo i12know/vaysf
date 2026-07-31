@@ -18,7 +18,7 @@ from uuid import uuid4
 from validation.individual_validator import IndividualValidator
 from validation.models import Participant
 from pydantic import ValidationError
-from sync.person_aliases import load_person_aliases, resolve_chm_id
+from sync.person_aliases import AliasMap, load_person_aliases, resolve_chm_id
 from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 
 # Helper functions
@@ -48,7 +48,23 @@ class ParticipantSyncer:
         # Initialize the IndividualValidator with the event collection
         self.validator = IndividualValidator(collection="SUMMER_2026")
         self.late_racquet_overrides = self._load_late_racquet_overrides()
-        self.person_aliases = load_person_aliases()
+        self._person_aliases: Optional[AliasMap] = None
+
+    @property
+    def person_aliases(self) -> AliasMap:
+        """Load the alias map on first use, then cache it for the run.
+
+        Loading is deliberately deferred out of ``__init__``. ``SyncManager``
+        constructs a ``ParticipantSyncer`` eagerly, so loading here would make a
+        malformed alias file abort every command that builds a SyncManager —
+        including ``sync-churches``, which never consumes the map. Participant
+        sync still fails closed, because every path that resolves an ID reaches
+        this property first (see ``run_full_sync``'s explicit preflight for the
+        full-sync guarantee).
+        """
+        if self._person_aliases is None:
+            self._person_aliases = load_person_aliases()
+        return self._person_aliases
 
     @staticmethod
     def _validation_issue_key(

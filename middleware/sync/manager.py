@@ -17,6 +17,7 @@ from chmeetings.backend_connector import ChMeetingsConnector, CHM_MIN_REQUEST_IN
 from wordpress.frontend_connector import WordPressConnector
 from sync.churches import ChurchSyncer
 from sync.participants import ParticipantSyncer
+from sync.person_aliases import load_person_aliases
 from validation import ChurchValidator, TeamValidator
 from validation.models import RulesManager
 import datetime
@@ -1248,8 +1249,19 @@ class SyncManager:
         return True
 
     def run_full_sync(self) -> Dict[str, Any]:
-        """Run a full synchronization process."""
+        """Run a full synchronization process.
+
+        Raises:
+            PersonAliasError: if the configured alias map is malformed. Validated
+                up front, before any sub-step writes, so a bad map cannot leave
+                the season half-synced with churches written and participants not.
+        """
         logger.info("Starting full synchronization process...")
+        # Preflight the alias map before the first write. ParticipantSyncer loads
+        # it lazily, so without this the failure would surface only once the
+        # participant step began — after church rows had already been written.
+        load_person_aliases()
+
         self.stats = {
             "churches": {"created": 0, "updated": 0, "skipped": 0, "errors": 0},
             "participants": {"created": 0, "updated": 0, "errors": 0},

@@ -18,6 +18,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
 from sync.manager import SyncManager
+from sync.person_aliases import PersonAliasError
 from chmeetings.backend_connector import ChMeetingsConnector  # Import for export command
 from wordpress.frontend_connector import WordPressConnector   # Import for export command
 from church_teams_export import ChurchTeamsExporter           # Import for export command
@@ -962,6 +963,19 @@ def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str
         else:
             logger.error(f"Invalid sync type: {sync_type}")
             return False
+    except PersonAliasError as e:
+        # Ordered ahead of the generic handler on purpose. A malformed alias map
+        # is operator error with a known cause, so it is reported as a plain
+        # message naming the file and the parse problem rather than a traceback.
+        # Catching it here also keeps the @retry decorator from re-attempting a
+        # deterministic configuration failure three times with backoff.
+        logger.error(f"Refusing to sync: {e}")
+        logger.error(
+            f"Fix the alias map at {Config.PERSON_ALIASES_FILE} and rerun. "
+            "Commands that do not consume the alias map, such as sync-churches, "
+            "are unaffected."
+        )
+        return False
     except Exception as e:
         logger.exception(f"Sync failed: {e}")
         return False

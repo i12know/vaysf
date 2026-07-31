@@ -236,8 +236,23 @@ python main.py apply-aliases --execute
 ```
 
 Keep the alias permanently so future participant syncs resolve the stale ID
-before fetching ChMeetings. An existing malformed alias file stops the command
-and participant sync; fix the file rather than removing the mapping.
+before fetching ChMeetings.
+
+**If the alias file is malformed.** A missing alias file is normal and simply
+means no aliases are configured. An *existing* file that will not parse is
+treated as operator error and fails closed, because identity data cannot be
+guessed — silently continuing would let sync recreate a person you had already
+retired. Specifically:
+
+- `apply-aliases` and participant sync (`sync --type participants`) refuse to
+  run and report the file path and the parse problem.
+- `sync --type full` validates the alias map **before performing any sub-step**,
+  so a bad file cannot leave the season half-synced with churches written and
+  participants not.
+- Commands that do not consume the alias map remain available, including
+  `sync-churches`, `export-church-teams`, and the scheduling commands.
+
+Fix the file rather than removing the mapping.
 
 #### Approvals Sync
 

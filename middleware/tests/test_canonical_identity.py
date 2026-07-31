@@ -3,8 +3,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import main
 from config import APPROVAL_STATUS
 from sync.alias_reconciler import apply_aliases
+from sync.manager import SyncManager
 from sync.participants import ParticipantSyncer
 from sync.person_aliases import PersonAliasError, load_person_aliases, resolve_chm_id
 
@@ -72,6 +74,75 @@ def test_existing_invalid_alias_file_fails_closed(tmp_path, payload, raw):
 
 def test_missing_alias_file_is_an_empty_map(tmp_path):
     assert load_person_aliases(tmp_path / "missing.json") == {}
+
+
+@pytest.fixture
+def malformed_alias_file(tmp_path, mocker):
+    """Point the configured alias map at a file that fails to parse."""
+    path = _write_aliases(tmp_path, "{not-json", raw=True)
+    mocker.patch("sync.person_aliases.Config.PERSON_ALIASES_FILE", path)
+    return path
+
+
+def _mock_connector_config(mocker):
+    mocker.patch("wordpress.frontend_connector.Config.WP_URL", "https://test.wordpress.com")
+    mocker.patch("wordpress.frontend_connector.Config.WP_API_KEY", "test_api_key")
+    mocker.patch("chmeetings.backend_connector.Config.CHM_API_URL", "https://test.chmeetings.com/")
+    mocker.patch("chmeetings.backend_connector.Config.CHM_API_KEY", "test_api_key")
+
+
+def test_malformed_alias_file_does_not_block_church_sync(mocker, malformed_alias_file):
+    """Maintainer decision: commands that do not consume the map stay available.
+
+    SyncManager builds a ParticipantSyncer eagerly, so this regresses the moment
+    the alias load moves back into that constructor.
+    """
+    _mock_connector_config(mocker)
+    manager = SyncManager()
+    try:
+        sync_from_excel = mocker.patch.object(
+            manager.church_syncer, "sync_from_excel", return_value=True
+        )
+        assert manager.sync_churches_from_excel("Church Application Form.xlsx") is True
+        sync_from_excel.assert_called_once()
+    finally:
+        manager.close()
+
+
+def test_full_sync_preflights_aliases_before_any_sub_step(mocker, malformed_alias_file):
+    """Maintainer decision: full sync validates the map before performing any sub-step."""
+    _mock_connector_config(mocker)
+    manager = SyncManager()
+    try:
+        sync_churches = mocker.patch.object(manager, "sync_churches_from_excel")
+        sync_participants = mocker.patch.object(manager, "sync_participants")
+        generate_approvals = mocker.patch.object(manager, "generate_approvals")
+
+        with pytest.raises(PersonAliasError):
+            manager.run_full_sync()
+
+        sync_churches.assert_not_called()
+        sync_participants.assert_not_called()
+        generate_approvals.assert_not_called()
+    finally:
+        manager.close()
+
+
+def test_run_sync_reports_alias_error_without_traceback_or_retry(mocker):
+    """Step 4: a malformed map is operator error, not a transient sync failure.
+
+    run_sync is decorated with @retry, so the catch must sit inside it — both to
+    avoid a traceback and to keep a deterministic config error from being
+    re-attempted three times with exponential backoff.
+    """
+    manager = MagicMock()
+    manager.authenticate.return_value = True
+    manager.run_full_sync.side_effect = PersonAliasError("cannot load person aliases")
+    exception_log = mocker.patch("main.logger.exception")
+
+    assert main.run_sync(manager, "full") is False
+    exception_log.assert_not_called()
+    assert manager.run_full_sync.call_count == 1
 
 
 def _stats():
@@ -201,12 +272,67 @@ def test_reconciler_fails_closed_on_read_errors(
     wp_connector.update_participant.assert_not_called()
 
 
-def test_reconciler_reports_partial_write_failure(wp_connector):
+@pytest.mark.parametrize(
+    ("reads", "failing_write"),
+    [
+        ({"get_rosters": [{"roster_id": 1}]}, "delete_roster"),
+        ({}, "update_participant"),
+        (
+            {"get_approvals": [{"approval_id": 2, "approval_status": "pending"}]},
+            "update_approval",
+        ),
+        ({"get_validation_issues": [{"issue_id": 3}]}, "update_validation_issue"),
+    ],
+    ids=[
+        "roster-delete",
+        "participant-tombstone",
+        "approval-tombstone",
+        "validation-resolve",
+    ],
+)
+def test_reconciler_reports_partial_write_failure(wp_connector, reads, failing_write):
+    """Every write in _apply_state must drag the run's result to False.
+
+    The participant tombstone uses `success = success and ...` while the other
+    three use `success = False`; that asymmetry is why all four are pinned here
+    rather than just the approval path.
+    """
     _wire_participants(wp_connector)
-    wp_connector.get_approvals.return_value = [{"approval_id": 2, "approval_status": "pending"}]
-    wp_connector.update_approval.return_value = None
+    for method, value in reads.items():
+        getattr(wp_connector, method).return_value = value
+    getattr(wp_connector, failing_write).return_value = None
 
     assert apply_aliases(execute=True) is False
+
+
+def test_reconciler_resolves_chain_to_terminal_canonical_id(wp_connector, mocker):
+    """A -> B -> C must reconcile against C, not B.
+
+    Reconciling against the immediate target was a real bug; the loader-level
+    chain test does not cover the reconciler's own use of resolve_chm_id.
+    """
+    mocker.patch(
+        "sync.alias_reconciler.load_person_aliases",
+        return_value={
+            "100": {"canonical_chm_id": "200"},
+            "200": {"canonical_chm_id": "300"},
+        },
+    )
+    stale = _participant("100", 10)
+    terminal = _participant("300", 12, status=APPROVAL_STATUS["APPROVED"])
+
+    # "200" deliberately has no WordPress row. Resolving to the immediate target
+    # instead of the terminal ID would report canonical_missing_run_sync_first.
+    def get_participants(params=None):
+        chm_id = (params or {}).get("chmeetings_id")
+        return {"100": [stale], "300": [terminal]}.get(chm_id, [])
+
+    wp_connector.get_participants.side_effect = get_participants
+
+    assert apply_aliases(execute=True) is True
+    wp_connector.update_participant.assert_called_once_with(
+        10, {"approval_status": APPROVAL_STATUS["MERGED"]}
+    )
 
 
 def test_reconciler_finishes_residual_work_without_canonical_row(wp_connector):

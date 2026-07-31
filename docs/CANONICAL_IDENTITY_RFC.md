@@ -116,9 +116,9 @@ three lines of code, and it does not preclude the cathedral later
 ### 4.1 The alias map — `person_aliases.json`
 
 An operator-maintained JSON file mapping stale IDs to canonical ones,
-following the exact pattern of the existing `late_racquet_overrides.json`
-(committed example file; real entries in a git-ignored `.local.json`;
-path overridable in `.env`):
+following the file-layout convention of the existing
+`late_racquet_overrides.json` (committed example file; real entries in a
+git-ignored `.local.json`; path overridable in `.env`):
 
 ```json
 {
@@ -334,11 +334,24 @@ made from experience rather than anticipation.
 independently shippable and testable in mock mode.*
 
 ### A1 (#308) — `middleware: person alias map + resolution at sync choke point`
-Phase 1 (§4.1–§4.2): `person_aliases.py` loader (late-racquet pattern;
+Phase 1 (§4.1–§4.2): `person_aliases.py` loader (late-racquet *file layout*;
 committed example + git-ignored `.local.json` per G5), transitive
 `resolve_chm_id` with cycle hard-fail (G2), resolution as the first
 statement of `_sync_single_participant()` before `get_person()` (G1).
 Tests: loader edge cases, empty-map regression guard, stale-ID-404s path.
+
+**Loader error handling — maintainer decision (2026-07-31, supersedes the
+late-racquet warn-and-continue precedent for this file):** a *missing* file
+remains equivalent to an empty map, but an *existing malformed* file fails
+closed rather than warning and returning `{}`. Identity data is not
+guessable, so a typo must not silently resolve to "no aliases" and let sync
+recreate a person the operator already retired. Scope is deliberately
+bounded: the malformed file blocks alias reconciliation and participant
+sync, `run_full_sync()` validates the map before performing any sub-step,
+and commands that never consume the map — `sync-churches` among them —
+remain available. The map is therefore loaded lazily by `ParticipantSyncer`
+rather than in its constructor, since `SyncManager` builds that syncer
+eagerly for every command.
 **Dependencies:** none. The foundation issue — must land first. (#308)
 
 ### A2 (#309) — `middleware/wordpress: verify merged-status tolerance across consumers`

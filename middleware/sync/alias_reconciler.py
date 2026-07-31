@@ -206,6 +206,10 @@ def _reconcile_one(
             f"rosters={len(state.rosters)}, approvals={len(state.active_approvals)}, "
             f"validation_issues={len(state.issues)}"
         )
+        # The operator still needs the stale badge to delete, even when the
+        # tombstone is only being finished. A first run that died before it
+        # reported the filename is exactly when this path is reached.
+        row["Stale Badge Filename"] = _badge_filename(stale, stale_chm_id)
         if not execute:
             row["Outcome"] = "would_finish_residual"
             return row

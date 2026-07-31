@@ -7,6 +7,10 @@
   retires stale WordPress participants, rosters, approvals, and validation issues.
   Alias files fail closed when malformed, merged participants cannot be reactivated
   through approval email tokens, and reconciliation reports partial API failures.
+  Fail-closed scope is bounded per the maintainer decision on #308: a missing file
+  still means no aliases, a malformed file blocks `apply-aliases` and participant
+  sync, `run_full_sync()` validates the map before any sub-step, and commands that
+  do not consume the map — `sync-churches` among them — remain available.
 
 - Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat
   under-reporting real approved-athlete counts (#181). `VAYSF_Statistics::get_overall_stats()`
