@@ -1978,6 +1978,87 @@ def test_sync_participants_skips_orphaned_group_membership(sync_manager, mocker)
     assert sync_manager.stats["participants"]["skipped_missing_people"] == 1
 
 
+def test_sync_participants_dedupes_aliased_and_canonical_group_members(sync_manager, mocker):
+    """Issue #308: a duplicate person is typically in the Team group under BOTH their
+    stale and canonical IDs. Alias resolution collapses them onto one canonical ID, so
+    the full sync must process that person once, not once per membership."""
+    mocker.patch("sync.participants.Config.TEAM_PREFIX", "Team")
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "pastor_email": "pastor@rpc.org"}],
+    )
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_groups",
+        return_value=[{"id": "870578", "name": "Team RPC"}],
+    )
+    # Both the stale ID and the canonical ID are members of the same Team group.
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_group_people",
+        return_value=[{"person_id": "3634001"}, {"person_id": "3633885"}],
+    )
+
+    syncer = sync_manager.participant_syncer
+    syncer.person_aliases = {"3634001": {"canonical_chm_id": "3633885"}}
+
+    synced_ids = []
+
+    def fake_sync_single(chm_id, *args, **kwargs):
+        synced_ids.append(chm_id)
+        return True
+
+    mocker.patch.object(syncer, "_sync_single_participant", side_effect=fake_sync_single)
+
+    result = sync_manager.sync_participants()
+
+    assert result is True
+    assert synced_ids == ["3634001"], (
+        "the canonical person should be synced once; the second membership resolves "
+        f"to the same canonical ID and must be skipped, got {synced_ids}"
+    )
+
+
+def test_sync_participants_without_aliases_syncs_every_membership(sync_manager, mocker):
+    """Regression guard: with an empty alias map, dedup only collapses genuinely
+    identical person_ids — distinct members are all still synced."""
+    mocker.patch("sync.participants.Config.TEAM_PREFIX", "Team")
+
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_churches",
+        return_value=[{"church_code": "RPC", "church_id": 1, "pastor_email": "pastor@rpc.org"}],
+    )
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_groups",
+        return_value=[{"id": "870578", "name": "Team RPC"}],
+    )
+    mocker.patch.object(
+        sync_manager.chm_connector,
+        "get_group_people",
+        return_value=[{"person_id": "3634001"}, {"person_id": "3633885"}],
+    )
+
+    syncer = sync_manager.participant_syncer
+    syncer.person_aliases = {}
+
+    synced_ids = []
+
+    def fake_sync_single(chm_id, *args, **kwargs):
+        synced_ids.append(chm_id)
+        return True
+
+    mocker.patch.object(syncer, "_sync_single_participant", side_effect=fake_sync_single)
+
+    result = sync_manager.sync_participants()
+
+    assert result is True
+    assert synced_ids == ["3634001", "3633885"]
+
+
 # ---------------------------------------------------------------------------
 # Tests for sync_approvals_to_chmeetings() — Issue #60
 # All three tests are pure mock tests (no LIVE_TEST guard needed).

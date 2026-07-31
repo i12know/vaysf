@@ -55,7 +55,13 @@
   `middleware/data/person_aliases.json` is the example, and real entries live
   in the git-ignored `middleware/data/person_aliases.local.json` (guardrail G5).
   An empty or missing map is byte-for-byte today's behavior — the existing mock
-  suite passes unchanged.
+  suite passes unchanged. The full Team-group sync now also dedupes on the
+  *resolved* canonical ID: a duplicated person is typically a member of the
+  Team group under both their stale and their canonical ID (that being the
+  disease the alias map cures), so without dedup, resolution would collapse
+  both memberships onto the canonical ID and sync that person twice — wasted
+  ChMeetings/WordPress calls and double-counted sync stats. Roster sync was
+  already idempotent, so this never produced duplicate roster rows.
 
 - Verified `merged`-status tolerance across every consumer of `approval_status`
   ahead of the reconciliation command (#310) — Track A2 of epic #307,
