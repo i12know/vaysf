@@ -107,7 +107,13 @@
     token can't resurrect it") and mailed the pastor a stale approval link.
     The row's "Resend Email" button is now hidden for `merged` approvals, and
     the `action=resend` handler independently rejects the request with a
-    notice, so a direct URL hit can't bypass the UI guard either.
+    notice, so a direct URL hit can't bypass the UI guard either. Both guards
+    check the **participant's** status as well as the approval's, and both
+    queries now select `p.approval_status`: `apply-aliases` (#310) tombstones
+    the participant *before* its approval rows, so a partially-failed
+    reconciliation leaves the participant `merged` while its approval is still
+    `pending` — guarding on the approval row alone would let precisely that
+    row be resent, which is the resurrection case this guard exists to stop.
   - The plugin schema needs no migration for any of this — `approval_status`
     is already a plain VARCHAR(50) (`vaysf.php`) and the REST participant/
     approval endpoints sanitize `approval_status` with `sanitize_text_field()`
