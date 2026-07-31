@@ -145,6 +145,16 @@ def parse_args() -> argparse.Namespace:
         help="Remove orphaned memberships from ChMeetings after identifying them (irreversible)",
     )
 
+    apply_aliases_parser = subparsers.add_parser(
+        "apply-aliases",
+        help="Retire WordPress rows for stale ChMeetings person IDs",
+    )
+    apply_aliases_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Apply the reconciliation; the default is report-only",
+    )
+
     # Export command
     export_parser = subparsers.add_parser("export-church-teams", help="Export church team status reports")
     export_parser.add_argument("--church-code", help="Export for specific church code (if omitted, exports for all churches)")
@@ -1541,6 +1551,9 @@ def main() -> None:
                                     remove_orphans=args.remove_orphans)
         if success:
             logger.info("Team-group audit complete. Check data/team_group_orphan_audit.xlsx for the audit log.")
+    elif args.command == "apply-aliases":
+        from sync.alias_reconciler import apply_aliases
+        success = apply_aliases(execute=args.execute)
     elif args.command == "export-church-teams":
         output_path = Path(args.output) 
         try:

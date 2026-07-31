@@ -13,6 +13,7 @@ import unicodedata
 
 from config import (
     Config,
+    APPROVAL_STATUS,
     DATA_DIR,
     CHECK_BOXES,
     CHM_FIELDS,
@@ -877,6 +878,12 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         wp_participant = wp_participants[0]
                         wp_participant_id_val = wp_participant.get("participant_id", 0)
                         approval_status_val = wp_participant.get("approval_status", "pending")
+                        if approval_status_val == APPROVAL_STATUS["MERGED"]:
+                            logger.info(
+                                f"Skipping merged participant chm_id={chm_id} "
+                                f"from church-team export"
+                            )
+                            continue
                         photo_url_val = wp_participant.get("photo_url", "N/A")
                         wp_created_at_str = wp_participant.get("created_at", "")
                         participant_issue_list = participant_error_lookup.get(str(wp_participant_id_val), [])

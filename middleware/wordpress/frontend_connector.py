@@ -53,6 +53,7 @@ class WordPressConnector:
         self.custom_api_url = f"{Config.WP_URL}/wp-json/vaysf/v1"
         self.total_participants = 0
         self.total_participant_pages = 0
+        self.last_get_participants_status = "unknown"
         self.last_get_rosters_status = "unknown"
         self.last_get_roster_status = "unknown"
         self.last_get_approvals_status = "unknown"
@@ -244,6 +245,7 @@ class WordPressConnector:
             
             if response.status_code == 404:
                 logger.warning(f"No participants found for params: {params}")
+                self.last_get_participants_status = "not_found"
                 return []
                 
             response.raise_for_status()
@@ -253,10 +255,12 @@ class WordPressConnector:
                 self.total_participants = int(response.headers['X-WP-Total'])
             if 'X-WP-TotalPages' in response.headers:
                 self.total_participant_pages = int(response.headers['X-WP-TotalPages'])
-            
+
+            self.last_get_participants_status = "ok"
             return response.json()
             
         except requests.RequestException as e:
+            self.last_get_participants_status = "failed"
             logger.error(f"Failed to get participants: {str(e)}")
             if _is_retryable_wp_read_exception(e):
                 raise  # Let retry handle transient failures.

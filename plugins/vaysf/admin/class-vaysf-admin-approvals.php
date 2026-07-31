@@ -34,19 +34,21 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                         $resend_id = absint($_GET['id']);
                         $approval = $wpdb->get_row(
                                 $wpdb->prepare(
-                                        "SELECT a.*, p.first_name, p.last_name, c.church_name FROM $table_approvals a JOIN $table_participants p ON a.participant_id = p.participant_id JOIN $table_churches c ON a.church_id = c.church_id WHERE a.approval_id = %d",
+                                        "SELECT a.*, p.first_name, p.last_name, p.approval_status AS participant_approval_status, c.church_name FROM $table_approvals a JOIN $table_participants p ON a.participant_id = p.participant_id JOIN $table_churches c ON a.church_id = c.church_id WHERE a.approval_id = %d",
                                         $resend_id
                                 ),
                                 ARRAY_A
                         );
-                        if ($approval) {
+                        if (!$approval) {
+                                echo '<div class="notice notice-error"><p>Approval record not found.</p></div>';
+                        } elseif ($approval['approval_status'] === 'merged' || $approval['participant_approval_status'] === 'merged') {
+                                echo '<div class="notice notice-error"><p>Cannot resend an approval for a merged participant.</p></div>';
+                        } else {
                                 if (vaysf_resend_approval_email($approval)) {
                                         echo '<div class="notice notice-success"><p>Approval email resent successfully.</p></div>';
                                 } else {
                                         echo '<div class="notice notice-error"><p>Failed to resend approval email.</p></div>';
                                 }
-                        } else {
-                                echo '<div class="notice notice-error"><p>Approval record not found.</p></div>';
                         }
                 }
         
@@ -56,7 +58,7 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
         
         // Get approvals
         $approvals = $wpdb->get_results(
-            "SELECT a.*, p.first_name, p.last_name, c.church_name 
+            "SELECT a.*, p.first_name, p.last_name, p.approval_status AS participant_approval_status, c.church_name
             FROM $table_approvals a 
             JOIN $table_participants p ON a.participant_id = p.participant_id 
             JOIN $table_churches c ON a.church_id = c.church_id 
@@ -109,6 +111,9 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                                         case 'denied':
                                             $status_class = 'status-denied';
                                             break;
+                                        case 'merged':
+                                            $status_class = 'status-merged';
+                                            break;
                                         default:
                                             $status_class = 'status-pending';
                                             break;
@@ -121,7 +126,11 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                                 <td><?php echo esc_html(date('Y-m-d H:i', strtotime($approval['created_at']))); ?></td>
                                 <td><?php echo esc_html(date('Y-m-d H:i', strtotime($approval['token_expiry']))); ?></td>
                                 <td>
-                                    <a href="<?php echo admin_url('admin.php?page=vaysf-approvals&action=resend&id=' . $approval['approval_id']); ?>" class="button button-small">Resend Email</a>
+                                    <?php if ($approval['approval_status'] === 'merged' || $approval['participant_approval_status'] === 'merged') : ?>
+                                        <span class="description">Merged - resend disabled</span>
+                                    <?php else : ?>
+                                        <a href="<?php echo admin_url('admin.php?page=vaysf-approvals&action=resend&id=' . $approval['approval_id']); ?>" class="button button-small">Resend Email</a>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -129,6 +138,7 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                 </tbody>
             </table>
         </div>
+        <style>.status-merged { color: #55595c; text-decoration: line-through; }</style>
         <?php
     }
 }

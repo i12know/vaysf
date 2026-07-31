@@ -445,7 +445,10 @@ public function update_approval($request) {
 		// Get approval by token
 		$approval = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT * FROM $table_approvals WHERE approval_token = %s",
+				"SELECT a.*, p.approval_status AS participant_approval_status
+                 FROM $table_approvals a
+                 JOIN $table_participants p ON a.participant_id = p.participant_id
+                 WHERE a.approval_token = %s",
 				$token
 			)
 		);
@@ -483,6 +486,15 @@ public function update_approval($request) {
 				array('status' => 400)
 			);
 		}
+
+        if ($approval->participant_approval_status === 'merged') {
+            error_log('WARNING: Approval token belongs to a merged participant');
+            return new WP_Error(
+                'rest_participant_merged',
+                esc_html__('This approval is no longer active.', 'vaysf'),
+                array('status' => 400)
+            );
+        }
 		
 		// Set approval status based on decision
 		$status = $decision === 'approve' ? 'approved' : 'denied';

@@ -204,6 +204,41 @@ After saving the file, rerun a targeted participant sync:
 python main.py sync --type participants --chm-id 3633885
 ```
 
+##### Canonical Person Aliases
+
+When an operator has confirmed that one ChMeetings person ID is a duplicate of
+another, put the stale-to-canonical mapping in the ignored local file configured
+by `PERSON_ALIASES_FILE`:
+
+```json
+{
+  "3634002": {
+    "canonical_chm_id": "3633885",
+    "reason": "duplicate registration",
+    "confirmed_by": "Bumble",
+    "confirmed_on": "2026-07-20"
+  }
+}
+```
+
+Preview the WordPress cleanup first. This writes
+`data/alias_reconciliation_audit.xlsx` and makes no API changes:
+
+```bash
+python main.py apply-aliases
+```
+
+After reviewing the audit, retire the stale participant, approval, roster, and
+open validation-issue rows:
+
+```bash
+python main.py apply-aliases --execute
+```
+
+Keep the alias permanently so future participant syncs resolve the stale ID
+before fetching ChMeetings. An existing malformed alias file stops the command
+and participant sync; fix the file rather than removing the mapping.
+
 #### Approvals Sync
 
 To sync approved participants to ChMeetings (adds them to the approved group via API):

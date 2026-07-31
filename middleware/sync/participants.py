@@ -18,6 +18,7 @@ from uuid import uuid4
 from validation.individual_validator import IndividualValidator
 from validation.models import Participant
 from pydantic import ValidationError
+from sync.person_aliases import load_person_aliases, resolve_chm_id
 from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 
 # Helper functions
@@ -47,6 +48,7 @@ class ParticipantSyncer:
         # Initialize the IndividualValidator with the event collection
         self.validator = IndividualValidator(collection="SUMMER_2026")
         self.late_racquet_overrides = self._load_late_racquet_overrides()
+        self.person_aliases = load_person_aliases()
 
     @staticmethod
     def _validation_issue_key(
@@ -714,6 +716,7 @@ class ParticipantSyncer:
             logger.info(f"Found {len(team_groups)} '{Config.TEAM_PREFIX}' groups for full sync.")
             
             all_participants_processed_successfully = True # Assume success unless a participant fails
+            processed_chm_ids: set[str] = set()
 
             for group in team_groups:
                 if hasattr(self.chm_connector, "last_get_group_people_status"):
@@ -740,7 +743,16 @@ class ParticipantSyncer:
                         self.stats["participants"]["errors"] += 1
                         all_participants_processed_successfully = False # Mark overall as not entirely successful
                         continue
-                    
+
+                    canonical_id = resolve_chm_id(current_chm_id, self.person_aliases)
+                    if canonical_id in processed_chm_ids:
+                        logger.info(
+                            f"[VAY SM] Skipping duplicate Team-group membership for "
+                            f"canonical chm_id={canonical_id}"
+                        )
+                        continue
+                    processed_chm_ids.add(canonical_id)
+
                     # Call the helper method for each person_chm_id
                     # TARGET_CHM_ID_FOR_DEBUG is passed for detailed logging if current_chm_id matches
                     if not self._sync_single_participant(
@@ -777,6 +789,11 @@ class ParticipantSyncer:
         Returns:
             bool: True if the participant was successfully processed (created or updated), False otherwise.
         """
+        canonical_id = resolve_chm_id(chm_id, self.person_aliases)
+        if canonical_id != chm_id:
+            logger.info(f"[VAY SM] Alias: stale chm_id {chm_id} resolved to {canonical_id}")
+            chm_id = canonical_id
+
         if chm_id == target_chm_id_for_debug:
             logger.debug(f"--------------------------------------------------------------------------")
             logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] START PROCESSING TARGET RECORD")

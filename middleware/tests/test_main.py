@@ -93,6 +93,21 @@ def test_parse_args_solve_schedule_defaults(monkeypatch):
     assert args.output is None
 
 
+@pytest.mark.parametrize(("argv", "execute"), [(["apply-aliases"], False), (["apply-aliases", "--execute"], True)])
+def test_parse_args_apply_aliases(monkeypatch, argv, execute):
+    monkeypatch.setattr(main.sys, "argv", ["main.py", *argv])
+    args = main.parse_args()
+    assert args.command == "apply-aliases"
+    assert args.execute is execute
+
+
+def test_main_dispatches_apply_aliases(monkeypatch, mocker):
+    monkeypatch.setattr(main.sys, "argv", ["main.py", "apply-aliases", "--execute"])
+    apply = mocker.patch("sync.alias_reconciler.apply_aliases", return_value=True)
+    _run_main_expect_exit(0)
+    apply.assert_called_once_with(execute=True)
+
+
 def test_parse_args_diagnose_schedule_defaults(monkeypatch):
     monkeypatch.setattr(main.sys, "argv", ["main.py", "diagnose-schedule"])
     args = main.parse_args()

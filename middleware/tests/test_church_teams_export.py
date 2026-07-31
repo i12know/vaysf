@@ -191,6 +191,33 @@ def test_handle_force_resend_includes_reapproval_required(mock_connectors, mocke
     assert resend_count == 1
 
 
+def test_handle_force_resend_excludes_merged(mock_connectors, mocker):
+    fake_manager = MagicMock()
+    fake_manager.wordpress_connector.get_churches.return_value = [
+        {"church_code": "RPC", "pastor_email": "pastor@rpc.org", "church_rep_email": "rep@rpc.org"}
+    ]
+    fake_manager.__enter__.return_value = fake_manager
+    mocker.patch("sync.manager.SyncManager", return_value=fake_manager)
+    exporter = ChurchTeamsExporter()
+    contacts = [{
+        "ChMeetings ID": "100",
+        "First Name": "Ngoc",
+        "Last Name": "Le",
+        "Church Team": "RPC",
+        "Email": "ngoc@example.com",
+        "Approval_Status (WP)": "merged",
+    }]
+
+    assert exporter._handle_force_resend(
+        contacts,
+        force_pending=True,
+        force_validated1=True,
+        force_validated2=True,
+        dry_run=True,
+        target_resend_chm_id="100",
+    ) == 0
+
+
 def test_resend_logs_existing_approval_metadata(mock_connectors, mocker):
     _, wp_connector = mock_connectors
 
@@ -397,6 +424,50 @@ def test_generate_reports_surfaces_open_validation_issues(mock_connectors, mocke
     team_issue = next(row for row in validation_rows if row["Issue Type"] == "team_non_member_limit")
     assert team_issue["Rule Level"] == "TEAM"
     assert team_issue["Participant Name"] == ""
+
+
+def test_generate_reports_excludes_merged_participants(mock_connectors, mocker, tmp_path):
+    chm_connector, wp_connector = mock_connectors
+    chm_connector.authenticate.return_value = True
+
+    exporter = ChurchTeamsExporter()
+    exporter.latest_chm_update_by_church = {"RPC": "2026-05-08 10:00:00"}
+    mocker.patch.object(
+        exporter,
+        "_fetch_chm_church_team_data",
+        return_value={
+            "RPC": [
+                {
+                    "Church Team": "RPC",
+                    "ChMeetings ID": "101",
+                    "First Name": "Alice",
+                    "Last Name": "Nguyen",
+                    "Gender": "Female",
+                    "Birthdate": "2000-01-02",
+                    "Mobile Phone": "555-0101",
+                    "Email": "alice@test.com",
+                    "Is_Member_ChM": True,
+                    "ChM_Roles": "Athlete",
+                    "ChM_Completion_Checklist": "",
+                    "Update_on_ChM": "2026-05-08 10:00:00",
+                }
+            ]
+        },
+    )
+    wp_connector.get_church_by_code.return_value = {"church_id": 1, "church_code": "RPC"}
+    wp_connector.get_participants.return_value = [
+        {"participant_id": 42, "approval_status": "merged"}
+    ]
+    wp_connector.get_validation_issues.return_value = []
+    write_report = mocker.patch.object(exporter, "_write_excel_report")
+
+    assert exporter.generate_reports("RPC", tmp_path) is True
+    _, summary_rows, contacts_rows, roster_rows, validation_rows = write_report.call_args.args
+    assert summary_rows[0]["Total Participants (in WP)"] == 0
+    assert contacts_rows == []
+    assert roster_rows == []
+    assert validation_rows == []
+    wp_connector.get_rosters.assert_not_called()
 
 
 def test_generate_reports_tolerates_null_wordpress_photo_url(mock_connectors, mocker, tmp_path):

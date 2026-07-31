@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added canonical ChMeetings person aliases for duplicate registrations (#308-#310).
+  Sync resolves stale IDs before fetching People records; `apply-aliases` previews or
+  retires stale WordPress participants, rosters, approvals, and validation issues.
+  Alias files fail closed when malformed, merged participants cannot be reactivated
+  through approval email tokens, and reconciliation reports partial API failures.
+
 - Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat
   under-reporting real approved-athlete counts (#181). `VAYSF_Statistics::get_overall_stats()`
   was counting `sf_approvals.approval_status = 'approved'` (a pastor-approval-token/sync

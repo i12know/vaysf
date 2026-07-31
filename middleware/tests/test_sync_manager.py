@@ -2272,6 +2272,27 @@ def test_sync_approvals_targeted_skips_non_approved(sync_manager, mocker):
     mock_get_approvals.assert_not_called()
     mock_update.assert_not_called()
 
+
+def test_sync_approvals_targeted_skips_merged(sync_manager, mocker):
+    participant = {
+        "participant_id": 75,
+        "chmeetings_id": "4363699",
+        "approval_status": "merged",
+        "first_name": "Janice",
+        "last_name": "Vu",
+    }
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=[participant],
+    )
+    get_groups = mocker.patch.object(sync_manager.chm_connector, "get_groups")
+    get_approvals = mocker.patch.object(sync_manager.wordpress_connector, "get_approvals")
+
+    assert sync_manager.sync_approvals_to_chmeetings(chm_id_to_target="4363699") is True
+    get_groups.assert_not_called()
+    get_approvals.assert_not_called()
+
 def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
     """Soccer - Coed Exhibition arrives via the other_events checkbox; the comma-split
     loop must produce a single roster row with sport_format=Team and sport_gender=Mixed,

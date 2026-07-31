@@ -419,6 +419,16 @@ def test_runner_filters_out_non_approved(generator):
     assert any("3139537" in p.name for p in pngs)
 
 
+def test_runner_filters_out_merged(generator):
+    parts = [_participant(), _participant(chmeetings_id="999", approval_status="merged")]
+    runner, _, _ = _make_runner(parts, generator)
+
+    assert runner.run(force=True) is True
+    pngs = list(generator.output_dir.glob("*.png"))
+    assert len(pngs) == 1
+    assert not any("999" in path.name for path in pngs)
+
+
 def test_runner_uses_approval_only_when_payment_status_is_unreliable(generator):
     participant = _participant(payment_status="pending")
     runner, chm, wp = _make_runner([participant], generator)
