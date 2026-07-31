@@ -210,7 +210,7 @@ def test_execute_warns_on_approval_mismatch_without_auto_copy(mocker, wp_connect
 
 
 def test_second_run_is_a_noop(mocker, wp_connector):
-    """Acceptance: idempotent — second run makes no write calls."""
+    """Acceptance: idempotent — a second run over a fully-tombstoned row writes nothing."""
     mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
 
     already_merged_stale = _participant(approval_status=APPROVAL_STATUS["MERGED"])
@@ -225,15 +225,115 @@ def test_second_run_is_a_noop(mocker, wp_connector):
         return []
 
     wp_connector.get_participants.side_effect = fake_get_participants
+    # Nothing left behind by the previous run.
+    wp_connector.get_rosters.return_value = []
+    wp_connector.get_approvals.return_value = [{"approval_id": 77, "approval_status": "merged"}]
+    wp_connector.get_validation_issues.return_value = []
 
     result = apply_aliases(execute=True)
 
     assert result is True
-    wp_connector.get_rosters.assert_not_called()
     wp_connector.delete_roster.assert_not_called()
     wp_connector.update_participant.assert_not_called()
     wp_connector.update_approval.assert_not_called()
     wp_connector.update_validation_issue.assert_not_called()
+
+
+def test_second_run_retries_residual_approval_tombstone(mocker, wp_connector):
+    """A previous run that tombstoned the participant but failed the approval write
+    must be retried, not skipped as 'already merged' — otherwise the stale approval
+    token stays live forever while the command reports success."""
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+    mocker.patch("sync.alias_reconciler._stale_badge_filename", return_value=None)
+
+    already_merged_stale = _participant(approval_status=APPROVAL_STATUS["MERGED"])
+    canonical = _participant(participant_id=413, chmeetings_id="3633885")
+
+    def fake_get_participants(params=None):
+        chm_id = (params or {}).get("chmeetings_id")
+        if chm_id == "3634001":
+            return [already_merged_stale]
+        if chm_id == "3633885":
+            return [canonical]
+        return []
+
+    wp_connector.get_participants.side_effect = fake_get_participants
+    wp_connector.get_rosters.return_value = []
+    # Left behind by the failed run: an approval still sitting at 'pending'.
+    wp_connector.get_approvals.return_value = [{"approval_id": 77, "approval_status": "pending"}]
+    wp_connector.get_validation_issues.return_value = []
+    wp_connector.update_participant.return_value = {"participant_id": 501}
+    wp_connector.update_approval.return_value = {"approval_id": 77}
+
+    result = apply_aliases(execute=True)
+
+    assert result is True
+    wp_connector.update_approval.assert_called_once_with(77, {"approval_status": "merged"})
+
+
+def test_second_run_retries_residual_open_validation_issue(mocker, wp_connector):
+    """Same for a validation issue left open by a partially-failed run."""
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+    mocker.patch("sync.alias_reconciler._stale_badge_filename", return_value=None)
+
+    already_merged_stale = _participant(approval_status=APPROVAL_STATUS["MERGED"])
+    canonical = _participant(participant_id=413, chmeetings_id="3633885")
+
+    def fake_get_participants(params=None):
+        chm_id = (params or {}).get("chmeetings_id")
+        if chm_id == "3634001":
+            return [already_merged_stale]
+        if chm_id == "3633885":
+            return [canonical]
+        return []
+
+    wp_connector.get_participants.side_effect = fake_get_participants
+    wp_connector.get_rosters.return_value = []
+    wp_connector.get_approvals.return_value = [{"approval_id": 77, "approval_status": "merged"}]
+    wp_connector.get_validation_issues.return_value = [{"issue_id": 901, "status": "open"}]
+    wp_connector.update_participant.return_value = {"participant_id": 501}
+    wp_connector.update_validation_issue.return_value = {"issue_id": 901}
+
+    result = apply_aliases(execute=True)
+
+    assert result is True
+    wp_connector.update_validation_issue.assert_called_once()
+    assert wp_connector.update_validation_issue.call_args.args[0] == 901
+
+
+def test_chain_reconciles_against_the_terminal_canonical_id(mocker, wp_connector):
+    """For A -> B -> C, sync resolves A to C, so apply-aliases must reconcile A
+    against C as well. Checking A against its immediate target B would verify a row
+    that is itself about to be tombstoned."""
+    chain = {
+        "A": {"canonical_chm_id": "B", "reason": "", "confirmed_by": "", "confirmed_on": "", "note": ""},
+        "B": {"canonical_chm_id": "C", "reason": "", "confirmed_by": "", "confirmed_on": "", "note": ""},
+    }
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=chain)
+    mocker.patch("sync.alias_reconciler._stale_badge_filename", return_value=None)
+
+    rows = {
+        "A": _participant(participant_id=501, chmeetings_id="A"),
+        "B": _participant(participant_id=502, chmeetings_id="B"),
+        "C": _participant(participant_id=503, chmeetings_id="C"),
+    }
+
+    def fake_get_participants(params=None):
+        chm_id = (params or {}).get("chmeetings_id")
+        return [rows[chm_id]] if chm_id in rows else []
+
+    wp_connector.get_participants.side_effect = fake_get_participants
+    wp_connector.get_rosters.return_value = []
+    wp_connector.get_approvals.return_value = []
+    wp_connector.get_validation_issues.return_value = []
+    wp_connector.update_participant.return_value = {"participant_id": 0}
+
+    result = apply_aliases(execute=False)
+
+    assert result is True
+    # Both A and B must have been looked up against terminal canonical C, never B.
+    looked_up = [c.kwargs["params"]["chmeetings_id"] for c in wp_connector.get_participants.call_args_list]
+    assert looked_up.count("C") == 2, f"expected both entries resolved to C, got {looked_up}"
 
 
 def test_roster_delete_failure_is_reported_as_an_error(mocker, wp_connector):

@@ -21,18 +21,30 @@
   succeed) is reported as `error` instead, so the audit trail never claims a
   duplicate is reconciled while a stale approval token or open validation
   issue is still live. Prints the stale badge filename for manual deletion
-  after each reconciliation. Idempotent: an alias entry whose stale row is
-  already `merged` is skipped with no further writes, so a second run is a
-  no-op. Deliberately WordPress-only — no ChMeetings-side writes and no
+  after each reconciliation. Each entry is reconciled against its **terminal**
+  canonical ID rather than its immediate alias target, matching how sync
+  resolves chains: for `A → B → C`, sync resolves `A` to `C`, so checking `A`
+  against `B` would verify (and compare approvals against) a row that is
+  itself about to be tombstoned, and would wrongly block on "run sync first"
+  whenever the intermediate `B` has no WordPress row. Idempotent, but
+  deliberately not naively so: a stale row counts as `already_merged` only
+  when its tombstone is *complete* (no leftover rosters, no non-merged
+  approvals, no open validation issues) — otherwise the residual work is
+  retried. Without that check, a run that tombstoned the participant and then
+  failed the approval write would be skipped as "already merged" on every
+  later run, leaving a live approval token on a retired duplicate while the
+  command reported success. A genuinely complete row is still a true no-op.
+  Deliberately WordPress-only — no ChMeetings-side writes and no
   edits to the alias map itself (guardrail G3); whether `apply-aliases`
   should also clean ChMeetings Team groups remains an open RFC §8 decision
   for a future issue. Added `APPROVAL_STATUS["MERGED"]` to
   `middleware/config.py` and wired `apply-aliases [--execute]` into `main.py`.
-  11 new mock tests cover the report-only/execute split, the
+  14 new mock tests cover the report-only/execute split, the
   missing-canonical-row block, the approval-mismatch warning, the roster-
   delete/approval-tombstone/validation-resolve failure paths (each reported
-  as an error, never as reconciled), and idempotency on a second run; 2 more
-  pin the new CLI argument parsing.
+  as an error, never as reconciled), terminal-canonical chain resolution, and
+  both the true-no-op and residual-retry second-run cases; 2 more pin the new
+  CLI argument parsing.
 
 - Added the canonical ChMeetings identity layer — Phase 1 of
   `docs/CANONICAL_IDENTITY_RFC.md` §4.1–§4.2, Track A1 of epic #307 (#308).

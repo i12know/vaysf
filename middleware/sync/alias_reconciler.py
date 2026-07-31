@@ -25,8 +25,15 @@ Deliberately out of scope, per the RFC:
 
 Report-only by default, mirroring ``audit-team-groups --remove-orphans``:
 call :func:`apply_aliases` for a dry-run preview, ``apply_aliases(execute=True)``
-to act. Idempotent — an alias entry whose stale row is already ``merged`` is
-reported and skipped without further writes, so a second run is a no-op.
+to act.
+
+Idempotent, but deliberately not naively so: a stale row is skipped as
+"already merged" only when its tombstone is *complete* — no leftover rosters,
+no non-merged approvals, no open validation issues. A run that tombstones the
+participant and then fails on the approval write would otherwise be skipped
+forever on every later run, leaving a live approval token on a retired
+duplicate while the command reported success. Residual work is retried
+instead. A genuinely complete row is still a true no-op.
 """
 import datetime
 from typing import Any, Dict, List, Optional
@@ -35,7 +42,7 @@ import pandas as pd
 from loguru import logger
 
 from config import APPROVAL_STATUS, DATA_DIR, VALIDATION_STATUS
-from sync.person_aliases import PersonAliasError, load_person_aliases
+from sync.person_aliases import PersonAliasError, load_person_aliases, resolve_chm_id
 from wordpress.frontend_connector import WordPressConnector
 
 ALIAS_RECONCILIATION_AUDIT_FILE = "alias_reconciliation_audit.xlsx"
@@ -55,6 +62,40 @@ def _write_audit_file(rows: List[Dict[str, Any]]) -> None:
             "Close the file and re-run to get an updated audit log. "
             "API calls already made above are unaffected."
         )
+
+
+def _residual_tombstone_work(
+    wp_connector: Any, participant_id: Any
+) -> Dict[str, int]:
+    """Return the tombstone work still outstanding on an already-merged stale row.
+
+    A previous ``--execute`` run can tombstone the participant and then fail on
+    the approval or validation-issue writes. Because the participant's own status
+    is already ``merged``, a naive "already merged, skip" check would never retry
+    that leftover work — silently leaving a live approval token on a retired
+    duplicate while reporting success. This is what makes the skip safe.
+    """
+    leftovers: Dict[str, int] = {}
+
+    leftover_rosters = wp_connector.get_rosters(params={"participant_id": participant_id}) or []
+    if leftover_rosters:
+        leftovers["rosters"] = len(leftover_rosters)
+
+    leftover_approvals = [
+        approval
+        for approval in (wp_connector.get_approvals(params={"participant_id": participant_id}) or [])
+        if approval.get("approval_status") != APPROVAL_STATUS["MERGED"]
+    ]
+    if leftover_approvals:
+        leftovers["approvals"] = len(leftover_approvals)
+
+    leftover_issues = wp_connector.get_validation_issues(
+        params={"participant_id": participant_id, "status": VALIDATION_STATUS["OPEN"]}
+    ) or []
+    if leftover_issues:
+        leftovers["validation_issues"] = len(leftover_issues)
+
+    return leftovers
 
 
 def _stale_badge_filename(stale: Dict[str, Any], stale_chm_id: str) -> Optional[str]:
@@ -121,10 +162,17 @@ def apply_aliases(execute: bool = False) -> bool:
 
     with WordPressConnector() as wp_connector:
         for stale_chm_id, entry in aliases.items():
-            canonical_chm_id = entry["canonical_chm_id"]
+            # Resolve to the *terminal* canonical ID, not this entry's immediate
+            # target. For a chain A -> B -> C, sync (#308) resolves A to C, so the
+            # reconciler must reconcile A against C too — checking A against B would
+            # verify (and compare approvals against) a row that is itself about to be
+            # tombstoned, and would wrongly block on "run sync first" whenever the
+            # intermediate B has no WordPress row.
+            canonical_chm_id = resolve_chm_id(stale_chm_id, aliases)
             row: Dict[str, Any] = {
                 "Stale ChM ID": stale_chm_id,
                 "Canonical ChM ID": canonical_chm_id,
+                "Direct Alias Target": entry["canonical_chm_id"],
                 "Reason": entry.get("reason", ""),
                 "Confirmed By": entry.get("confirmed_by", ""),
             }
@@ -145,14 +193,25 @@ def apply_aliases(execute: bool = False) -> bool:
             row["Stale Approval Status"] = stale.get("approval_status", "")
 
             if stale.get("approval_status") == APPROVAL_STATUS["MERGED"]:
-                already_reconciled += 1
-                row["Outcome"] = "already_merged"
-                logger.info(
+                residual = _residual_tombstone_work(wp_connector, stale["participant_id"])
+                if not residual:
+                    already_reconciled += 1
+                    row["Outcome"] = "already_merged"
+                    logger.info(
+                        f"[VAY SM] chm_id={stale_chm_id} (WP participant {stale.get('participant_id')}) "
+                        "is already merged; skipping."
+                    )
+                    audit_rows.append(row)
+                    continue
+
+                # Tombstoned, but a previous run left work behind. Fall through and
+                # retry it rather than reporting a clean skip over a live token.
+                row["Residual Work"] = ", ".join(f"{k}={v}" for k, v in sorted(residual.items()))
+                logger.warning(
                     f"[VAY SM] chm_id={stale_chm_id} (WP participant {stale.get('participant_id')}) "
-                    "is already merged; skipping."
+                    f"is tombstoned but a previous run left work incomplete ({row['Residual Work']}). "
+                    "Retrying the outstanding tombstone work."
                 )
-                audit_rows.append(row)
-                continue
 
             canonical_matches = wp_connector.get_participants(params={"chmeetings_id": canonical_chm_id})
             if not canonical_matches:
