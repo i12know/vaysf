@@ -14,6 +14,20 @@ from sync.alias_reconciler import apply_aliases
 from sync.person_aliases import PersonAliasError
 
 
+def _make_read_fail(wp, method_name, status_attr, result=None):
+    """Make a connector read behave like a non-retryable WordPress failure.
+
+    The real connector logs the error, sets ``last_get_*_status = "failed"``, and
+    still returns ``[]`` — which is indistinguishable from "no rows" unless the
+    caller checks the marker. These tests pin that the reconciler checks it.
+    """
+    def _fail(*args, **kwargs):
+        setattr(wp, status_attr, "failed")
+        return [] if result is None else result
+
+    getattr(wp, method_name).side_effect = _fail
+
+
 @pytest.fixture()
 def wp_connector(mocker):
     wp = MagicMock()
@@ -423,3 +437,148 @@ def test_validation_resolve_failure_is_reported_as_an_error(mocker, wp_connector
     assert result is False
 
 # End of tests/test_alias_reconciler.py
+
+
+# ── Fail-closed on WordPress read failures ────────────────────────────────────
+
+def _wire_stale_and_canonical(wp_connector, stale, canonical):
+    def fake_get_participants(params=None):
+        chm_id = (params or {}).get("chmeetings_id")
+        if chm_id == "3634001":
+            return [stale]
+        if chm_id == "3633885":
+            return [canonical]
+        return []
+
+    wp_connector.get_participants.side_effect = fake_get_participants
+
+
+def test_failed_stale_participant_read_is_an_error_not_no_wp_row(mocker, wp_connector):
+    """A failed participant read returns [] — it must not be reported as 'no WP row'."""
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+    _make_read_fail(wp_connector, "get_participants", "last_get_participants_status")
+
+    result = apply_aliases(execute=True)
+
+    assert result is False
+    wp_connector.update_participant.assert_not_called()
+
+
+def test_failed_roster_read_aborts_before_any_write(mocker, wp_connector):
+    """Reads happen before writes, so a failed roster read leaves the row untouched
+    rather than tombstoning a participant whose rosters are still live."""
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+    mocker.patch("sync.alias_reconciler._stale_badge_filename", return_value=None)
+
+    _wire_stale_and_canonical(
+        wp_connector, _participant(), _participant(participant_id=413, chmeetings_id="3633885")
+    )
+    _make_read_fail(wp_connector, "get_rosters", "last_get_rosters_status")
+
+    result = apply_aliases(execute=True)
+
+    assert result is False
+    wp_connector.delete_roster.assert_not_called()
+    wp_connector.update_participant.assert_not_called()
+    wp_connector.update_approval.assert_not_called()
+
+
+def test_failed_approval_read_aborts_before_any_write(mocker, wp_connector):
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+    mocker.patch("sync.alias_reconciler._stale_badge_filename", return_value=None)
+
+    _wire_stale_and_canonical(
+        wp_connector, _participant(), _participant(participant_id=413, chmeetings_id="3633885")
+    )
+    wp_connector.get_rosters.return_value = []
+    _make_read_fail(wp_connector, "get_approvals", "last_get_approvals_status")
+
+    result = apply_aliases(execute=True)
+
+    assert result is False
+    wp_connector.update_participant.assert_not_called()
+
+
+def test_failed_validation_issue_read_aborts_before_any_write(mocker, wp_connector):
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+    mocker.patch("sync.alias_reconciler._stale_badge_filename", return_value=None)
+
+    _wire_stale_and_canonical(
+        wp_connector, _participant(), _participant(participant_id=413, chmeetings_id="3633885")
+    )
+    wp_connector.get_rosters.return_value = []
+    wp_connector.get_approvals.return_value = []
+    _make_read_fail(wp_connector, "get_validation_issues", "last_get_validation_issues_status")
+
+    result = apply_aliases(execute=True)
+
+    assert result is False
+    wp_connector.update_participant.assert_not_called()
+
+
+def test_failed_residual_read_is_an_error_not_already_merged(mocker, wp_connector):
+    """The residual check must fail closed too — otherwise a failed read makes a
+    half-tombstoned row look complete and it is skipped as 'already merged'."""
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+
+    _wire_stale_and_canonical(
+        wp_connector,
+        _participant(approval_status=APPROVAL_STATUS["MERGED"]),
+        _participant(participant_id=413, chmeetings_id="3633885"),
+    )
+    _make_read_fail(wp_connector, "get_approvals", "last_get_approvals_status")
+    wp_connector.get_rosters.return_value = []
+
+    result = apply_aliases(execute=True)
+
+    assert result is False
+
+
+def test_residual_cleanup_proceeds_when_canonical_row_is_missing(mocker, wp_connector):
+    """An already-retired identity's leftover work must be finished even if the
+    canonical row isn't in WordPress yet. That check guards against retiring a live
+    identity prematurely; this one is already retired, so blocking on it would
+    strand a live approval token while the command reported success."""
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+    mocker.patch("sync.alias_reconciler._stale_badge_filename", return_value=None)
+
+    merged_stale = _participant(approval_status=APPROVAL_STATUS["MERGED"])
+
+    def fake_get_participants(params=None):
+        chm_id = (params or {}).get("chmeetings_id")
+        if chm_id == "3634001":
+            return [merged_stale]
+        return []  # canonical row not synced to WordPress yet
+
+    wp_connector.get_participants.side_effect = fake_get_participants
+    wp_connector.get_rosters.return_value = []
+    wp_connector.get_approvals.return_value = [{"approval_id": 77, "approval_status": "pending"}]
+    wp_connector.get_validation_issues.return_value = []
+    wp_connector.update_participant.return_value = {"participant_id": 501}
+    wp_connector.update_approval.return_value = {"approval_id": 77}
+
+    result = apply_aliases(execute=True)
+
+    assert result is True
+    wp_connector.update_approval.assert_called_once_with(77, {"approval_status": "merged"})
+
+
+def test_report_only_never_writes_even_with_residual_work(mocker, wp_connector):
+    """Report-only stays read-only on the residual path too."""
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+
+    _wire_stale_and_canonical(
+        wp_connector,
+        _participant(approval_status=APPROVAL_STATUS["MERGED"]),
+        _participant(participant_id=413, chmeetings_id="3633885"),
+    )
+    wp_connector.get_rosters.return_value = [{"roster_id": 10}]
+    wp_connector.get_approvals.return_value = [{"approval_id": 77, "approval_status": "pending"}]
+    wp_connector.get_validation_issues.return_value = []
+
+    result = apply_aliases(execute=False)
+
+    assert result is True
+    wp_connector.delete_roster.assert_not_called()
+    wp_connector.update_participant.assert_not_called()
+    wp_connector.update_approval.assert_not_called()

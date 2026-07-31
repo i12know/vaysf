@@ -39,12 +39,30 @@
   should also clean ChMeetings Team groups remains an open RFC §8 decision
   for a future issue. Added `APPROVAL_STATUS["MERGED"]` to
   `middleware/config.py` and wired `apply-aliases [--execute]` into `main.py`.
-  14 new mock tests cover the report-only/execute split, the
+  The command also **fails closed on WordPress reads**: the connector's read
+  methods return `[]` on a non-retryable failure and record it only on a
+  `last_get_*_status` marker, but here an empty roster/approval/issue list
+  means "nothing to clean up" — so an unchecked failed read would tombstone a
+  participant and report it reconciled while its rosters were still on the
+  scoresheet and its approval token still live, and would let the residual
+  check report `already_merged` over a half-retired row. Every read is now
+  checked, all reads for an entry happen *before* any of its writes (so a
+  read failure leaves the row untouched rather than half-retired), and a
+  failed read aborts just that entry as an error. Finishing residual work no
+  longer waits on the canonical row: that check exists to stop a live
+  identity being retired before its replacement exists, and a row that is
+  already `merged` is already retired — blocking there stranded leftover
+  rosters/approvals/issues while the command reported success. Also gave
+  `WordPressConnector.get_participants()` the `last_get_participants_status`
+  marker its sibling reads already had, so a failed participant lookup is no
+  longer indistinguishable from "no such row".
+  21 new mock tests cover the report-only/execute split, the
   missing-canonical-row block, the approval-mismatch warning, the roster-
   delete/approval-tombstone/validation-resolve failure paths (each reported
-  as an error, never as reconciled), terminal-canonical chain resolution, and
-  both the true-no-op and residual-retry second-run cases; 2 more pin the new
-  CLI argument parsing.
+  as an error, never as reconciled), terminal-canonical chain resolution,
+  both the true-no-op and residual-retry second-run cases, a failed read on
+  each of the four read paths, and residual cleanup with the canonical row
+  absent; 2 more pin the new CLI argument parsing.
 
 - Added the canonical ChMeetings identity layer — Phase 1 of
   `docs/CANONICAL_IDENTITY_RFC.md` §4.1–§4.2, Track A1 of epic #307 (#308).
