@@ -262,4 +262,64 @@ def test_roster_delete_failure_is_reported_as_an_error(mocker, wp_connector):
 
     assert result is False
 
+
+def test_approval_tombstone_failure_is_reported_as_an_error(mocker, wp_connector):
+    """A failed update_approval() must not be reported as 'reconciled' — a stale
+    approval token could still be active for the retired duplicate."""
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+    mocker.patch("sync.alias_reconciler._stale_badge_filename", return_value=None)
+
+    stale = _participant()
+    canonical = _participant(participant_id=413, chmeetings_id="3633885")
+
+    def fake_get_participants(params=None):
+        chm_id = (params or {}).get("chmeetings_id")
+        if chm_id == "3634001":
+            return [stale]
+        if chm_id == "3633885":
+            return [canonical]
+        return []
+
+    wp_connector.get_participants.side_effect = fake_get_participants
+    wp_connector.get_rosters.return_value = []
+    wp_connector.delete_roster.return_value = True
+    wp_connector.update_participant.return_value = {"participant_id": 501}
+    wp_connector.get_approvals.return_value = [{"approval_id": 77, "approval_status": "pending"}]
+    wp_connector.update_approval.return_value = None  # write failed
+    wp_connector.get_validation_issues.return_value = []
+
+    result = apply_aliases(execute=True)
+
+    assert result is False
+
+
+def test_validation_resolve_failure_is_reported_as_an_error(mocker, wp_connector):
+    """A failed update_validation_issue() must not be reported as 'reconciled' —
+    a stale validation issue could still be left open on the retired duplicate."""
+    mocker.patch("sync.alias_reconciler.load_person_aliases", return_value=_alias_map())
+    mocker.patch("sync.alias_reconciler._stale_badge_filename", return_value=None)
+
+    stale = _participant()
+    canonical = _participant(participant_id=413, chmeetings_id="3633885")
+
+    def fake_get_participants(params=None):
+        chm_id = (params or {}).get("chmeetings_id")
+        if chm_id == "3634001":
+            return [stale]
+        if chm_id == "3633885":
+            return [canonical]
+        return []
+
+    wp_connector.get_participants.side_effect = fake_get_participants
+    wp_connector.get_rosters.return_value = []
+    wp_connector.delete_roster.return_value = True
+    wp_connector.update_participant.return_value = {"participant_id": 501}
+    wp_connector.get_approvals.return_value = []
+    wp_connector.get_validation_issues.return_value = [{"issue_id": 901, "status": "open"}]
+    wp_connector.update_validation_issue.return_value = None  # write failed
+
+    result = apply_aliases(execute=True)
+
+    assert result is False
+
 # End of tests/test_alias_reconciler.py

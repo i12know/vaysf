@@ -215,16 +215,25 @@ def apply_aliases(execute: bool = False) -> bool:
 
             stale_approvals = wp_connector.get_approvals(params={"participant_id": stale["participant_id"]})
             approvals_tombstoned = 0
+            approval_tombstone_failed = False
             for approval in stale_approvals:
                 if wp_connector.update_approval(
                     approval["approval_id"], {"approval_status": APPROVAL_STATUS["MERGED"]}
                 ):
                     approvals_tombstoned += 1
+                else:
+                    approval_tombstone_failed = True
+                    logger.error(
+                        f"[VAY SM] Failed to tombstone approval {approval.get('approval_id')} "
+                        f"for stale participant {stale.get('participant_id')} (chm_id={stale_chm_id}). "
+                        "A stale approval token may still be active."
+                    )
 
             open_issues = wp_connector.get_validation_issues(
                 params={"participant_id": stale["participant_id"], "status": VALIDATION_STATUS["OPEN"]}
             )
             issues_resolved = 0
+            validation_resolve_failed = False
             for issue in open_issues:
                 if wp_connector.update_validation_issue(
                     issue["issue_id"],
@@ -234,13 +243,25 @@ def apply_aliases(execute: bool = False) -> bool:
                     },
                 ):
                     issues_resolved += 1
+                else:
+                    validation_resolve_failed = True
+                    logger.error(
+                        f"[VAY SM] Failed to resolve validation issue {issue.get('issue_id')} "
+                        f"for stale participant {stale.get('participant_id')} (chm_id={stale_chm_id})."
+                    )
 
             row["Rosters Deleted"] = rosters_deleted
             row["Participant Tombstoned"] = participant_tombstoned
             row["Approvals Tombstoned"] = approvals_tombstoned
             row["Validation Issues Resolved"] = issues_resolved
 
-            if participant_tombstoned and not roster_delete_failed:
+            fully_reconciled = (
+                participant_tombstoned
+                and not roster_delete_failed
+                and not approval_tombstone_failed
+                and not validation_resolve_failed
+            )
+            if fully_reconciled:
                 reconciled += 1
                 row["Outcome"] = "reconciled"
                 logger.info(
@@ -261,7 +282,9 @@ def apply_aliases(execute: bool = False) -> bool:
                     f"[VAY SM] Reconciliation incomplete for stale chm_id={stale_chm_id} "
                     f"(WP {stale.get('participant_id')}): "
                     f"participant_tombstoned={participant_tombstoned}, "
-                    f"roster_delete_failed={roster_delete_failed}."
+                    f"roster_delete_failed={roster_delete_failed}, "
+                    f"approval_tombstone_failed={approval_tombstone_failed}, "
+                    f"validation_resolve_failed={validation_resolve_failed}."
                 )
 
             audit_rows.append(row)

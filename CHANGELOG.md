@@ -14,18 +14,25 @@
   sync first" and skips otherwise), and if the stale row was pastor-approved
   but the canonical row is not, logs a loud warning and does **not**
   auto-copy the approval — an identity change invalidates approval, matching
-  the drift-guard philosophy (#171). Prints the stale badge filename for
-  manual deletion after each reconciliation. Idempotent: an alias entry whose
-  stale row is already `merged` is skipped with no further writes, so a
-  second run is a no-op. Deliberately WordPress-only — no ChMeetings-side
-  writes and no edits to the alias map itself (guardrail G3); whether
-  `apply-aliases` should also clean ChMeetings Team groups remains an open
-  RFC §8 decision for a future issue. Added `APPROVAL_STATUS["MERGED"]` to
+  the drift-guard philosophy (#171). A row is only reported as `reconciled`
+  when the participant tombstone, every roster delete, every approval
+  tombstone, and every validation-issue resolution all succeeded — a partial
+  failure (e.g. `update_approval()` fails after the participant/rosters
+  succeed) is reported as `error` instead, so the audit trail never claims a
+  duplicate is reconciled while a stale approval token or open validation
+  issue is still live. Prints the stale badge filename for manual deletion
+  after each reconciliation. Idempotent: an alias entry whose stale row is
+  already `merged` is skipped with no further writes, so a second run is a
+  no-op. Deliberately WordPress-only — no ChMeetings-side writes and no
+  edits to the alias map itself (guardrail G3); whether `apply-aliases`
+  should also clean ChMeetings Team groups remains an open RFC §8 decision
+  for a future issue. Added `APPROVAL_STATUS["MERGED"]` to
   `middleware/config.py` and wired `apply-aliases [--execute]` into `main.py`.
-  9 new mock tests cover the report-only/execute split, the
+  11 new mock tests cover the report-only/execute split, the
   missing-canonical-row block, the approval-mismatch warning, the roster-
-  delete-failure error path, and idempotency on a second run; 2 more pin the
-  new CLI argument parsing.
+  delete/approval-tombstone/validation-resolve failure paths (each reported
+  as an error, never as reconciled), and idempotency on a second run; 2 more
+  pin the new CLI argument parsing.
 
 - Added the canonical ChMeetings identity layer — Phase 1 of
   `docs/CANONICAL_IDENTITY_RFC.md` §4.1–§4.2, Track A1 of epic #307 (#308).
