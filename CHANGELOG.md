@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Added the canonical ChMeetings identity layer — Phase 1 of
+  `docs/CANONICAL_IDENTITY_RFC.md` §4.1–§4.2, Track A1 of epic #307 (#308).
+  New `middleware/sync/person_aliases.py` provides `load_person_aliases()`
+  (following the `_load_late_racquet_overrides` pattern: missing file → `{}`,
+  unparseable or wrongly-shaped JSON → warn + `{}`) and `resolve_chm_id()`,
+  which walks alias chains transitively to the terminal canonical ID. The map
+  accepts both shorthand (`{"3634001": "3633885"}`) and object entries carrying
+  `reason`/`confirmed_by`/`confirmed_on`/`note`; self-maps are rejected.
+  `ParticipantSyncer` loads the map once at construction and resolves as the
+  **first statement** of `_sync_single_participant()`, ahead of
+  `get_person(chm_id)` (guardrail G1) — so an ID already merged or deleted in
+  ChMeetings resolves to its replacement instead of 404ing, and the stale
+  WordPress row is never re-created. A cyclic map (`A → B → A`) is a hard
+  failure: `PersonAliasError` is raised at load, and the sync refuses to run
+  until an operator corrects the file (guardrail G2). Nothing in the codebase
+  ever writes the map (guardrail G3). New `PERSON_ALIASES_FILE` in
+  `middleware/config.py` with a `PERSON_ALIASES_FILE` env override, alongside
+  the late-racquet precedent; a committed-but-empty
+  `middleware/data/person_aliases.json` is the example, and real entries live
+  in the git-ignored `middleware/data/person_aliases.local.json` (guardrail G5).
+  An empty or missing map is byte-for-byte today's behavior — the existing mock
+  suite passes unchanged.
+
 - Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat
   under-reporting real approved-athlete counts (#181). `VAYSF_Statistics::get_overall_stats()`
   was counting `sf_approvals.approval_status = 'approved'` (a pastor-approval-token/sync

@@ -57,6 +57,7 @@ ATHLETE_FEE_OTHER_EVENTS_ONLY = 20  # athlete registered only under Other Events
 ATHLETE_FEE_LATE = 60              # athlete with primary or secondary sport (after deadline)
 REGISTRATION_DEADLINE = "2026-05-17"  # ISO date; last day for early-bird rate (inclusive); late fee starts the following day
 LATE_RACQUET_OVERRIDES_FILE = DATA_DIR / "late_racquet_overrides.json"  # middleware-side allowlist for approved late racquet exceptions
+PERSON_ALIASES_FILE = DATA_DIR / "person_aliases.json"  # stale ChMeetings ID -> canonical ChMeetings ID map (see docs/CANONICAL_IDENTITY_RFC.md)
 
 # Ensure directories exist with error handling
 for directory in [LOG_DIR, DATA_DIR, TEMP_DIR, EXPORT_DIR]:
@@ -680,6 +681,9 @@ class Config:
     LATE_RACQUET_OVERRIDES_FILE = Path(
         os.getenv("LATE_RACQUET_OVERRIDES_FILE", str(LATE_RACQUET_OVERRIDES_FILE))
     )
+    PERSON_ALIASES_FILE = Path(
+        os.getenv("PERSON_ALIASES_FILE", str(PERSON_ALIASES_FILE))
+    )
     BUSINESS_TIMEZONE = os.getenv("BUSINESS_TIMEZONE", DEFAULT_BUSINESS_TIMEZONE)
     WORDPRESS_CREATED_AT_TIMEZONE = os.getenv(
         "WORDPRESS_CREATED_AT_TIMEZONE",
@@ -819,6 +823,10 @@ VAYSM_GROUP_ID=
 # Optional local-only JSON file for approved late racquet exceptions.
 # Keep real entries out of git; middleware/data/late_racquet_overrides.local.json is ignored.
 LATE_RACQUET_OVERRIDES_FILE=data/late_racquet_overrides.local.json
+# Optional local-only JSON file mapping stale ChMeetings IDs to canonical ones.
+# Real entries carry names and pastoral judgment — keep them out of git;
+# middleware/data/person_aliases.local.json is ignored.
+PERSON_ALIASES_FILE=data/person_aliases.local.json
 
 # Export directory
 # Default is now 'G:\\Shared drives\\RP Google Drive\\VAY\\SportsFest\\VAYSF-data' if not set here.

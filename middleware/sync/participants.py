@@ -18,6 +18,7 @@ from uuid import uuid4
 from validation.individual_validator import IndividualValidator
 from validation.models import Participant
 from pydantic import ValidationError
+from sync.person_aliases import load_person_aliases, resolve_chm_id
 from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 
 # Helper functions
@@ -47,6 +48,9 @@ class ParticipantSyncer:
         # Initialize the IndividualValidator with the event collection
         self.validator = IndividualValidator(collection="SUMMER_2026")
         self.late_racquet_overrides = self._load_late_racquet_overrides()
+        # Canonical identity map (Issue #308). A cyclic map raises PersonAliasError
+        # here, which is deliberate: the sync must refuse to run on it (guardrail G2).
+        self.person_aliases = load_person_aliases()
 
     @staticmethod
     def _validation_issue_key(
@@ -777,6 +781,16 @@ class ParticipantSyncer:
         Returns:
             bool: True if the participant was successfully processed (created or updated), False otherwise.
         """
+        # Canonical identity resolution (Issue #308, guardrail G1): this must be the
+        # first statement, ahead of the get_person() fetch. An ID already merged or
+        # deleted in ChMeetings 404s on fetch, so resolving afterwards would be too late.
+        canonical_id = resolve_chm_id(chm_id, self.person_aliases) if self.person_aliases else chm_id
+        if canonical_id != chm_id:
+            logger.info(
+                f"[VAY SM] Alias: stale chm_id {chm_id} resolved to canonical {canonical_id}"
+            )
+            chm_id = canonical_id
+
         if chm_id == target_chm_id_for_debug:
             logger.debug(f"--------------------------------------------------------------------------")
             logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] START PROCESSING TARGET RECORD")
