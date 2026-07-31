@@ -254,6 +254,11 @@ retired. Specifically:
 
 Fix the file rather than removing the mapping.
 
+The alias map is re-read at the start of every participant or full sync, so an
+alias added between two scheduled runs takes effect on the next run. You do not
+need to restart a long-running `python main.py schedule --daemon` process after
+editing the file.
+
 #### Approvals Sync
 
 To sync approved participants to ChMeetings (adds them to the approved group via API):

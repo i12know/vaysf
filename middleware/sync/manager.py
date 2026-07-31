@@ -17,7 +17,7 @@ from chmeetings.backend_connector import ChMeetingsConnector, CHM_MIN_REQUEST_IN
 from wordpress.frontend_connector import WordPressConnector
 from sync.churches import ChurchSyncer
 from sync.participants import ParticipantSyncer
-from sync.person_aliases import load_person_aliases
+from sync.person_aliases import AliasMap, load_person_aliases
 from validation import ChurchValidator, TeamValidator
 from validation.models import RulesManager
 import datetime
@@ -95,12 +95,31 @@ class SyncManager:
         """Trigger church synchronization from an Excel file."""
         return self.church_syncer.sync_from_excel(excel_file_path)
 
-    def sync_participants(self, chm_id: Optional[str] = None) -> bool:
+    def sync_participants(
+        self,
+        chm_id: Optional[str] = None,
+        person_aliases: Optional[AliasMap] = None,
+    ) -> bool:
         """
         Trigger participant synchronization from ChMeetings.
         Can sync a single participant if chm_id is provided.
+
+        Args:
+            chm_id: Optional single ChMeetings ID to sync.
+            person_aliases: The alias snapshot this run should use. Supplied by
+                ``run_full_sync`` so its preflight and its participant step share
+                one map. When omitted, the map is re-read from disk here.
+
+        Raises:
+            PersonAliasError: if the configured alias map is malformed.
         """
         if self.participant_syncer:
+            # Re-read per top-level run rather than reusing whatever the syncer
+            # cached. In daemon mode one SyncManager serves many scheduled runs,
+            # so an alias added between runs must apply to the next one.
+            self.participant_syncer.person_aliases = (
+                load_person_aliases() if person_aliases is None else person_aliases
+            )
             # Pass the chm_id to the ParticipantSyncer's method
             return self.participant_syncer.sync_participants(chm_id_to_sync=chm_id)
         logger.warning("Participant syncer not initialized. Cannot sync participants.")
@@ -1260,7 +1279,9 @@ class SyncManager:
         # Preflight the alias map before the first write. ParticipantSyncer loads
         # it lazily, so without this the failure would surface only once the
         # participant step began — after church rows had already been written.
-        load_person_aliases()
+        # The snapshot is carried into sync_participants below so the map that
+        # was validated is exactly the map the run uses.
+        person_aliases = load_person_aliases()
 
         self.stats = {
             "churches": {"created": 0, "updated": 0, "skipped": 0, "errors": 0},
@@ -1276,7 +1297,7 @@ class SyncManager:
         else:
             logger.error(f"Excel file not found at {excel_path}")
 
-        self.sync_participants()
+        self.sync_participants(person_aliases=person_aliases)
         self.generate_approvals()
         self.sync_approvals_to_chmeetings()
         # self.validate_data() ## temporary skipped until more validations can be tested.

@@ -352,6 +352,16 @@ and commands that never consume the map — `sync-churches` among them —
 remain available. The map is therefore loaded lazily by `ParticipantSyncer`
 rather than in its constructor, since `SyncManager` builds that syncer
 eagerly for every command.
+
+The loaded map is scoped to **one run, not one `SyncManager`**. Daemon mode
+(`main.py schedule --daemon`) reuses a single manager across every scheduled
+run, so a map cached for the manager's lifetime would pin whatever was on
+disk at startup — an alias added and reconciled between two runs would never
+take effect, and the next participant sync could resurrect the very ID the
+operator had just retired. `SyncManager.sync_participants()` therefore
+assigns a freshly loaded map at the start of each top-level run, and
+`run_full_sync()` passes its preflighted snapshot through so the map that was
+validated is exactly the map that run uses.
 **Dependencies:** none. The foundation issue — must land first. (#308)
 
 ### A2 (#309) — `middleware/wordpress: verify merged-status tolerance across consumers`

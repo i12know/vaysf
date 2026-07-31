@@ -193,6 +193,10 @@ def _reconcile_one(
             "Stale WP Participant ID": participant_id,
             "Stale Name": f"{stale.get('first_name', '')} {stale.get('last_name', '')}".strip(),
             "Stale Approval Status": stale.get("approval_status", ""),
+            # Computed once, as soon as a stale row exists, so every outcome that
+            # has one reports the badge to delete — including already_merged and
+            # canonical_missing_run_sync_first, not just the reconciled path.
+            "Stale Badge Filename": _badge_filename(stale, stale_chm_id),
         }
     )
 
@@ -206,10 +210,6 @@ def _reconcile_one(
             f"rosters={len(state.rosters)}, approvals={len(state.active_approvals)}, "
             f"validation_issues={len(state.issues)}"
         )
-        # The operator still needs the stale badge to delete, even when the
-        # tombstone is only being finished. A first run that died before it
-        # reported the filename is exactly when this path is reached.
-        row["Stale Badge Filename"] = _badge_filename(stale, stale_chm_id)
         if not execute:
             row["Outcome"] = "would_finish_residual"
             return row
@@ -228,7 +228,6 @@ def _reconcile_one(
             "Canonical WP Participant ID": canonical.get("participant_id", ""),
             "Canonical Approval Status": canonical.get("approval_status", ""),
             "Stale Roster Rows": len(state.rosters),
-            "Stale Badge Filename": _badge_filename(stale, stale_chm_id),
         }
     )
     mismatch = (

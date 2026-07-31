@@ -52,19 +52,26 @@ class ParticipantSyncer:
 
     @property
     def person_aliases(self) -> AliasMap:
-        """Load the alias map on first use, then cache it for the run.
+        """The alias map for the current sync, loaded on first use.
 
         Loading is deliberately deferred out of ``__init__``. ``SyncManager``
         constructs a ``ParticipantSyncer`` eagerly, so loading here would make a
         malformed alias file abort every command that builds a SyncManager —
-        including ``sync-churches``, which never consumes the map. Participant
-        sync still fails closed, because every path that resolves an ID reaches
-        this property first (see ``run_full_sync``'s explicit preflight for the
-        full-sync guarantee).
+        including ``sync-churches``, which never consumes the map.
+
+        The cached value is scoped to one sync, not to the syncer's lifetime:
+        ``SyncManager.sync_participants()`` assigns a freshly loaded map at the
+        start of every top-level run. A ``SyncManager`` can outlive many runs in
+        daemon mode, and an alias added between two scheduled runs must take
+        effect on the next one.
         """
         if self._person_aliases is None:
             self._person_aliases = load_person_aliases()
         return self._person_aliases
+
+    @person_aliases.setter
+    def person_aliases(self, aliases: AliasMap) -> None:
+        self._person_aliases = aliases
 
     @staticmethod
     def _validation_issue_key(

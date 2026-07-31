@@ -966,9 +966,8 @@ def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str
     except PersonAliasError as e:
         # Ordered ahead of the generic handler on purpose. A malformed alias map
         # is operator error with a known cause, so it is reported as a plain
-        # message naming the file and the parse problem rather than a traceback.
-        # Catching it here also keeps the @retry decorator from re-attempting a
-        # deterministic configuration failure three times with backoff.
+        # message naming the file and the parse problem rather than the traceback
+        # the generic handler would log.
         logger.error(f"Refusing to sync: {e}")
         logger.error(
             f"Fix the alias map at {Config.PERSON_ALIASES_FILE} and rerun. "

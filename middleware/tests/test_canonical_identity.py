@@ -128,12 +128,49 @@ def test_full_sync_preflights_aliases_before_any_sub_step(mocker, malformed_alia
         manager.close()
 
 
-def test_run_sync_reports_alias_error_without_traceback_or_retry(mocker):
-    """Step 4: a malformed map is operator error, not a transient sync failure.
+def test_daemon_reuse_picks_up_aliases_added_between_runs(mocker):
+    """A long-lived SyncManager must not pin the alias map from its first run.
 
-    run_sync is decorated with @retry, so the catch must sit inside it — both to
-    avoid a traceback and to keep a deterministic config error from being
-    re-attempted three times with exponential backoff.
+    Daemon mode reuses one SyncManager across scheduled runs. If the syncer's
+    cache outlived a run, an alias added and reconciled between two runs would
+    never take effect, and the next participant sync could resurrect the stale
+    ID the operator just retired.
+    """
+    _mock_connector_config(mocker)
+    manager = SyncManager()
+    try:
+        mocker.patch.object(manager, "sync_churches_from_excel")
+        mocker.patch.object(manager, "generate_approvals")
+        mocker.patch.object(manager, "sync_approvals_to_chmeetings")
+        inner = mocker.patch.object(
+            manager.participant_syncer, "sync_participants", return_value=True
+        )
+        loader = mocker.patch(
+            "sync.manager.load_person_aliases", side_effect=[{}, _aliases()]
+        )
+
+        manager.run_full_sync()
+        assert manager.participant_syncer.person_aliases == {}
+
+        # Operator adds and reconciles an alias between scheduled runs.
+        manager.run_full_sync()
+        assert manager.participant_syncer.person_aliases == _aliases()
+
+        assert inner.call_count == 2
+        # Exactly one load per run: the participant step is handed the
+        # preflighted snapshot instead of re-reading the file, so a map edited
+        # mid-run cannot be applied half-and-half.
+        assert loader.call_count == 2
+    finally:
+        manager.close()
+
+
+def test_run_sync_reports_alias_error_without_traceback(mocker):
+    """Step 4: a malformed map is operator error, so it reports as a plain message.
+
+    The catch must sit inside run_sync, ahead of its generic ``except Exception``
+    handler — that handler logs via ``logger.exception``, which is the traceback
+    the decision rules out.
     """
     manager = MagicMock()
     manager.authenticate.return_value = True
@@ -142,7 +179,6 @@ def test_run_sync_reports_alias_error_without_traceback_or_retry(mocker):
 
     assert main.run_sync(manager, "full") is False
     exception_log.assert_not_called()
-    assert manager.run_full_sync.call_count == 1
 
 
 def _stats():
@@ -303,6 +339,38 @@ def test_reconciler_reports_partial_write_failure(wp_connector, reads, failing_w
     getattr(wp_connector, failing_write).return_value = None
 
     assert apply_aliases(execute=True) is False
+
+
+@pytest.mark.parametrize(
+    ("stale", "canonical_present", "expected_outcome"),
+    [
+        (_participant(status=APPROVAL_STATUS["MERGED"]), True, "already_merged"),
+        (_participant(), False, "canonical_missing_run_sync_first"),
+    ],
+    ids=["already-merged", "canonical-missing"],
+)
+def test_reconciler_reports_stale_badge_for_every_stale_row_outcome(
+    wp_connector, mocker, stale, canonical_present, expected_outcome
+):
+    """#310 asks for the badge to delete whenever a stale row was found.
+
+    It was previously reported only on the reconciled path, so the two outcomes
+    that stop earlier left the operator without the filename.
+    """
+    audit = mocker.patch("sync.alias_reconciler._write_audit")
+
+    def get_participants(params=None):
+        chm_id = (params or {}).get("chmeetings_id")
+        if chm_id == "100":
+            return [stale]
+        return [_participant("200", 11)] if canonical_present else []
+
+    wp_connector.get_participants.side_effect = get_participants
+
+    assert apply_aliases(execute=False) is True
+    (rows,) = audit.call_args.args
+    assert rows[0]["Outcome"] == expected_outcome
+    assert rows[0]["Stale Badge Filename"] == "stale.png"
 
 
 def test_reconciler_resolves_chain_to_terminal_canonical_id(wp_connector, mocker):
