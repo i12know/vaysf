@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Removed the broken `uuid>=1.30` pin from `middleware/requirements.txt` (#374).
+  That 2006-era PyPI package shadows the standard-library `uuid` module and fails
+  to build on Python 3 (`AttributeError: install_layout` out of setuptools), which
+  aborted `pip install -r requirements.txt` outright on any machine without an
+  already-provisioned environment — so the documented setup path in
+  `docs/INSTALLATION.md` did not work on a fresh or rebuilt box. Existing operator
+  virtualenvs were unaffected, which is why it went unnoticed for a full season.
+  No source change was needed alongside it: the code imports the stdlib `uuid`.
+  Verified both directions — a clean `pip install -r requirements.txt` now
+  succeeds, and installing `uuid>=1.30` on its own still fails as described.
+  (Debt register §2.1.)
+- Micro-fixes from the 2026 architecture review's debt register §2.4 (#377).
+  `middleware/church_teams_export.py`'s column-width sizing no longer swallows
+  every exception with a bare `except: pass`; it now catches
+  `(AttributeError, TypeError, ValueError)` and logs at debug level, so a sizing
+  failure is visible without a wide sheet flooding the run log (the column still
+  falls back to the width computed from its other cells — behavior unchanged).
+  `middleware/config.py`'s directory-creation failure handler uses `logger.error()`
+  instead of `print()`, bringing that failure path into the structured logging
+  conventions; it reaches loguru's default stderr sink rather than the log file,
+  which is correct here since `LOG_DIR` itself may be the directory that failed.
+  The third §2.4 item — the hardcoded `G:\Shared drives\...` default export path
+  at `config.py:39` — is deliberately **not** included; see #377 for why.
 - Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat
   under-reporting real approved-athlete counts (#181). `VAYSF_Statistics::get_overall_stats()`
   was counting `sf_approvals.approval_status = 'approved'` (a pastor-approval-token/sync
