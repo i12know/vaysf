@@ -11,7 +11,6 @@ tqdm>=4.64.1
 schedule>=1.1.0
 tenacity>=8.1.0
 pytz>=2022.5
-uuid>=1.30
 
 # Scheduling / optimization
 ortools>=9.8

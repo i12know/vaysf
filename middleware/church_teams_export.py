@@ -3040,8 +3040,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                             try:
                                 if len(str(cell.value)) > max_length:
                                     max_length = len(str(cell.value))/2 # Divide by 2 for better fit
-                            except:
-                                pass
+                            except (AttributeError, TypeError, ValueError) as e:
+                                # Per-cell and non-fatal: the column just keeps the
+                                # width computed from its other cells. Logged at debug
+                                # so a wide sheet cannot flood the run log.
+                                logger.debug(f"Skipped column-width sizing for cell {cell.coordinate!r}: {e}")
                         
                         # Set width with some padding
                         adjusted_width = min(max_length + 2, 50)  # Max width of 50
