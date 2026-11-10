@@ -767,6 +767,106 @@ def parse_args() -> argparse.Namespace:
         help="Write approved_schedule_games.json and publish-ready JSON artifacts when validation is clean",
     )
 
+    optimize_parser = subparsers.add_parser(
+        "optimize-approved-schedule",
+        help=(
+            "Experiment: repair the approved preliminary schedule with CP-SAT, moving as "
+            "few games as possible to cut shared-athlete conflicts (Issue #218)"
+        ),
+    )
+    optimize_parser.add_argument(
+        "--input",
+        default=None,
+        help="schedule_input.json built from the reconciled venues (default: EXPORT_DIR/schedule_input.json)",
+    )
+    optimize_parser.add_argument(
+        "--baseline",
+        default=None,
+        help="Approved games with baseline placements (default: EXPORT_DIR/approved_schedule_games.json)",
+    )
+    optimize_parser.add_argument(
+        "--comparison",
+        default=None,
+        help="Baseline-vs-optimized comparison JSON (default: EXPORT_DIR/optimized_schedule_comparison.json)",
+    )
+    optimize_parser.add_argument(
+        "--output",
+        default=None,
+        help="Optimized schedule JSON, written on --execute (default: EXPORT_DIR/optimized_schedule_output.json)",
+    )
+    optimize_parser.add_argument(
+        "--workbook",
+        default=None,
+        help="Comparison workbook, written on --execute (default: EXPORT_DIR/VAYSF_Optimized_Schedule_YYYY-MM-DD.xlsx)",
+    )
+    optimize_parser.add_argument(
+        "--repair-events",
+        nargs="+",
+        default=None,
+        metavar="EVENT",
+        help="Sports whose preliminary games may move (default: Basketball, Men's and Women's Volleyball, Bible Challenge)",
+    )
+    optimize_parser.add_argument(
+        "--allow-cross-day",
+        action="store_true",
+        help="Let a game move to another day its sport already plays on (default: same day only)",
+    )
+    optimize_parser.add_argument(
+        "--max-move-minutes",
+        type=int,
+        default=None,
+        help="Largest time change allowed for any one game",
+    )
+    optimize_parser.add_argument(
+        "--max-moves",
+        type=int,
+        default=None,
+        help="Largest number of games allowed to move",
+    )
+    optimize_parser.add_argument(
+        "--movement-priority",
+        choices=["time,court", "court,time"],
+        default="time,court",
+        help="After the move count: minimize minutes moved before court changes (default), or the reverse",
+    )
+    optimize_parser.add_argument(
+        "--rest-policy",
+        choices=["no_worse", "strict", "ignore"],
+        default="no_worse",
+        help="Back-to-back games: no more than the baseline (default), none at all, or unconstrained",
+    )
+    optimize_parser.add_argument(
+        "--rest-window-minutes",
+        type=int,
+        default=0,
+        help="A team's games count as back-to-back when the gap is at most this many minutes (default: 0)",
+    )
+    optimize_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help=(
+            "Time budget in seconds for the whole solve; the move frontier gets the same "
+            "again (default: SCHEDULE_SOLVER_TIMEOUT or 90)"
+        ),
+    )
+    optimize_parser.add_argument(
+        "--no-frontier",
+        action="store_true",
+        help="Skip the table of best conflict totals for each smaller move budget",
+    )
+    optimize_mode = optimize_parser.add_mutually_exclusive_group(required=True)
+    optimize_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Audit the baseline, solve, and write only the comparison JSON",
+    )
+    optimize_mode.add_argument(
+        "--execute",
+        action="store_true",
+        help="Also write the optimized schedule JSON and comparison workbook (never the official files)",
+    )
+
     reconcile_parser = subparsers.add_parser(
         "reconcile-approved-schedules",
         help=(
@@ -2163,6 +2263,46 @@ def main() -> None:
                 logger.info(f"Approved publish schedule_input written to: {publish_input_path.resolve()}")
                 logger.info(f"Approved publish schedule_output written to: {publish_output_path.resolve()}")
                 success = True
+    elif args.command == "optimize-approved-schedule":
+        from scheduling import approved_games, schedule_repair
+
+        export_base = Path(EXPORT_DIR) if EXPORT_DIR else DATA_DIR
+        repair_kwargs = {}
+        if args.timeout is not None:
+            repair_kwargs["timeout_seconds"] = args.timeout
+        exit_code = schedule_repair.run_optimize_approved_schedule(
+            input_path=(
+                Path(args.input) if args.input
+                else _default_schedule_json_path("schedule_input.json")
+            ),
+            baseline_path=(
+                Path(args.baseline) if args.baseline
+                else approved_games.default_sidecar_path(export_base)
+            ),
+            comparison_path=(
+                Path(args.comparison) if args.comparison
+                else schedule_repair.default_comparison_path(export_base)
+            ),
+            output_path=(
+                Path(args.output) if args.output
+                else schedule_repair.default_output_path(export_base)
+            ),
+            workbook_path=(
+                Path(args.workbook) if args.workbook
+                else schedule_repair.default_workbook_path(export_base)
+            ),
+            execute=args.execute,
+            repair_events=args.repair_events,
+            allow_cross_day=args.allow_cross_day,
+            max_move_minutes=args.max_move_minutes,
+            max_moves=args.max_moves,
+            movement_priority=args.movement_priority,
+            rest_policy=args.rest_policy,
+            rest_window_minutes=args.rest_window_minutes,
+            frontier=not args.no_frontier,
+            **repair_kwargs,
+        )
+        sys.exit(exit_code)
     elif args.command == "reconcile-approved-schedules":
         from scheduling import approved_games, approved_reconciliation
 

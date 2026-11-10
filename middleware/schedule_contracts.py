@@ -122,6 +122,7 @@ class _ResourceContract(BaseModel):
     exclusive_group: Optional[str] = None
     solver_pool: Optional[str] = None
     venue_name: Optional[str] = None
+    pod_name: Optional[str] = None
     playoff_pinned: Optional[bool] = Field(default=None, strict=True)
 
     @field_validator("open_time", "close_time")
