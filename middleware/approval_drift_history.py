@@ -18,6 +18,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from config import EXPORT_COLUMNS
 
 STATUS_WORKBOOK_GLOB = "Church_Team_Status_ALL_*.xlsx"
 LOG_GLOB = "sportsfest_*.log"
@@ -104,10 +105,10 @@ def load_current_participants(
     idx = {header: i for i, header in enumerate(headers) if header}
 
     required = [
-        "Church Team",
+        EXPORT_COLUMNS["CHURCH_TEAM"],
         "ChMeetings ID",
-        "First Name",
-        "Last Name",
+        EXPORT_COLUMNS["FIRST_NAME"],
+        EXPORT_COLUMNS["LAST_NAME"],
         "Participant ID (WP)",
         "Approval_Status (WP)",
         "Sports Registered",
@@ -124,7 +125,7 @@ def load_current_participants(
         if status and row_status != status:
             continue
 
-        church = str(row[idx["Church Team"]] or "").strip()
+        church = str(row[idx[EXPORT_COLUMNS["CHURCH_TEAM"]]] or "").strip()
         if church_code and church.upper() != church_code.upper():
             continue
 
@@ -132,8 +133,8 @@ def load_current_participants(
         if not chmeetings_id:
             continue
 
-        first_name = str(row[idx["First Name"]] or "").strip()
-        last_name = str(row[idx["Last Name"]] or "").strip()
+        first_name = str(row[idx[EXPORT_COLUMNS["FIRST_NAME"]]] or "").strip()
+        last_name = str(row[idx[EXPORT_COLUMNS["LAST_NAME"]]] or "").strip()
         is_member = _membership_answer(row, idx)
         participants[chmeetings_id] = CurrentParticipant(
             church=church,

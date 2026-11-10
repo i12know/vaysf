@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Routed export/roster column headers through `CHM_FIELDS` (#375). Added
+  `EXPORT_COLUMNS` to `middleware/config.py` — a sibling mapping derived from
+  `CHM_FIELDS` (plus `FIRST_NAME`/`LAST_NAME`, which aren't custom fields but
+  share the same drift risk) — and swept the literal `"Church Team"`,
+  `"Primary Sport"`, `"Secondary Sport"`, `"My role is"`, `"First Name"`, and
+  `"Last Name"` column-header strings out of
+  `middleware/{group_assignment,scoresheets,approval_drift_history,
+  schedule_workbook,church_teams_export}.py`,
+  `middleware/scheduling/{approved_games,conflict_edges,manual_matchups,
+  pool_assignment}.py`, and `middleware/sync/{consent_checker,manager}.py`
+  (debt register §2.2). A ChMeetings rename now needs a one-line fix in
+  `config.py`, and the field inspector flags the drift in one place instead of
+  a dozen call sites breaking quietly. Pure constant substitution — no export
+  behavior changed; `pytest tests/ -v` (mock mode) still passes at 1016/1016.
+  `middleware/sync/churches.py`'s `"First Name"`/`"Last Name"` reads from the
+  separate Church Application Form workbook were left alone: that workbook
+  isn't a ChMeetings export, so its headers are out of scope.
 - Removed the broken `uuid>=1.30` pin from `middleware/requirements.txt` (#374).
   That 2006-era PyPI package shadows the standard-library `uuid` module and fails
   to build on Python 3 (`AttributeError: install_layout` out of setuptools), which

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 from loguru import logger
 from config import (
-    Config, CHM_FIELDS, DATA_DIR,
+    Config, CHM_FIELDS, EXPORT_COLUMNS, DATA_DIR,
     MEMBERSHIP_QUESTION,
     SF_FIELD_IDS,
     SF_CHURCH_TEAM_OPTIONS,
@@ -90,20 +90,24 @@ def _row_first_clean(row: pd.Series, *columns: str) -> str:
 def _load_source_export_rows(source_file: str) -> List[Dict[str, str]]:
     """Load current-season registrants from an Individual Application export."""
     df = pd.read_excel(source_file)
-    required_columns = ["First Name", "Last Name", "Church Team"]
+    required_columns = [
+        EXPORT_COLUMNS["FIRST_NAME"],
+        EXPORT_COLUMNS["LAST_NAME"],
+        EXPORT_COLUMNS["CHURCH_TEAM"],
+    ]
     missing = [col for col in required_columns if col not in df.columns]
     if missing:
         raise ValueError(f"Missing required column(s) in source export: {missing}")
 
     rows: List[Dict[str, str]] = []
     for _, row in df.iterrows():
-        church_code = str(row.get("Church Team", "") or "").strip().upper()
+        church_code = str(row.get(EXPORT_COLUMNS["CHURCH_TEAM"], "") or "").strip().upper()
         if not church_code:
             continue
         rows.append({
             "source_row": str(int(row.name) + 2),
-            "first_name": _clean_cell(row.get("First Name", "")),
-            "last_name": _clean_cell(row.get("Last Name", "")),
+            "first_name": _clean_cell(row.get(EXPORT_COLUMNS["FIRST_NAME"], "")),
+            "last_name": _clean_cell(row.get(EXPORT_COLUMNS["LAST_NAME"], "")),
             "email": _normalize_text(row.get("Email", "")),
             "email_display": _clean_cell(row.get("Email", "")),
             "mobile_phone": _normalize_phone(row.get("Mobile Phone", "")),
@@ -111,7 +115,7 @@ def _load_source_export_rows(source_file: str) -> List[Dict[str, str]]:
             "gender": _clean_cell(row.get("Gender", "")),
             "birth_date": _parse_form_date(row.get("Birthdate", "")),
             "church_code": church_code,
-            "role": _clean_cell(row.get("My role is", "")),
+            "role": _clean_cell(row.get(EXPORT_COLUMNS["ROLES"], "")),
             "is_member": _row_first_clean(
                 row,
                 MEMBERSHIP_QUESTION,
@@ -123,8 +127,8 @@ def _load_source_export_rows(source_file: str) -> List[Dict[str, str]]:
             "parent_phone": _clean_cell(row.get(CHM_FIELDS["PARENT_PHONE"], "")),
             "additional_info": _clean_cell(row.get("Additional Info", "")),
             "submission_date": _clean_cell(row.get("Submission Date", "")),
-            "primary_sport": _clean_cell(row.get("Primary Sport", "")),
-            "secondary_sport": _clean_cell(row.get("Secondary Sport", "")),
+            "primary_sport": _clean_cell(row.get(EXPORT_COLUMNS["PRIMARY_SPORT"], "")),
+            "secondary_sport": _clean_cell(row.get(EXPORT_COLUMNS["SECONDARY_SPORT"], "")),
             "other_events": _clean_cell(row.get("Other Events", "")),
         })
     return rows
@@ -600,8 +604,8 @@ def _repair_audit_row(
 ) -> Dict[str, str]:
     return {
         "Source Row": row.get("source_row", ""),
-        "First Name": row.get("first_name", ""),
-        "Last Name": row.get("last_name", ""),
+        EXPORT_COLUMNS["FIRST_NAME"]: row.get("first_name", ""),
+        EXPORT_COLUMNS["LAST_NAME"]: row.get("last_name", ""),
         "Email": row.get("email_display", ""),
         "Mobile Phone": row.get("mobile_phone_display", ""),
         "Gender": row.get("gender", ""),
@@ -614,8 +618,8 @@ def _repair_audit_row(
         "Parent Email": row.get("parent_email", ""),
         "Parent Phone": row.get("parent_phone", ""),
         "Submission Date": row.get("submission_date", ""),
-        "Primary Sport": row.get("primary_sport", ""),
-        "Secondary Sport": row.get("secondary_sport", ""),
+        EXPORT_COLUMNS["PRIMARY_SPORT"]: row.get("primary_sport", ""),
+        EXPORT_COLUMNS["SECONDARY_SPORT"]: row.get("secondary_sport", ""),
         "Other Events": row.get("other_events", ""),
         "Outcome": outcome,
         "Outcome Detail": outcome_detail,
@@ -905,15 +909,15 @@ def audit_form_people(
                     )
         audit_rows.append({
             "Source Row": row.get("source_row", ""),
-            "First Name": row.get("first_name", ""),
-            "Last Name": row.get("last_name", ""),
+            EXPORT_COLUMNS["FIRST_NAME"]: row.get("first_name", ""),
+            EXPORT_COLUMNS["LAST_NAME"]: row.get("last_name", ""),
             "Email": row.get("email_display", ""),
             "Mobile Phone": row.get("mobile_phone_display", ""),
             "Church Code": row.get("church_code", ""),
             "Role": row.get("role", ""),
             "Submission Date": row.get("submission_date", ""),
-            "Primary Sport": row.get("primary_sport", ""),
-            "Secondary Sport": row.get("secondary_sport", ""),
+            EXPORT_COLUMNS["PRIMARY_SPORT"]: row.get("primary_sport", ""),
+            EXPORT_COLUMNS["SECONDARY_SPORT"]: row.get("secondary_sport", ""),
             "Other Events": row.get("other_events", ""),
             "Match Status": match_status,
             "Match Count": str(len(matches)),
@@ -1252,8 +1256,8 @@ def _assignment_audit_row(
     hydration = hydration or _hydration_audit()
     return {
         "Person Id": str(person.get("person_id") or person.get("id", "")),
-        "First Name": person.get("first_name", ""),
-        "Last Name": person.get("last_name", ""),
+        EXPORT_COLUMNS["FIRST_NAME"]: person.get("first_name", ""),
+        EXPORT_COLUMNS["LAST_NAME"]: person.get("last_name", ""),
         "Email": person.get("email", ""),
         "Church Code": church_code,
         "Target Group": target_group,
@@ -1464,8 +1468,8 @@ def _assign_people_to_church_team_groups_legacy(
 
             audit_rows.append({
                 "Person Id": person["person_id"],
-                "First Name": person["first_name"],
-                "Last Name": person["last_name"],
+                EXPORT_COLUMNS["FIRST_NAME"]: person["first_name"],
+                EXPORT_COLUMNS["LAST_NAME"]: person["last_name"],
                 "Email": person["email"],
                 "Church Code": person["church_code"],
                 "Target Group": target_group_name,
@@ -1984,8 +1988,8 @@ def clear_team_groups(
                     "Group Id": group_id,
                     "Group Name": group_name,
                     "Person Id": "",
-                    "First Name": "",
-                    "Last Name": "",
+                    EXPORT_COLUMNS["FIRST_NAME"]: "",
+                    EXPORT_COLUMNS["LAST_NAME"]: "",
                     "Email": "",
                     "Outcome": "empty_group",
                 })
@@ -2028,8 +2032,8 @@ def clear_team_groups(
                     "Group Id": group_id,
                     "Group Name": group_name,
                     "Person Id": person_id,
-                    "First Name": first_name,
-                    "Last Name": last_name,
+                    EXPORT_COLUMNS["FIRST_NAME"]: first_name,
+                    EXPORT_COLUMNS["LAST_NAME"]: last_name,
                     "Email": email,
                     "Outcome": outcome,
                 })

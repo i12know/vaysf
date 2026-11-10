@@ -24,7 +24,7 @@ import qrcode
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 
-from config import Config
+from config import Config, EXPORT_COLUMNS
 from schedule_publisher import merge_schedule
 from score_sheet_verses import BibleVerse, VerseSetError, load_bible_verse_set
 
@@ -351,8 +351,8 @@ def _team_labels(game: dict[str, Any], sides: tuple[str, ...]) -> list[str]:
 
 
 def _roster_name(row: dict[str, Any]) -> str:
-    first = str(row.get("First Name") or "").strip()
-    last = str(row.get("Last Name") or "").strip()
+    first = str(row.get(EXPORT_COLUMNS["FIRST_NAME"]) or "").strip()
+    last = str(row.get(EXPORT_COLUMNS["LAST_NAME"]) or "").strip()
     full = f"{last} {first}".strip()
     return full or str(row.get("Full Name") or "").strip() or "Player"
 
@@ -418,8 +418,8 @@ def _sort_roster_index(indexed: dict[str, list[dict[str, Any]]]) -> None:
     for rows in indexed.values():
         rows.sort(
             key=lambda item: (
-                str(item.get("Last Name") or "").casefold(),
-                str(item.get("First Name") or "").casefold(),
+                str(item.get(EXPORT_COLUMNS["LAST_NAME"]) or "").casefold(),
+                str(item.get(EXPORT_COLUMNS["FIRST_NAME"]) or "").casefold(),
             )
         )
 
@@ -431,7 +431,7 @@ def build_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict[str, list[
     for row in roster_rows:
         if not _event_matches_roster_row(row, BASKETBALL_EVENT):
             continue
-        code = _team_code(row.get("Church Team"))
+        code = _team_code(row.get(EXPORT_COLUMNS["CHURCH_TEAM"]))
         if not code:
             continue
         indexed.setdefault(code, []).append(row)
@@ -450,7 +450,7 @@ def build_volleyball_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict
         for event in VOLLEYBALL_EVENTS:
             if not _event_matches_roster_row(row, event):
                 continue
-            code = _team_code(row.get("Church Team"))
+            code = _team_code(row.get(EXPORT_COLUMNS["CHURCH_TEAM"]))
             if not code:
                 continue
             indexed[event].setdefault(code, []).append(row)
@@ -467,7 +467,7 @@ def build_soccer_roster_index(roster_rows: Iterable[dict[str, Any]]) -> dict[str
     for row in roster_rows:
         if not _event_matches_roster_row(row, SOCCER_EVENT):
             continue
-        code = _team_code(row.get("Church Team"))
+        code = _team_code(row.get(EXPORT_COLUMNS["CHURCH_TEAM"]))
         if not code:
             continue
         indexed.setdefault(code, []).append(row)
@@ -482,7 +482,7 @@ def build_bible_challenge_roster_index(roster_rows: Iterable[dict[str, Any]]) ->
     for row in roster_rows:
         if not _event_matches_roster_row(row, BIBLE_CHALLENGE_EVENT):
             continue
-        code = _team_code(row.get("Church Team"))
+        code = _team_code(row.get(EXPORT_COLUMNS["CHURCH_TEAM"]))
         if not code:
             continue
         indexed.setdefault(code, []).append(row)

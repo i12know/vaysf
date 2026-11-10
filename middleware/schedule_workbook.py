@@ -49,6 +49,7 @@ from config import (
     SCHEDULE_SOLVER_GYM_COURTS,
     VENUE_INPUT_FILENAME,
     POD_RESOURCE_EVENT_TYPE,
+    EXPORT_COLUMNS,
 )
 from validation.doubles_resolver import Selection as _DblSelection, resolve_doubles as _resolve_dbl
 from validation.name_matcher import normalized_name as _norm_name
@@ -95,7 +96,7 @@ class ScheduleWorkbookBuilder:
 
     _POOL_ASSIGNMENT_COLUMNS: List[str] = [
         "Event",
-        "Church Team",
+        EXPORT_COLUMNS["CHURCH_TEAM"],
         "Team Order",
         "Team ID",
         "Team Label",
@@ -128,7 +129,7 @@ class ScheduleWorkbookBuilder:
             "pool-assignment rows cover BB / VBM / VBW / BC"
             + (" / SOC." if SOCCER_ENABLED else ".")
         ),
-        "Church Team": (
+        EXPORT_COLUMNS["CHURCH_TEAM"]: (
             "Church code contributing this team row, such as RPC or TLC."
         ),
         "Team Order": (
@@ -561,7 +562,7 @@ class ScheduleWorkbookBuilder:
                 continue
             if target_gender and r_gender.casefold() != target_gender.casefold():
                 continue
-            church = str(r.get("Church Team") or "").strip().upper()
+            church = str(r.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or "").strip().upper()
             if not church:
                 continue
             team_order = str(r.get("team_order") or "").strip().upper()
@@ -713,7 +714,7 @@ class ScheduleWorkbookBuilder:
             if str(r.get("sport_type") or "").strip().casefold() != sport_name.casefold():
                 continue
             fmt = str(r.get("sport_format") or "").strip().casefold()
-            church = str(r.get("Church Team") or "").strip().upper()
+            church = str(r.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or "").strip().upper()
             parameter = self._racquet_rule_parameter_for_row(r)
             if "single" in fmt:
                 n_singles += 1
@@ -919,7 +920,7 @@ class ScheduleWorkbookBuilder:
         entry_counter = 0
 
         def _full_name(r: Dict[str, Any]) -> str:
-            return f"{r.get('First Name', '')} {r.get('Last Name', '')}".strip()
+            return f"{r.get(EXPORT_COLUMNS['FIRST_NAME'], '')} {r.get(EXPORT_COLUMNS['LAST_NAME'], '')}".strip()
 
         def _pid(r: Dict[str, Any]) -> str:
             return str(r.get("Participant ID (WP)") or r.get("ChMeetings ID") or "").strip()
@@ -942,7 +943,7 @@ class ScheduleWorkbookBuilder:
                 "participant_1_name": _full_name(r),
                 "participant_2_name": "",
                 "source_participant_ids": _pid(r),
-                "church_team": str(r.get("Church Team") or ""),
+                "church_team": str(r.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or ""),
                 "partner_status": "N/A",
                 "review_status": "NeedsReview" if _has_error(r) else "OK",
                 "notes": "",
@@ -974,7 +975,7 @@ class ScheduleWorkbookBuilder:
                     partner_norm_name=_norm_name(partner_decl),
                     sport_type=sport_type,
                     sport_format=str(r.get("sport_format") or "").strip(),
-                    church_code=str(r.get("Church Team") or "").strip(),
+                    church_code=str(r.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or "").strip(),
                     group_key=division_id,
                 ))
                 row_by_sel_id[sel_id] = r
@@ -990,8 +991,8 @@ class ScheduleWorkbookBuilder:
                     and r_b and not _has_error(r_b)
                 )
                 churches = ", ".join(c for c in sorted({
-                    str((r_a or {}).get("Church Team") or ""),
-                    str((r_b or {}).get("Church Team") or ""),
+                    str((r_a or {}).get(EXPORT_COLUMNS["CHURCH_TEAM"]) or ""),
+                    str((r_b or {}).get(EXPORT_COLUMNS["CHURCH_TEAM"]) or ""),
                 }) if c)
                 entry_counter += 1
                 entry_rows.append({
@@ -1049,7 +1050,7 @@ class ScheduleWorkbookBuilder:
                 "participant_1_name": _full_name(r),
                 "participant_2_name": "",
                 "source_participant_ids": _pid(r),
-                "church_team": str(r.get("Church Team") or ""),
+                "church_team": str(r.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or ""),
                 "partner_status": "N/A",
                 "review_status": "NeedsReview",
                 "notes": f"Unexpected format '{r.get('sport_format', '')}' for racquet sport",
@@ -1092,8 +1093,8 @@ class ScheduleWorkbookBuilder:
             pid = str(r.get("Participant ID (WP)") or r.get("ChMeetings ID") or "").strip()
             if pid:
                 full_name = (
-                    f"{str(r.get('First Name') or '').strip()} "
-                    f"{str(r.get('Last Name') or '').strip()}"
+                    f"{str(r.get(EXPORT_COLUMNS['FIRST_NAME']) or '').strip()} "
+                    f"{str(r.get(EXPORT_COLUMNS['LAST_NAME']) or '').strip()}"
                 ).strip()
                 pid_info[pid] = {
                     "name": full_name or pid,
@@ -1195,8 +1196,8 @@ class ScheduleWorkbookBuilder:
                     continue  # duplicate roster row for the same player
                 seen_in_div[division_id].add(pid)
             full_name = (
-                f"{str(r.get('First Name') or '').strip()} "
-                f"{str(r.get('Last Name') or '').strip()}"
+                f"{str(r.get(EXPORT_COLUMNS['FIRST_NAME']) or '').strip()} "
+                f"{str(r.get(EXPORT_COLUMNS['LAST_NAME']) or '').strip()}"
             ).strip()
             by_division.setdefault(division_id, []).append({
                 "division_id": division_id,
