@@ -310,6 +310,10 @@ audit with their provenance.
 - Friday Orange Church Badminton / Table Tennis rows are re-gridded to the
   approved 20- / 15-minute grids, clipped to the approved window, and limited
   to the courts/tables actually used.
+- Splitting a window turns one physical court into several time-boxed
+  resources (`GYM-Sat-1-1`, `GYM-Sat-1-6`, ... are all Court-1). Visual lanes
+  resolve by court (`Exclusive Venue Group` + label), then to that court's
+  resource open at the slot.
 - Soccer's six exact pool matches are validated against the booked Soccer
   Field rows; G7-G12 stay unresolved and no window is invented for them.
 - Global pauses such as dinner apply exactly where the Main Schedule draws
@@ -323,9 +327,14 @@ period, time outside every booked window of that type, lane or grid needing
 more courts/tables than booked (`capacity_overflow`), a sport needing a mode the
 area does not offer, overlapping games on one surface, different sport modes
 overlapping in one exclusive gym, Orange Church blocks mapped onto a non-Orange
-booking, missing source workbooks, and the Table Tennis U35 roster/schedule
+booking, missing source workbooks, the Table Tennis U35 roster/schedule
 discrepancy (FVC vs SBC) unless `--waive-table-tennis-discrepancy` records an
-explicit operator decision. Warnings (non-blocking): unresolved cells,
+explicit operator decision, and any venue-centric `Playoff-Slots` pin that no
+longer fits the proposed windows (`playoff_slot_conflict`). The pin check runs
+the schedule builder's own resolver, because one stale pin makes
+`export-church-teams` skip `schedule_input.json` altogether. It checks each pin
+as one grid slot, since real game durations need the roster, and does not
+resolve explicit `resource_id` + `slot` pins. Warnings (non-blocking): unresolved cells,
 non-sport blocks on an unbooked area, block lengths that do not divide the
 booked slot length, and Badminton/Soccer counts other than 39/6.
 

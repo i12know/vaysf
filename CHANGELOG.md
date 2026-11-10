@@ -22,8 +22,12 @@
   `Reconciliation-Sources` (source hashes) tabs. Reconciling from the booking
   tab makes reruns idempotent, lets a changed approved workbook re-open a
   window, and adopts rows operators add to Venue-Input instead of dropping
-  them. Gym-Modes and Playoff-Slots are left untouched. New module
-  `middleware/scheduling/approved_reconciliation.py`, 33 tests in
+  them. Gym-Modes and Playoff-Slots are left untouched, but a venue-centric
+  Playoff-Slots pin that no longer fits the proposed windows now blocks
+  `--execute`, so the export cannot silently skip `schedule_input.json`. Visual
+  lanes now resolve by physical court, so split windows keep approved games on
+  the right court in `import-approved-games` and the override imports. New module
+  `middleware/scheduling/approved_reconciliation.py`, 38 tests in
   `tests/test_approved_reconciliation.py`; documented in `docs/SCHEDULING.md`
   and `docs/SCHEDULE-HOW-TO.md`.
 - Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat

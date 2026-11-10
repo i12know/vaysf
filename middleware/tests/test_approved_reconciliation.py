@@ -104,7 +104,7 @@ def _write_table_tennis(path, *, include_sbc=True, scheduled=("FVC", "ORN")):
     wb.save(path)
 
 
-def _write_venue(path, *, badminton_qty=4, extra_rows=()):
+def _write_venue(path, *, badminton_qty=4, extra_rows=(), extra_pins=()):
     wb = Workbook()
     ws = wb.active
     ws.title = "Venue-Input"
@@ -128,8 +128,10 @@ def _write_venue(path, *, badminton_qty=4, extra_rows=()):
     gm.append(["EHS Main Gym", 2, 3])
     gm.append(["EHS Practice Gym", 0, 3])
     ps = wb.create_sheet("Playoff-Slots")
-    ps.append(["game_id", "event", "stage", "gym_name", "date", "start_time"])
-    ps.append(["BBM-Final", "Basketball - Men Team", "Final", "EHS Main Gym", "2026-07-26", "15:00"])
+    ps.append(["game_id", "event", "stage", "gym_name", "date", "start_time", "slot_minutes"])
+    ps.append(["BBM-Final", SPORT_TYPE["BASKETBALL"], "Final", "EHS Main Gym", sat, "15:00", None])
+    for pin in extra_pins:
+        ps.append(list(pin))
     wb.save(path)
 
 
@@ -353,6 +355,54 @@ def test_missing_source_is_error(sources, tmp_path):
     sources["soccer_path"] = tmp_path / "nope.xlsx"
     payload = rec.build_reconciliation_payload(**sources)
     assert payload["issues"]["errors"][0]["kind"] == "missing_source"
+
+
+# --- Playoff-Slots pins against the reconciled windows ----------------------
+
+FRIDAY = datetime(2026, 7, 24)
+
+
+def _table_tennis_pin(start, slot_minutes):
+    return ["TT-Final", SPORT_TYPE["TABLE_TENNIS"], "Final", "Orange Church", FRIDAY, start, slot_minutes]
+
+
+def _pin_errors(payload):
+    return [i for i in payload["issues"]["errors"] if i["kind"] == "playoff_slot_conflict"]
+
+
+def test_pin_on_the_approved_grid_is_accepted(sources):
+    _write_venue(sources["venue_input_path"], extra_pins=[_table_tennis_pin("17:15", 15)])
+    payload = rec.build_reconciliation_payload(**sources)
+    assert _pin_errors(payload) == []
+    assert payload["playoff_slots"]["pins_checked"] == 2
+
+
+def test_pin_keeping_the_old_slot_length_blocks_execute(sources):
+    """The real 2026 failure: booked 20-minute pin, approved 15-minute grid."""
+    _write_venue(sources["venue_input_path"], extra_pins=[_table_tennis_pin("17:15", 20)])
+    errors = _pin_errors(rec.build_reconciliation_payload(**sources))
+    assert len(errors) == 1
+    assert "TT-Final" in errors[0]["message"]
+
+
+def test_pin_off_the_new_grid_blocks_execute(sources):
+    _write_venue(sources["venue_input_path"], extra_pins=[_table_tennis_pin("17:20", 15)])
+    assert "TT-Final" in _pin_errors(rec.build_reconciliation_payload(**sources))[0]["message"]
+
+
+def test_pin_inside_a_blacked_out_window_blocks_execute(sources):
+    sat = datetime(2026, 7, 18)
+    pin = ["BBM-Semi", SPORT_TYPE["BASKETBALL"], "Semi", "EHS Main Gym", sat, "12:00", None]
+    _write_venue(sources["venue_input_path"], extra_pins=[pin])
+    assert "BBM-Semi" in _pin_errors(rec.build_reconciliation_payload(**sources))[0]["message"]
+
+
+def test_cli_execute_blocked_by_stale_pin_leaves_file_alone(monkeypatch, sources, tmp_path):
+    _write_venue(sources["venue_input_path"], extra_pins=[_table_tennis_pin("17:15", 20)])
+    before = sources["venue_input_path"].read_bytes()
+    assert _cli(monkeypatch, sources, tmp_path, "--execute") == 1
+    assert sources["venue_input_path"].read_bytes() == before
+    assert not list(tmp_path.glob("venue_input.backup-*.xlsx"))
 
 
 # --- execute: backup, atomic write, idempotence, loader compatibility -------

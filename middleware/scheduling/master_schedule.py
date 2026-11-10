@@ -479,17 +479,24 @@ def _resolve_resource_id(
         return None, f"no {resource_type} resource has slot {slot}"
 
     desired = _desired_lane(row)
-    if desired is not None and 1 <= desired <= len(candidates):
-        resource = candidates[desired - 1]
-        if slot in _resource_slots(resource):
-            return _clean_text(resource.get("resource_id")), None
+    if desired is not None:
+        # A visual lane is a physical court.  Reconciled venue windows expand one
+        # court into several time-boxed resources, so count courts, not resources.
+        courts: Dict[Tuple[str, str], List[Mapping[str, Any]]] = {}
+        for resource in candidates:
+            key = (_clean_text(resource.get("exclusive_group")), _clean_text(resource.get("label")))
+            courts.setdefault(key, []).append(resource)
+        lanes = list(courts.values())
+        if not 1 <= desired <= len(lanes):
+            return None, f"visual lane {desired} exceeds {len(lanes)} {resource_type} resource(s)"
+        for resource in lanes[desired - 1]:
+            if slot in _resource_slots(resource):
+                return _clean_text(resource.get("resource_id")), None
         return (
             None,
             f"visual lane {desired} resource "
-            f"{_clean_text(resource.get('resource_id')) or '<unknown>'} lacks slot {slot}",
+            f"{_clean_text(lanes[desired - 1][0].get('resource_id')) or '<unknown>'} lacks slot {slot}",
         )
-    if desired is not None:
-        return None, f"visual lane {desired} exceeds {len(candidates)} {resource_type} resource(s)"
 
     return _clean_text(valid[0].get("resource_id")), None
 

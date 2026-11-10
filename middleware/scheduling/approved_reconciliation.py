@@ -61,6 +61,9 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
+from gym_allocator import extract_gym_blocks
+from schedule_workbook import ScheduleWorkbookBuilder
+
 from config import (
     GYM_RESOURCE_TYPE_BASKETBALL,
     GYM_RESOURCE_TYPE_VOLLEYBALL,
@@ -84,6 +87,7 @@ RECONCILIATION_AUDIT_FILENAME = "approved_schedule_reconciliation.audit.json"
 
 VENUE_SHEET = "Venue-Input"
 BOOKED_SHEET = "Booked-Venue-Input"
+PLAYOFF_SHEET = "Playoff-Slots"
 BLOCKS_SHEET = "Operational-Blocks"
 SOURCES_SHEET = "Reconciliation-Sources"
 BOOKED_ROW_ID_COLUMN = "Booked Row ID"
@@ -1145,6 +1149,59 @@ def reconcile(
     return proposed, changes
 
 
+def _venue_output_rows(
+    venue_model: Mapping[str, Any],
+    proposed: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Rows for the reconciled Venue-Input tab: proposed windows, then note rows."""
+    return list(proposed) + [
+        {k: v for k, v in r.items() if k != "__row__"} for r in venue_model["note_rows"]
+    ]
+
+
+def _validate_playoff_pins(
+    venue_model: Mapping[str, Any],
+    proposed: Sequence[Mapping[str, Any]],
+    issues: Dict[str, List[Dict[str, Any]]],
+) -> int:
+    """Check venue-centric Playoff-Slots pins against the proposed Venue-Input.
+
+    Reconciliation re-grids and removes windows but leaves Playoff-Slots alone,
+    so a pin that was valid against the booking can stop resolving.  The schedule
+    builder rejects the whole build when that happens and export-church-teams
+    then writes no schedule_input.json, so it has to be caught before --execute.
+
+    Runs the builder's own resolver on a throwaway copy of the workbook so both
+    always agree.  Game durations need the roster and are unknown here, so each
+    pin is checked as one grid slot; explicit resource_id + slot pins are not
+    resolved at this stage.  Returns the number of venue-centric pins checked.
+    """
+    builder = ScheduleWorkbookBuilder()
+    wb = load_workbook(venue_model["path"], data_only=False)
+    _write_table(wb[VENUE_SHEET], list(venue_model["headers"]), _venue_output_rows(venue_model, proposed))
+    with tempfile.TemporaryDirectory(prefix="vaysf-reconcile-") as tmp_dir:
+        candidate = Path(tmp_dir) / "venue_input.xlsx"
+        wb.save(candidate)
+        pins = builder._load_playoff_slots(candidate)
+        venue_rows, _ = builder._load_venue_input_rows(candidate)
+        gym_modes = builder._load_gym_modes(candidate)
+        date_day_map = builder._load_venue_date_day_map(candidate)
+    checked = sum(1 for pin in pins if not (pin.get("resource_id") and pin.get("slot")))
+    try:
+        builder._resolve_venue_playoff_slots(
+            pins, venue_rows, date_day_map, gym_modes,
+            allocator_active=bool(extract_gym_blocks(venue_rows) and gym_modes),
+        )
+    except ValueError as exc:
+        for line in str(exc).splitlines():
+            if line.startswith("  - "):
+                issues["errors"].append(_issue(
+                    "playoff_slot_conflict",
+                    f"{line[4:]} Update this {PLAYOFF_SHEET} row to fit the reconciled "
+                    f"{VENUE_SHEET} windows, or remove it."))
+    return checked
+
+
 # ---------------------------------------------------------------------------
 # Payload / audit
 # ---------------------------------------------------------------------------
@@ -1226,6 +1283,7 @@ def build_reconciliation_payload(
     venue_model = load_venue_model(sources["venue_input"])
     grids = [bad_grid, tt_grid]
     proposed, changes = reconcile(blocks, venue_model, grids, issues)
+    playoff_pins_checked = _validate_playoff_pins(venue_model, proposed, issues)
 
     # De-duplicate identical issue messages (one bad block can hit several rows).
     for level in ("errors", "warnings"):
@@ -1258,6 +1316,7 @@ def build_reconciliation_payload(
         "playoff_slots": {
             "action": "preserved",
             "note": "Stage blocks lock gym modes only; Playoff-Slots rows are left untouched.",
+            "pins_checked": playoff_pins_checked,
             "stage_blocks": [
                 {k: b.get(k) for k in ("source_cell", "raw_text", "day", "start_time", "end_time", "venue")}
                 for b in blocks if b["classification"] == SPORT_STAGE_BLOCK
@@ -1341,9 +1400,7 @@ def apply_reconciliation(payload: Mapping[str, Any], venue_input_path: Path) -> 
 
     booked_rows = [{k: v for k, v in r["raw"].items() if k != "__row__"} for r in model["rows"]]
     booked_rows += [{k: v for k, v in r.items() if k != "__row__"} for r in model["note_rows"]]
-    venue_rows = list(payload["proposed_venue_rows"]) + [
-        {k: v for k, v in r.items() if k != "__row__"} for r in model["note_rows"]
-    ]
+    venue_rows = _venue_output_rows(model, payload["proposed_venue_rows"])
     block_rows = sorted(
         payload["blocks"],
         key=lambda b: (b["source_file"], b.get("day") or "", b.get("start_time") or "", b["venue"], b["source_cell"]),
