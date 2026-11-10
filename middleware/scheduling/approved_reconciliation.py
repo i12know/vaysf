@@ -138,6 +138,12 @@ _EVENT_RESOURCE_TYPE = {
 # "gym" is too generic to tell two gyms apart, so it never decides a match.
 _AREA_STOP_WORDS = {"court", "courts", "table", "tables", "room", "gym", "the"}
 
+# Visual-header abbreviations that must resolve to the same word the booked
+# Venue Name / Exclusive Venue Group uses, or the area token match in
+# target_rows()/_area_score() silently finds zero overlap (e.g. "Prac. Gym
+# VB1" vs. booked "EHS Practice Gym" -> unknown_venue, Issue #216 dry run).
+_AREA_WORD_ALIASES = {"prac": "practice"}
+
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -264,7 +270,11 @@ def parse_visual_venue(header: str) -> Dict[str, Any]:
     if lane_match:
         area = area[: lane_match.start()] + area[lane_match.end():]
     area = re.sub(r"\b(BB|VB|MVB|WVB|BC)\b", " ", area)
-    area_tokens = [tok for tok in _norm(area).split() if tok not in _AREA_STOP_WORDS]
+    area_tokens = [
+        _AREA_WORD_ALIASES.get(tok, tok)
+        for tok in _norm(area).split()
+        if tok not in _AREA_STOP_WORDS
+    ]
     return {
         "header": text,
         "area": " ".join(area_tokens),
@@ -858,6 +868,12 @@ def target_rows(block: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> 
         return [r for r in day_rows if r["resource_type"] == wanted]
     if block.get("source_role") == "soccer":
         return [r for r in day_rows if r["resource_type"] == TEAM_RESOURCE_TYPE_SOCCER]
+    if (block.get("resource_type") or block.get("lane_resource_type")) == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE:
+        # Bible Challenge has one stage per day; the Main Schedule's visual
+        # area label for it drifts (e.g. a Final moved to "Practice Gym -
+        # Center Court" while the only booked BC/Jeopardy-stage row that day
+        # is still named for the Main Gym). Match by resource type, not area.
+        return [r for r in day_rows if r["resource_type"] == TEAM_RESOURCE_TYPE_BIBLE_CHALLENGE]
     area = block.get("area", "")
     if area:
         # Best token match: "EHS Main Gym BB1" picks the Main Gym rows even if
