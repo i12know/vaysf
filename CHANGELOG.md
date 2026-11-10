@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Added `python main.py reconcile-approved-schedules --dry-run|--execute`
+  (#216). It parses the four approved 2026 schedule workbooks (Main Schedule,
+  Badminton, Co-ed Soccer, Table Tennis) into operational blocks with
+  file/sheet/cell provenance (merged ranges included) and classifies each as a
+  game, stage block, reservation, setup, meal/break, ceremony/worship,
+  community event, CLOSED, pointer to a separate schedule, or unresolved. It
+  then reconciles them against the booked `venue_input.xlsx`: non-sport blocks
+  are subtracted per lane, approved sport use locks the gym to that mode (so
+  the Stage A allocator cannot reassign it), and the Friday Orange Church
+  Badminton / Table Tennis rows adopt the approved 20- / 15-minute grids and
+  court/table counts. Unknown venues, dates/times outside the booking, capacity
+  overflow, overlapping games, conflicting gym modes, Orange blocks mapped
+  onto non-Orange rows, and the unwaived Table Tennis U35 FVC/SBC discrepancy
+  block `--execute`. The dry run writes
+  `approved_schedule_reconciliation.audit.json`; `--execute` makes a
+  timestamped backup, writes atomically, keeps the original booking in a new
+  `Booked-Venue-Input` tab, and adds `Operational-Blocks` and
+  `Reconciliation-Sources` (source hashes) tabs. Reconciling from the booking
+  tab makes reruns idempotent, lets a changed approved workbook re-open a
+  window, and adopts rows operators add to Venue-Input instead of dropping
+  them. Gym-Modes and Playoff-Slots are left untouched. New module
+  `middleware/scheduling/approved_reconciliation.py`, 33 tests in
+  `tests/test_approved_reconciliation.py`; documented in `docs/SCHEDULING.md`
+  and `docs/SCHEDULE-HOW-TO.md`.
 - Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat
   under-reporting real approved-athlete counts (#181). `VAYSF_Statistics::get_overall_stats()`
   was counting `sf_approvals.approval_status = 'approved'` (a pastor-approval-token/sync

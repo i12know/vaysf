@@ -767,6 +767,48 @@ def parse_args() -> argparse.Namespace:
         help="Write approved_schedule_games.json and publish-ready JSON artifacts when validation is clean",
     )
 
+    reconcile_parser = subparsers.add_parser(
+        "reconcile-approved-schedules",
+        help=(
+            "Fold the approved Main/Badminton/Soccer/Table Tennis schedules into "
+            "venue_input.xlsx so the scheduler only sees operationally valid windows (Issue #216)"
+        ),
+    )
+    reconcile_parser.add_argument(
+        "--main-schedule",
+        default=None,
+        help="Approved main schedule workbook (default: data/VAY2026_Main_Schedule_draft_12.xlsx)",
+    )
+    reconcile_parser.add_argument("--badminton", default=None, help="Approved badminton schedule workbook")
+    reconcile_parser.add_argument("--soccer", default=None, help="Approved soccer schedule workbook")
+    reconcile_parser.add_argument("--table-tennis", default=None, help="Approved table tennis schedule workbook")
+    reconcile_parser.add_argument(
+        "--venue-input",
+        default=None,
+        help="venue_input.xlsx to reconcile (default: data/venue_input.xlsx)",
+    )
+    reconcile_parser.add_argument(
+        "--audit",
+        default=None,
+        help="Audit JSON path (default: EXPORT_DIR/approved_schedule_reconciliation.audit.json)",
+    )
+    reconcile_parser.add_argument(
+        "--waive-table-tennis-discrepancy",
+        action="store_true",
+        help="Allow --execute despite the U35 roster/schedule discrepancy (operator approval required)",
+    )
+    reconcile_mode = reconcile_parser.add_mutually_exclusive_group(required=True)
+    reconcile_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Parse, reconcile, and write the audit JSON only; venue_input.xlsx is not touched",
+    )
+    reconcile_mode.add_argument(
+        "--execute",
+        action="store_true",
+        help="Back up and atomically rewrite venue_input.xlsx when validation has no errors",
+    )
+
     # Generate-venue-template command
     venue_template_parser = subparsers.add_parser(
         "generate-venue-template",
@@ -2121,6 +2163,67 @@ def main() -> None:
                 logger.info(f"Approved publish schedule_input written to: {publish_input_path.resolve()}")
                 logger.info(f"Approved publish schedule_output written to: {publish_output_path.resolve()}")
                 success = True
+    elif args.command == "reconcile-approved-schedules":
+        from scheduling import approved_games, approved_reconciliation
+
+        venue_input_path = (
+            Path(args.venue_input)
+            if args.venue_input
+            else approved_reconciliation.default_venue_input_path(DATA_DIR)
+        )
+        audit_path = (
+            Path(args.audit)
+            if args.audit
+            else approved_reconciliation.default_audit_path(Path(EXPORT_DIR) if EXPORT_DIR else DATA_DIR)
+        )
+        payload = approved_reconciliation.build_reconciliation_payload(
+            main_schedule_path=(
+                Path(args.main_schedule) if args.main_schedule
+                else approved_games.default_main_schedule_path(DATA_DIR)
+            ),
+            badminton_path=(
+                Path(args.badminton) if args.badminton
+                else approved_games.default_badminton_path(DATA_DIR)
+            ),
+            soccer_path=(
+                Path(args.soccer) if args.soccer
+                else approved_games.default_soccer_path(DATA_DIR)
+            ),
+            table_tennis_path=(
+                Path(args.table_tennis) if args.table_tennis
+                else approved_games.default_table_tennis_path(DATA_DIR)
+            ),
+            venue_input_path=venue_input_path,
+            waive_table_tennis_discrepancy=args.waive_table_tennis_discrepancy,
+        )
+        for line in approved_reconciliation.summarize_payload_for_log(payload):
+            logger.info(line)
+        issues = payload.get("issues", {}) or {}
+        for warning in issues.get("warnings", []) or []:
+            logger.warning(f"reconcile-approved-schedules: {warning['message']}")
+        errors = issues.get("errors", []) or []
+        for error in errors:
+            logger.error(f"reconcile-approved-schedules: {error['message']}")
+        approved_reconciliation.write_audit(payload, audit_path)
+        logger.info(f"Reconciliation audit written to: {audit_path.resolve()}")
+
+        if args.dry_run:
+            success = not errors
+            if not errors:
+                logger.info("Dry run clean; rerun with --execute to update venue_input.xlsx.")
+        elif errors:
+            logger.error(
+                f"reconcile-approved-schedules: {len(errors)} error(s); venue_input.xlsx was NOT changed."
+            )
+            success = False
+        else:
+            result = approved_reconciliation.apply_reconciliation(payload, venue_input_path)
+            if result["changed"]:
+                logger.info(f"Backup written to: {result['backup']}")
+                logger.info(f"Reconciled venue input written to: {venue_input_path.resolve()}")
+            else:
+                logger.info("venue_input.xlsx already matches the approved schedules; nothing to change.")
+            success = True
     elif args.command == "generate-venue-template":
         out = Path(args.output) if args.output else None
         success = generate_venue_template(out)

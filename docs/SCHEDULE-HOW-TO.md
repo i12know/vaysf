@@ -145,6 +145,16 @@ Use this sequence after receiving human schedule updates:
    Edit `venue_input.xlsx` for physical availability: courts, rooms, fields,
    dates, time windows, gym modes, and known playoff pins.
 
+   Once the approved Main/Badminton/Soccer/Table Tennis workbooks exist, fold
+   them into the booking with `reconcile-approved-schedules --dry-run`, review
+   `approved_schedule_reconciliation.audit.json`, then `--execute`. This backs
+   up `venue_input.xlsx`, keeps the original booking in `Booked-Venue-Input`
+   (edit bookings there from then on), and rewrites `Venue-Input` so closures,
+   setup, meals, ceremonies, worship, community events, and approved sport
+   modes are respected. Rerun it whenever an approved workbook changes; an
+   unchanged rerun changes nothing. See `docs/SCHEDULING.md`, "Approved
+   schedule reconciliation".
+
 3. **Import the approved pool-play matchups.**
    Run `import-team-matchups` for BB/MVB/WVB/SOC/BC when those tabs or
    workbooks are authoritative.

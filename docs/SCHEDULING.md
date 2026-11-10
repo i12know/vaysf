@@ -250,6 +250,119 @@ resources, when game keys or resource slots duplicate, or when the known Table
 Tennis U35 `SBC` roster/schedule discrepancy is present without an explicit
 `--waive-table-tennis-discrepancy` operator decision.
 
+### Approved schedule reconciliation into `venue_input.xlsx` (Issue #216)
+
+`venue_input.xlsx` records what was **booked**. The four approved workbooks
+(Main Schedule, Badminton, Co-ed Soccer, Table Tennis) record what the event
+actually **does** with that booking. `reconcile-approved-schedules` folds the
+second into the first *before* `export-church-teams`, Stage A allocation, and
+the solver run, so no layer can hand out a court that is closed, in setup,
+hosting worship, or already assigned to another sport.
+
+```text
+python main.py reconcile-approved-schedules --dry-run
+python main.py reconcile-approved-schedules --execute
+python main.py export-church-teams
+python main.py build-schedule-workbook
+python main.py diagnose-schedule
+run-schedule.bat
+```
+
+Paths default to the same `data/` workbooks as `import-approved-games` and to
+`data/venue_input.xlsx`; override them with `--main-schedule`, `--badminton`,
+`--soccer`, `--table-tennis`, `--venue-input`, and `--audit`.
+
+**Parsing.** Every meaningful source cell (merged ranges included, horizontally
+and vertically) becomes an operational block with source file, sheet, cell or
+range, raw text, day, start/end time, venue, resource type, lane, a
+classification, and an intended action:
+
+| Classification | Examples | Action on Venue-Input |
+|---|---|---|
+| `sport_match` | `ANH v GAC`, BC three-team row, Badminton/TT/Soccer games | lock the area to that sport's mode |
+| `sport_stage_block` | `BB QF`, `WVB FINAL`, `PLAYOFF / 3RD / FINAL`, TT `SF 1` | lock the mode (Playoff-Slots untouched) |
+| `sport_reservation` | bye cells | lock the mode |
+| `setup` | `SET UP - TAPE LINES`, `SET UP - AUDIO / VISUAL` | blackout |
+| `meal_or_break` | `DINNER`, `LUNCH / COMMUNITY GAMES`, `BREAK` | blackout |
+| `ceremony_or_worship` | opening/closing ceremony, Sunday worship service | blackout |
+| `community_event` | Track & Field / Tug of War, Scripture Memorization | blackout |
+| `closed` | `CLOSED` | blackout |
+| `reference_to_separate_schedule` | Friday Orange Church Badminton / Table Tennis pointer | none (the racquet workbooks own it) |
+| `unresolved` | anything else, Soccer G7-G12 advancement rows | none; listed in the audit |
+
+Ambiguous cells are never guessed: they stay `unresolved` and appear in the
+audit with their provenance.
+
+**Reconciliation rules.**
+
+- A visual header such as `Main Gym BB1` is split into an area (`main`), a
+  resource type (Basketball Court), and a lane (1). The area is matched to
+  booked rows by their Pod Name / Venue Name / Exclusive Venue Group words;
+  every mode sharing that Exclusive Venue Group is the same physical gym. A
+  named area that matches nothing is an `unknown_venue` error, never re-homed
+  onto another gym.
+- Blackouts remove the window from the affected lane (from every lane of other
+  modes in the same gym). Lanes are counted per interval, so a gym with one of
+  two courts closed keeps a `Quantity = 1` row for that window.
+- A sport block keeps its own mode's window and removes every other mode in
+  that gym. This is what stops the Stage A allocator reassigning the window:
+  `extract_gym_blocks()` only offers a window to the modes whose rows define it.
+- Friday Orange Church Badminton / Table Tennis rows are re-gridded to the
+  approved 20- / 15-minute grids, clipped to the approved window, and limited
+  to the courts/tables actually used.
+- Soccer's six exact pool matches are validated against the booked Soccer
+  Field rows; G7-G12 stay unresolved and no window is invented for them.
+- Global pauses such as dinner apply exactly where the Main Schedule draws
+  them (design question 4): a cell merged across every court blacks out every
+  court; a cell on one court affects that court only.
+- Referee assignments are kept in the audit / Operational-Blocks provenance
+  only (design question 5).
+
+**Validation (blocks `--execute`).** Unknown venue, date outside the booked
+period, time outside every booked window of that type, lane or grid needing
+more courts/tables than booked (`capacity_overflow`), a sport needing a mode the
+area does not offer, overlapping games on one surface, different sport modes
+overlapping in one exclusive gym, Orange Church blocks mapped onto a non-Orange
+booking, missing source workbooks, and the Table Tennis U35 roster/schedule
+discrepancy (FVC vs SBC) unless `--waive-table-tennis-discrepancy` records an
+explicit operator decision. Warnings (non-blocking): unresolved cells,
+non-sport blocks on an unbooked area, block lengths that do not divide the
+booked slot length, and Badminton/Soccer counts other than 39/6.
+
+**What `--execute` writes.** A timestamped
+`venue_input.backup-YYYYMMDD-HHMMSS.xlsx` beside the original, then an atomic
+replace (write a temp file, read it back, `os.replace`) of `venue_input.xlsx`
+with these tabs:
+
+| Tab | Content |
+|---|---|
+| `Booked-Venue-Input` | The untouched booking, copied from Venue-Input on the first execute. Edit bookings **here**. |
+| `Venue-Input` | Reconciled, scheduler-consumable windows. Each row carries a `Booked Row ID` back to its booking row. |
+| `Operational-Blocks` | Every parsed block, including CLOSED/setup/meal/ceremony rows that never become resources. |
+| `Reconciliation-Sources` | Source workbook names and SHA-256 hashes, to detect changed approved files. |
+
+`Gym-Modes` and `Playoff-Slots` are preserved as-is (design questions 1-3:
+blackouts are expressed by splitting Venue-Input availability *and* recorded
+in Operational-Blocks; approved sport blocks lock modes through the existing
+Stage A input rather than bypassing it; stage blocks are not converted into
+Playoff-Slots pins because their participants are unknown).
+
+Every run reconciles from `Booked-Venue-Input`, so:
+
+- running `--execute` twice with unchanged inputs writes nothing the second
+  time ("already matches"), and creates no second backup;
+- if an approved workbook later re-opens a window (e.g. a CLOSED cell is
+  removed), the next run restores it from the booking;
+- a row an operator adds directly to `Venue-Input` (no `Booked Row ID`) is
+  adopted into the booking, not discarded.
+
+The dry run writes `approved_schedule_reconciliation.audit.json` (in
+`EXPORT_DIR`) with every parsed block, the proposed Venue-Input rows, a
+per-booking-row change log (`preserved` / `split_or_changed` / `removed`),
+errors and warnings with source provenance, the racquet grids, the U35
+discrepancy detail, source hashes, and counts by file, venue, day,
+classification, and action.
+
 ### Data flow by layer
 
 ```
@@ -322,7 +435,7 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 
 | File | Location | Role | Layer |
 |------|----------|------|-------|
-| `venue_input.xlsx` | `middleware/data/` (gitignored) | Booked venue: courts, times, gym modes, playoff slots | Layer 2 input |
+| `venue_input.xlsx` | `middleware/data/` (gitignored) | Booked venue: courts, times, gym modes, playoff slots. After `reconcile-approved-schedules --execute`, Venue-Input holds the reconciled windows and Booked-Venue-Input the original booking | Layer 2 input |
 | `2026-VAY-Lottery-Drawing_Team-Assignment(ALL-TEAM-SPORTS)_template.xlsx` | `middleware/data/` | 2026 approved BB/MVB/WVB/SOC/BC matchup import source | Layer 2/3 human input |
 | `VAY2026_Main_Schedule_draft_12.xlsx` | `middleware/data/` | Latest reviewed event-wide Master Schedule and operational envelope | Layer 3 human input |
 | `2026 VAY Badminton Schedule_draft_v1_10Jul2026.xlsx` | `middleware/data/` | Badminton detailed schedule inside Master Schedule blocks | Layer 3 sport-detail input |
@@ -334,6 +447,7 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 
 | Artifact | Produced by | Consumed by | Layer |
 |----------|-------------|-------------|-------|
+| `approved_schedule_reconciliation.audit.json` | `reconcile-approved-schedules` | Operator review before `--execute` | Layer 2 input audit |
 | `Church_Team_Status_ALL_*.xlsx` | `export-church-teams` | Human review, approvals | Non-scheduling |
 | `Church_Team_Status_{CODE}.xlsx` | `export-church-teams` | Pastor / church coordinator | Non-scheduling |
 | `schedule_input.json` | `export-church-teams` | `solve-schedule`, `build-schedule-workbook` | Bridge (includes Layer-2 gym resources, seeded pool assignments, and shared-athlete conflict edges when available) |
