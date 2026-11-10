@@ -22,6 +22,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from config import (
+    EXPORT_COLUMNS,
     POD_RESOURCE_TYPE_BADMINTON,
     POD_RESOURCE_TYPE_TABLE_TENNIS,
     SPORT_TYPE,
@@ -748,7 +749,7 @@ def _table_tennis_roster_index(
         event = _clean_text(row.get("sport_type"))
         if event not in {SPORT_TYPE["TABLE_TENNIS"], SPORT_TYPE["TABLE_TENNIS_35"]}:
             continue
-        church = _team_code(row.get("Church Team"))
+        church = _team_code(row.get(EXPORT_COLUMNS["CHURCH_TEAM"]))
         if not church:
             continue
         index.setdefault((event, church), []).append(row)
@@ -775,8 +776,8 @@ def _table_tennis_roster_candidates(
 def _row_full_name(row: Mapping[str, Any]) -> str:
     return " ".join(
         part for part in (
-            _clean_text(row.get("First Name")),
-            _clean_text(row.get("Last Name")),
+            _clean_text(row.get(EXPORT_COLUMNS["FIRST_NAME"])),
+            _clean_text(row.get(EXPORT_COLUMNS["LAST_NAME"])),
         ) if part
     )
 

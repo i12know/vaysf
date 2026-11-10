@@ -16,6 +16,7 @@ from config import (
     DATA_DIR,
     CHECK_BOXES,
     CHM_FIELDS,
+    EXPORT_COLUMNS,
     MEMBERSHIP_QUESTION,
     FORMAT_MAPPINGS,
     RULE_LEVEL,
@@ -287,8 +288,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             full_name = " ".join(
                 part
                 for part in (
-                    str(row.get("First Name") or "").strip(),
-                    str(row.get("Last Name") or "").strip(),
+                    str(row.get(EXPORT_COLUMNS["FIRST_NAME"]) or "").strip(),
+                    str(row.get(EXPORT_COLUMNS["LAST_NAME"]) or "").strip(),
                 )
                 if part
             ).strip()
@@ -296,7 +297,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 continue
 
             event_key = (
-                str(row.get("Church Team") or "").strip().upper(),
+                str(row.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or "").strip().upper(),
                 self._normalized_sport_type(sport_type),
                 self._normalized_gender(sport_gender),
                 str(sport_format).strip().casefold(),
@@ -357,12 +358,12 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         participant_key = str(participant_id) if participant_id not in (None, "", 0, "0") else ""
         participant_info = participants_by_wp_id.get(participant_key, {})
         first_name = str(
-            participant_info.get("First Name")
+            participant_info.get(EXPORT_COLUMNS["FIRST_NAME"])
             or fallback_first_name
             or ""
         ).strip()
         last_name = str(
-            participant_info.get("Last Name")
+            participant_info.get(EXPORT_COLUMNS["LAST_NAME"])
             or fallback_last_name
             or ""
         ).strip()
@@ -496,8 +497,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             participant_id = issue.get("participant_id")
             participant_key = str(participant_id) if participant_id not in (None, "", 0, "0") else ""
             participant_info = participants_by_wp_id.get(participant_key, {})
-            first_name = str(issue.get("first_name") or participant_info.get("First Name") or "").strip()
-            last_name = str(issue.get("last_name") or participant_info.get("Last Name") or "").strip()
+            first_name = str(issue.get("first_name") or participant_info.get(EXPORT_COLUMNS["FIRST_NAME"]) or "").strip()
+            last_name = str(issue.get("last_name") or participant_info.get(EXPORT_COLUMNS["LAST_NAME"]) or "").strip()
             participant_name = " ".join(part for part in (first_name, last_name) if part).strip()
             issue_description = issue.get("issue_description", "")
 
@@ -524,7 +525,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     )
 
             rows.append({
-                "Church Team": church_code,
+                EXPORT_COLUMNS["CHURCH_TEAM"]: church_code,
                 "Rule Level": self._issue_rule_level(issue),
                 "Severity": self._issue_severity(issue),
                 "Status": issue.get("status", "open"),
@@ -677,10 +678,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     _latest_chm_update_by_church_dt[church_code] = updated_on_dt
 
                 mapped_person = {
-                    "Church Team": church_code,
+                    EXPORT_COLUMNS["CHURCH_TEAM"]: church_code,
                     "ChMeetings ID": chm_id,
-                    "First Name": person_data.get("first_name", ""),
-                    "Last Name": person_data.get("last_name", ""),
+                    EXPORT_COLUMNS["FIRST_NAME"]: person_data.get("first_name", ""),
+                    EXPORT_COLUMNS["LAST_NAME"]: person_data.get("last_name", ""),
                     "Gender": person_data.get("gender", ""),
                     "Birthdate": person_data.get("birth_date", ""),
                     "Mobile Phone": person_data.get("mobile", ""),
@@ -896,8 +897,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                             participants_by_wp_id[str(wp_participant_id_val)] = {
                                 "ChMeetings ID": chm_id,
-                                "First Name": chm_person["First Name"],
-                                "Last Name": chm_person["Last Name"],
+                                EXPORT_COLUMNS["FIRST_NAME"]: chm_person[EXPORT_COLUMNS["FIRST_NAME"]],
+                                EXPORT_COLUMNS["LAST_NAME"]: chm_person[EXPORT_COLUMNS["LAST_NAME"]],
                                 "Approval_Status (WP)": approval_status_val,
                             }
                             try:
@@ -922,15 +923,15 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                                     if self._team_issue_matches_roster(issue, roster_entry)
                                 ]
                                 church_rosters_rows.append({
-                                    "Church Team": church_code_iter,
+                                    EXPORT_COLUMNS["CHURCH_TEAM"]: church_code_iter,
                                     "ChMeetings ID": chm_id,
                                     "Participant ID (WP)": wp_participant_id_val,
                                     "Approval_Status (WP)": approval_status_val,
                                     "Is_Member_ChM": chm_person.get("Is_Member_ChM", False),  # ADD THIS LINE
                                     "Photo": self._excel_image_formula(photo_url_val),  # ADD THIS LINE
 #NOTE: The above line assumes the Excel engine supports IMAGE formula, which is not standard in pandas and will insert "@" after "="
-                                    "First Name": chm_person["First Name"], 
-                                    "Last Name": chm_person["Last Name"],
+                                    EXPORT_COLUMNS["FIRST_NAME"]: chm_person[EXPORT_COLUMNS["FIRST_NAME"]],
+                                    EXPORT_COLUMNS["LAST_NAME"]: chm_person[EXPORT_COLUMNS["LAST_NAME"]],
                                     "Gender": chm_person["Gender"],
                                     "Age (at Event)": self._calculate_age(chm_person["Birthdate"]),
                                     "Mobile Phone": chm_person["Mobile Phone"],
@@ -998,10 +999,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     athlete_fee = ""
 
                 contact_row = {
-                    "Church Team": church_code_iter,
+                    EXPORT_COLUMNS["CHURCH_TEAM"]: church_code_iter,
                     "ChMeetings ID": chm_id,
-                    "First Name": chm_person["First Name"],
-                    "Last Name": chm_person["Last Name"],
+                    EXPORT_COLUMNS["FIRST_NAME"]: chm_person[EXPORT_COLUMNS["FIRST_NAME"]],
+                    EXPORT_COLUMNS["LAST_NAME"]: chm_person[EXPORT_COLUMNS["LAST_NAME"]],
                     "Is_Participant": "Yes" if is_participant_chm else "No",
                     "Is_Member_ChM": "Yes" if chm_person["Is_Member_ChM"] else "No",
                     "Participant ID (WP)": wp_participant_id_val,
@@ -1103,9 +1104,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             for church_code_iter in churches_to_process_codes: # Iterate using the original list of codes
                 if church_code_iter not in chm_data_by_church: continue 
 
-                current_church_contacts = [row for row in all_contacts_data if row["Church Team"] == church_code_iter]
-                current_church_rosters = [row for row in all_rosters_data if row["Church Team"] == church_code_iter]
-                current_church_validation = [row for row in all_validation_data if row["Church Team"] == church_code_iter]
+                current_church_contacts = [row for row in all_contacts_data if row[EXPORT_COLUMNS["CHURCH_TEAM"]] == church_code_iter]
+                current_church_rosters = [row for row in all_rosters_data if row[EXPORT_COLUMNS["CHURCH_TEAM"]] == church_code_iter]
+                current_church_validation = [row for row in all_validation_data if row[EXPORT_COLUMNS["CHURCH_TEAM"]] == church_code_iter]
                 current_church_summary = [s_data for s_data in summary_data_list if s_data["Church Code"] == church_code_iter]
 
                 safe_code = "".join(c if c.isalnum() else "_" for c in church_code_iter)
@@ -1319,7 +1320,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 continue
             if target_gender and r_gender.casefold() != target_gender.casefold():
                 continue
-            church = str(r.get("Church Team") or "").strip()
+            church = str(r.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or "").strip()
             if not church:
                 continue
             counts_by_church[church] = counts_by_church.get(church, 0) + 1
@@ -2797,7 +2798,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         )
 
                     contacts_cols = [
-                        "Church Team", "ChMeetings ID", "First Name", "Last Name", "Is_Participant",
+                        EXPORT_COLUMNS["CHURCH_TEAM"], "ChMeetings ID", EXPORT_COLUMNS["FIRST_NAME"],
+                        EXPORT_COLUMNS["LAST_NAME"], "Is_Participant",
                         "Is_Member_ChM", "Participant ID (WP)", "Approval_Status (WP)",
                         "Total_Open_ERRORs (WP)", "Gender", "Birthdate", "Age (at Event)",
                         "Mobile Phone", "Email", "Registration Date (WP)", "Sports Registered", "Athlete Fee",
@@ -2809,7 +2811,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         if col not in df_contacts.columns:
                             df_contacts[col] = None
                     df_contacts = df_contacts.reindex(columns=contacts_cols).sort_values(
-                        by=["Church Team", "Total_Open_ERRORs (WP)", "Is_Participant", "Last Name", "First Name"],
+                        by=[EXPORT_COLUMNS["CHURCH_TEAM"], "Total_Open_ERRORs (WP)", "Is_Participant",
+                            EXPORT_COLUMNS["LAST_NAME"], EXPORT_COLUMNS["FIRST_NAME"]],
                         ascending=[True, False, False, True, True]
                     )
                 df_contacts.to_excel(writer, sheet_name="Contacts-Status", index=False)
@@ -2819,9 +2822,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 df_roster = pd.DataFrame(roster_rows)
                 if not df_roster.empty:
                     roster_cols = [
-                        "Church Team", "ChMeetings ID", "Participant ID (WP)", "Approval_Status (WP)",
+                        EXPORT_COLUMNS["CHURCH_TEAM"], "ChMeetings ID", "Participant ID (WP)", "Approval_Status (WP)",
                         "Is_Member_ChM", "Photo",          # ADD THIS LINE
-                        "First Name", "Last Name", "Gender", "Age (at Event)", "Mobile Phone", "Email",
+                        EXPORT_COLUMNS["FIRST_NAME"], EXPORT_COLUMNS["LAST_NAME"], "Gender", "Age (at Event)",
+                        "Mobile Phone", "Email",
                         "sport_type", "sport_gender", "sport_format", "team_order", "partner_name",
                         "Open_TEAM_Issue_Count (WP)", "Open_TEAM_Issue_Desc (WP)"
                     ]
@@ -2829,7 +2833,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         if col not in df_roster.columns:
                             df_roster[col] = None
                     df_roster = df_roster.reindex(columns=roster_cols).sort_values(
-                        by=["Church Team", "sport_type", "sport_gender", "Last Name", "First Name", 
+                        by=[EXPORT_COLUMNS["CHURCH_TEAM"], "sport_type", "sport_gender",
+                            EXPORT_COLUMNS["LAST_NAME"], EXPORT_COLUMNS["FIRST_NAME"],
                             "Approval_Status (WP)", "sport_format"] # Removed team_order and partner_name from sort if they are often None
                     )
                 df_roster.to_excel(writer, sheet_name="Roster", index=False)
@@ -2862,11 +2867,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         or {}
                     )
                     mrow: Dict[str, Any] = {
-                        "Church Team": crow.get("Church Team", ""),
+                        EXPORT_COLUMNS["CHURCH_TEAM"]: crow.get(EXPORT_COLUMNS["CHURCH_TEAM"], ""),
                         "ChMeetings ID": chm_pid,
                         "Participant ID (WP)": wp_pid,
-                        "First Name": crow.get("First Name", ""),
-                        "Last Name": crow.get("Last Name", ""),
+                        EXPORT_COLUMNS["FIRST_NAME"]: crow.get(EXPORT_COLUMNS["FIRST_NAME"], ""),
+                        EXPORT_COLUMNS["LAST_NAME"]: crow.get(EXPORT_COLUMNS["LAST_NAME"], ""),
                         "Gender": crow.get("Gender", ""),
                         "Age (at Event)": crow.get("Age (at Event)", ""),
                         "Approval_Status (WP)": crow.get("Approval_Status (WP)", ""),
@@ -2875,8 +2880,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         mrow[sport_col] = sport_roles.get(sport_col, "")
                     matrix_rows.append(mrow)
                 matrix_identity_cols = [
-                    "Church Team", "ChMeetings ID", "Participant ID (WP)",
-                    "First Name", "Last Name", "Gender", "Age (at Event)", "Approval_Status (WP)",
+                    EXPORT_COLUMNS["CHURCH_TEAM"], "ChMeetings ID", "Participant ID (WP)",
+                    EXPORT_COLUMNS["FIRST_NAME"], EXPORT_COLUMNS["LAST_NAME"], "Gender", "Age (at Event)",
+                    "Approval_Status (WP)",
                 ]
                 df_matrix = pd.DataFrame(matrix_rows) if matrix_rows else pd.DataFrame(columns=matrix_identity_cols + all_sport_labels)
                 if not df_matrix.empty:
@@ -2885,7 +2891,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         if col not in df_matrix.columns:
                             df_matrix[col] = ""
                     df_matrix = df_matrix.reindex(columns=matrix_all_cols).sort_values(
-                        by=["Church Team", "Last Name", "First Name"]
+                        by=[EXPORT_COLUMNS["CHURCH_TEAM"], EXPORT_COLUMNS["LAST_NAME"], EXPORT_COLUMNS["FIRST_NAME"]]
                     )
                 df_matrix.to_excel(writer, sheet_name="Multi-Sport-Matrix", index=False)
                 logger.debug(f"Multi-Sport-Matrix tab: {len(df_matrix)} rows.")
@@ -2894,7 +2900,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 df_validation = pd.DataFrame(validation_rows)
                 if not df_validation.empty:
                     validation_cols = [
-                        "Church Team", "Rule Level", "Severity", "Status",
+                        EXPORT_COLUMNS["CHURCH_TEAM"], "Rule Level", "Severity", "Status",
                         "Issue Type", "Rule Code",
                         "Participant ID (WP)", "ChMeetings ID", "Participant Name",
                         "Approval_Status (WP)", "sport_type", "sport_format",
@@ -2904,7 +2910,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         if col not in df_validation.columns:
                             df_validation[col] = None
                     df_validation = df_validation.reindex(columns=validation_cols).sort_values(
-                        by=["Church Team", "Rule Level", "Severity", "Participant Name", "Issue Type"],
+                        by=[EXPORT_COLUMNS["CHURCH_TEAM"], "Rule Level", "Severity", "Participant Name", "Issue Type"],
                         ascending=[True, True, True, True, True]
                     )
                 df_validation.to_excel(writer, sheet_name="Validation-Issues", index=False)
@@ -2996,24 +3002,28 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                         
                         # Modify columns: replace Last Name and First Name with Full Name
                         sport_cols = [
-                            "Church Team", "ChMeetings ID", "Participant ID (WP)", "Approval_Status (WP)",
-                            "Is_Member_ChM", "Photo", "Full Name", "Gender", "Age (at Event)", 
-                            "Mobile Phone", "Email", "sport_type", "sport_gender", "sport_format", 
+                            EXPORT_COLUMNS["CHURCH_TEAM"], "ChMeetings ID", "Participant ID (WP)", "Approval_Status (WP)",
+                            "Is_Member_ChM", "Photo", "Full Name", "Gender", "Age (at Event)",
+                            "Mobile Phone", "Email", "sport_type", "sport_gender", "sport_format",
                             "team_order", "partner_name",
                             "Open_TEAM_Issue_Count (WP)", "Open_TEAM_Issue_Desc (WP)"
                         ]
-                        
+
                         # Create Full Name column
-                        df_sport["Full Name"] = df_sport["Last Name"].astype(str) + " " + df_sport["First Name"].astype(str)
-                        
+                        df_sport["Full Name"] = (
+                            df_sport[EXPORT_COLUMNS["LAST_NAME"]].astype(str)
+                            + " "
+                            + df_sport[EXPORT_COLUMNS["FIRST_NAME"]].astype(str)
+                        )
+
                         # Ensure all sport columns exist
                         for col in sport_cols:
                             if col not in df_sport.columns:
                                 df_sport[col] = None
-                        
+
                         # Reindex and sort
                         df_sport = df_sport.reindex(columns=sport_cols).sort_values(
-                            by=["Church Team", "sport_type", "sport_gender", "Full Name", "Approval_Status (WP)"],
+                            by=[EXPORT_COLUMNS["CHURCH_TEAM"], "sport_type", "sport_gender", "Full Name", "Approval_Status (WP)"],
                             ascending=[True, True, True, True, True]
                         )
                         
@@ -3074,7 +3084,10 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
             # Category 1: Pending participants, including identity-drift reapproval.
             if force_pending and approval_status in ["pending", "pending_approval", "reapproval_required"]:
                 participants_to_resend.append(contact)
-                logger.debug(f"Added pending participant: {contact.get('First Name')} {contact.get('Last Name')} ({contact.get('Church Team')})")
+                logger.debug(
+                    f"Added pending participant: {contact.get(EXPORT_COLUMNS['FIRST_NAME'])} "
+                    f"{contact.get(EXPORT_COLUMNS['LAST_NAME'])} ({contact.get(EXPORT_COLUMNS['CHURCH_TEAM'])})"
+                )
                 
             # Category 2 & 3: Validated participants  
             elif approval_status == "validated":
@@ -3084,11 +3097,17 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 if force_validated1 and has_box_data:
                     # Under review by church rep
                     participants_to_resend.append(contact)
-                    logger.debug(f"Added validated-under-review participant: {contact.get('First Name')} {contact.get('Last Name')} ({contact.get('Church Team')})")
+                    logger.debug(
+                        f"Added validated-under-review participant: {contact.get(EXPORT_COLUMNS['FIRST_NAME'])} "
+                        f"{contact.get(EXPORT_COLUMNS['LAST_NAME'])} ({contact.get(EXPORT_COLUMNS['CHURCH_TEAM'])})"
+                    )
                 elif force_validated2 and not has_box_data:
                     # Not reviewed yet by church rep
                     participants_to_resend.append(contact)
-                    logger.debug(f"Added validated-not-reviewed participant: {contact.get('First Name')} {contact.get('Last Name')} ({contact.get('Church Team')})")
+                    logger.debug(
+                        f"Added validated-not-reviewed participant: {contact.get(EXPORT_COLUMNS['FIRST_NAME'])} "
+                        f"{contact.get(EXPORT_COLUMNS['LAST_NAME'])} ({contact.get(EXPORT_COLUMNS['CHURCH_TEAM'])})"
+                    )
 
         if target_resend_chm_id:
             normalized_target = str(target_resend_chm_id).strip()
@@ -3119,8 +3138,8 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                     return len(participants_to_resend)
                 
                 for p in participants_to_resend:
-                    participant_name = f"{p.get('First Name')} {p.get('Last Name')}"
-                    church_code = p.get('Church Team')
+                    participant_name = f"{p.get(EXPORT_COLUMNS['FIRST_NAME'])} {p.get(EXPORT_COLUMNS['LAST_NAME'])}"
+                    church_code = p.get(EXPORT_COLUMNS['CHURCH_TEAM'])
                     participant_email = p.get('Email', 'N/A')
                     status = p.get('Approval_Status (WP)')
                     
@@ -3151,9 +3170,15 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 wp_participant_id = participant_contact.get("Participant ID (WP)")
                 if wp_participant_id and self._resend_approval_for_participant(sync_manager, participant_contact):
                     success_count += 1
-                    logger.info(f"Resent approval email for {participant_contact.get('First Name')} {participant_contact.get('Last Name')}")
+                    logger.info(
+                        f"Resent approval email for {participant_contact.get(EXPORT_COLUMNS['FIRST_NAME'])} "
+                        f"{participant_contact.get(EXPORT_COLUMNS['LAST_NAME'])}"
+                    )
                 else:
-                    logger.error(f"Failed to resend for {participant_contact.get('First Name')} {participant_contact.get('Last Name')}")
+                    logger.error(
+                        f"Failed to resend for {participant_contact.get(EXPORT_COLUMNS['FIRST_NAME'])} "
+                        f"{participant_contact.get(EXPORT_COLUMNS['LAST_NAME'])}"
+                    )
         
         return success_count
 
@@ -3164,9 +3189,9 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
         try:
             # Extract data from contact
             wp_participant_id = participant_contact.get("Participant ID (WP)")
-            first_name = participant_contact.get("First Name", "")
-            last_name = participant_contact.get("Last Name", "")
-            church_team = participant_contact.get("Church Team", "")
+            first_name = participant_contact.get(EXPORT_COLUMNS["FIRST_NAME"], "")
+            last_name = participant_contact.get(EXPORT_COLUMNS["LAST_NAME"], "")
+            church_team = participant_contact.get(EXPORT_COLUMNS["CHURCH_TEAM"], "")
             chm_id = participant_contact.get("ChMeetings ID", "")
             email = participant_contact.get("Email", "")
             
@@ -3273,7 +3298,11 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
                 return False
             
         except Exception as e:
-            logger.error(f"Error resending approval for participant {participant_contact.get('First Name')} {participant_contact.get('Last Name')}: {e}", exc_info=True)
+            logger.error(
+                f"Error resending approval for participant {participant_contact.get(EXPORT_COLUMNS['FIRST_NAME'])} "
+                f"{participant_contact.get(EXPORT_COLUMNS['LAST_NAME'])}: {e}",
+                exc_info=True,
+            )
             return False
                     
     @staticmethod

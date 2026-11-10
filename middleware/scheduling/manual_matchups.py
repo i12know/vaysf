@@ -21,6 +21,7 @@ from config import (
     COURT_ESTIMATE_DEFAULT_MINUTES_PER_GAME,
     COURT_ESTIMATE_MINUTES_PER_GAME,
     COURT_ESTIMATE_POOL_GAMES_PER_TEAM,
+    EXPORT_COLUMNS,
     GYM_RESOURCE_TYPE_BASKETBALL,
     GYM_RESOURCE_TYPE_VOLLEYBALL,
     SPORT_FORMAT,
@@ -198,7 +199,7 @@ def _extract_roster_team_codes(
                 continue
             if r_format and r_format.casefold() != SPORT_FORMAT["TEAM"].casefold():
                 continue
-            code = _clean_team_code(row.get("Church Team"))
+            code = _clean_team_code(row.get(EXPORT_COLUMNS["CHURCH_TEAM"]))
             if code:
                 team_order = _clean_team_code(row.get("team_order"))
                 result[event_name].add(code if not team_order else f"{code}-{team_order}")

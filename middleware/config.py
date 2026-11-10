@@ -227,6 +227,22 @@ CHM_FIELDS = {
     "ROLES": "My role is",
 }
 
+# Roster/export column headers that are named after ChMeetings fields.
+# Derived from CHM_FIELDS where a custom field already has the same label;
+# FIRST_NAME/LAST_NAME are core profile fields (API key "first_name"/
+# "last_name") that don't have a CHM_FIELDS entry of their own, so their
+# export header is named here directly. Business logic that builds or reads
+# these roster/export columns should use EXPORT_COLUMNS, not the literal
+# string, so a rename is a one-line fix caught by the field inspector.
+EXPORT_COLUMNS = {
+    "CHURCH_TEAM": CHM_FIELDS["CHURCH_TEAM"],
+    "PRIMARY_SPORT": CHM_FIELDS["PRIMARY_SPORT"],
+    "SECONDARY_SPORT": CHM_FIELDS["SECONDARY_SPORT"],
+    "ROLES": CHM_FIELDS["ROLES"],
+    "FIRST_NAME": "First Name",
+    "LAST_NAME": "Last Name",
+}
+
 # ── Season Reset: ChMeetings Custom Field & Option IDs ──────────────────────
 # Sports Fest section (section_id: 116139)
 SF_SECTION_ID = 116139

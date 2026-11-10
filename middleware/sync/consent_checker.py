@@ -7,7 +7,7 @@ import pandas as pd
 from loguru import logger
 
 from chmeetings.backend_connector import ChMeetingsConnector
-from config import DATA_DIR, SF_FIELD_IDS
+from config import DATA_DIR, EXPORT_COLUMNS, SF_FIELD_IDS
 from wordpress.frontend_connector import WordPressConnector
 
 
@@ -25,8 +25,8 @@ CONSENT_SCORE_WEIGHTS = {
 }
 CONSENT_AUDIT_FILE = "consent_check_audit.xlsx"
 CONSENT_REQUIRED_COLUMNS = [
-    "First Name",
-    "Last Name",
+    EXPORT_COLUMNS["FIRST_NAME"],
+    EXPORT_COLUMNS["LAST_NAME"],
     "Athlete Mobile Phone",
     "Athlete Email",
     "Athlete Birthdate",
@@ -115,10 +115,11 @@ class ConsentChecker:
             rows.append(
                 {
                     "source_row_number": index + 2,
-                    "signer_first_name": str(row.get("First Name", "") or "").strip(),
-                    "signer_last_name": str(row.get("Last Name", "") or "").strip(),
+                    "signer_first_name": str(row.get(EXPORT_COLUMNS["FIRST_NAME"], "") or "").strip(),
+                    "signer_last_name": str(row.get(EXPORT_COLUMNS["LAST_NAME"], "") or "").strip(),
                     "signer_name": str(
-                        f"{row.get('First Name', '') or ''} {row.get('Last Name', '') or ''}"
+                        f"{row.get(EXPORT_COLUMNS['FIRST_NAME'], '') or ''} "
+                        f"{row.get(EXPORT_COLUMNS['LAST_NAME'], '') or ''}"
                     ).strip(),
                     "athlete_phone": _normalize_phone(row.get("Athlete Mobile Phone", "")),
                     "athlete_email": _normalize_text(row.get("Athlete Email", "")),
@@ -140,7 +141,8 @@ class ConsentChecker:
                         row.get("Submission Date", "") or ""
                     ).strip(),
                     "normalized_signer_name": _full_name(
-                        row.get("First Name", ""), row.get("Last Name", "")
+                        row.get(EXPORT_COLUMNS["FIRST_NAME"], ""),
+                        row.get(EXPORT_COLUMNS["LAST_NAME"], ""),
                     ),
                 }
             )
@@ -297,8 +299,8 @@ class ConsentChecker:
         resolved_person = chm_person or participant or {}
         return {
             "CHM ID": str(resolved_person.get("id") or resolved_person.get("chmeetings_id") or ""),
-            "First Name": resolved_person.get("first_name", ""),
-            "Last Name": resolved_person.get("last_name", ""),
+            EXPORT_COLUMNS["FIRST_NAME"]: resolved_person.get("first_name", ""),
+            EXPORT_COLUMNS["LAST_NAME"]: resolved_person.get("last_name", ""),
             "Church Code": resolved_person.get("church_code", participant.get("church_code", "") if participant else ""),
             "Consent Form Signer Type": consent_row.get("signer_type", ""),
             "Consent Row Name": consent_row.get("signer_name", ""),

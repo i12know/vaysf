@@ -19,6 +19,7 @@ from config import (
     SPORT_FORMAT,
     COURT_ESTIMATE_DEFAULT_POOL_GAMES_PER_TEAM,
     COURT_ESTIMATE_POOL_GAMES_PER_TEAM,
+    EXPORT_COLUMNS,
 )
 
 
@@ -117,7 +118,7 @@ def _write_pool_assignment_state(
             continue
         payload_rows.append({
             "event": event_name,
-            "church_code": str(row.get("Church Team") or "").strip(),
+            "church_code": str(row.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or "").strip(),
             "team_order": str(row.get("Team Order") or "").strip(),
             "team_id": team_id,
             "seed": builder._normalize_pool_seed(row.get("Seed")),
@@ -169,7 +170,7 @@ def _build_pool_assignment_base_rows(
             if r_format and r_format.casefold() != SPORT_FORMAT["TEAM"].casefold():
                 continue
 
-            church_code = str(roster_row.get("Church Team") or "").strip().upper()
+            church_code = str(roster_row.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or "").strip().upper()
             if not church_code:
                 continue
             team_order = str(roster_row.get("team_order") or "").strip().upper()
@@ -185,7 +186,7 @@ def _build_pool_assignment_base_rows(
             persisted = persisted_state.get((event_name, team_id), {})
             rows.append({
                 "Event": event_name,
-                "Church Team": church_code,
+                EXPORT_COLUMNS["CHURCH_TEAM"]: church_code,
                 "Team Order": team_order,
                 "Team ID": team_id,
                 "Team Label": team_id,
@@ -500,7 +501,7 @@ def refresh_pool_assignments(
             continue
         normalized_rows.append({
             "Event": event_name,
-            "Church Team": str(row.get("Church Team") or "").strip(),
+            EXPORT_COLUMNS["CHURCH_TEAM"]: str(row.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or "").strip(),
             "Team Order": str(row.get("Team Order") or "").strip(),
             "Team ID": team_id,
             "Team Label": str(row.get("Team Label") or team_id).strip(),

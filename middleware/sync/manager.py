@@ -11,7 +11,7 @@ import pandas as pd
 from typing import Dict, Any, Optional
 from loguru import logger
 from config import (Config, DATA_DIR, APPROVAL_STATUS, CHECK_BOXES, MEMBERSHIP_QUESTION,
-                   SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, CHM_FIELDS,
+                   SPORT_TYPE, SPORT_CATEGORY, SPORT_FORMAT, GENDER, CHM_FIELDS, EXPORT_COLUMNS,
                    VALIDATION_SEVERITY, VALIDATION_STATUS, RULE_LEVEL)
 from chmeetings.backend_connector import ChMeetingsConnector, CHM_MIN_REQUEST_INTERVAL_SECONDS
 from wordpress.frontend_connector import WordPressConnector
@@ -620,8 +620,8 @@ class SyncManager:
         for participant in participants:
             participants_data.append({
                 "Person Id": participant["chmeetings_id"],
-                "First Name": participant["first_name"],
-                "Last Name": participant["last_name"],
+                EXPORT_COLUMNS["FIRST_NAME"]: participant["first_name"],
+                EXPORT_COLUMNS["LAST_NAME"]: participant["last_name"],
                 "Group Name": Config.APPROVED_GROUP_NAME
             })
             wp_participant_ids.append(str(participant["participant_id"]))

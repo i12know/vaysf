@@ -9,6 +9,7 @@ reach everything through it.
 """
 from typing import Any, Dict, List, Optional, Tuple
 from config import (
+    EXPORT_COLUMNS,
     SPORT_FORMAT,
 )
 
@@ -39,7 +40,7 @@ def _build_core_gym_team_lookup(
             if r_format and r_format.casefold() != SPORT_FORMAT["TEAM"].casefold():
                 continue
 
-            church_code = str(roster_row.get("Church Team") or "").strip().upper()
+            church_code = str(roster_row.get(EXPORT_COLUMNS["CHURCH_TEAM"]) or "").strip().upper()
             if not church_code:
                 continue
             team_order = str(roster_row.get("team_order") or "").strip().upper()
@@ -67,8 +68,8 @@ def _build_core_gym_team_lookup(
 
             team_state["participant_ids"].add(participant_id)
             full_name = (
-                f"{str(roster_row.get('First Name') or '').strip()} "
-                f"{str(roster_row.get('Last Name') or '').strip()}"
+                f"{str(roster_row.get(EXPORT_COLUMNS['FIRST_NAME']) or '').strip()} "
+                f"{str(roster_row.get(EXPORT_COLUMNS['LAST_NAME']) or '').strip()}"
             ).strip()
             if full_name:
                 team_state["participant_names"][participant_id] = full_name
