@@ -19,8 +19,10 @@
   locked but counted; Badminton and Table Tennis are deferred (their approved
   team keys do not match roster conflict ids) and carried through unchanged;
   Tennis and Pickleball conflict edges are not evaluated because no approved
-  games exist for them. `solve-schedule` is unchanged. New module
-  `middleware/scheduling/schedule_repair.py`, 36 tests in
+  games exist for them. Deferred games and deferred-sport pins still reserve
+  their courts, a game's own placement limits are audited, and the timeout is
+  one budget for the whole solve. `solve-schedule` is unchanged. New module
+  `middleware/scheduling/schedule_repair.py`, 50 tests in
   `tests/test_schedule_repair.py`; documented in `docs/SCHEDULING.md` and
   `docs/SCHEDULE-HOW-TO.md`.
 - Added `python main.py reconcile-approved-schedules --dry-run|--execute`

@@ -41,6 +41,9 @@ Objective (strictly lexicographic, solved one tier at a time):
 
 Each tier is minimised, then frozen at its value before the next tier runs,
 so a tier reported OPTIMAL is proven minimal under every constraint above.
+
+Placements the experiment does not evaluate (deferred sports' games and
+pins) still reserve their courts, so nothing is ever moved onto them.
 """
 
 from __future__ import annotations
@@ -311,6 +314,7 @@ def build_repair_problem(
     }
     superseded_pins: List[str] = []
     skipped_pins: List[Dict[str, str]] = []
+    reserved_pins: List[Dict[str, Any]] = []
     for pin in schedule_input.get("playoff_slots", []) or []:
         game_id = _clean(pin.get("game_id"))
         resource_id = _clean(pin.get("resource_id"))
@@ -324,8 +328,6 @@ def build_repair_problem(
         if game_id in seen_ids:
             continue
         event = _clean(pin.get("event") or input_games.get(game_id, {}).get("event"))
-        if event not in evaluated_events:
-            continue
         if slot not in resource_slots.get(resource_id, ()):
             skipped_pins.append({
                 "game_id": game_id,
@@ -338,6 +340,24 @@ def build_repair_problem(
             continue
         resource = resource_by_id.get(resource_id, {})
         source_game = input_games.get(game_id, {})
+        if event not in evaluated_events:
+            # A pin for a sport outside the experiment still holds its court.
+            seen_ids.add(game_id)
+            reserved_pins.append({
+                "game_id": game_id,
+                "event": event,
+                "resource_type": _clean(resource.get("resource_type")),
+                "duration_minutes": int(
+                    pin.get("duration_minutes")
+                    or source_game.get("duration_minutes")
+                    or resource.get("slot_minutes")
+                    or 60
+                ),
+                "baseline_resource_id": resource_id,
+                "baseline_slot": slot,
+                "origin": "schedule_input_pin",
+            })
+            continue
         seen_ids.add(game_id)
         games.append({
             "game_id": game_id,
@@ -394,6 +414,8 @@ def build_repair_problem(
     problem: Dict[str, Any] = {
         "games": games,
         "deferred_games": deferred_games,
+        # Courts held by placements the experiment does not evaluate.
+        "reserved": deferred_games + reserved_pins,
         "resources": resources,
         "team_conflicts": evaluated_edges,
         "precedence": precedence,
@@ -483,24 +505,60 @@ class _Context:
         days += sorted(extra - seen, key=_day_chronological_key)
         self.day_index = {day: idx for idx, day in enumerate(days)}
         self.days = days
+        self._court_track = self._assign_court_tracks()
+
+    def _base_court(self, res: Mapping[str, Any]) -> Tuple[str, str, str]:
+        return (
+            _clean(res.get("exclusive_group") or res.get("venue_name")),
+            _clean(res.get("resource_type")),
+            _clean(res.get("label")) or _clean(res.get("resource_id")),
+        )
+
+    def _assign_court_tracks(self) -> Dict[str, int]:
+        """Tell apart courts that share a venue, type and label.
+
+        Time-boxed windows of one physical court never overlap, so they share
+        a track.  Two resources with the same label whose windows do overlap
+        (two pods at one venue, each starting at Court-1) are different
+        courts and get different tracks.
+        """
+        groups: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = defaultdict(list)
+        for res in self.resources.values():
+            groups[(self._base_court(res), res["day"])].append(res)
+        tracks: Dict[str, int] = {}
+        for members in groups.values():
+            members.sort(key=lambda r: (
+                _parse_time_minutes(r["open_time"]), len(r["resource_id"]), r["resource_id"]
+            ))
+            track_end: List[int] = []
+            for res in members:
+                opens = _parse_time_minutes(res["open_time"])
+                closes = _parse_time_minutes(res["close_time"])
+                for index, end in enumerate(track_end):
+                    if end <= opens:
+                        track_end[index] = closes
+                        tracks[res["resource_id"]] = index
+                        break
+                else:
+                    track_end.append(closes)
+                    tracks[res["resource_id"]] = len(track_end) - 1
+        return tracks
 
     def absolute_minutes(self, slot: str) -> int:
         day, time = _parse_slot_label(slot)
         return self.day_index.get(day, len(self.day_index)) * 1440 + _parse_time_minutes(time)
 
-    def court_key(self, resource_id: str) -> Tuple[str, str, str]:
-        res = self.resources.get(resource_id) or {}
-        return (
-            _clean(res.get("exclusive_group") or res.get("venue_name")),
-            _clean(res.get("resource_type")),
-            _clean(res.get("label")) or resource_id,
-        )
+    def court_key(self, resource_id: str) -> Tuple[str, str, str, int]:
+        res = self.resources.get(resource_id) or {"resource_id": resource_id}
+        return (*self._base_court(res), self._court_track.get(resource_id, 0))
 
     def court_label(self, resource_id: str) -> str:
         res = self.resources.get(resource_id) or {}
         venue = _clean(res.get("venue_name") or res.get("exclusive_group"))
         label = _clean(res.get("label")) or resource_id
-        return f"{venue} {label}".strip()
+        track = self._court_track.get(resource_id, 0)
+        suffix = f" (set {track + 1})" if track else ""
+        return f"{venue} {label}{suffix}".strip()
 
     def geometry(self, game: Mapping[str, Any], resource_id: str, slot: str) -> Dict[str, Any]:
         """Describe one placement; 'problem' is set when it is not legal."""
@@ -547,6 +605,54 @@ class _Context:
         info["cells"] = [(resource_id, i) for i in range(idx, idx + n_slots)]
         info["occupied_end"] = start + n_slots * slot_minutes
         return info
+
+
+def _reserved_geometry(problem: Mapping[str, Any], ctx: _Context) -> List[Tuple[str, Dict[str, Any]]]:
+    """Legal placements of deferred games and deferred-sport pins.
+
+    They are outside the experiment, but they still occupy their courts.
+    """
+    found: List[Tuple[str, Dict[str, Any]]] = []
+    for item in problem.get("reserved", []) or []:
+        if not item.get("baseline_resource_id") or not item.get("baseline_slot"):
+            continue
+        info = ctx.geometry(item, item["baseline_resource_id"], item["baseline_slot"])
+        if not info["problem"]:
+            found.append((item["game_id"], info))
+    return found
+
+
+def _envelope_problem(
+    ctx: _Context,
+    game: Mapping[str, Any],
+    info: Mapping[str, Any],
+    options: Mapping[str, Any],
+) -> Optional[str]:
+    """Why a placement breaks the game's own limits, or None."""
+    if info.get("start") is None:
+        return None
+    allowed = game.get("allowed_resource_ids") or []
+    if allowed and info["resource_id"] not in allowed:
+        return f"{info['resource_id']} is not one of its allowed resources {sorted(allowed)}"
+    if game.get("earliest_slot") and info["start"] < ctx.absolute_minutes(game["earliest_slot"]):
+        return f"{info['slot']} is before its earliest slot {game['earliest_slot']}"
+    if game.get("latest_slot") and info["start"] > ctx.absolute_minutes(game["latest_slot"]):
+        return f"{info['slot']} is after its latest slot {game['latest_slot']}"
+    limit = game.get("max_move_minutes")
+    if limit is None:
+        limit = options.get("max_move_minutes")
+    if (
+        limit is not None
+        and game.get("placement_policy") == POLICY_REPAIRABLE
+        and game.get("baseline_slot")
+    ):
+        try:
+            moved = abs(info["start"] - ctx.absolute_minutes(game["baseline_slot"]))
+        except (ValueError, AttributeError):
+            return None
+        if moved > int(limit):
+            return f"{info['slot']} is {moved} minutes from its approved time (limit {int(limit)})"
+    return None
 
 
 def baseline_placements(problem: Mapping[str, Any]) -> Dict[str, Dict[str, str]]:
@@ -619,14 +725,25 @@ def audit_placements(
                 "game_ids": [game_id],
                 "message": f"{game_id}: {info['problem']}",
             })
+            continue
+        outside = _envelope_problem(ctx, game, info, problem["options"])
+        if outside:
+            hard.append({
+                "kind": "outside_envelope",
+                "game_ids": [game_id],
+                "message": f"{game_id}: {outside}",
+            })
 
+    # Deferred games and deferred-sport pins hold their courts too.  A clash is
+    # reported when it involves at least one game the experiment evaluates.
+    reserved = _reserved_geometry(problem, ctx)
     occupancy: Dict[Tuple[str, int], List[str]] = defaultdict(list)
-    for game_id, info in geometry.items():
+    for game_id, info in list(geometry.items()) + reserved:
         for cell in info["cells"]:
             occupancy[cell].append(game_id)
     reported: set[frozenset] = set()
     for (resource_id, idx), occupants in sorted(occupancy.items()):
-        if len(occupants) < 2:
+        if len(occupants) < 2 or not any(o in games for o in occupants):
             continue
         key = frozenset(occupants)
         if key in reported:
@@ -646,9 +763,11 @@ def audit_placements(
         mode_pairs.add((res_a, res_b))
         mode_pairs.add((res_b, res_a))
     if mode_pairs:
-        placed = [(gid, info) for gid, info in geometry.items() if info["cells"]]
+        placed = [(gid, info) for gid, info in geometry.items() if info["cells"]] + reserved
         for index, (gid_a, info_a) in enumerate(placed):
             for gid_b, info_b in placed[index + 1:]:
+                if gid_a not in games and gid_b not in games:
+                    continue
                 if (info_a["resource_id"], info_b["resource_id"]) not in mode_pairs:
                     continue
                 if _overlap(info_a["start"], info_a["occupied_end"],
@@ -787,6 +906,7 @@ def audit_placements(
         "same_team_overlaps": kinds.get("same_team_overlap", 0),
         "gym_mode_conflicts": kinds.get("gym_mode_conflict", 0),
         "precedence_violations": kinds.get("precedence_violation", 0),
+        "outside_envelope": kinds.get("outside_envelope", 0),
         "primary_conflict_penalty": sum(r["primary"] for r in conflict_rows),
         "secondary_conflict_penalty": sum(r["secondary"] for r in conflict_rows),
         "conflict_pair_count": len(conflict_rows),
@@ -877,8 +997,9 @@ def solve_repair(
     baseline = baseline_placements(problem)
     baseline_audit = audit_placements(problem, baseline)
 
+    reserved_infos = [info for _id, info in _reserved_geometry(problem, ctx)]
     locked_cells: set[Tuple[str, int]] = set()
-    for info in fixed.values():
+    for info in list(fixed.values()) + reserved_infos:
         locked_cells.update(info["cells"])
     mode_pairs = _mode_conflict_pairs(ctx)
     mode_partners: Dict[str, List[str]] = defaultdict(list)
@@ -965,7 +1086,7 @@ def solve_repair(
                     continue
                 if any(
                     _overlap(info["start"], info["occupied_end"], other["start"], other["occupied_end"])
-                    for other in fixed.values()
+                    for other in list(fixed.values()) + reserved_infos
                     if other["cells"] and other["resource_id"] in mode_partners.get(resource_id, ())
                 ):
                     continue
@@ -1135,8 +1256,8 @@ def solve_repair(
         if base_info.get("start") is None:
             moved.const += 1
             continue
-        if not any(info["is_baseline"] for info in candidates[game_id]):
-            moved.const += 1
+        # When the baseline is not a candidate, every candidate below already
+        # counts as one move; adding a constant here would count it twice.
         for rank, (info, var) in enumerate(zip(candidates[game_id], x[game_id])):
             tie_break.add(var, rank)
             if info["is_baseline"]:
@@ -1152,7 +1273,10 @@ def solve_repair(
     if max_moves is not None and moved.vars:
         model.Add(moved.expr(cp_model) <= int(max_moves))
 
-    if rest_policy != "ignore" and rest.vars and not baseline_audit["hard_violation_count"]:
+    # The cap also holds while repairing an invalid baseline.  If that leaves
+    # no legal schedule, the solve is retried once without it (see below).
+    rest_capped = rest_policy != "ignore" and bool(rest.vars)
+    if rest_capped:
         cap = 0 if rest_policy == "strict" else baseline_audit["rest_violation_count"]
         model.Add(rest.expr(cp_model) <= max(cap, rest.const))
 
@@ -1249,6 +1373,14 @@ def solve_repair(
             tiers.append({"tier": name, "value": lin.const, "status": STATUS_OPTIMAL,
                           "solver_wall_seconds": 0.0})
             continue
+        # timeout_seconds is one budget shared by every tier, not a per-tier limit.
+        remaining = float(timeout_seconds) - total_wall
+        if chosen and remaining <= 0.05:
+            tiers.append({"tier": name, "value": None, "status": "SKIPPED",
+                          "solver_wall_seconds": 0.0})
+            final_status = STATUS_FEASIBLE
+            continue
+        solver.parameters.max_time_in_seconds = max(remaining, 0.05)
         model.Minimize(lin.expr(cp_model))
         status_name = solver.StatusName(solver.Solve(model))
         wall = float(solver.WallTime())
@@ -1258,6 +1390,23 @@ def solve_repair(
             tiers.append({"tier": name, "value": None, "status": failed,
                           "solver_wall_seconds": round(wall, 3)})
             if not chosen:
+                if (
+                    failed == STATUS_INFEASIBLE
+                    and rest_capped
+                    and baseline_audit["hard_violation_count"]
+                ):
+                    # Repairing an invalid baseline may need one more
+                    # back-to-back game than the baseline had.
+                    relaxed = solve_repair(
+                        problem,
+                        timeout_seconds=max(float(timeout_seconds) - total_wall, 1.0),
+                        max_moves=max_moves,
+                        movement_priority=movement_priority,
+                        rest_policy="ignore",
+                        conflict_tiers_only=conflict_tiers_only,
+                    )
+                    relaxed["rest_cap_relaxed"] = True
+                    return relaxed
                 return {
                     "status": failed,
                     "placements": {},
@@ -1265,6 +1414,7 @@ def solve_repair(
                     "unscheduled": sorted(movable),
                     "solver_wall_seconds": round(total_wall, 3),
                     "baseline_audit": baseline_audit,
+                    "rest_cap_relaxed": False,
                 }
             final_status = STATUS_FEASIBLE
             break
@@ -1302,6 +1452,7 @@ def solve_repair(
         "unscheduled": [],
         "solver_wall_seconds": round(total_wall, 3),
         "baseline_audit": baseline_audit,
+        "rest_cap_relaxed": False,
     }
 
 
@@ -1312,16 +1463,25 @@ def compute_move_frontier(
     timeout_seconds: float = _DEFAULT_TIMEOUT,
     rest_policy: str = "no_worse",
 ) -> List[Dict[str, Any]]:
-    """Best conflict penalties achievable with at most k moved games, k = 0..max_budget."""
+    """Best conflict penalties achievable with at most k moved games, k = 0..max_budget.
+
+    timeout_seconds is the budget for the whole table.  When it runs out the
+    table stops early, so its length says how far it got.
+    """
     rows: List[Dict[str, Any]] = []
+    spent = 0.0
     for budget in range(0, max(int(max_budget), 0) + 1):
+        remaining = float(timeout_seconds) - spent
+        if rows and remaining <= 0.05:
+            break
         result = solve_repair(
             problem,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=max(remaining, 0.05),
             max_moves=budget,
             rest_policy=rest_policy,
             conflict_tiers_only=True,
         )
+        spent += float(result.get("solver_wall_seconds") or 0.0)
         values = {tier["tier"]: tier for tier in result["tiers"]}
         primary = values.get("primary_conflict_penalty", {})
         secondary = values.get("secondary_conflict_penalty", {})
@@ -1354,6 +1514,7 @@ _METRICS: Tuple[Tuple[str, str], ...] = (
     ("same_team_overlaps", "Same-team overlaps"),
     ("gym_mode_conflicts", "Gym mode conflicts"),
     ("precedence_violations", "Precedence violations"),
+    ("outside_envelope", "Placements outside a game's own limits"),
     ("rest_violation_count", "Back-to-back games (same team)"),
     ("volleyball_adjacent_switches", "Volleyball adjacent Men/Women switches"),
     ("latest_finish", "Latest finish (any day)"),
@@ -1403,11 +1564,14 @@ def decide_verdict(
     after = (optimized_audit["primary_conflict_penalty"], optimized_audit["secondary_conflict_penalty"])
     if after >= before:
         return VERDICT_NO_IMPROVEMENT, "no legal move reduces shared-athlete conflicts"
+    # Penalties are weights (shared athletes per clashing game pair), and a
+    # primary gain can come with a secondary loss, so report each on its own.
     removed = sum(before) - sum(after)
     share = moved_count / repairable_count if repairable_count else 0.0
     gain = removed / moved_count if moved_count else float(removed)
     detail = (
-        f"{removed} athlete clash(es) removed by moving {moved_count} of "
+        f"primary penalty {before[0]} -> {after[0]}, secondary penalty "
+        f"{before[1]} -> {after[1]}, by moving {moved_count} of "
         f"{repairable_count} repairable game(s) ({share:.0%})"
     )
     if share <= ACCEPTABLE_MAX_MOVE_SHARE and gain >= ACCEPTABLE_MIN_GAIN_PER_MOVE:
@@ -1504,10 +1668,16 @@ def build_comparison(
                      if r["status"] == "introduced" and game_id in _pair_key(r)]
             row["conflicts_removed"] = removed
             row["conflicts_introduced"] = added
-            row["reason"] = (
-                "Removes " + "; ".join(removed) if removed
-                else "Makes room for another move (no conflict of its own)"
-            )
+            forced = [v["message"] for v in baseline_audit["hard_violations"]
+                      if game_id in v["game_ids"]]
+            if forced:
+                row["reason"] = "Approved placement is not legal: " + "; ".join(forced)
+                if removed:
+                    row["reason"] += ". Also removes " + "; ".join(removed)
+            elif removed:
+                row["reason"] = "Removes " + "; ".join(removed)
+            else:
+                row["reason"] = "Makes room for another move (no conflict of its own)"
             moved_games.append(row)
         rows.append(row)
     for game in problem.get("deferred_games", []):
@@ -1589,6 +1759,11 @@ def build_comparison(
             )
     else:
         summary_lines.append(f"The solver returned no schedule (status {solve_result['status']}).")
+    if solve_result.get("rest_cap_relaxed"):
+        summary_lines.append(
+            "No legal repair kept back-to-back games at the baseline level, so that "
+            "limit was dropped for this run."
+        )
     summary_lines.append(f"Verdict: {verdict} - {rationale}.")
 
     return {
@@ -1609,6 +1784,7 @@ def build_comparison(
             "unevaluated_conflict_edges": problem["unevaluated_edges"],
             "schedule_input_pins_overridden_by_baseline": problem["superseded_pins"],
             "schedule_input_pins_skipped": problem["skipped_pins"],
+            "courts_reserved_by_unevaluated_placements": len(problem.get("reserved", [])),
         },
         "parameters": {**problem["options"], **dict(parameters or {})},
         "solver": {
@@ -1616,6 +1792,7 @@ def build_comparison(
             "solver_wall_seconds": solve_result.get("solver_wall_seconds", 0.0),
             "tiers": list(solve_result.get("tiers", [])),
             "conflict_tiers_proven_optimal": conflicts_proven,
+            "rest_cap_relaxed": bool(solve_result.get("rest_cap_relaxed")),
             "unscheduled": list(solve_result.get("unscheduled", [])),
         },
         "metrics": metrics,
@@ -1841,6 +2018,9 @@ def run_optimize_approved_schedule(
 ) -> int:
     """Run the experiment.
 
+    timeout_seconds is the budget for the main solve; the move frontier gets
+    the same budget again, so one run is bounded by about twice that.
+
     Exit codes: 0 = comparison produced from a valid baseline; 1 = baseline
     invalid or no legal schedule; 2 = solver timed out with no schedule;
     3 = bad input.  A dry run writes the comparison JSON only.
@@ -1934,12 +2114,20 @@ def run_optimize_approved_schedule(
     baseline_audit = result["baseline_audit"]
     if frontier and solved and not baseline_audit["hard_violation_count"]:
         moved_tier = next((t for t in result["tiers"] if t["tier"] == "games_moved"), None)
-        budget = min(int(moved_tier["value"]), int(frontier_limit)) if moved_tier else 0
+        budget = (
+            min(int(moved_tier["value"]), int(frontier_limit))
+            if moved_tier and moved_tier["value"] is not None else 0
+        )
         if budget > 0:
             frontier_rows = compute_move_frontier(
                 problem, max_budget=budget, timeout_seconds=timeout_seconds,
                 rest_policy=rest_policy,
             )
+            if len(frontier_rows) <= budget:
+                logger.warning(
+                    f"optimize-approved-schedule: the move frontier stopped at "
+                    f"{len(frontier_rows) - 1} of {budget} move(s) when its time budget ran out."
+                )
 
     comparison = build_comparison(
         problem,

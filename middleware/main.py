@@ -845,7 +845,10 @@ def parse_args() -> argparse.Namespace:
         "--timeout",
         type=float,
         default=None,
-        help="Time limit in seconds for each objective tier (default: SCHEDULE_SOLVER_TIMEOUT or 90)",
+        help=(
+            "Time budget in seconds for the whole solve; the move frontier gets the same "
+            "again (default: SCHEDULE_SOLVER_TIMEOUT or 90)"
+        ),
     )
     optimize_parser.add_argument(
         "--no-frontier",

@@ -468,6 +468,165 @@ def test_unknown_placement_policy_is_rejected():
         _problem(resources, games)
 
 
+# --- review findings on PR #382 -------------------------------------------------
+
+def _shared_court_world(**kwargs):
+    """Two Men's Volleyball games that clash; the only free slot is VB-1 at 13:00."""
+    resources = [_court("VB-1", "Volleyball Court", close_time="14:00"),
+                 _court("VB-2", "Volleyball Court", "Court-2", close_time="13:00")]
+    games = [
+        _game("VBM-01", VBM, ["VBM::A", "VBM::B"], "VB-1", "Sat-1-12:00"),
+        _game("VBM-02", VBM, ["VBM::C", "VBM::D"], "VB-2", "Sat-1-12:00"),
+    ]
+    edges = [_edge("VBM::A", "VBM::C", primary=1, secondary=0)]
+    return resources, games, edges
+
+
+def test_free_slot_is_used_when_nothing_reserves_it():
+    resources, games, edges = _shared_court_world()
+    result, _comparison = _solve(_problem(resources, games, edges))
+    assert {"resource_id": "VB-1", "slot": "Sat-1-13:00"} in result["placements"].values()
+
+
+def test_deferred_game_keeps_its_court():
+    resources, games, edges = _shared_court_world()
+    games.append(_game("VBW-01", VBW, ["VBW::X", "VBW::Y"], "VB-1", "Sat-1-13:00"))
+    problem = _problem(resources, games, edges, unknown_events=[VBW])
+    result, comparison = _solve(problem)
+
+    assert [d["event"] for d in problem["deferred_events"]] == [VBW]
+    assert comparison["moved_games"] == []
+    assert {"resource_id": "VB-1", "slot": "Sat-1-13:00"} not in result["placements"].values()
+    assert _metric(comparison, "primary_conflict_penalty") == 1
+
+
+def test_baseline_game_on_a_deferred_games_court_is_a_collision():
+    resources, games, _edges = _shared_court_world()
+    games.append(_game("VBW-01", VBW, ["VBW::X", "VBW::Y"], "VB-1", "Sat-1-12:00"))
+    problem = _problem(resources, games, unknown_events=[VBW])
+    audit = sr.audit_placements(problem, sr.baseline_placements(problem))
+
+    assert [(v["kind"], v["game_ids"]) for v in audit["hard_violations"]] == [
+        ("resource_collision", ["VBM-01", "VBW-01"])
+    ]
+
+
+def test_pin_for_a_deferred_sport_keeps_its_court():
+    resources, games, edges = _shared_court_world()
+    pin = {"game_id": "VBW-Final", "event": VBW, "stage": "Final", "resource_id": "VB-1",
+           "slot": "Sat-1-13:00", "duration_minutes": 60}
+    problem = _problem(resources, games, edges, pins=[pin])
+    result, comparison = _solve(problem)
+
+    assert [r["game_id"] for r in problem["reserved"]] == ["VBW-Final"]
+    assert problem["skipped_pins"] == []
+    assert comparison["moved_games"] == []
+    assert {"resource_id": "VB-1", "slot": "Sat-1-13:00"} not in result["placements"].values()
+
+
+def test_forced_move_counts_once_and_fits_a_one_move_budget():
+    resources = [_court("BB-1", "Basketball Court")]
+    games = [_game("BBM-01", BB, ["BBM::A", "BBM::B"], "BB-1", "Sat-1-12:00",
+                   earliest_slot="Sat-1-13:00")]
+    problem = _problem(resources, games)
+    result, comparison = _solve(problem)
+
+    assert _tier(result, "games_moved") == 1 == comparison["movement"]["games_moved"]
+    assert sr.solve_repair(problem, timeout_seconds=20, max_moves=1)["status"] == sr.STATUS_OPTIMAL
+
+
+@pytest.mark.parametrize("limits,fragment", [
+    ({"earliest_slot": "Sat-1-13:00"}, "before its earliest slot"),
+    ({"latest_slot": "Sat-1-11:00"}, "after its latest slot"),
+    ({"allowed_resource_ids": ["BB-2"]}, "not one of its allowed resources"),
+])
+def test_baseline_outside_a_games_own_limits_is_invalid(limits, fragment):
+    resources = [_court("BB-1", "Basketball Court", open_time="11:00"),
+                 _court("BB-2", "Basketball Court", "Court-2", open_time="11:00")]
+    games = [_game("BBM-01", BB, ["BBM::A", "BBM::B"], "BB-1", "Sat-1-12:00", **limits)]
+    _result, comparison = _solve(_problem(resources, games))
+
+    assert comparison["verdict"] == sr.VERDICT_BASELINE_INVALID
+    violation = comparison["baseline_hard_violations"][0]
+    assert violation["kind"] == "outside_envelope" and fragment in violation["message"]
+    assert _metric(comparison, "outside_envelope", "baseline") == 1
+    assert _metric(comparison, "outside_envelope") == 0
+    assert comparison["moved_games"][0]["reason"].startswith("Approved placement is not legal")
+
+
+def test_max_move_minutes_is_audited_on_the_result():
+    resources = [_court("BB-1", "Basketball Court")]
+    games = [_game("BBM-01", BB, ["BBM::A", "BBM::B"], "BB-1", "Sat-1-12:00")]
+    problem = _problem(resources, games, max_move_minutes=60)
+    audit = sr.audit_placements(problem, {"BBM-01": {"resource_id": "BB-1", "slot": "Sat-1-15:00"}})
+    assert [v["kind"] for v in audit["hard_violations"]] == ["outside_envelope"]
+
+
+def test_same_label_courts_with_overlapping_windows_are_different_courts():
+    def pod_court(resource_id):
+        return {**_court(resource_id, "Volleyball Court", close_time="13:00"), "exclusive_group": ""}
+
+    resources = [pod_court("VB-1"), pod_court("VB-2")]
+    games = [
+        _game("VBM-01", VBM, ["VBM::A", "VBM::B"], "VB-1", "Sat-1-12:00"),
+        _game("VBM-02", VBM, ["VBM::C", "VBM::D"], "VB-1", "Sat-1-12:00"),
+    ]
+    _result, comparison = _solve(_problem(resources, games))
+
+    moved = comparison["moved_games"][0]
+    assert (moved["moved_time"], moved["moved_court"]) == (False, True)
+    assert comparison["movement"]["court_changes"] == 1
+    assert moved["optimized"]["court"] != moved["baseline"]["court"]
+
+
+def _invalid_baseline_with_rest_choice(close_time):
+    resources = [_court("BB-1", "Basketball Court", close_time=close_time)]
+    games = [
+        _game("BBM-01", BB, ["BBM::A", "BBM::B"], "BB-1", "Sat-1-12:00"),
+        _game("BBM-02", BB, ["BBM::C", "BBM::D"], "BB-1", "Sat-1-12:00", placement_policy="locked"),
+        _game("BBM-03", BB, ["BBM::A", "BBM::E"], "BB-1", "Sat-1-14:00", placement_policy="locked"),
+    ]
+    return _problem(resources, games)
+
+
+def test_rest_cap_still_applies_when_repairing_an_invalid_baseline():
+    result, comparison = _solve(_invalid_baseline_with_rest_choice("17:00"))
+
+    # 13:00 and 15:00 are closer but back-to-back with team A's 14:00 game.
+    assert comparison["verdict"] == sr.VERDICT_BASELINE_INVALID
+    assert result["placements"]["BBM-01"]["slot"] == "Sat-1-16:00"
+    assert _metric(comparison, "rest_violation_count") == 0
+    assert result["rest_cap_relaxed"] is False
+
+
+def test_rest_cap_is_dropped_only_when_no_legal_repair_keeps_it():
+    result, comparison = _solve(_invalid_baseline_with_rest_choice("16:00"))
+
+    assert result["status"] == sr.STATUS_OPTIMAL
+    assert result["rest_cap_relaxed"] is True
+    assert comparison["optimized_hard_violations"] == []
+    assert _metric(comparison, "rest_violation_count") == 1
+    assert any("limit was dropped" in line for line in comparison["summary_lines"])
+
+
+def test_verdict_reports_each_penalty_and_never_a_negative_count():
+    def audit(primary, secondary):
+        return {"hard_violation_count": 0, "primary_conflict_penalty": primary,
+                "secondary_conflict_penalty": secondary}
+
+    verdict, rationale = sr.decide_verdict(audit(1, 0), audit(0, 3), 1, 80)
+    assert verdict == sr.VERDICT_MARGINAL
+    assert "primary penalty 1 -> 0, secondary penalty 0 -> 3" in rationale
+    assert "-2" not in rationale and "clash" not in rationale
+
+
+def test_move_frontier_stops_when_its_time_budget_is_spent():
+    resources, games, edges = _shared_court_world()
+    rows = sr.compute_move_frontier(_problem(resources, games, edges), max_budget=5,
+                                    timeout_seconds=0.0)
+    assert [r["max_moves"] for r in rows] == [0]
+
+
 # --- metrics --------------------------------------------------------------------
 
 def test_volleyball_switches_and_latest_finish_are_audited():

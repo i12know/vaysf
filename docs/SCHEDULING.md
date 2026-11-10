@@ -420,6 +420,15 @@ sport already plays on). Candidate courts come only from the reconciled
 windows, and other sports' modes are never used. An unchanged legal baseline
 is always a valid answer.
 
+Placements the experiment does not evaluate still hold their courts: every
+deferred sport's game and every `schedule_input.json` pin for a deferred sport
+is reserved, so no game is ever moved onto them. A game's own
+`allowed_resource_ids`, `earliest_slot`, `latest_slot`, and `max_move_minutes`
+are hard limits too, and the audit reports a placement that breaks one as
+`outside_envelope`. The back-to-back limit also applies while repairing an
+invalid baseline; only if no legal repair can keep it is it dropped for that
+run, and the summary says so.
+
 **Objective.** Strictly lexicographic. Each tier is minimized, then frozen at
 its value before the next tier is solved, so a tier reported `OPTIMAL` is
 proven minimal under all the constraints above:
@@ -437,7 +446,8 @@ A conflict is a pair of games that overlap in real time and whose teams share
 at least one athlete; its penalty is the edge's `primary_overlap_count` /
 `secondary_only_count`. "Court" means the physical court (`Exclusive Venue
 Group` + label), so moving between two time-boxed resources of one court is a
-time change, not a court change. `--max-moves` and `--max-move-minutes` cap the
+time change, not a court change. Two resources with the same venue and label
+whose windows overlap (two pods at one venue) are treated as different courts. `--max-moves` and `--max-move-minutes` cap the
 repair.
 
 **Why it does not call `solve()`.** The normal solver decomposes by pool and
@@ -449,8 +459,10 @@ identity, edge weights, and edge audit. `solve-schedule` is unchanged.
 **Baseline audit.** Before solving, the baseline is measured with the same
 function used for the result: legal/illegal placements, resource collisions,
 same-team overlaps, gym mode conflicts, precedence violations, conflict
-penalties and pairs, overlapping edges, back-to-back games, Volleyball
-switches, and latest finish. A hard violation is listed and the verdict
+placements outside a game's own limits, clashes with a deferred sport's
+reserved court, penalties and pairs, overlapping edges, back-to-back games,
+Volleyball switches, and latest finish. Clashes between two deferred-sport
+placements are outside the experiment and are not reported. A hard violation is listed and the verdict
 becomes `BASELINE INVALID`; it is never treated as a preference.
 
 **Outputs.**
@@ -465,8 +477,15 @@ The **move frontier** lists the best conflict totals reachable with at most
 0, 1, 2, ... moved games, so the scheduler can choose a smaller change.
 
 Verdict labels are a reporting aid only: `ACCEPTABLE` (at most 25% of
-repairable games moved and at least one athlete clash removed per move),
-`MARGINAL`, `NO IMPROVEMENT`, `BASELINE INVALID`, `NO SOLUTION`.
+repairable games moved and the combined penalty drops by at least one point per
+move), `MARGINAL`, `NO IMPROVEMENT`, `BASELINE INVALID`, `NO SOLUTION`. The
+rationale states the primary and secondary penalties before and after.
+
+**Time limit.** `--timeout` (default `SCHEDULE_SOLVER_TIMEOUT`, 90 s) is one
+budget shared by all tiers of the main solve. A tier that gets no time is
+listed as `SKIPPED` and the result is `FEASIBLE`, not proven. The move frontier
+gets the same budget again and stops early when it runs out, so a run is
+bounded by about twice the timeout.
 
 Exit codes: 0 comparison produced from a valid baseline; 1 baseline invalid or
 no legal schedule; 2 timed out with no schedule; 3 bad input, or an output
