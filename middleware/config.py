@@ -63,7 +63,10 @@ for directory in [LOG_DIR, DATA_DIR, TEMP_DIR, EXPORT_DIR]:
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        print(f"Failed to create directory {directory}: {e}")
+        # Logging is configured below, so this reaches loguru's default stderr
+        # sink rather than the log file — which is correct here, since LOG_DIR
+        # itself may be the directory that failed to create.
+        logger.error(f"Failed to create directory {directory}: {e}")
         raise
 
 # Configure logging (file and console)
