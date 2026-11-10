@@ -1135,6 +1135,11 @@ Direct venue rows use the canonical short prefixes above, for example
 (empty string for standalone resources, or for gym courts built from the
 `SCHEDULE_SOLVER_GYM_COURTS` scenario).
 
+Direct venue rows also carry optional `venue_name` and `pod_name` (the
+`Venue Name` and `Pod Name` columns). `optimize-approved-schedule` uses
+`pod_name` to tell apart two pods at one venue whose labels both start at
+`Court-1`; allocator-built gym courts don't need it.
+
 Every **playoff_slot object** looks like:
 
 ```json

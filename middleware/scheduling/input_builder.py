@@ -444,6 +444,7 @@ def _resolve_venue_playoff_slots(
                 "close_time":      _clock(track["close_min"]),
                 "slot_minutes":    track["slot_minutes"],
                 "venue_name":      source_row.get("venue_name", ""),
+                "pod_name":        source_row.get("pod_name", ""),
                 "exclusive_group": exclusive_group,
                 "playoff_pinned":  True,
             }
@@ -872,6 +873,7 @@ def _build_schedule_input(
                 "close_time":      close_time,
                 "slot_minutes":    slot_minutes,
                 "venue_name":      source_row.get("venue_name", ""),
+                "pod_name":        source_row.get("pod_name", ""),
                 "exclusive_group": source_row.get("exclusive_group", ""),
                 "playoff_pinned":  True,
             }

@@ -508,8 +508,11 @@ class _Context:
         self._court_track = self._assign_court_tracks()
 
     def _base_court(self, res: Mapping[str, Any]) -> Tuple[str, str, str]:
+        # pod_name (carried from Venue-Input's Pod Name) separates two pods at
+        # one venue; older schedule_input files without it fall back to the
+        # time-track heuristic in _assign_court_tracks.
         return (
-            _clean(res.get("exclusive_group") or res.get("venue_name")),
+            _clean(res.get("exclusive_group") or res.get("pod_name") or res.get("venue_name")),
             _clean(res.get("resource_type")),
             _clean(res.get("label")) or _clean(res.get("resource_id")),
         )
@@ -1405,8 +1408,11 @@ def solve_repair(
                         rest_policy="ignore",
                         conflict_tiers_only=conflict_tiers_only,
                     )
-                    relaxed["rest_cap_relaxed"] = True
-                    return relaxed
+                    # Only claim the cap was dropped when dropping it produced a
+                    # schedule; otherwise the failure had another cause.
+                    if relaxed["status"] in (STATUS_OPTIMAL, STATUS_FEASIBLE):
+                        relaxed["rest_cap_relaxed"] = True
+                        return relaxed
                 return {
                     "status": failed,
                     "placements": {},

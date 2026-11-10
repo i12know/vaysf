@@ -22,9 +22,13 @@
   games exist for them. Deferred games and deferred-sport pins still reserve
   their courts, a game's own placement limits are audited, and the timeout is
   one budget for the whole solve. `solve-schedule` is unchanged. New module
-  `middleware/scheduling/schedule_repair.py`, 50 tests in
+  `middleware/scheduling/schedule_repair.py`, 52 tests in
   `tests/test_schedule_repair.py`; documented in `docs/SCHEDULING.md` and
-  `docs/SCHEDULE-HOW-TO.md`.
+  `docs/SCHEDULE-HOW-TO.md`. Venue-Input resources now carry `pod_name`
+  (documented, optional in the schedule_input contract) so the repair can tell
+  apart two pods at one venue whose labels both start at Court-1, and the
+  "back-to-back limit was dropped" note only appears when dropping it actually
+  produced a schedule.
 - Added `python main.py reconcile-approved-schedules --dry-run|--execute`
   (#216). It parses the four approved 2026 schedule workbooks (Main Schedule,
   Badminton, Co-ed Soccer, Table Tennis) into operational blocks with

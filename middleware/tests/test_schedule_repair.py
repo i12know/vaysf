@@ -579,6 +579,25 @@ def test_same_label_courts_with_overlapping_windows_are_different_courts():
     assert moved["optimized"]["court"] != moved["baseline"]["court"]
 
 
+def test_pod_name_keeps_two_pods_apart_when_their_split_windows_do_not_line_up():
+    def pod_court(resource_id, pod, open_time, close_time):
+        return {**_court(resource_id, "Basketball Court", open_time=open_time, close_time=close_time),
+                "exclusive_group": "", "venue_name": "EHS", "pod_name": pod}
+
+    resources = [
+        pod_court("BB-1", "Pod A", "08:00", "12:00"),
+        pod_court("BB-2", "Pod B", "08:00", "11:00"),
+        pod_court("BB-3", "Pod B", "12:00", "16:00"),
+        pod_court("BB-4", "Pod A", "13:00", "16:00"),
+    ]
+    ctx = sr._Context({"resources": resources, "games": [], "day_order": ["Sat-1"]})
+    keys = {r["resource_id"]: ctx.court_key(r["resource_id"]) for r in resources}
+    # Split windows of one pod are one court; the two pods are different courts.
+    assert keys["BB-1"] == keys["BB-4"]
+    assert keys["BB-2"] == keys["BB-3"]
+    assert keys["BB-1"] != keys["BB-3"]
+
+
 def _invalid_baseline_with_rest_choice(close_time):
     resources = [_court("BB-1", "Basketball Court", close_time=close_time)]
     games = [
@@ -607,6 +626,17 @@ def test_rest_cap_is_dropped_only_when_no_legal_repair_keeps_it():
     assert comparison["optimized_hard_violations"] == []
     assert _metric(comparison, "rest_violation_count") == 1
     assert any("limit was dropped" in line for line in comparison["summary_lines"])
+
+
+def test_failed_relaxed_retry_does_not_claim_the_rest_cap_was_dropped():
+    # max_moves=0 makes the repair impossible for a reason unrelated to rest.
+    problem = _invalid_baseline_with_rest_choice("16:00")
+    result = sr.solve_repair(problem, timeout_seconds=20, max_moves=0)
+    comparison = sr.build_comparison(problem, result)
+
+    assert result["status"] == sr.STATUS_INFEASIBLE
+    assert result["rest_cap_relaxed"] is False
+    assert not any("limit was dropped" in line for line in comparison["summary_lines"])
 
 
 def test_verdict_reports_each_penalty_and_never_a_negative_count():

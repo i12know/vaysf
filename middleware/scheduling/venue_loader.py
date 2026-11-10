@@ -53,6 +53,9 @@ def _load_venue_input_rows(venue_input_path: Path) -> Tuple[List[Dict[str, Any]]
         if not resource_type:
             continue
         venue_name = _clean_excel_text(row.get("Venue Name"))
+        # Pod Name identifies the physical area; schedule repair (#218) uses it
+        # to tell apart two pods at one venue whose labels both start at Court-1.
+        pod_name = _clean_excel_text(row.get("Pod Name"))
         # Exclusive Venue Group: rows sharing a group value compete for the
         # same physical gym (only one mode active per time block). Optional
         # column — blank means the resource stands alone.
@@ -98,6 +101,7 @@ def _load_venue_input_rows(venue_input_path: Path) -> Tuple[List[Dict[str, Any]]
                 "close_time":      close_time,
                 "slot_minutes":    slot_min,
                 "venue_name":      venue_name,
+                "pod_name":        pod_name,
                 "exclusive_group": exclusive_group,
             })
         resource_counts[count_key] = rc
