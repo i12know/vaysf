@@ -25,6 +25,61 @@
   which is correct here since `LOG_DIR` itself may be the directory that failed.
   The third §2.4 item — the hardcoded `G:\Shared drives\...` default export path
   at `config.py:39` — is deliberately **not** included; see #377 for why.
+- Added `python main.py optimize-approved-schedule --dry-run|--execute` (#218),
+  an experimental, non-authoritative CP-SAT *repair* of the approved
+  preliminary schedule. It keeps every approved matchup, the reconciled venue
+  windows (#216) and all later-round pins, treats the approved court/time of
+  each Basketball, Volleyball and Bible Challenge pool game as a movable
+  preference (`placement_policy`: `locked` / `repairable` /
+  `solver_controlled`), and minimizes, in strict order, primary then secondary
+  shared-athlete conflicts, games moved, minutes moved, court changes, and
+  back-to-back games. It audits the baseline with the same metrics as the
+  result, reports hard violations as `BASELINE INVALID`, and writes separate
+  artifacts only: `optimized_schedule_comparison.json` (dry run), plus
+  `optimized_schedule_output.json` and `VAYSF_Optimized_Schedule_*.xlsx` on
+  `--execute`, including a move frontier (best result for each smaller move
+  budget). It refuses to write over an official schedule file. Soccer is
+  locked but counted; Badminton and Table Tennis are deferred (their approved
+  team keys do not match roster conflict ids) and carried through unchanged;
+  Tennis and Pickleball conflict edges are not evaluated because no approved
+  games exist for them. Deferred games and deferred-sport pins still reserve
+  their courts, a game's own placement limits are audited, and the timeout is
+  one budget for the whole solve. `solve-schedule` is unchanged. New module
+  `middleware/scheduling/schedule_repair.py`, 52 tests in
+  `tests/test_schedule_repair.py`; documented in `docs/SCHEDULING.md` and
+  `docs/SCHEDULE-HOW-TO.md`. Venue-Input resources now carry `pod_name`
+  (documented, optional in the schedule_input contract) so the repair can tell
+  apart two pods at one venue whose labels both start at Court-1, and the
+  "back-to-back limit was dropped" note only appears when dropping it actually
+  produced a schedule.
+- Added `python main.py reconcile-approved-schedules --dry-run|--execute`
+  (#216). It parses the four approved 2026 schedule workbooks (Main Schedule,
+  Badminton, Co-ed Soccer, Table Tennis) into operational blocks with
+  file/sheet/cell provenance (merged ranges included) and classifies each as a
+  game, stage block, reservation, setup, meal/break, ceremony/worship,
+  community event, CLOSED, pointer to a separate schedule, or unresolved. It
+  then reconciles them against the booked `venue_input.xlsx`: non-sport blocks
+  are subtracted per lane, approved sport use locks the gym to that mode (so
+  the Stage A allocator cannot reassign it), and the Friday Orange Church
+  Badminton / Table Tennis rows adopt the approved 20- / 15-minute grids and
+  court/table counts. Unknown venues, dates/times outside the booking, capacity
+  overflow, overlapping games, conflicting gym modes, Orange blocks mapped
+  onto non-Orange rows, and the unwaived Table Tennis U35 FVC/SBC discrepancy
+  block `--execute`. The dry run writes
+  `approved_schedule_reconciliation.audit.json`; `--execute` makes a
+  timestamped backup, writes atomically, keeps the original booking in a new
+  `Booked-Venue-Input` tab, and adds `Operational-Blocks` and
+  `Reconciliation-Sources` (source hashes) tabs. Reconciling from the booking
+  tab makes reruns idempotent, lets a changed approved workbook re-open a
+  window, and adopts rows operators add to Venue-Input instead of dropping
+  them. Gym-Modes and Playoff-Slots are left untouched, but a venue-centric
+  Playoff-Slots pin that no longer fits the proposed windows now blocks
+  `--execute`, so the export cannot silently skip `schedule_input.json`. Visual
+  lanes now resolve by physical court, so split windows keep approved games on
+  the right court in `import-approved-games` and the override imports. New module
+  `middleware/scheduling/approved_reconciliation.py`, 38 tests in
+  `tests/test_approved_reconciliation.py`; documented in `docs/SCHEDULING.md`
+  and `docs/SCHEDULE-HOW-TO.md`.
 - Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat
   under-reporting real approved-athlete counts (#181). `VAYSF_Statistics::get_overall_stats()`
   was counting `sf_approvals.approval_status = 'approved'` (a pastor-approval-token/sync
