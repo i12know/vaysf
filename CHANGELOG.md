@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Added `python main.py optimize-approved-schedule --dry-run|--execute` (#218),
+  an experimental, non-authoritative CP-SAT *repair* of the approved
+  preliminary schedule. It keeps every approved matchup, the reconciled venue
+  windows (#216) and all later-round pins, treats the approved court/time of
+  each Basketball, Volleyball and Bible Challenge pool game as a movable
+  preference (`placement_policy`: `locked` / `repairable` /
+  `solver_controlled`), and minimizes, in strict order, primary then secondary
+  shared-athlete conflicts, games moved, minutes moved, court changes, and
+  back-to-back games. It audits the baseline with the same metrics as the
+  result, reports hard violations as `BASELINE INVALID`, and writes separate
+  artifacts only: `optimized_schedule_comparison.json` (dry run), plus
+  `optimized_schedule_output.json` and `VAYSF_Optimized_Schedule_*.xlsx` on
+  `--execute`, including a move frontier (best result for each smaller move
+  budget). It refuses to write over an official schedule file. Soccer is
+  locked but counted; Badminton and Table Tennis are deferred (their approved
+  team keys do not match roster conflict ids) and carried through unchanged;
+  Tennis and Pickleball conflict edges are not evaluated because no approved
+  games exist for them. `solve-schedule` is unchanged. New module
+  `middleware/scheduling/schedule_repair.py`, 36 tests in
+  `tests/test_schedule_repair.py`; documented in `docs/SCHEDULING.md` and
+  `docs/SCHEDULE-HOW-TO.md`.
 - Added `python main.py reconcile-approved-schedules --dry-run|--execute`
   (#216). It parses the four approved 2026 schedule workbooks (Main Schedule,
   Badminton, Co-ed Soccer, Table Tennis) into operational blocks with

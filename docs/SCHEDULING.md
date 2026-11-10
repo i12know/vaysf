@@ -372,6 +372,131 @@ errors and warnings with source provenance, the racquet grids, the U35
 discrepancy detail, source hashes, and counts by file, venue, day,
 classification, and action.
 
+### Approved schedule repair experiment (`optimize-approved-schedule`, Issue #218)
+
+**Status: experimental and non-authoritative.** This command proposes changes
+to the approved schedule. Nothing it writes is official until the human
+scheduler and Sports Fest leadership approve it, and it never writes to the
+approved workbooks, `schedule_output.json`, or the `approved_schedule_*` files.
+
+It is a schedule *repair*, not a redesign. It keeps every approved matchup,
+the reconciled venue windows from #216, and every later-round pin, treats the
+human scheduler's court/time placements as the preferred baseline, and asks
+CP-SAT whether moving a few preliminary games removes shared-athlete conflicts.
+
+```powershell
+python main.py optimize-approved-schedule --dry-run
+python main.py optimize-approved-schedule --execute
+```
+
+Inputs (defaults in `EXPORT_DIR`): `--input schedule_input.json` (built by
+`export-church-teams` *after* `reconcile-approved-schedules --execute`) and
+`--baseline approved_schedule_games.json` (from `import-approved-games
+--execute`, run against that same `schedule_input.json`).
+
+**Placement policy.** Matchup identity and placement policy are separate.
+Each baseline game keeps its `game_key` and teams and gets one policy:
+
+| Policy | Meaning | Default for |
+|---|---|---|
+| `repairable` | Baseline court/time is preferred but may move | Pool games of Basketball, Men's Volleyball, Women's Volleyball, Bible Challenge |
+| `locked` | May not move; still counted in every metric | Every other evaluated baseline game (Soccer), and later-round pins from `schedule_input.json` |
+| `solver_controlled` | No baseline preference; placed freely | Only when a baseline row asks for it |
+
+A baseline row may set `placement_policy` itself, plus optional
+`allowed_resource_ids`, `earliest_slot`, `latest_slot`, and
+`max_move_minutes`. `--repair-events` changes which sports are repairable.
+Repairable games are CP-SAT decision variables; they are never put in
+`playoff_slots`, because the normal solver removes pinned games from the model.
+
+**Hard constraints.** One court and start per game; one game per court slot;
+matching court type; no team in two overlapping games; mutually exclusive gym
+modes; pool-before-playoff precedence; locked placements; and no more
+back-to-back games than the baseline has (`--rest-policy no_worse`, the
+default; `strict` allows none, `ignore` drops the rule). By default a game
+stays on its approved day (`--allow-cross-day` lets it move to another day its
+sport already plays on). Candidate courts come only from the reconciled
+`schedule_input.json` resources, so ceremonies, worship, meals, setup, CLOSED
+windows, and other sports' modes are never used. An unchanged legal baseline
+is always a valid answer.
+
+**Objective.** Strictly lexicographic. Each tier is minimized, then frozen at
+its value before the next tier is solved, so a tier reported `OPTIMAL` is
+proven minimal under all the constraints above:
+
+1. primary shared-athlete conflict penalty
+2. secondary shared-athlete conflict penalty
+3. games moved to another day (only with `--allow-cross-day`)
+4. games moved at all
+5. total minutes moved, then 6. court changes (`--movement-priority
+   court,time` swaps these two)
+7. back-to-back games, then Volleyball Men/Women switches on one court
+8. a canonical tie-break, so equal-quality answers are reproducible
+
+A conflict is a pair of games that overlap in real time and whose teams share
+at least one athlete; its penalty is the edge's `primary_overlap_count` /
+`secondary_only_count`. "Court" means the physical court (`Exclusive Venue
+Group` + label), so moving between two time-boxed resources of one court is a
+time change, not a court change. `--max-moves` and `--max-move-minutes` cap the
+repair.
+
+**Why it does not call `solve()`.** The normal solver decomposes by pool and
+hard-blocks every slot a cross-pool conflict partner already holds, which can
+make a legal baseline infeasible. Repair builds one joint model in
+`scheduling/schedule_repair.py` and reuses the solver's slot grid, team
+identity, edge weights, and edge audit. `solve-schedule` is unchanged.
+
+**Baseline audit.** Before solving, the baseline is measured with the same
+function used for the result: legal/illegal placements, resource collisions,
+same-team overlaps, gym mode conflicts, precedence violations, conflict
+penalties and pairs, overlapping edges, back-to-back games, Volleyball
+switches, and latest finish. A hard violation is listed and the verdict
+becomes `BASELINE INVALID`; it is never treated as a preference.
+
+**Outputs.**
+
+| File | Written by | Content |
+|---|---|---|
+| `optimized_schedule_comparison.json` | `--dry-run` and `--execute` | Verdict, plain-language summary, metric table (baseline / optimized / change), every moved game with baseline and proposed court/time, minutes moved, the conflict it removes and its source cell, unchanged games, conflicts removed / remaining / introduced, solver tiers, scope, and the move frontier |
+| `optimized_schedule_output.json` | `--execute` | `schedule_output`-shaped assignments for all approved games, with `x_baseline_*`, `x_placement_policy`, and `x_moved` |
+| `VAYSF_Optimized_Schedule_YYYY-MM-DD.xlsx` | `--execute` | `Summary`, `Moved-Games`, `Conflicts`, `Schedule`, `Baseline-Issues`, `Move-Frontier` tabs for the human scheduler |
+
+The **move frontier** lists the best conflict totals reachable with at most
+0, 1, 2, ... moved games, so the scheduler can choose a smaller change.
+
+Verdict labels are a reporting aid only: `ACCEPTABLE` (at most 25% of
+repairable games moved and at least one athlete clash removed per move),
+`MARGINAL`, `NO IMPROVEMENT`, `BASELINE INVALID`, `NO SOLUTION`.
+
+Exit codes: 0 comparison produced from a valid baseline; 1 baseline invalid or
+no legal schedule; 2 timed out with no schedule; 3 bad input, or an output
+path that would overwrite an official file.
+
+**Determinism.** The solver uses `SCHEDULE_SOLVER_RANDOM_SEED` and one search
+worker, so the same inputs give the same schedule. Setting
+`SCHEDULE_SOLVER_WORKERS` above 1 trades that guarantee for speed.
+
+**Scope of the 2026 experiment (Stage A).**
+
+- Repairable: Basketball, Men's and Women's Volleyball, Bible Challenge pool
+  games.
+- Locked but counted: Soccer G1-G6. Soccer stays locked because its approved
+  sheet also assigns referees and its G7-G12 rows have no fixed windows.
+- Deferred (Stage B): Badminton, Table Tennis, Table Tennis 35+. Their
+  approved team keys (`BAD-MD::GAC-1`, `TT-M-S::...`) do not match the roster
+  conflict ids in `schedule_input.json` (`TT-Men-Singles-S13`), so their
+  shared-athlete conflicts cannot be evaluated yet. Their placements are
+  carried through unchanged and listed as `deferred`. Stage B needs that key
+  mapping, the SF/3rd/Final stage rows modelled as occupied tables, and Table
+  Tennis games treated as 15 minutes (the approved grid) instead of the
+  20 minutes `import-approved-games` currently records.
+- Not evaluated: conflict edges to Tennis and Pickleball. No approved Tennis
+  or Pickleball games are in the baseline, so those edges are counted in the
+  comparison's scope section and excluded from every conflict total.
+
+Promotion of an accepted proposal to the official schedule is a separate,
+later step and is not part of this command.
+
 ### Data flow by layer
 
 ```
@@ -430,6 +555,7 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 | `church_teams_export.py` | Live ChMeetings + WP export; writes `schedule_input.json`; delegates scheduling tab rendering to `schedule_workbook.py` | Layer 1 + bridge |
 | `schedule_workbook.py` | `ScheduleWorkbookBuilder` — facade for all scheduling tabs, both workbooks, and the schedule output renderer; implementations live in the `scheduling/` package (`xlsx_utils`, `venue_loader`, `output_report`, `planning_tabs`, `pool_assignment`, `game_builder`, `conflict_edges`, `input_builder`, plus the manual-import modules) | Layer 1 + bridge + Layer 2 output |
 | `scheduler.py` | CP-SAT solver (Stage B) | Layer 2 |
+| `scheduling/schedule_repair.py` | Experimental CP-SAT repair of the approved preliminary schedule (`optimize-approved-schedule`, #218) | Layer 2 experiment |
 | `config.py` | All configuration constants; `SCHEDULE_SKETCH_*` and `SCHEDULE_SOLVER_GYM_COURTS` are Layer-1 stand-ins | — |
 | `gym_allocator.py` | Stage A greedy mode allocator | Layer 2 (Issue #102, done) |
 
@@ -457,6 +583,8 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 | Artifact | Produced by | Consumed by | Layer |
 |----------|-------------|-------------|-------|
 | `approved_schedule_reconciliation.audit.json` | `reconcile-approved-schedules` | Operator review before `--execute` | Layer 2 input audit |
+| `optimized_schedule_comparison.json` | `optimize-approved-schedule` | Human scheduler / leadership review | Experimental repair proposal (#218) |
+| `optimized_schedule_output.json`, `VAYSF_Optimized_Schedule_*.xlsx` | `optimize-approved-schedule --execute` | Human scheduler / leadership review | Experimental repair proposal (#218); never official |
 | `Church_Team_Status_ALL_*.xlsx` | `export-church-teams` | Human review, approvals | Non-scheduling |
 | `Church_Team_Status_{CODE}.xlsx` | `export-church-teams` | Pastor / church coordinator | Non-scheduling |
 | `schedule_input.json` | `export-church-teams` | `solve-schedule`, `build-schedule-workbook` | Bridge (includes Layer-2 gym resources, seeded pool assignments, and shared-athlete conflict edges when available) |
