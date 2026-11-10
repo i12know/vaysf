@@ -1214,8 +1214,10 @@ def _make_gym_roster(n_churches: int = 8) -> list:
     return rows
 
 
-def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path):
+def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path, monkeypatch):
     """Schedule-Input tab absent from ALL export; schedule_input.json is still written (closes #101)."""
+    # Keep the operator's local, gitignored venue_input.xlsx out of this test.
+    monkeypatch.setattr("church_teams_export.DATA_DIR", tmp_path)
     exporter = ChurchTeamsExporter()
 
     summary_rows = [{
