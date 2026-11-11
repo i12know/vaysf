@@ -67,7 +67,9 @@ vaysf/
 │   ├── .env.template                # committed; real .env is gitignored
 │   ├── requirements.txt
 │   ├── main.py                      # CLI entry: sync, sync-churches, export-*, *-schedule
-│   ├── church_teams_export.py       # live ChMeetings/WP export; delegates scheduling
+│   ├── church_teams_export.py       # live ChMeetings/WP export orchestration (ChurchTeamsExporter)
+│   ├── church_teams_report.py       # export row shaping + Church_Team_Status workbook writer
+│   ├── church_teams_scheduling.py   # export → ScheduleWorkbookBuilder hand-off (one-way)
 │   ├── schedule_workbook.py         # ScheduleWorkbookBuilder: scheduling tabs + workbooks
 │   ├── scheduler.py                 # OR-Tools CP-SAT pool-play solver
 │   ├── chrome_export_vaysf_forms.py # sanctioned diagnostic-only Playwright form export (see Conventions)
