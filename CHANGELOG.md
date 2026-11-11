@@ -32,8 +32,13 @@
     before/after run of `export-church-teams` (six CLI scenarios, 23 workbooks,
     131,895 cells, plus `schedule_input.json` and the run logs) is identical
     between `main` and this change. Moving the tests to follow their modules is
-    a follow-up. A live-data before/after export diff on the operator's Windows
-    machine is still required before merge.
+    a follow-up.
+  - Live-data check (operator's Windows machine, 2026-11-10): three
+    all-churches `export-church-teams` runs (`main`, this change, `main` again
+    as a control) produced 20 identical workbooks and matching logs. The only
+    difference was the order of `gym_allocation.decisions` in
+    `schedule_input.json`, which `main` also shows against itself; that
+    pre-existing allocator nondeterminism is tracked in #386.
   - Docs: `docs/ARCHITECTURE.md` (boundaries and rationale),
     `docs/SCHEDULING.md`, `CLAUDE.md`, `AGENTS.md`.
 - Routed export/roster column headers through `CHM_FIELDS` (#375). Added
