@@ -6,7 +6,7 @@ import requests
 from pathlib import Path
 from loguru import logger
 from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import deque
 import re
 import unicodedata
@@ -67,6 +67,31 @@ from time_utils import current_business_date, parse_wordpress_created_at_to_busi
 from schedule_workbook import ScheduleWorkbookBuilder
 from validation.models import RulesManager
 from math import ceil
+
+_CHM_UPDATED_ON_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _parse_chm_updated_on(raw_value: Any, chm_id: str) -> datetime:
+    """Parse a ChMeetings ``updated_on`` value into a timezone-aware datetime.
+
+    Every return value is aware, so values from different people can always be
+    compared. A value with no offset (``2026-04-16T00:00:00`` or
+    ``2026-04-03 08:09:10``) is taken as UTC, which leaves its wall-clock
+    fields, and so the ``%Y-%m-%d %H:%M:%S`` string built from it, unchanged.
+    Missing values fall back to the epoch silently; unparseable ones log a
+    warning first.
+    """
+    if raw_value is None or raw_value == "":
+        return _CHM_UPDATED_ON_EPOCH
+    try:
+        parsed = datetime.fromisoformat(str(raw_value).strip().replace("Z", "+00:00"))
+    except ValueError as ve:
+        logger.warning(f"Could not parse ChM updated_on '{raw_value}' for person {chm_id}: {ve}. Using epoch.")
+        return _CHM_UPDATED_ON_EPOCH
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
 
 class ChurchTeamsExporter: # MODIFIED CLASS NAME
     """
@@ -661,17 +686,7 @@ class ChurchTeamsExporter: # MODIFIED CLASS NAME
 
                 additional_fields = {f.get("field_name"): f.get("value") for f in person_data.get("additional_fields", [])}
                 
-                updated_on_str = person_data.get("updated_on", "1970-01-01T00:00:00+00:00")
-                try:
-                    if 'Z' in updated_on_str:
-                         updated_on_dt = datetime.fromisoformat(updated_on_str.replace("Z", "+00:00"))
-                    elif 'T' in updated_on_str and ('+' in updated_on_str or '-' in updated_on_str[updated_on_str.rfind('T'):]): # Check for timezone info after T
-                        updated_on_dt = datetime.fromisoformat(updated_on_str)
-                    else: 
-                        updated_on_dt = datetime.strptime(updated_on_str, "%Y-%m-%d %H:%M:%S")
-                except ValueError as ve:
-                    logger.warning(f"Could not parse ChM updated_on '{updated_on_str}' for person {chm_id}: {ve}. Using epoch.")
-                    updated_on_dt = datetime.fromisoformat("1970-01-01T00:00:00+00:00")
+                updated_on_dt = _parse_chm_updated_on(person_data.get("updated_on"), chm_id)
 
                 current_latest_dt = _latest_chm_update_by_church_dt[church_code]
                 if current_latest_dt is None or updated_on_dt > current_latest_dt:
