@@ -17,6 +17,45 @@
   `PersonResponseDto.updated_on` as `date-time`, and no fixture or doc in the
   repo shows the API returning the space-separated form. New mock tests in
   `middleware/tests/test_church_teams_export.py` cover each format.
+- Split `middleware/church_teams_export.py` (3,791 lines) into three modules
+  with one job each (#376, debt register §2.3). No behavior change.
+  - `church_teams_export.py` (942 lines) — export orchestration:
+    `ChurchTeamsExporter`, the ChMeetings/WordPress fetch loops,
+    `generate_reports()`, and the `--force-resend-*` path.
+  - `church_teams_report.py` (945 lines, new) — formatting:
+    `ChurchTeamsReportMixin` with the validation-issue rows, reverse
+    doubles-partner suggestions, multi-sport matrix, and `_write_excel_report()`.
+    No network calls.
+  - `church_teams_scheduling.py` (181 lines, new) — scheduling hand-off: the
+    delegation list (now `SCHEDULE_WORKBOOK_METHOD_NAMES`, applied by the
+    `delegate_schedule_workbook_methods` class decorator), the
+    `schedule_input.json` write for the ALL export, and the tab status stamp.
+    It is the only `church_teams_*` module that imports `schedule_workbook.py`;
+    the dependency stays one-way.
+  - Deleted 35 scheduling methods (1,749 lines) from the `ChurchTeamsExporter`
+    class body. Each was dead: its name is in the delegation list, so the
+    `setattr` loop replaced it with `ScheduleWorkbookBuilder`'s version at
+    import time. Verified on `main` before deleting — for every one,
+    `ChurchTeamsExporter.__dict__[name] is ScheduleWorkbookBuilder.__dict__[name]`.
+  - The 40 live methods moved verbatim (AST-identical to `main`) except two
+    mechanical edits: `_team_issue_scope_key` names the mixin instead of
+    `ChurchTeamsExporter`, and `_write_excel_report` calls the two hand-off
+    functions instead of inlining them. One new method,
+    `ChurchTeamsExporter._venue_input_path()`, keeps the `DATA_DIR` lookup in
+    the orchestration module.
+  - Tests are unchanged and pass at 1016/1016 in mock mode. A mock-mode
+    before/after run of `export-church-teams` (six CLI scenarios, 23 workbooks,
+    131,895 cells, plus `schedule_input.json` and the run logs) is identical
+    between `main` and this change. Moving the tests to follow their modules is
+    a follow-up.
+  - Live-data check (operator's Windows machine, 2026-11-10): three
+    all-churches `export-church-teams` runs (`main`, this change, `main` again
+    as a control) produced 20 identical workbooks and matching logs. The only
+    difference was the order of `gym_allocation.decisions` in
+    `schedule_input.json`, which `main` also shows against itself; that
+    pre-existing allocator nondeterminism is tracked in #386.
+  - Docs: `docs/ARCHITECTURE.md` (boundaries and rationale),
+    `docs/SCHEDULING.md`, `CLAUDE.md`, `AGENTS.md`.
 - Routed export/roster column headers through `CHM_FIELDS` (#375). Added
   `EXPORT_COLUMNS` to `middleware/config.py` — a sibling mapping derived from
   `CHM_FIELDS` (plus `FIRST_NAME`/`LAST_NAME`, which aren't custom fields but
