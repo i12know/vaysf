@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Fixed `export-church-teams` aborting with `can't compare offset-naive and
+  offset-aware datetimes` when one church's Team group mixed ChMeetings
+  `updated_on` formats. `ChurchTeamsExporter._fetch_chm_church_team_data` now
+  parses the value through one helper, `_parse_chm_updated_on`, that always
+  returns a timezone-aware datetime: a value with no offset is taken as UTC, so
+  its `Update_on_ChM` string (`%Y-%m-%d %H:%M:%S`) is unchanged and offset-bearing
+  values print exactly as before. Two adjacent gaps in the same parser are closed
+  with it: an ISO value with a `T` but no offset (`2026-04-16T00:00:00`) used to
+  fail the space-separated fallback and be reported as `1970-01-01 00:00:00` with
+  a warning, and now keeps its real timestamp; and a JSON `null` `updated_on`
+  used to raise an uncaught `TypeError`, and now falls back to the epoch like a
+  missing key. Defensive rather than urgent: the OpenAPI snapshot types
+  `PersonResponseDto.updated_on` as `date-time`, and no fixture or doc in the
+  repo shows the API returning the space-separated form. New mock tests in
+  `middleware/tests/test_church_teams_export.py` cover each format.
 - Split `middleware/church_teams_export.py` (3,791 lines) into three modules
   with one job each (#376, debt register §2.3). No behavior change.
   - `church_teams_export.py` (942 lines) — export orchestration:
