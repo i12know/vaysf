@@ -571,7 +571,9 @@ LAYER 2 — TACTICAL (post-booking): maximize use of the booked venue
 | File | Role | Layer |
 |------|------|-------|
 | `main.py` | CLI entry — all commands | — |
-| `church_teams_export.py` | Live ChMeetings + WP export; writes `schedule_input.json`; delegates scheduling tab rendering to `schedule_workbook.py` | Layer 1 + bridge |
+| `church_teams_export.py` | Live ChMeetings + WP export orchestration (`ChurchTeamsExporter`) | Layer 1 |
+| `church_teams_report.py` | Export row shaping and the `Church_Team_Status_*.xlsx` writer; triggers the `schedule_input.json` hand-off for the ALL export | Layer 1 |
+| `church_teams_scheduling.py` | Export → scheduling hand-off: binds `ScheduleWorkbookBuilder` methods onto `ChurchTeamsExporter`, writes `schedule_input.json`, stamps tab statuses. The only `church_teams_*` module that imports `schedule_workbook.py` | bridge |
 | `schedule_workbook.py` | `ScheduleWorkbookBuilder` — facade for all scheduling tabs, both workbooks, and the schedule output renderer; implementations live in the `scheduling/` package (`xlsx_utils`, `venue_loader`, `output_report`, `planning_tabs`, `pool_assignment`, `game_builder`, `conflict_edges`, `input_builder`, plus the manual-import modules) | Layer 1 + bridge + Layer 2 output |
 | `scheduler.py` | CP-SAT solver (Stage B) | Layer 2 |
 | `scheduling/schedule_repair.py` | Experimental CP-SAT repair of the approved preliminary schedule (`optimize-approved-schedule`, #218) | Layer 2 experiment |
@@ -1662,8 +1664,9 @@ ChMeetings/WordPress reads, the `Church_Team_Status_ALL.xlsx`, and the
 `schedule_input.json` machine contract.  `build-schedule-workbook` (Stage 2) is
 an offline, fast, repeatable consumer of those artifacts.  The scheduling logic
 lives in `middleware/schedule_workbook.py` (`ScheduleWorkbookBuilder`);
-`church_teams_export.py` delegates to it under a strict one-way dependency
-(`church_teams_export.py` → `schedule_workbook.py`, never the reverse).
+the export delegates to it through `church_teams_scheduling.py` under a strict
+one-way dependency (`church_teams_export.py` → `church_teams_scheduling.py` →
+`schedule_workbook.py`, never the reverse).
 
 One important operator consequence follows from that dependency:
 

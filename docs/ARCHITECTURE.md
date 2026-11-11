@@ -244,7 +244,9 @@ CREATE TABLE sf_validation_issues (
 ├── config.py                   # Configuration and constants
 ├── requirements.txt            # Python dependencies
 ├── group_assignment.py         # Script to generate church team assignment Excel (assign-groups command)
-├── church_teams_export.py      # Script to generate church status reports (export-church-teams command)
+├── church_teams_export.py      # export-church-teams: live ChMeetings/WordPress fetch + orchestration
+├── church_teams_report.py      # export-church-teams: report rows + Church_Team_Status workbook writer
+├── church_teams_scheduling.py  # export-church-teams: hand-off to schedule_workbook.py (one-way)
 ├── .env                        # Environment config
 ├── .env.template               # Template for .env
 ├── .key                        # Encryption key for sensitive data
@@ -345,14 +347,45 @@ class IndividualValidator:
 ```
 
 #### ChurchTeamsExporter Utility
-Consolidates data from ChMeetings and WordPress to produce Excel reports of team rosters and statuses.
+Consolidates data from ChMeetings and WordPress to produce Excel reports of team rosters and statuses
+(`export-church-teams`). Since Issue #376 it is three modules, one per job:
+
+| Module | Job | Talks to |
+|---|---|---|
+| `church_teams_export.py` | **Export orchestration.** `ChurchTeamsExporter`: owns the two connectors, fetches Team-group members from ChMeetings and participants/rosters/validation issues from WordPress, aggregates per church in `generate_reports()`, computes fees, and runs the `--force-resend-*` approval path. | ChMeetings API, WordPress REST API |
+| `church_teams_report.py` | **Formatting.** `ChurchTeamsReportMixin`: turns already-fetched data into report rows (validation issues, reverse doubles-partner suggestions, multi-sport matrix) and writes the `Church_Team_Status_*.xlsx` tabs in `_write_excel_report()`. | pandas / openpyxl only — no network |
+| `church_teams_scheduling.py` | **Scheduling hand-off.** Binds `ScheduleWorkbookBuilder`'s methods onto `ChurchTeamsExporter`, writes `schedule_input.json` beside the consolidated ALL workbook, and stamps the tab status banners. | `schedule_workbook.py` |
+
 ```python
-class ChurchTeamsExporter:
-    def generate_reports(self, target_church_code=None, output_dir=None)
-    def _fetch_data(self, church_code=None)
-    def _create_report(self, church_data, participants_data)
-    def _calculate_age(self, birthdate)
+@delegate_schedule_workbook_methods          # church_teams_scheduling.py
+class ChurchTeamsExporter(ChurchTeamsReportMixin):   # church_teams_report.py
+    def generate_reports(self, target_church_code, output_dir, force_resend_pending=False, ...)
+    def _fetch_chm_church_team_data(self, target_church_code=None)
+    def _fetch_open_validation_issues(self, church_id)
+    def _handle_force_resend(self, contacts_data, ...)
+    # from ChurchTeamsReportMixin
+    def _build_validation_issue_rows(self, church_code, issues, participants_by_wp_id, ...)
+    def _write_excel_report(self, filepath, summary_rows, contacts_rows, roster_rows, validation_rows, ...)
 ```
+
+Why these boundaries:
+
+- **The seam is "does it touch the network?"** Everything that can fail because ChMeetings or WordPress is
+  slow, down, or returned something odd stays in `church_teams_export.py`. Everything in
+  `church_teams_report.py` is a deterministic function of rows already in memory, so a formatting change
+  can be reviewed and tested without reading any fetch/retry code, and vice versa.
+- **`ChurchTeamsReportMixin` is a mixin rather than a separate object** because `main.py`, the tests, and
+  the scheduling code all call these helpers as `exporter._something(...)`. A mixin moves the code without
+  changing a single call site.
+- **Scheduling knowledge is confined to one small module.** `church_teams_scheduling.py` is the only
+  `church_teams_*` module that imports `schedule_workbook.py`. The dependency is strictly one-way:
+  `schedule_workbook.py` and the `scheduling/` package must never import from any `church_teams_*` module.
+- **No scheduling logic lives in the export modules.** `ScheduleWorkbookBuilder` is the single
+  implementation; the exporter only carries its method names for backward compatibility (the names are
+  listed in `SCHEDULE_WORKBOOK_METHOD_NAMES`). The stale copies that used to sit in
+  `church_teams_export.py` and were overwritten at import time were deleted in #376.
+- **Paths stay with orchestration.** The writer asks the exporter for `_venue_input_path()` instead of
+  reading `config.DATA_DIR` itself, so where operator inputs live is decided in one place.
 
 #### Group Assignment Utility
 Scans ChMeetings for ungrouped people with church codes and outputs an Excel file for import. This ensures participants are placed into their 'Team [Code]' groups (related to the assign-groups command).
