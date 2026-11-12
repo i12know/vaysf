@@ -1166,31 +1166,65 @@ def test_connectivity(system: str = "all", test_type: str = "connectivity", test
                                     opts = field.get("options", [])
                                     opts_str = f" options={[(o.get('id'), o.get('name')) for o in opts]}" if opts else ""
                                     logger.info(f"    field_id={field.get('field_id')} | name={field.get('field_name')!r} | type={field.get('field_type')}{opts_str}")
-                            # 1b. Cross-reference CHM_FIELDS constants against live API
-                            from config import CHM_FIELDS
-                            all_api_field_names = set()
-                            for section in (sections if isinstance(sections, list) else []):
-                                for field in section.get("fields", []):
-                                    fname = field.get("field_name")
-                                    if fname:
-                                        all_api_field_names.add(fname)
-
-                            logger.info("=" * 60)
-                            logger.info("FIELD MAPPING VALIDATION (CHM_FIELDS vs live API)")
-                            logger.info("=" * 60)
-                            all_matched = True
-                            for key, expected_name in CHM_FIELDS.items():
-                                if expected_name in all_api_field_names:
-                                    logger.info(f"  OK  CHM_FIELDS[{key!r}] = {expected_name!r}")
-                                else:
-                                    logger.warning(f"  MISSING  CHM_FIELDS[{key!r}] = {expected_name!r} - NOT found in API fields!")
-                                    all_matched = False
-                            if all_matched:
-                                logger.info("  All CHM_FIELDS matched successfully.")
-                            else:
-                                logger.warning("  Some CHM_FIELDS did not match. Update config.py CHM_FIELDS if field names changed.")
                         else:
                             logger.warning("No field definitions returned")
+
+                        # 1b. Cross-reference CHM_FIELDS against the live API.
+                        # Custom labels are checked against /people/fields; core profile
+                        # keys (config.CHM_CORE_FIELD_KEYS) against a real person response,
+                        # so the sample people are fetched here, before the mapping check.
+                        from config import CHM_FIELDS, CHM_CORE_FIELD_KEYS
+                        from field_inspector import (
+                            STATUS_MISSING, STATUS_NOT_CHECKED, STATUS_OK,
+                            extract_custom_field_names, validate_chm_fields,
+                        )
+                        sample_people = []
+                        try:
+                            _resp = connector._api_request("GET", "api/v1/people", params={
+                                "include_additional_fields": True,
+                                "include_family_members": False,
+                                "include_organizations": False,
+                                "page_size": 2, "page": 1,
+                            })
+                            _resp.raise_for_status()
+                            sample_people = connector._extract_data(_resp.json())
+                        except Exception as e:
+                            logger.error(f"Could not fetch sample people: {e}")
+                            success = False
+
+                        custom_field_names = None
+                        if fields:
+                            custom_field_names = extract_custom_field_names(
+                                fields.get("sections", []) if isinstance(fields, dict) else fields
+                            )
+
+                        logger.info("=" * 60)
+                        logger.info("FIELD MAPPING VALIDATION (CHM_FIELDS vs live API)")
+                        logger.info("=" * 60)
+                        checks = validate_chm_fields(
+                            CHM_FIELDS, CHM_CORE_FIELD_KEYS, custom_field_names, sample_people[:2]
+                        )
+                        for check in checks:
+                            kind = "core person key" if check.is_core else "custom field"
+                            label = f"CHM_FIELDS[{check.key!r}] = {check.expected!r} ({kind})"
+                            if check.status == STATUS_OK:
+                                logger.info(f"  OK  {label}")
+                            elif check.status == STATUS_MISSING:
+                                where = ("person response keys" if check.is_core
+                                         else "API field definitions")
+                                logger.warning(f"  MISSING  {label} - NOT found in {where}!")
+                            else:
+                                why = ("no sample person returned" if check.is_core
+                                       else "no field definitions returned")
+                                logger.warning(f"  NOT CHECKED  {label} - {why}")
+                        n_missing = sum(c.status == STATUS_MISSING for c in checks)
+                        n_unchecked = sum(c.status == STATUS_NOT_CHECKED for c in checks)
+                        if n_missing:
+                            logger.warning("  Some CHM_FIELDS did not match. Update config.py CHM_FIELDS if field names changed.")
+                        if n_unchecked:
+                            logger.warning(f"  {n_unchecked} CHM_FIELDS could not be checked.")
+                        if not n_missing and not n_unchecked:
+                            logger.info("  All CHM_FIELDS matched successfully.")
 
                         # 2. List groups
                         logger.info("=" * 60)
@@ -1205,14 +1239,7 @@ def test_connectivity(system: str = "all", test_type: str = "connectivity", test
                         logger.info("=" * 60)
                         logger.info("SAMPLE PEOPLE (GET /api/v1/people?include_additional_fields=true&page_size=2&page=1)")
                         logger.info("=" * 60)
-                        _resp = connector._api_request("GET", "api/v1/people", params={
-                            "include_additional_fields": True,
-                            "include_family_members": False,
-                            "include_organizations": False,
-                            "page_size": 2, "page": 1,
-                        })
-                        _resp.raise_for_status()
-                        sample_people = connector._extract_data(_resp.json())
+                        # (already fetched above for the field mapping check)
                         for person in sample_people[:2]:
                             logger.info(f"--- Person: {person.get('first_name', '?')} {person.get('last_name', '?')} (id={person.get('id', person.get('person_id', '?'))}) ---")
                             logger.info(f"  Keys: {list(person.keys())}")
