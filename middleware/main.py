@@ -18,7 +18,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
 from sync.manager import SyncManager
-from sync.person_aliases import PersonAliasError
+from sync.person_aliases import PersonAliasError, load_person_aliases, resolve_chm_id
 from chmeetings.backend_connector import ChMeetingsConnector  # Import for export command
 from wordpress.frontend_connector import WordPressConnector   # Import for export command
 from church_teams_export import ChurchTeamsExporter           # Import for export command
@@ -1082,6 +1082,17 @@ def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str
             # Pass chm_id to the manager's sync_participants method
             return manager.sync_participants(chm_id=chm_id)
         elif sync_type == "approvals":
+            if chm_id:
+                # Same resolution as the participant choke point: an operator
+                # who types a retired ID gets the work done on the canonical
+                # person. Strict load on purpose; a malformed map is reported by
+                # the PersonAliasError handler below instead of being guessed.
+                canonical_id = resolve_chm_id(chm_id, load_person_aliases())
+                if canonical_id != str(chm_id).strip():
+                    logger.info(
+                        f"[VAY SM] Alias: stale chm_id {chm_id} resolved to {canonical_id}"
+                    )
+                chm_id = canonical_id
             success1 = manager.generate_approvals(chm_id_to_target=chm_id)
             success2 = manager.sync_approvals_to_chmeetings(
                 chm_id_to_target=chm_id,

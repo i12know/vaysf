@@ -53,6 +53,9 @@
   - The alias loader rejects a repeated key and a non-numeric ID, accepts a
     UTF-8 byte-order mark, and reports a non-UTF-8 file as the usual plain
     `PersonAliasError` message instead of a traceback [13].
+  - `sync --type approvals --chm-id <stale>` resolves the ID through the alias
+    map and logs the same `Alias: stale ... resolved to ...` line as participant
+    sync. A malformed map refuses this targeted run [14].
   - Validation, `check-consent`, the export and the read-only team-group audit
     still run when the alias map is malformed, as decided on #308: they log the
     problem and continue on raw IDs.

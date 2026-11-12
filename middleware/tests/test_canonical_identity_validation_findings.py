@@ -668,3 +668,54 @@ def test_alias_loader_still_accepts_integer_ids_and_padding(tmp_path):
             "note": "",
         }
     }
+
+
+# --------------------------------------------------------------------------
+# Finding 14 — `sync --type approvals --chm-id <stale>` resolves the ID
+# --------------------------------------------------------------------------
+def _approvals_manager():
+    manager = MagicMock()
+    manager.authenticate.return_value = True
+    manager.generate_approvals.return_value = True
+    manager.sync_approvals_to_chmeetings.return_value = True
+    return manager
+
+
+def test_targeted_approvals_sync_resolves_a_stale_chm_id(mocker):
+    import main
+
+    mocker.patch(
+        "main.load_person_aliases", return_value={"100": {"canonical_chm_id": "200"}}
+    )
+    manager = _approvals_manager()
+
+    assert main.run_sync(manager, "approvals", chm_id="100") is True
+
+    manager.generate_approvals.assert_called_once_with(chm_id_to_target="200")
+    manager.sync_approvals_to_chmeetings.assert_called_once_with(
+        chm_id_to_target="200", use_excel_fallback=False
+    )
+
+
+def test_untargeted_approvals_sync_does_not_load_the_alias_map(mocker):
+    import main
+
+    load = mocker.patch("main.load_person_aliases")
+    manager = _approvals_manager()
+
+    assert main.run_sync(manager, "approvals") is True
+
+    load.assert_not_called()
+    manager.generate_approvals.assert_called_once_with(chm_id_to_target=None)
+
+
+def test_targeted_approvals_sync_refuses_on_a_malformed_alias_map(mocker):
+    import main
+
+    mocker.patch("main.load_person_aliases", side_effect=PersonAliasError("bad map"))
+    manager = _approvals_manager()
+
+    assert main.run_sync(manager, "approvals", chm_id="100") is False
+
+    manager.generate_approvals.assert_not_called()
+    manager.sync_approvals_to_chmeetings.assert_not_called()
