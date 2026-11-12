@@ -903,7 +903,11 @@ class ParticipantSyncer:
 
         chm_updated_on_str = full_person_data.get("updated_on", "1970-01-01T00:00:00+00:00").replace("Z", "+00:00")
         chm_updated_on = datetime.datetime.fromisoformat(chm_updated_on_str)
-        chm_updated_on_utc = chm_updated_on.astimezone(pytz.UTC)
+        chm_updated_on_utc = (
+            chm_updated_on.replace(tzinfo=pytz.UTC)
+            if chm_updated_on.tzinfo is None
+            else chm_updated_on.astimezone(pytz.UTC)
+        )
         mapped["updated_at"] = chm_updated_on_utc.strftime("%Y-%m-%d %H:%M:%S")
 
         # Fetch the existing WordPress row first: the racquet cutoff below needs

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed participant sync writing `updated_at` seven hours off on a
+  non-UTC host. `ParticipantSyncer._sync_single_participant` now treats a
+  timezone-less ChMeetings `updated_on` as UTC (offset values still convert to
+  UTC), matching the export fix in #385. Regression test:
+  `test_sync_participant_writes_updated_on_in_utc`.
 - Added canonical ChMeetings person aliases for duplicate registrations (#308-#310).
   Sync resolves stale IDs before fetching People records; `apply-aliases` previews or
   retires stale WordPress participants, rosters, approvals, and validation issues.
