@@ -57,6 +57,21 @@ ATHLETE_FEE_OTHER_EVENTS_ONLY = 20  # athlete registered only under Other Events
 ATHLETE_FEE_LATE = 60              # athlete with primary or secondary sport (after deadline)
 REGISTRATION_DEADLINE = "2026-05-17"  # ISO date; last day for early-bird rate (inclusive); late fee starts the following day
 LATE_RACQUET_OVERRIDES_FILE = DATA_DIR / "late_racquet_overrides.json"  # middleware-side allowlist for approved late racquet exceptions
+# The real (private, git-ignored) alias map. data/person_aliases.json is only the
+# committed example of the file format and is never read by default.
+PERSON_ALIASES_FILE = DATA_DIR / "person_aliases.local.json"
+
+
+def _resolve_person_aliases_file(configured) -> Path:
+    """Absolute path of the alias map; a relative setting is relative to middleware/.
+
+    Resolving against BASE_DIR (not the current directory) means the same .env
+    finds the same file from daily-run.bat and from a scheduled task started in
+    another folder.
+    """
+    raw = (configured or "").strip()
+    path = Path(raw) if raw else PERSON_ALIASES_FILE
+    return path if path.is_absolute() else BASE_DIR / path
 
 # Ensure directories exist with error handling
 for directory in [LOG_DIR, DATA_DIR, TEMP_DIR, EXPORT_DIR]:
@@ -417,6 +432,7 @@ APPROVAL_STATUS = {
     "APPROVED": "approved",                 ## Set when a pastor explicitly approves a participant
     "DENIED": "denied",                     ## Set when a pastor explicitly denies a participant
     "REAPPROVAL_REQUIRED": "reapproval_required",  ## Approval invalidated by post-approval identity drift; participant must be re-approved by pastor.
+    "MERGED": "merged",                            ## Retired duplicate identity; ignored by active participant workflows.
 }
 
 # Validation Severity Constants
@@ -706,6 +722,7 @@ class Config:
     LATE_RACQUET_OVERRIDES_FILE = Path(
         os.getenv("LATE_RACQUET_OVERRIDES_FILE", str(LATE_RACQUET_OVERRIDES_FILE))
     )
+    PERSON_ALIASES_FILE = _resolve_person_aliases_file(os.getenv("PERSON_ALIASES_FILE"))
     BUSINESS_TIMEZONE = os.getenv("BUSINESS_TIMEZONE", DEFAULT_BUSINESS_TIMEZONE)
     WORDPRESS_CREATED_AT_TIMEZONE = os.getenv(
         "WORDPRESS_CREATED_AT_TIMEZONE",
@@ -845,6 +862,10 @@ VAYSM_GROUP_ID=
 # Optional local-only JSON file for approved late racquet exceptions.
 # Keep real entries out of git; middleware/data/late_racquet_overrides.local.json is ignored.
 LATE_RACQUET_OVERRIDES_FILE=data/late_racquet_overrides.local.json
+# Private stale-to-canonical ChMeetings person ID map (git-ignored).
+# This is also the default when the line is absent. A relative path is resolved
+# against the middleware/ folder, not the current directory.
+PERSON_ALIASES_FILE=data/person_aliases.local.json
 
 # Export directory
 # Default is now 'G:\\Shared drives\\RP Google Drive\\VAY\\SportsFest\\VAYSF-data' if not set here.

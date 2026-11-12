@@ -80,6 +80,67 @@ def test_fetch_chm_church_team_data_skips_orphaned_memberships(mock_connectors):
     assert exporter.last_orphaned_memberships_by_church == {"RPC": 1}
 
 
+def _alias_export_person(person_id: str) -> dict:
+    return {
+        "id": person_id,
+        "first_name": "Ngoc",
+        "last_name": "Le",
+        "updated_on": "2026-05-07T22:17:30+00:00",
+        "additional_fields": [{"field_name": CHM_FIELDS["ROLES"], "value": "Athlete"}],
+    }
+
+
+def test_fetch_chm_church_team_data_resolves_and_dedups_aliased_members(mock_connectors, mocker):
+    """PR #387 finding 6A: a stale ID still in the Team group is exported as its
+    canonical person, once — never as a second (billable) contact row."""
+    chm_connector, _ = mock_connectors
+    mocker.patch(
+        "church_teams_export.load_person_aliases_for_reader",
+        return_value={"100": {"canonical_chm_id": "200"}},
+    )
+    chm_connector.get_groups.return_value = [{"id": "1", "name": "Team WAG"}]
+    chm_connector.get_group_people.return_value = [{"person_id": "100"}, {"person_id": "200"}]
+
+    def fake_get_person(person_id):
+        chm_connector.last_get_person_status = "ok"
+        return _alias_export_person(person_id)
+
+    chm_connector.get_person.side_effect = fake_get_person
+
+    exporter = ChurchTeamsExporter()
+    data = exporter._fetch_chm_church_team_data()
+
+    assert [row["ChMeetings ID"] for row in data["WAG"]] == ["200"]
+    chm_connector.get_person.assert_called_once_with("200")
+
+
+def test_fetch_chm_church_team_data_reaches_survivor_through_retired_membership(mock_connectors, mocker):
+    """PR #387 finding 6B: only the retired ID is listed (it would 404); the
+    survivor is exported through the alias and nothing is counted as orphaned."""
+    chm_connector, _ = mock_connectors
+    mocker.patch(
+        "church_teams_export.load_person_aliases_for_reader",
+        return_value={"100": {"canonical_chm_id": "200"}},
+    )
+    chm_connector.get_groups.return_value = [{"id": "1", "name": "Team WAG"}]
+    chm_connector.get_group_people.return_value = [{"person_id": "100"}]
+
+    def fake_get_person(person_id):
+        if person_id == "100":
+            chm_connector.last_get_person_status = "not_found"
+            return None
+        chm_connector.last_get_person_status = "ok"
+        return _alias_export_person(person_id)
+
+    chm_connector.get_person.side_effect = fake_get_person
+
+    exporter = ChurchTeamsExporter()
+    data = exporter._fetch_chm_church_team_data()
+
+    assert [row["ChMeetings ID"] for row in data["WAG"]] == ["200"]
+    assert exporter.last_orphaned_memberships_by_church == {}
+
+
 def test_fetch_chm_church_team_data_tolerates_null_email(mock_connectors):
     chm_connector, _ = mock_connectors
 
@@ -300,6 +361,33 @@ def test_handle_force_resend_includes_reapproval_required(mock_connectors, mocke
     assert resend_count == 1
 
 
+def test_handle_force_resend_excludes_merged(mock_connectors, mocker):
+    fake_manager = MagicMock()
+    fake_manager.wordpress_connector.get_churches.return_value = [
+        {"church_code": "RPC", "pastor_email": "pastor@rpc.org", "church_rep_email": "rep@rpc.org"}
+    ]
+    fake_manager.__enter__.return_value = fake_manager
+    mocker.patch("sync.manager.SyncManager", return_value=fake_manager)
+    exporter = ChurchTeamsExporter()
+    contacts = [{
+        "ChMeetings ID": "100",
+        "First Name": "Ngoc",
+        "Last Name": "Le",
+        "Church Team": "RPC",
+        "Email": "ngoc@example.com",
+        "Approval_Status (WP)": "merged",
+    }]
+
+    assert exporter._handle_force_resend(
+        contacts,
+        force_pending=True,
+        force_validated1=True,
+        force_validated2=True,
+        dry_run=True,
+        target_resend_chm_id="100",
+    ) == 0
+
+
 def test_resend_logs_existing_approval_metadata(mock_connectors, mocker):
     _, wp_connector = mock_connectors
 
@@ -506,6 +594,50 @@ def test_generate_reports_surfaces_open_validation_issues(mock_connectors, mocke
     team_issue = next(row for row in validation_rows if row["Issue Type"] == "team_non_member_limit")
     assert team_issue["Rule Level"] == "TEAM"
     assert team_issue["Participant Name"] == ""
+
+
+def test_generate_reports_excludes_merged_participants(mock_connectors, mocker, tmp_path):
+    chm_connector, wp_connector = mock_connectors
+    chm_connector.authenticate.return_value = True
+
+    exporter = ChurchTeamsExporter()
+    exporter.latest_chm_update_by_church = {"RPC": "2026-05-08 10:00:00"}
+    mocker.patch.object(
+        exporter,
+        "_fetch_chm_church_team_data",
+        return_value={
+            "RPC": [
+                {
+                    "Church Team": "RPC",
+                    "ChMeetings ID": "101",
+                    "First Name": "Alice",
+                    "Last Name": "Nguyen",
+                    "Gender": "Female",
+                    "Birthdate": "2000-01-02",
+                    "Mobile Phone": "555-0101",
+                    "Email": "alice@test.com",
+                    "Is_Member_ChM": True,
+                    "ChM_Roles": "Athlete",
+                    "ChM_Completion_Checklist": "",
+                    "Update_on_ChM": "2026-05-08 10:00:00",
+                }
+            ]
+        },
+    )
+    wp_connector.get_church_by_code.return_value = {"church_id": 1, "church_code": "RPC"}
+    wp_connector.get_participants.return_value = [
+        {"participant_id": 42, "approval_status": "merged"}
+    ]
+    wp_connector.get_validation_issues.return_value = []
+    write_report = mocker.patch.object(exporter, "_write_excel_report")
+
+    assert exporter.generate_reports("RPC", tmp_path) is True
+    _, summary_rows, contacts_rows, roster_rows, validation_rows = write_report.call_args.args
+    assert summary_rows[0]["Total Participants (in WP)"] == 0
+    assert contacts_rows == []
+    assert roster_rows == []
+    assert validation_rows == []
+    wp_connector.get_rosters.assert_not_called()
 
 
 def test_generate_reports_tolerates_null_wordpress_photo_url(mock_connectors, mocker, tmp_path):

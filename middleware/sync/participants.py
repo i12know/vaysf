@@ -18,6 +18,7 @@ from uuid import uuid4
 from validation.individual_validator import IndividualValidator
 from validation.models import Participant
 from pydantic import ValidationError
+from sync.person_aliases import AliasMap, load_person_aliases, resolve_chm_id
 from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 
 # Helper functions
@@ -47,6 +48,30 @@ class ParticipantSyncer:
         # Initialize the IndividualValidator with the event collection
         self.validator = IndividualValidator(collection="SUMMER_2026")
         self.late_racquet_overrides = self._load_late_racquet_overrides()
+        self._person_aliases: Optional[AliasMap] = None
+
+    @property
+    def person_aliases(self) -> AliasMap:
+        """The alias map for the current sync, loaded on first use.
+
+        Loading is deliberately deferred out of ``__init__``. ``SyncManager``
+        constructs a ``ParticipantSyncer`` eagerly, so loading here would make a
+        malformed alias file abort every command that builds a SyncManager —
+        including ``sync-churches``, which never consumes the map.
+
+        The cached value is scoped to one sync, not to the syncer's lifetime:
+        ``SyncManager.sync_participants()`` assigns a freshly loaded map at the
+        start of every top-level run. A ``SyncManager`` can outlive many runs in
+        daemon mode, and an alias added between two scheduled runs must take
+        effect on the next one.
+        """
+        if self._person_aliases is None:
+            self._person_aliases = load_person_aliases()
+        return self._person_aliases
+
+    @person_aliases.setter
+    def person_aliases(self, aliases: AliasMap) -> None:
+        self._person_aliases = aliases
 
     @staticmethod
     def _validation_issue_key(
@@ -714,6 +739,7 @@ class ParticipantSyncer:
             logger.info(f"Found {len(team_groups)} '{Config.TEAM_PREFIX}' groups for full sync.")
             
             all_participants_processed_successfully = True # Assume success unless a participant fails
+            processed_chm_ids: set[str] = set()
 
             for group in team_groups:
                 if hasattr(self.chm_connector, "last_get_group_people_status"):
@@ -740,7 +766,16 @@ class ParticipantSyncer:
                         self.stats["participants"]["errors"] += 1
                         all_participants_processed_successfully = False # Mark overall as not entirely successful
                         continue
-                    
+
+                    canonical_id = resolve_chm_id(current_chm_id, self.person_aliases)
+                    if canonical_id in processed_chm_ids:
+                        logger.info(
+                            f"[VAY SM] Skipping duplicate Team-group membership for "
+                            f"canonical chm_id={canonical_id}"
+                        )
+                        continue
+                    processed_chm_ids.add(canonical_id)
+
                     # Call the helper method for each person_chm_id
                     # TARGET_CHM_ID_FOR_DEBUG is passed for detailed logging if current_chm_id matches
                     if not self._sync_single_participant(
@@ -777,6 +812,11 @@ class ParticipantSyncer:
         Returns:
             bool: True if the participant was successfully processed (created or updated), False otherwise.
         """
+        canonical_id = resolve_chm_id(chm_id, self.person_aliases)
+        if canonical_id != chm_id:
+            logger.info(f"[VAY SM] Alias: stale chm_id {chm_id} resolved to {canonical_id}")
+            chm_id = canonical_id
+
         if chm_id == target_chm_id_for_debug:
             logger.debug(f"--------------------------------------------------------------------------")
             logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] START PROCESSING TARGET RECORD")
@@ -875,6 +915,25 @@ class ParticipantSyncer:
         # Use mapped["chmeetings_id"] as it's directly from the mapped data which is from full_person_data
         participant_in_wp_list = self.wordpress_connector.get_participants({"chmeetings_id": mapped["chmeetings_id"]})
         participant_in_wp = (participant_in_wp_list[0] if participant_in_wp_list else None)
+
+        # A `merged` row is a tombstone written by apply-aliases. It must hold on
+        # its own: the alias that explains it may not be loaded for this run
+        # (file missing on this machine, entry removed, direction reversed), and
+        # falling through would recompute its status and recreate its rosters.
+        # Never rewrite it; fail the participant loudly so the run reports it.
+        if participant_in_wp and participant_in_wp.get("approval_status") == APPROVAL_STATUS["MERGED"]:
+            logger.warning(
+                f"[VAY SM] Refusing to sync chm_id={chm_id}: WordPress participant "
+                f"{participant_in_wp.get('participant_id')} is a 'merged' tombstone but no "
+                "person alias redirected this ID. Restore the alias entry in the person alias "
+                "map (see the 'Loaded person aliases' log line for the file in use), or "
+                "reverse the merge deliberately (docs/USAGE.md, 'Reversing an alias'). "
+                "The row was left untouched."
+            )
+            self.stats["participants"]["errors"] += 1
+            if chm_id == target_chm_id_for_debug:
+                logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] END PROCESSING (MERGED TOMBSTONE)")
+            return False
 
         # Normalize `mapped` into its effective shape BEFORE the identity drift
         # comparison below, in the same order the WordPress payload is built.

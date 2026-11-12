@@ -445,7 +445,10 @@ public function update_approval($request) {
 		// Get approval by token
 		$approval = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT * FROM $table_approvals WHERE approval_token = %s",
+				"SELECT a.*, p.approval_status AS participant_approval_status
+                 FROM $table_approvals a
+                 JOIN $table_participants p ON a.participant_id = p.participant_id
+                 WHERE a.approval_token = %s",
 				$token
 			)
 		);
@@ -461,6 +464,18 @@ public function update_approval($request) {
 	
         error_log('DEBUG: Found approval record - ID: ' . $approval->approval_id . ', Participant ID: ' . $approval->participant_id); //// Add debug logging
         
+        // A 'merged' approval row or participant is a retired duplicate identity
+        // (apply-aliases tombstone). Checked first, so the pastor reads "no
+        // longer active" rather than "already processed" or "expired".
+        if ($approval->approval_status === 'merged' || $approval->participant_approval_status === 'merged') {
+            error_log('WARNING: Approval token belongs to a merged approval or participant');
+            return new WP_Error(
+                'rest_participant_merged',
+                esc_html__('This approval is no longer active.', 'vaysf'),
+                array('status' => 400)
+            );
+        }
+
 		// Check if token has expired
 		$token_expiry = new DateTime($approval->token_expiry);
 		$now = new DateTime();
@@ -483,7 +498,7 @@ public function update_approval($request) {
 				array('status' => 400)
 			);
 		}
-		
+
 		// Set approval status based on decision
 		$status = $decision === 'approve' ? 'approved' : 'denied';
         error_log('DEBUG: Decision: ' . $decision . ', Setting status to: ' . $status); //// Add debug logging
@@ -496,10 +511,35 @@ public function update_approval($request) {
 				'approval_date' => current_time('mysql'),
 				'updated_at' => current_time('mysql')
 			),
-			array('approval_id' => $approval->approval_id),
+			// Conditional on still being 'pending': the status was read above, and
+			// apply-aliases --execute (or a second click) may have changed the row
+			// since. Without this the write would overwrite a tombstone.
+			array('approval_id' => $approval->approval_id, 'approval_status' => 'pending'),
 			array('%s', '%s', '%s'),
-			array('%d')
+			array('%d', '%s')
 		);
+
+        if ($approval_result === 0) {
+            $current_approval_status = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT approval_status FROM $table_approvals WHERE approval_id = %d",
+                    $approval->approval_id
+                )
+            );
+            error_log('WARNING: Approval ' . $approval->approval_id . ' was no longer pending at write time. Current status: ' . $current_approval_status);
+            if ($current_approval_status === 'merged') {
+                return new WP_Error(
+                    'rest_participant_merged',
+                    esc_html__('This approval is no longer active.', 'vaysf'),
+                    array('status' => 400)
+                );
+            }
+            return new WP_Error(
+                'rest_approval_already_processed',
+                esc_html__('Approval has already been processed.', 'vaysf'),
+                array('status' => 400)
+            );
+        }
 
 //// DEBUG CODE BEFORE PARTICIPANT UPDATE
         // Issue #181: a wpdb->update() failure here must not be silently reported
@@ -527,16 +567,45 @@ public function update_approval($request) {
 //// DEBUG CODE BEFORE PARTICIPANT UPDATE
 
 		// Update participant status
-            $participant_result = $wpdb->update(
-                $table_participants,
-                array(
-                    'approval_status' => $status,
-                    'updated_at' => current_time('mysql')
-                ),
-                array('participant_id' => $approval->participant_id),
-                array('%s', '%s'),
-                array('%d')
+            // Never overwrite a 'merged' participant. apply-aliases tombstones the
+            // participant before its approval row, so the approval can still be
+            // 'pending' at the moment the participant has just been retired.
+            $participant_result = $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE $table_participants
+                     SET approval_status = %s, updated_at = %s
+                     WHERE participant_id = %d
+                       AND (approval_status IS NULL OR approval_status <> 'merged')",
+                    $status,
+                    current_time('mysql'),
+                    $approval->participant_id
+                )
             );
+
+            if ($participant_result === 0) {
+                $current_participant_status = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT approval_status FROM $table_participants WHERE participant_id = %d",
+                        $approval->participant_id
+                    )
+                );
+                if ($current_participant_status === 'merged') {
+                    // Put the approval row back in step with its retired participant.
+                    $wpdb->update(
+                        $table_approvals,
+                        array('approval_status' => 'merged', 'updated_at' => current_time('mysql')),
+                        array('approval_id' => $approval->approval_id),
+                        array('%s', '%s'),
+                        array('%d')
+                    );
+                    error_log('WARNING: Participant ' . $approval->participant_id . ' was merged during token processing; approval ' . $approval->approval_id . ' tombstoned');
+                    return new WP_Error(
+                        'rest_participant_merged',
+                        esc_html__('This approval is no longer active.', 'vaysf'),
+                        array('status' => 400)
+                    );
+                }
+            }
 
 //// DEBUG CODE
             if ($participant_result === false) {

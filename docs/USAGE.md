@@ -204,6 +204,124 @@ After saving the file, rerun a targeted participant sync:
 python main.py sync --type participants --chm-id 3633885
 ```
 
+##### Canonical Person Aliases
+
+When an operator has confirmed that one ChMeetings person ID is a duplicate of
+another, put the stale-to-canonical mapping in the git-ignored local file
+`middleware/data/person_aliases.local.json`. That is the default location; an
+`.env` written before this feature needs no new line. `PERSON_ALIASES_FILE` in
+`.env` overrides it, and a relative value is resolved against the `middleware/`
+folder, not the folder the command was started from. Never put real entries in
+the tracked `data/person_aliases.json`: it is only an example of the format and
+is not read.
+
+Every load logs where it looked and what it found, for example
+`[VAY SM] Loaded 3 person alias(es) from <path>` or
+`[VAY SM] Loaded 0 person aliases (file not found at <path>)`. Check that line
+on the first run on any new machine: the file is not in git, so it does not
+travel with a clone.
+
+```json
+{
+  "3634002": {
+    "canonical_chm_id": "3633885",
+    "reason": "duplicate registration",
+    "confirmed_by": "Bumble",
+    "confirmed_on": "2026-07-20"
+  }
+}
+```
+
+Preview the WordPress cleanup first. This makes no API changes. Every run,
+preview or `--execute`, writes its own workbook
+`data/alias_reconciliation_<YYYYMMDD_HHMMSS>_audit.xlsx` and never overwrites an
+earlier one, so the report from the `--execute` run is still there after you
+rerun to confirm:
+
+```bash
+python main.py apply-aliases
+```
+
+**Precondition for the first `--execute`: the new plugin is live on the site.**
+The guards that keep a `merged` row retired (pastor email link, "Resend Email",
+statistics and the public participants list) ship in plugin **1.1.15**. Install
+`plugins/vaysf.zip` and confirm the Plugins screen in WordPress shows version
+1.1.15 or later *before* running `apply-aliases --execute` for the first time.
+On an older plugin, a pastor's old email link or the admin resend button can
+set a tombstoned participant back to `approved`.
+
+After reviewing the audit, retire the stale participant, approval, roster, and
+open validation-issue rows:
+
+```bash
+python main.py apply-aliases --execute
+```
+
+Keep the alias permanently so future participant syncs resolve the stale ID
+before fetching ChMeetings.
+
+Read the `Approval Mismatch` column before closing the workbook. `yes` means the
+stale row was pastor-approved and the canonical row is not: the approval is not
+carried over, so that athlete needs a new pastor approval. On a later run the
+stale row already reads `merged`; the column then says `possible` when its old
+approval row still records a pastor decision date (set for a denial as well as
+an approval) and the canonical row is still not approved.
+
+**Reversing an alias.** A tombstone is reversible, but only by hand: no command
+un-merges a row, and sync refuses to touch a `merged` row on its own (it logs a
+`[VAY SM]` warning and counts the participant as an error). `apply-aliases` also
+refuses to act when the *canonical* row is itself `merged` (outcome
+`canonical_is_merged`, nothing written, non-zero exit) — that is what you see if
+you flip an already-executed entry from `A → B` to `B → A`. To undo an executed
+alias `A → B` and bring row A back:
+
+1. Remove the `A` entry from the alias file. Do not add the reversed entry yet.
+2. Restore A's participant row and its approval row from `merged` to `pending`.
+   From `middleware/`, in interactive Python (IDs come from the audit workbook):
+
+   ```python
+   from wordpress.frontend_connector import WordPressConnector
+   with WordPressConnector() as wp:
+       wp.update_participant(<A_wp_participant_id>, {"approval_status": "pending"})
+       for approval in wp.get_approvals(params={"participant_id": <A_wp_participant_id>}):
+           wp.update_approval(approval["approval_id"], {"approval_status": "pending"})
+   ```
+
+3. Run `python main.py sync --type participants --chm-id <A>`. This recomputes
+   A's status and recreates its rosters; validation issues reopen on the next
+   `sync --type validation`.
+4. The pastor approval is **not** restored. Once A reaches `pending_approval`,
+   use "Resend Email" on the Approvals admin page so the pastor gets a fresh
+   link, then regenerate A's badge after approval.
+5. Only if B is the real duplicate: now add `B → A` to the alias file and run
+   `apply-aliases`, review the audit, then `apply-aliases --execute`.
+
+**If the alias file is malformed.** A missing alias file is normal and simply
+means no aliases are configured. An *existing* file that will not parse is
+treated as operator error and fails closed, because identity data cannot be
+guessed — silently continuing would let sync recreate a person you had already
+retired. Specifically:
+
+- `apply-aliases` and participant sync (`sync --type participants`) refuse to
+  run and report the file path and the parse problem.
+- `sync --type full` validates the alias map **before performing any sub-step**,
+  so a bad file cannot leave the season half-synced with churches written and
+  participants not.
+- Commands that do not consume the alias map remain available, including
+  `sync-churches`, `export-church-teams`, and the scheduling commands.
+
+Fix the file rather than removing the mapping.
+
+The loader also rejects, with the same plain message: a stale ID listed twice
+(JSON would otherwise keep only the last line), an ID that is not all digits,
+and a file that is not UTF-8 (for example UTF-16 written by PowerShell `>`).
+A UTF-8 byte-order mark is accepted.
+
+The alias map is re-read at the start of every participant or full sync, so an
+alias added between two scheduled runs takes effect on the next run. You do not
+need to restart a long-running `python main.py schedule --daemon` process after
+editing the file.
+
 #### Approvals Sync
 
 To sync approved participants to ChMeetings (adds them to the approved group via API):

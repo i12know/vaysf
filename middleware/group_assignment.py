@@ -2078,6 +2078,27 @@ def audit_team_groups(church_code: Optional[str] = None,
             "This action is irreversible."
         )
 
+    # An orphaned membership whose ID is a known alias is the only path by
+    # which sync, validation and the export reach the canonical person, so it
+    # is reported as `aliased` and never removed. Removal therefore needs a
+    # readable map; the read-only audit still runs without one.
+    from sync.person_aliases import PersonAliasError, load_person_aliases, resolve_chm_id
+
+    try:
+        person_aliases = load_person_aliases()
+    except PersonAliasError as exc:
+        if remove_orphans:
+            logger.error(
+                f"[VAY SM] Refusing to remove orphaned memberships: {exc}. "
+                "Fix the person alias map and rerun."
+            )
+            return False
+        logger.error(
+            f"[VAY SM] Person alias map is unusable ({exc}); the audit continues "
+            "WITHOUT alias resolution, so aliased orphans are reported as not_found."
+        )
+        person_aliases = {}
+
     with ChMeetingsConnector() as chm_connector, WordPressConnector() as wp_connector:
         if not chm_connector.authenticate():
             logger.error("Authentication with ChMeetings failed")
@@ -2099,6 +2120,7 @@ def audit_team_groups(church_code: Optional[str] = None,
         orphans_found = 0
         orphans_removed = 0
         orphans_stuck = 0
+        aliased_found = 0
         resolved_found = 0
         failed_lookups = 0
         audit_rows: List[Dict[str, str]] = []
@@ -2121,6 +2143,7 @@ def audit_team_groups(church_code: Optional[str] = None,
                     "Membership Last Name": "",
                     "Membership Email": "",
                     "Lookup Status": "empty_group",
+                    "Alias Canonical ChM Id": "",
                     "Resolved ChM First Name": "",
                     "Resolved ChM Last Name": "",
                     "Resolved ChM Email": "",
@@ -2150,6 +2173,18 @@ def audit_team_groups(church_code: Optional[str] = None,
                     resolved_first_name = resolved_person.get("first_name", "")
                     resolved_last_name = resolved_person.get("last_name", "")
                     resolved_email = resolved_person.get("email", "")
+                elif (
+                    lookup_status == "not_found"
+                    and resolve_chm_id(person_id, person_aliases) != person_id
+                ):
+                    aliased_found += 1
+                    lookup_status = "aliased"
+                    canonical_id = resolve_chm_id(person_id, person_aliases)
+                    logger.info(
+                        f"[VAY SM] Aliased Team-group membership kept: {group_name} has "
+                        f"person_id={person_id} (404), which the person alias map resolves "
+                        f"to {canonical_id}. Not an orphan; not removed."
+                    )
                 elif lookup_status == "not_found":
                     orphans_found += 1
                     logger.warning(
@@ -2207,6 +2242,11 @@ def audit_team_groups(church_code: Optional[str] = None,
                     "Membership Last Name": membership_last_name,
                     "Membership Email": membership_email,
                     "Lookup Status": lookup_status,
+                    "Alias Canonical ChM Id": (
+                        resolve_chm_id(person_id, person_aliases)
+                        if lookup_status == "aliased"
+                        else ""
+                    ),
                     "Resolved ChM First Name": resolved_first_name,
                     "Resolved ChM Last Name": resolved_last_name,
                     "Resolved ChM Email": resolved_email,
@@ -2219,6 +2259,7 @@ def audit_team_groups(church_code: Optional[str] = None,
         summary = (
             f"Team-group orphan audit complete: {groups_processed} group(s), "
             f"{memberships_found} membership(s), {orphans_found} orphan(s), "
+            f"{aliased_found} aliased (kept), "
             f"{resolved_found} resolved lookup(s), {failed_lookups} failed lookup(s)."
         )
         if remove_orphans:

@@ -70,3 +70,54 @@ def tmp_path():
     path.mkdir(parents=True, exist_ok=False)
     yield path
     shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_person_alias_map(tmp_path, monkeypatch):
+    """Mock mode never reads the operator's real person alias map.
+
+    The real map (``data/person_aliases.local.json``) is private, git-ignored
+    and present on the operator's machine. Tests that need aliases build their
+    own; every other mock-mode test must see "no alias file" whatever ``.env``
+    says. Live runs keep the configured map, since they act on real data.
+    """
+    if _env_flag(LIVE_TEST_ENV):
+        return
+    from config import Config
+
+    monkeypatch.setattr(
+        Config,
+        "PERSON_ALIASES_FILE",
+        tmp_path / "person_aliases.absent.json",
+    )
+
+
+class _StubPhotoResponse:
+    def __init__(self, status_code: int, content_type: str):
+        self.status_code = status_code
+        self.headers = {"Content-Type": content_type}
+
+
+@pytest.fixture(autouse=True)
+def _stub_live_photo_head(monkeypatch):
+    """LIVE_TEST photo checks never reach a real image host.
+
+    In live mode the individual validator sends ``requests.head`` to each
+    participant's photo URL. The tests feed it fixture URLs, and the real image
+    server is private (it answers 403), so the result would depend on network
+    access rather than on the code. A URL naming a missing or broken photo
+    raises a connection error; any other URL is a reachable JPEG. The real
+    ChMeetings and WordPress connectors use ``requests.Session`` and are not
+    affected.
+    """
+    if not _env_flag(LIVE_TEST_ENV):
+        return
+    import requests
+
+    def fake_head(url, *args, **kwargs):
+        lowered = str(url).lower()
+        if any(marker in lowered for marker in ("not-exist", "nonexistent", "broken")):
+            raise requests.ConnectionError(f"stubbed unreachable photo host: {url}")
+        return _StubPhotoResponse(200, "image/jpeg")
+
+    monkeypatch.setattr(requests, "head", fake_head)
