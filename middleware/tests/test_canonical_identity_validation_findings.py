@@ -570,12 +570,6 @@ def test_alias_loader_logs_path_and_count_on_every_load(tmp_path, payload, count
 # Finding 12 — apply-aliases reads stale rosters with the REST default, which
 # only returns rows whose team_order IS NULL
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding 12: GET /rosters filters to team_order IS NULL unless "
-    "all_team_orders is sent; the reconciler does not send it, so stale rosters "
-    "that carry a team_order are neither reported nor deleted.",
-)
 def test_apply_aliases_requests_rosters_for_every_team_order(wp_connector):
     _wire_participants(wp_connector)
 
@@ -583,6 +577,25 @@ def test_apply_aliases_requests_rosters_for_every_team_order(wp_connector):
 
     params = wp_connector.get_rosters.call_args.kwargs["params"]
     assert params.get("all_team_orders")
+
+
+def test_apply_aliases_pages_through_every_open_validation_issue(wp_connector):
+    """Finding 12: more open issues than one page are all read and resolved."""
+    _wire_participants(wp_connector)
+    pages = {
+        1: [{"issue_id": issue_id} for issue_id in range(1, 101)],
+        2: [{"issue_id": issue_id} for issue_id in range(101, 131)],
+    }
+    wp_connector.get_validation_issues.side_effect = lambda params=None: pages.get(
+        params["page"], []
+    )
+
+    assert apply_aliases(execute=True) is True
+
+    requested = [call.kwargs["params"] for call in wp_connector.get_validation_issues.call_args_list]
+    assert [params["page"] for params in requested] == [1, 2]
+    assert all(params["per_page"] == 100 for params in requested)
+    assert wp_connector.update_validation_issue.call_count == 130
 
 
 # --------------------------------------------------------------------------

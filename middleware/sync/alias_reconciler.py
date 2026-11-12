@@ -39,6 +39,10 @@ def _audit_path(now: Optional[datetime.datetime] = None) -> Path:
 _FAILING_OUTCOMES = frozenset({"canonical_is_merged"})
 
 
+_ISSUE_PAGE_SIZE = 100
+_ISSUE_MAX_PAGES = 50
+
+
 class ReconcileReadError(RuntimeError):
     """A WordPress read failed and must not be mistaken for an empty result."""
 
@@ -89,6 +93,35 @@ def _participant_rows(connector: Any, chm_id: str) -> List[Dict[str, Any]]:
     )
 
 
+def _open_issues(connector: Any, participant_id: int) -> List[Dict[str, Any]]:
+    """Every open validation issue for the participant, across all pages.
+
+    GET /validation-issues returns 20 rows per page by default, so one call
+    would report a participant with more open issues as fully reconciled.
+    """
+    issues: List[Dict[str, Any]] = []
+    for page in range(1, _ISSUE_MAX_PAGES + 1):
+        batch = _read(
+            connector,
+            "get_validation_issues",
+            "last_get_validation_issues_status",
+            f"open validation issues for participant_id={participant_id} (page {page})",
+            params={
+                "participant_id": participant_id,
+                "status": VALIDATION_STATUS["OPEN"],
+                "per_page": _ISSUE_PAGE_SIZE,
+                "page": page,
+            },
+        )
+        issues.extend(batch)
+        if len(batch) < _ISSUE_PAGE_SIZE:
+            return issues
+    raise ReconcileReadError(
+        f"WordPress read failed: more than {_ISSUE_MAX_PAGES * _ISSUE_PAGE_SIZE} open "
+        f"validation issues for participant_id={participant_id}"
+    )
+
+
 def _state(connector: Any, participant_id: int) -> ReconcileState:
     return ReconcileState(
         rosters=_read(
@@ -96,7 +129,9 @@ def _state(connector: Any, participant_id: int) -> ReconcileState:
             "get_rosters",
             "last_get_rosters_status",
             f"rosters for participant_id={participant_id}",
-            params={"participant_id": participant_id},
+            # Without all_team_orders the endpoint only returns rows whose
+            # team_order IS NULL and would hide a roster staff gave an order.
+            params={"participant_id": participant_id, "all_team_orders": 1},
         ),
         approvals=_read(
             connector,
@@ -105,13 +140,7 @@ def _state(connector: Any, participant_id: int) -> ReconcileState:
             f"approvals for participant_id={participant_id}",
             params={"participant_id": participant_id},
         ),
-        issues=_read(
-            connector,
-            "get_validation_issues",
-            "last_get_validation_issues_status",
-            f"open validation issues for participant_id={participant_id}",
-            params={"participant_id": participant_id, "status": VALIDATION_STATUS["OPEN"]},
-        ),
+        issues=_open_issues(connector, participant_id),
     )
 
 
