@@ -341,13 +341,6 @@ def test_check_consent_never_writes_to_merged_row_without_alias(mocker):
 # Finding 7 — apply-aliases: a transient WordPress failure inside delete_roster
 # escapes as RetryError and aborts the whole run with no audit file
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    raises=RetryError,
-    reason="Finding 7: WordPressConnector.delete_roster() pre-reads the roster "
-    "through the retried get_roster(); on a transient failure that raises "
-    "tenacity.RetryError, which neither delete_roster nor apply_aliases catches.",
-)
 def test_apply_aliases_survives_retry_error_during_roster_delete(wp_connector, mocker):
     _wire_participants(wp_connector)
     wp_connector.get_rosters.return_value = [{"roster_id": 1}]
@@ -355,6 +348,75 @@ def test_apply_aliases_survives_retry_error_during_roster_delete(wp_connector, m
     write_audit = mocker.patch("sync.alias_reconciler._write_audit")
 
     assert apply_aliases(execute=True) is False
+    write_audit.assert_called_once()
+    (row,) = write_audit.call_args.args[0]
+    assert row["Outcome"] == "error"
+    assert row["Failed Writes"] == "roster 1"
+    # The participant was made inert before the roster delete was attempted.
+    assert row["Participant Tombstoned"] is True
+
+
+def test_apply_aliases_tombstones_participant_before_other_writes(wp_connector):
+    """Finding 7: the participant tombstone is the first write."""
+    _wire_participants(wp_connector)
+    wp_connector.get_rosters.return_value = [{"roster_id": 1}]
+    wp_connector.get_approvals.return_value = [{"approval_id": 2, "approval_status": "pending"}]
+    wp_connector.get_validation_issues.return_value = [{"issue_id": 3}]
+
+    assert apply_aliases(execute=True) is True
+
+    writes = [
+        call[0]
+        for call in wp_connector.method_calls
+        if call[0]
+        in ("update_participant", "delete_roster", "update_approval", "update_validation_issue")
+    ]
+    assert writes == [
+        "update_participant",
+        "delete_roster",
+        "update_approval",
+        "update_validation_issue",
+    ]
+
+
+def test_apply_aliases_stops_an_alias_when_the_tombstone_does_not_land(wp_connector, mocker):
+    """Finding 7: a failed tombstone leaves that row whole and the loop continues."""
+    mocker.patch(
+        "sync.alias_reconciler.load_person_aliases",
+        return_value={
+            "100": {"canonical_chm_id": "200"},
+            "300": {"canonical_chm_id": "200"},
+        },
+    )
+    rows_by_chm_id = {
+        "100": [_participant("100", 10, "approved")],
+        "300": [_participant("300", 12, "pending")],
+        "200": [_participant("200", 11)],
+    }
+    wp_connector.get_participants.side_effect = lambda params=None: rows_by_chm_id.get(
+        (params or {}).get("chmeetings_id"), []
+    )
+    wp_connector.get_rosters.return_value = [{"roster_id": 1}]
+    wp_connector.update_participant.side_effect = [RetryError(MagicMock()), {"participant_id": 12}]
+    write_audit = mocker.patch("sync.alias_reconciler._write_audit")
+
+    assert apply_aliases(execute=True) is False
+
+    first, second = write_audit.call_args.args[0]
+    assert (first["Outcome"], first["Failed Writes"]) == ("error", "participant 10")
+    assert second["Outcome"] == "reconciled"
+    # Only the second alias reached its roster delete.
+    wp_connector.delete_roster.assert_called_once_with(1)
+
+
+def test_apply_aliases_writes_audit_even_when_the_run_aborts(wp_connector, mocker):
+    """Finding 7: an unexpected exception still leaves the audit record."""
+    _wire_participants(wp_connector)
+    wp_connector.get_rosters.side_effect = KeyError("unexpected")
+    write_audit = mocker.patch("sync.alias_reconciler._write_audit")
+
+    with pytest.raises(KeyError):
+        apply_aliases(execute=True)
     write_audit.assert_called_once()
 
 

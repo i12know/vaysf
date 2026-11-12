@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List
 
 import pandas as pd
+import requests
 from loguru import logger
 from tenacity import RetryError
 
@@ -107,6 +108,21 @@ def _badge_filename(stale: Dict[str, Any], stale_chm_id: str) -> str:
         return ""
 
 
+def _write(connector: Any, method: str, description: str, *args: Any) -> Any:
+    """Run one WordPress write; a raised transient failure is a failed write.
+
+    Connector writes that pre-read through a retried GET (``delete_roster``)
+    raise ``tenacity.RetryError`` once the retries are spent. That must fail the
+    one write, not abort the run: the remaining aliases still need processing
+    and the audit file must be written.
+    """
+    try:
+        return getattr(connector, method)(*args)
+    except (RetryError, requests.RequestException) as exc:
+        logger.error(f"[VAY SM] WordPress write failed ({description}): {exc!r}")
+        return None
+
+
 def _apply_state(
     connector: Any,
     stale: Dict[str, Any],
@@ -115,45 +131,78 @@ def _apply_state(
 ) -> bool:
     participant_id = stale["participant_id"]
     success = True
+    failed_writes: List[str] = []
 
-    deleted = 0
-    for roster in state.rosters:
-        if connector.delete_roster(roster["roster_id"]):
-            deleted += 1
-        else:
-            success = False
-            logger.error(f"Failed to delete stale roster {roster.get('roster_id')}")
-
+    # Tombstone the participant first. Every consumer keys off that one field,
+    # so it is the write that makes the row inert; if it does not land, nothing
+    # else is touched and the row stays whole for the rerun.
     participant_tombstoned = stale.get("approval_status") == APPROVAL_STATUS["MERGED"]
     if not participant_tombstoned:
-        participant_tombstoned = connector.update_participant(
+        participant_tombstoned = _write(
+            connector,
+            "update_participant",
+            f"tombstone participant {participant_id}",
             participant_id,
             {"approval_status": APPROVAL_STATUS["MERGED"]},
         ) is not None
-        success = success and participant_tombstoned
+        if not participant_tombstoned:
+            logger.error(
+                f"Failed to tombstone stale participant {participant_id}; its rosters, "
+                "approvals and validation issues were left untouched. Rerun apply-aliases."
+            )
+            row.update(
+                {
+                    "Rosters Deleted": 0,
+                    "Participant Tombstoned": False,
+                    "Approvals Tombstoned": 0,
+                    "Validation Issues Resolved": 0,
+                    "Failed Writes": f"participant {participant_id}",
+                }
+            )
+            return False
+
+    deleted = 0
+    for roster in state.rosters:
+        roster_id = roster.get("roster_id")
+        if _write(connector, "delete_roster", f"delete roster {roster_id}", roster_id):
+            deleted += 1
+        else:
+            success = False
+            failed_writes.append(f"roster {roster_id}")
+            logger.error(f"Failed to delete stale roster {roster_id}")
 
     approvals_tombstoned = 0
     for approval in state.active_approvals:
-        if connector.update_approval(
-            approval["approval_id"],
+        approval_id = approval.get("approval_id")
+        if _write(
+            connector,
+            "update_approval",
+            f"tombstone approval {approval_id}",
+            approval_id,
             {"approval_status": APPROVAL_STATUS["MERGED"]},
         ):
             approvals_tombstoned += 1
         else:
             success = False
-            logger.error(f"Failed to tombstone stale approval {approval.get('approval_id')}")
+            failed_writes.append(f"approval {approval_id}")
+            logger.error(f"Failed to tombstone stale approval {approval_id}")
 
     issues_resolved = 0
     resolved_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for issue in state.issues:
-        if connector.update_validation_issue(
-            issue["issue_id"],
+        issue_id = issue.get("issue_id")
+        if _write(
+            connector,
+            "update_validation_issue",
+            f"resolve validation issue {issue_id}",
+            issue_id,
             {"status": VALIDATION_STATUS["RESOLVED"], "resolved_at": resolved_at},
         ):
             issues_resolved += 1
         else:
             success = False
-            logger.error(f"Failed to resolve stale validation issue {issue.get('issue_id')}")
+            failed_writes.append(f"validation issue {issue_id}")
+            logger.error(f"Failed to resolve stale validation issue {issue_id}")
 
     row.update(
         {
@@ -161,6 +210,7 @@ def _apply_state(
             "Participant Tombstoned": participant_tombstoned,
             "Approvals Tombstoned": approvals_tombstoned,
             "Validation Issues Resolved": issues_resolved,
+            "Failed Writes": ", ".join(failed_writes),
         }
     )
     return success
@@ -271,15 +321,25 @@ def apply_aliases(execute: bool = False) -> bool:
         return True
 
     rows: List[Dict[str, Any]] = []
-    with WordPressConnector() as connector:
-        for stale_chm_id, entry in aliases.items():
-            try:
-                rows.append(_reconcile_one(connector, stale_chm_id, entry, aliases, execute))
-            except ReconcileReadError as exc:
-                logger.error(f"[VAY SM] {exc}")
-                rows.append({"Stale ChM ID": stale_chm_id, "Outcome": "error_read_failed"})
+    try:
+        with WordPressConnector() as connector:
+            for stale_chm_id, entry in aliases.items():
+                try:
+                    rows.append(_reconcile_one(connector, stale_chm_id, entry, aliases, execute))
+                except ReconcileReadError as exc:
+                    logger.error(f"[VAY SM] {exc}")
+                    rows.append({"Stale ChM ID": stale_chm_id, "Outcome": "error_read_failed"})
+                except (RetryError, requests.RequestException) as exc:
+                    # Backstop: every write already goes through _write().
+                    logger.error(
+                        f"[VAY SM] WordPress call failed for stale chm_id={stale_chm_id}: {exc!r}"
+                    )
+                    rows.append({"Stale ChM ID": stale_chm_id, "Outcome": "error_write_failed"})
+    finally:
+        # Whatever happened above, the operator gets a record of the aliases
+        # that were already processed in this run.
+        _write_audit(rows)
 
-    _write_audit(rows)
     outcomes = Counter(row["Outcome"] for row in rows)
     logger.info(f"Alias reconciliation complete: {dict(outcomes)}")
     return not any(outcome.startswith("error") for outcome in outcomes)
