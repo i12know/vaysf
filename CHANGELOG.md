@@ -65,6 +65,12 @@
   - Plugin: `vaysf_resend_approval_email()` itself refuses a `merged` approval
     or participant (re-read from the database), so a future caller cannot
     revive a tombstone [15].
+  - Plugin: the pastor token endpoint answers "This approval is no longer
+    active" when the approval row (not only the participant) is `merged`, its
+    approval `UPDATE` is conditional on `approval_status = 'pending'`, and its
+    participant `UPDATE` never overwrites a `merged` row, which closes the
+    window between the status read and the write while `apply-aliases
+    --execute` is running [4, endpoint notes].
   - Validation, `check-consent`, the export and the read-only team-group audit
     still run when the alias map is malformed, as decided on #308: they log the
     problem and continue on raw IDs.
