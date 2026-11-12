@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Union
 
 from loguru import logger
 
-from config import Config
+from config import BASE_DIR, Config
 
 AliasEntry = Dict[str, str]
 AliasMap = Dict[str, AliasEntry]
@@ -69,7 +69,12 @@ def load_person_aliases(path: Optional[Union[str, Path]] = None) -> AliasMap:
     sync cannot silently recreate identities that were previously retired.
     """
     alias_path = Path(path or Config.PERSON_ALIASES_FILE)
+    if not alias_path.is_absolute():
+        alias_path = BASE_DIR / alias_path
     if not alias_path.exists():
+        # Still an empty map by decision (#308), but never a silent one: this
+        # line is how an operator notices the file is not where sync looks.
+        logger.info(f"[VAY SM] Loaded 0 person aliases (file not found at {alias_path})")
         return {}
 
     try:
@@ -90,8 +95,7 @@ def load_person_aliases(path: Optional[Union[str, Path]] = None) -> AliasMap:
     for stale_id in aliases:
         resolve_chm_id(stale_id, aliases)
 
-    if aliases:
-        logger.info(f"[VAY SM] Loaded {len(aliases)} person alias(es) from {alias_path}")
+    logger.info(f"[VAY SM] Loaded {len(aliases)} person alias(es) from {alias_path}")
     return aliases
 
 

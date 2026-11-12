@@ -510,6 +510,63 @@ def test_already_merged_row_reports_no_mismatch_when_nothing_was_lost(
 
 
 # --------------------------------------------------------------------------
+# Finding 10 — where the map is read from, and saying so on every load
+# --------------------------------------------------------------------------
+def test_alias_file_defaults_to_the_private_local_file():
+    import config
+
+    assert config.PERSON_ALIASES_FILE == config.DATA_DIR / "person_aliases.local.json"
+    assert config._resolve_person_aliases_file(None) == config.PERSON_ALIASES_FILE
+    assert config._resolve_person_aliases_file("  ") == config.PERSON_ALIASES_FILE
+
+
+def test_relative_alias_file_resolves_against_middleware_not_cwd(tmp_path, monkeypatch):
+    import config
+
+    monkeypatch.chdir(tmp_path)
+    resolved = config._resolve_person_aliases_file("data/person_aliases.local.json")
+    assert resolved == config.BASE_DIR / "data" / "person_aliases.local.json"
+    absolute = tmp_path / "elsewhere.json"
+    assert config._resolve_person_aliases_file(str(absolute)) == absolute
+
+
+def _capture_log(level="INFO"):
+    from loguru import logger
+
+    messages = []
+    handler_id = logger.add(lambda message: messages.append(str(message)), level=level)
+    return messages, lambda: logger.remove(handler_id)
+
+
+def test_alias_loader_logs_missing_file_as_zero_aliases_with_path(tmp_path):
+    missing = tmp_path / "person_aliases.local.json"
+    messages, stop = _capture_log()
+    try:
+        assert load_person_aliases(missing) == {}
+    finally:
+        stop()
+    assert any(
+        "Loaded 0 person aliases (file not found at" in message and str(missing) in message
+        for message in messages
+    ), messages
+
+
+@pytest.mark.parametrize(("payload", "count"), [({}, 0), ({"100": "200"}, 1)])
+def test_alias_loader_logs_path_and_count_on_every_load(tmp_path, payload, count):
+    path = tmp_path / "person_aliases.local.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    messages, stop = _capture_log()
+    try:
+        load_person_aliases(path)
+    finally:
+        stop()
+    assert any(
+        f"Loaded {count} person alias(es) from" in message and str(path) in message
+        for message in messages
+    ), messages
+
+
+# --------------------------------------------------------------------------
 # Finding 12 — apply-aliases reads stale rosters with the REST default, which
 # only returns rows whose team_order IS NULL
 # --------------------------------------------------------------------------

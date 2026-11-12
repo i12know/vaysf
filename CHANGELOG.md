@@ -40,6 +40,13 @@
     overwrites an earlier one. `already_merged` rows keep reporting the approval
     mismatch, as `possible`, from the pastor decision date that survives on the
     tombstoned approval row [9].
+  - `PERSON_ALIASES_FILE` now defaults to the git-ignored
+    `data/person_aliases.local.json` (was the tracked example file), a relative
+    value resolves against `middleware/` rather than the current directory, and
+    every load logs the resolved path and entry count, including
+    `Loaded 0 person aliases (file not found at ...)` [10]. **Operator note:** if
+    real entries were ever put in the tracked `data/person_aliases.json`, move
+    them to the `.local` file; the tracked file is no longer read by default.
   - Validation, `check-consent`, the export and the read-only team-group audit
     still run when the alias map is malformed, as decided on #308: they log the
     problem and continue on raw IDs.

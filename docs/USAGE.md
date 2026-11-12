@@ -207,8 +207,19 @@ python main.py sync --type participants --chm-id 3633885
 ##### Canonical Person Aliases
 
 When an operator has confirmed that one ChMeetings person ID is a duplicate of
-another, put the stale-to-canonical mapping in the ignored local file configured
-by `PERSON_ALIASES_FILE`:
+another, put the stale-to-canonical mapping in the git-ignored local file
+`middleware/data/person_aliases.local.json`. That is the default location; an
+`.env` written before this feature needs no new line. `PERSON_ALIASES_FILE` in
+`.env` overrides it, and a relative value is resolved against the `middleware/`
+folder, not the folder the command was started from. Never put real entries in
+the tracked `data/person_aliases.json`: it is only an example of the format and
+is not read.
+
+Every load logs where it looked and what it found, for example
+`[VAY SM] Loaded 3 person alias(es) from <path>` or
+`[VAY SM] Loaded 0 person aliases (file not found at <path>)`. Check that line
+on the first run on any new machine: the file is not in git, so it does not
+travel with a clone.
 
 ```json
 {
