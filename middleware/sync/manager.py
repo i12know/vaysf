@@ -17,7 +17,12 @@ from chmeetings.backend_connector import ChMeetingsConnector, CHM_MIN_REQUEST_IN
 from wordpress.frontend_connector import WordPressConnector
 from sync.churches import ChurchSyncer
 from sync.participants import ParticipantSyncer
-from sync.person_aliases import AliasMap, load_person_aliases
+from sync.person_aliases import (
+    AliasMap,
+    load_person_aliases,
+    load_person_aliases_for_reader,
+    resolve_chm_id,
+)
 from validation import ChurchValidator, TeamValidator
 from validation.models import RulesManager
 import datetime
@@ -818,8 +823,17 @@ class SyncManager:
                 )
         return church_lookup
 
-    def _load_current_eligible_chm_ids(self) -> Optional[set[str]]:
+    def _load_current_eligible_chm_ids(
+        self,
+        person_aliases: Optional[AliasMap] = None,
+    ) -> Optional[set[str]]:
         """Return current athlete IDs from ChMeetings Team groups.
+
+        Member IDs are resolved through the person alias map and de-duplicated,
+        the same way the participant sync loop does: Team groups are never
+        edited by ``apply-aliases``, so a stale membership must count as its
+        canonical person (and a canonical person reached only through a stale
+        membership must stay in scope).
 
         ``None`` means the snapshot could not be loaded completely, so callers
         must retain the unfiltered WordPress fallback and avoid resolving issues
@@ -827,6 +841,8 @@ class SyncManager:
         """
         if not self.chm_connector:
             return None
+        if person_aliases is None:
+            person_aliases = load_person_aliases_for_reader("validation eligibility")
 
         groups = self.chm_connector.get_groups()
         if getattr(self.chm_connector, "last_get_groups_status", None) != "ok":
@@ -879,8 +895,11 @@ class SyncManager:
                 return None
 
             for member in members:
-                chm_id = str(member.get("person_id") or "").strip()
-                if not chm_id or chm_id in seen_ids:
+                raw_chm_id = str(member.get("person_id") or "").strip()
+                if not raw_chm_id:
+                    continue
+                chm_id = resolve_chm_id(raw_chm_id, person_aliases)
+                if chm_id in seen_ids:
                     continue
                 seen_ids.add(chm_id)
 
@@ -1146,10 +1165,30 @@ class SyncManager:
         logger.info(f"Fetched {len(wp_participants)} participants for validation.")
 
         open_validation_issues = self._fetch_open_validation_issues()
+        # The orphan self-heal still sees every row: it only ever resolves
+        # issues, and a tombstone's leftover issues should be cleared too.
         self._resolve_orphaned_individual_validation_issues(
             wp_participants,
             open_validation_issues,
         )
+
+        # `merged` rows are retired duplicate identities (apply-aliases). Their
+        # sport fields must not be counted by any team or church rule, even
+        # though the stale ChMeetings person is usually still a Team-group
+        # member and would otherwise pass the eligibility filter below.
+        fetched_participant_count = len(wp_participants)
+        wp_participants = [
+            participant for participant in wp_participants
+            if participant.get("approval_status") != APPROVAL_STATUS["MERGED"]
+        ]
+        merged_count = fetched_participant_count - len(wp_participants)
+        if merged_count:
+            logger.info(
+                f"[VAY SM] Excluded {merged_count} merged participant row(s) from validation."
+            )
+        if not wp_participants:
+            logger.warning("No active participants found for validation")
+            return False
 
         eligible_chm_ids = self._load_current_eligible_chm_ids()
         if eligible_chm_ids is not None:

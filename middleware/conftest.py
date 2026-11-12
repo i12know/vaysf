@@ -70,3 +70,23 @@ def tmp_path():
     path.mkdir(parents=True, exist_ok=False)
     yield path
     shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_person_alias_map(tmp_path, monkeypatch):
+    """Mock mode never reads the operator's real person alias map.
+
+    The real map (``data/person_aliases.local.json``) is private, git-ignored
+    and present on the operator's machine. Tests that need aliases build their
+    own; every other mock-mode test must see "no alias file" whatever ``.env``
+    says. Live runs keep the configured map, since they act on real data.
+    """
+    if _env_flag(LIVE_TEST_ENV):
+        return
+    from config import Config
+
+    monkeypatch.setattr(
+        Config,
+        "PERSON_ALIASES_FILE",
+        tmp_path / "person_aliases.absent.json",
+    )

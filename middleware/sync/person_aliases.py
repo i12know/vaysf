@@ -93,3 +93,22 @@ def load_person_aliases(path: Optional[Union[str, Path]] = None) -> AliasMap:
     if aliases:
         logger.info(f"[VAY SM] Loaded {len(aliases)} person alias(es) from {alias_path}")
     return aliases
+
+
+def load_person_aliases_for_reader(consumer: str) -> AliasMap:
+    """Load the alias map for a read-side consumer that must stay available.
+
+    Participant sync and ``apply-aliases`` fail closed on a malformed map (#308
+    decision). Validation, consent checking and the church-team export were
+    deliberately left runnable in that situation, so they use this wrapper: the
+    problem is reported loudly and the consumer continues on raw ChMeetings IDs.
+    ``merged`` WordPress rows are still excluded by those consumers either way.
+    """
+    try:
+        return load_person_aliases()
+    except PersonAliasError as exc:
+        logger.error(
+            f"[VAY SM] Person alias map is unusable ({exc}); {consumer} continues "
+            "WITHOUT alias resolution. Fix the file and rerun."
+        )
+        return {}

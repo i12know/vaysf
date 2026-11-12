@@ -94,13 +94,6 @@ def test_sync_never_reactivates_a_merged_row_when_alias_is_absent(sync_manager, 
 # --------------------------------------------------------------------------
 # Finding 1 — team/church validation still counts merged participants
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding 1: validate_data() fetches every WP participant with no "
-    "status filter and builds eligibility from raw Team-group IDs, so a merged "
-    "row whose stale ChM person is still a live Team-group member is counted by "
-    "TeamValidator/ChurchValidator.",
-)
 def test_validate_data_excludes_merged_participants_from_team_validation(
     sync_manager, mocker
 ):
@@ -165,6 +158,69 @@ def test_validate_data_excludes_merged_participants_from_team_validation(
     assert all(p.get("approval_status") != MERGED for p in validated), (
         "a merged tombstone was passed to team validation and is being counted"
     )
+
+
+def test_validation_eligibility_resolves_stale_team_membership(sync_manager, mocker):
+    """Finding 1/6: a canonical person reached only through a stale Team-group
+    membership stays in the validation population, and is fetched once."""
+    chm = sync_manager.chm_connector
+    mocker.patch(
+        "sync.manager.load_person_aliases_for_reader",
+        return_value={"100": {"canonical_chm_id": "200"}},
+    )
+
+    def get_groups():
+        chm.last_get_groups_status = "ok"
+        return [{"id": "team-wag", "name": "Team WAG"}]
+
+    def get_group_people(_group_id):
+        chm.last_get_group_people_status = "ok"
+        # Only the retired ID is still listed; a second stale listing must de-dup.
+        return [{"person_id": "100"}, {"person_id": "100"}]
+
+    def get_person(chm_id):
+        chm.last_get_person_status = "ok"
+        return {
+            "id": chm_id,
+            "additional_fields": [{"field_name": CHM_FIELDS["ROLES"], "value": "Athlete"}],
+        }
+
+    mocker.patch.object(chm, "get_groups", side_effect=get_groups)
+    mocker.patch.object(chm, "get_group_people", side_effect=get_group_people)
+    get_person_mock = mocker.patch.object(chm, "get_person", side_effect=get_person)
+
+    assert sync_manager._load_current_eligible_chm_ids() == {"200"}
+    get_person_mock.assert_called_once_with("200")
+
+
+def test_validation_survives_a_malformed_alias_map(sync_manager, mocker, tmp_path):
+    """A malformed map blocks participant sync, not validation (#308 scope):
+    eligibility falls back to raw Team-group IDs and says so."""
+    bad = tmp_path / "person_aliases.local.json"
+    bad.write_text("{not json", encoding="utf-8")
+    mocker.patch("sync.person_aliases.Config.PERSON_ALIASES_FILE", bad)
+    chm = sync_manager.chm_connector
+
+    def get_groups():
+        chm.last_get_groups_status = "ok"
+        return [{"id": "team-wag", "name": "Team WAG"}]
+
+    def get_group_people(_group_id):
+        chm.last_get_group_people_status = "ok"
+        return [{"person_id": "100"}]
+
+    def get_person(chm_id):
+        chm.last_get_person_status = "ok"
+        return {
+            "id": chm_id,
+            "additional_fields": [{"field_name": CHM_FIELDS["ROLES"], "value": "Athlete"}],
+        }
+
+    mocker.patch.object(chm, "get_groups", side_effect=get_groups)
+    mocker.patch.object(chm, "get_group_people", side_effect=get_group_people)
+    mocker.patch.object(chm, "get_person", side_effect=get_person)
+
+    assert sync_manager._load_current_eligible_chm_ids() == {"100"}
 
 
 # --------------------------------------------------------------------------
