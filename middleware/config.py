@@ -227,6 +227,13 @@ CHM_FIELDS = {
     "ROLES": "My role is",
 }
 
+# CHM_FIELDS keys whose value is a core person-profile key on the API response
+# (e.g. "nick_name"), not a custom field label. The field inspector checks these
+# against the keys of a real person response; every other CHM_FIELDS entry is a
+# custom field label checked against GET /api/v1/people/fields. Add a key here
+# when adding a core-profile entry to CHM_FIELDS.
+CHM_CORE_FIELD_KEYS = frozenset({"NICK_NAME"})
+
 # Roster/export column headers that are named after ChMeetings fields.
 # Derived from CHM_FIELDS where a custom field already has the same label;
 # FIRST_NAME/LAST_NAME are core profile fields (API key "first_name"/
