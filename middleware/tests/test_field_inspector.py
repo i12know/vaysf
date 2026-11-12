@@ -7,6 +7,7 @@ from config import CHM_CORE_FIELD_KEYS, CHM_FIELDS
 from field_inspector import (
     STATUS_MISSING,
     STATUS_NOT_CHECKED,
+    STATUS_NOT_OBSERVED,
     STATUS_OK,
     extract_custom_field_names,
     validate_chm_fields,
@@ -26,16 +27,16 @@ def test_core_key_present_in_person_response_is_ok():
     assert _status(checks, "NICK_NAME") == STATUS_OK
 
 
-def test_core_key_absent_from_person_response_is_missing():
+def test_core_key_absent_from_person_response_is_not_observed():
     checks = validate_chm_fields(MAPPING, CORE, {"Church Team"}, [{"first_name": "A", "nickname": "x"}])
-    assert _status(checks, "NICK_NAME") == STATUS_MISSING
+    assert _status(checks, "NICK_NAME") == STATUS_NOT_OBSERVED
 
 
 def test_core_key_is_not_looked_up_in_custom_field_definitions():
     # Even if a custom field happened to be labelled "nick_name", a core key
     # is validated against the person response only.
     checks = validate_chm_fields(MAPPING, CORE, {"Church Team", "nick_name"}, [{"first_name": "A"}])
-    assert _status(checks, "NICK_NAME") == STATUS_MISSING
+    assert _status(checks, "NICK_NAME") == STATUS_NOT_OBSERVED
 
 
 def test_custom_label_absent_from_people_fields_is_missing():
@@ -154,10 +155,11 @@ def test_api_inspect_no_longer_flags_nick_name(monkeypatch):
     assert "All CHM_FIELDS matched successfully." in text
 
 
-def test_api_inspect_still_flags_core_drift(monkeypatch):
+def test_api_inspect_reports_unobserved_core_key_without_claiming_drift(monkeypatch):
     ok, text = _run_inspect(monkeypatch, people=[{"id": 1, "first_name": "Emily"}])
-    assert "MISSING  CHM_FIELDS['NICK_NAME']" in text
-    assert "Some CHM_FIELDS did not match" in text
+    assert "NOT OBSERVED  CHM_FIELDS['NICK_NAME']" in text
+    assert "MISSING  CHM_FIELDS['NICK_NAME']" not in text
+    assert "All CHM_FIELDS matched successfully." not in text
 
 
 def test_api_inspect_reports_not_checked_when_no_people(monkeypatch):

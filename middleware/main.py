@@ -1175,7 +1175,7 @@ def test_connectivity(system: str = "all", test_type: str = "connectivity", test
                         # so the sample people are fetched here, before the mapping check.
                         from config import CHM_FIELDS, CHM_CORE_FIELD_KEYS
                         from field_inspector import (
-                            STATUS_MISSING, STATUS_NOT_CHECKED, STATUS_OK,
+                            STATUS_MISSING, STATUS_NOT_CHECKED, STATUS_NOT_OBSERVED, STATUS_OK,
                             extract_custom_field_names, validate_chm_fields,
                         )
                         sample_people = []
@@ -1210,20 +1210,21 @@ def test_connectivity(system: str = "all", test_type: str = "connectivity", test
                             if check.status == STATUS_OK:
                                 logger.info(f"  OK  {label}")
                             elif check.status == STATUS_MISSING:
-                                where = ("person response keys" if check.is_core
-                                         else "API field definitions")
-                                logger.warning(f"  MISSING  {label} - NOT found in {where}!")
+                                logger.warning(f"  MISSING  {label} - NOT found in API field definitions!")
+                            elif check.status == STATUS_NOT_OBSERVED:
+                                logger.warning(f"  NOT OBSERVED  {label} - absent from sampled person responses")
                             else:
                                 why = ("no sample person returned" if check.is_core
                                        else "no field definitions returned")
                                 logger.warning(f"  NOT CHECKED  {label} - {why}")
                         n_missing = sum(c.status == STATUS_MISSING for c in checks)
                         n_unchecked = sum(c.status == STATUS_NOT_CHECKED for c in checks)
+                        n_unobserved = sum(c.status == STATUS_NOT_OBSERVED for c in checks)
                         if n_missing:
                             logger.warning("  Some CHM_FIELDS did not match. Update config.py CHM_FIELDS if field names changed.")
                         if n_unchecked:
                             logger.warning(f"  {n_unchecked} CHM_FIELDS could not be checked.")
-                        if not n_missing and not n_unchecked:
+                        if not n_missing and not n_unchecked and not n_unobserved:
                             logger.info("  All CHM_FIELDS matched successfully.")
 
                         # 2. List groups

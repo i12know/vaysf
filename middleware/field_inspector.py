@@ -10,9 +10,9 @@ sources:
 
 * custom field labels (the default) -- must appear as a ``field_name`` in
   ``GET /api/v1/people/fields``;
-* core profile keys (named in ``config.CHM_CORE_FIELD_KEYS``) -- must appear
-  as a key on a person response, because core keys are never listed in
-  ``/people/fields``.
+* core profile keys (named in ``config.CHM_CORE_FIELD_KEYS``) -- can be
+  confirmed by observing the key on a person response. Optional keys may
+  be omitted, so a sample without the key cannot establish drift.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from typing import Any, Iterable, Mapping, Optional
 STATUS_OK = "ok"
 STATUS_MISSING = "missing"
 STATUS_NOT_CHECKED = "not_checked"
+STATUS_NOT_OBSERVED = "not_observed"
 
 SOURCE_PEOPLE_FIELDS = "people_fields"
 SOURCE_PERSON_RESPONSE = "person_response"
@@ -32,7 +33,7 @@ class FieldCheck:
     key: str            # CHM_FIELDS key, e.g. "NICK_NAME"
     expected: str       # CHM_FIELDS value, e.g. "nick_name"
     is_core: bool       # True for core profile keys
-    status: str         # STATUS_OK | STATUS_MISSING | STATUS_NOT_CHECKED
+    status: str
     source: str         # where it was (or would have been) looked up
 
 
@@ -68,8 +69,8 @@ def validate_chm_fields(
 
     ``custom_field_names`` is the set of labels from ``/people/fields`` (None if
     the definitions could not be fetched). ``sample_people`` are person
-    responses; with none available, core keys are reported ``not_checked`` --
-    neither OK nor MISSING.
+    responses. Core keys are ``not_checked`` without a sample and
+    ``not_observed`` if no sampled response contains the key.
     """
     core = set(core_keys)
     person_keys = collect_person_keys(sample_people)
@@ -81,7 +82,9 @@ def validate_chm_fields(
             known, source = custom_field_names, SOURCE_PEOPLE_FIELDS
         if known is None:
             status = STATUS_NOT_CHECKED
+        elif expected in known:
+            status = STATUS_OK
         else:
-            status = STATUS_OK if expected in known else STATUS_MISSING
+            status = STATUS_NOT_OBSERVED if key in core else STATUS_MISSING
         results.append(FieldCheck(key, expected, key in core, status, source))
     return results

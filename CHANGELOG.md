@@ -15,16 +15,16 @@
   - New `field_inspector.py` holds the comparison as a pure function,
     `validate_chm_fields`. Custom labels are still checked against
     `/people/fields`; core keys are checked against the keys of the sample
-    person responses (unioned across the two sampled people). With no sample
-    person the core keys are reported `NOT CHECKED` — not OK, not MISSING — and
-    likewise custom labels if no field definitions came back.
+    person responses (unioned across the two sampled people). Core keys absent
+    from the sample are reported `NOT OBSERVED`. Missing samples or field
+    definitions produce `NOT CHECKED` for the corresponding entries.
   - `main.py`: the inspector now fetches the sample people before the mapping
     check (and no longer fetches them a second time). A failed sample fetch is
     logged and marks the run failed, but no longer skips the custom-label check.
     The summary line says how many entries were not checked instead of claiming
     "All CHM_FIELDS matched".
   - New `middleware/tests/test_field_inspector.py` (mock mode): core key
-    present → OK, absent → MISSING; custom label present → OK, absent →
+    present → OK, absent → NOT OBSERVED; custom label present → OK, absent →
     MISSING; no sample person → NOT CHECKED; plus tests that drive the real
     `api-inspect` branch with a fake connector.
 - Fixed `export-church-teams` aborting with `can't compare offset-naive and
