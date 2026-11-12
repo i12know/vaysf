@@ -226,12 +226,6 @@ def test_validation_survives_a_malformed_alias_map(sync_manager, mocker, tmp_pat
 # --------------------------------------------------------------------------
 # Finding 2 — check-consent can credit the merged twin instead of the canonical
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding 2: ConsentChecker scores every WP participant including "
-    "merged rows and keeps the first on a tie, so the consent form can be "
-    "credited to the stale ChMeetings person and never reach the canonical one.",
-)
 def test_check_consent_credits_canonical_person_not_merged_twin(mocker):
     chm = MagicMock()
     chm.authenticate.return_value = True
@@ -272,6 +266,75 @@ def test_check_consent_credits_canonical_person_not_merged_twin(mocker):
 
     credited = [call.args[0] for call in chm.update_person.call_args_list]
     assert credited == ["200"], f"consent was credited to ChM person(s) {credited}"
+
+
+def _consent_checker_with_one_form(mocker, **form_overrides):
+    chm = MagicMock()
+    chm.authenticate.return_value = True
+    chm.update_person.return_value = True
+    chm.get_person.side_effect = lambda chm_id: _make_chm_person(chmeetings_id=chm_id)
+    wp = MagicMock()
+    mocker.patch("sync.consent_checker.time.sleep", return_value=None)
+    checker = ConsentChecker(chm, wp)
+    mocker.patch.object(checker, "_write_audit_file")
+    form = {
+        "First Name": "Jerry",
+        "Last Name": "Phan",
+        "Athlete Mobile Phone": "(562) 555-0101",
+        "Athlete Email": "Jerry@example.com",
+        "Athlete Birthdate": "2008-04-15",
+        "Select one:": "I am 18 or older and am signing this Agreement on my own behalf.",
+        "Full Name of the parents or legal guardian": "",
+        "Email of the parents or legal guardian": "",
+        "Cell phone of the parents or legal guardian": "",
+        "Submission Date": "2026-05-08 10:00:00",
+    }
+    _mock_consent_export(mocker, [{**form, **form_overrides}])
+    return checker, chm, wp
+
+
+def test_check_consent_form_matching_only_retired_registration_credits_canonical(mocker):
+    """Finding 2: the form carries the retired registration's details, so it
+    scores against the merged row only. The alias redirects the credit to the
+    canonical person before the ChMeetings write."""
+    checker, chm, wp = _consent_checker_with_one_form(mocker)
+    mocker.patch(
+        "sync.consent_checker.load_person_aliases_for_reader",
+        return_value={"100": {"canonical_chm_id": "200"}},
+    )
+    stale = {**_make_wp_participant(chmeetings_id="100"), "approval_status": MERGED}
+    canonical = {
+        **_make_wp_participant(
+            chmeetings_id="200",
+            first_name="Gerald",
+            last_name="Pham",
+            email="other@example.com",
+            phone="714-555-0199",
+            birthdate="2007-01-01",
+        ),
+        "participant_id": 2,
+        "approval_status": "validated",
+    }
+    wp.get_participants.side_effect = [[stale, canonical], []]
+
+    checker.run("consent.xlsx")
+
+    assert [call.args[0] for call in chm.update_person.call_args_list] == ["200"]
+    mirrored = [call.args[0] for call in wp.update_participant.call_args_list]
+    assert mirrored == [2], f"consent mirrored onto participant(s) {mirrored}"
+
+
+def test_check_consent_never_writes_to_merged_row_without_alias(mocker):
+    """Finding 2: a merged row whose alias is not loaded is excluded outright."""
+    checker, chm, wp = _consent_checker_with_one_form(mocker)
+    stale = {**_make_wp_participant(chmeetings_id="100"), "approval_status": MERGED}
+    wp.get_participants.side_effect = [[stale], []]
+
+    summary = checker.run("consent.xlsx")
+
+    chm.update_person.assert_not_called()
+    wp.update_participant.assert_not_called()
+    assert summary["unmatched"] == 1
 
 
 # --------------------------------------------------------------------------

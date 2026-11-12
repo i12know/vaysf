@@ -7,7 +7,8 @@ import pandas as pd
 from loguru import logger
 
 from chmeetings.backend_connector import ChMeetingsConnector
-from config import DATA_DIR, EXPORT_COLUMNS, SF_FIELD_IDS
+from config import APPROVAL_STATUS, DATA_DIR, EXPORT_COLUMNS, SF_FIELD_IDS
+from sync.person_aliases import load_person_aliases_for_reader, resolve_chm_id
 from wordpress.frontend_connector import WordPressConnector
 
 
@@ -100,6 +101,9 @@ class ConsentChecker:
         self.chm = chm_connector
         self.wp = wp_connector
         self.output_dir = Path(output_dir or DATA_DIR)
+        # merged WordPress participant_id -> the canonical row that receives
+        # the credit. Rebuilt by every _fetch_participants() call.
+        self._credit_to: Dict[str, Dict[str, Any]] = {}
 
     def load_consent_export(self, path: str) -> List[Dict[str, Any]]:
         """Read and normalize a ChMeetings consent-form export."""
@@ -224,6 +228,22 @@ class ConsentChecker:
                 break
             page += 1
 
+        # `merged` rows are retired duplicate identities (apply-aliases). They
+        # never receive a consent write. A merged row whose alias resolves to an
+        # active row is kept only as a matching proxy, so a form filled in with
+        # the retired registration's details still credits the canonical person;
+        # run() swaps in the canonical row before any ChMeetings write.
+        merged_status = APPROVAL_STATUS["MERGED"]
+        active_by_chm_id = {
+            str(participant.get("chmeetings_id")).strip(): participant
+            for participant in all_participants
+            if participant.get("chmeetings_id")
+            and participant.get("approval_status") != merged_status
+        }
+        self._credit_to = {}
+        aliases = None
+        merged_dropped = 0
+
         candidates = []
         for participant in all_participants:
             if normalized_church_code and str(
@@ -232,7 +252,23 @@ class ConsentChecker:
                 continue
             if not participant.get("chmeetings_id"):
                 continue
+            if participant.get("approval_status") == merged_status:
+                if aliases is None:
+                    aliases = load_person_aliases_for_reader("check-consent")
+                stale_chm_id = str(participant.get("chmeetings_id")).strip()
+                canonical = active_by_chm_id.get(resolve_chm_id(stale_chm_id, aliases))
+                if canonical is None:
+                    merged_dropped += 1
+                    continue
+                self._credit_to[str(participant.get("participant_id"))] = canonical
             candidates.append(participant)
+
+        if merged_dropped or self._credit_to:
+            logger.info(
+                f"[VAY SM] check-consent: {len(self._credit_to)} merged participant row(s) "
+                f"redirect to their canonical row; {merged_dropped} merged row(s) with no "
+                "loaded alias or no active canonical row were excluded."
+            )
 
         logger.info(
             f"Loaded {len(candidates)} WordPress participant candidate(s)"
@@ -386,6 +422,17 @@ class ConsentChecker:
                     )
                 )
                 continue
+
+            canonical_participant = self._credit_to.get(
+                str(best_participant.get("participant_id"))
+            )
+            if canonical_participant is not None:
+                logger.info(
+                    f"[VAY SM] Consent row {consent_row['source_row_number']} matched merged "
+                    f"chm_id={best_participant.get('chmeetings_id')}; crediting canonical "
+                    f"chm_id={canonical_participant.get('chmeetings_id')}"
+                )
+                best_participant = canonical_participant
 
             is_guardian = consent_row.get("signer_type") == "guardian"
             effective_threshold = (
