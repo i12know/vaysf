@@ -90,3 +90,34 @@ def _isolate_person_alias_map(tmp_path, monkeypatch):
         "PERSON_ALIASES_FILE",
         tmp_path / "person_aliases.absent.json",
     )
+
+
+class _StubPhotoResponse:
+    def __init__(self, status_code: int, content_type: str):
+        self.status_code = status_code
+        self.headers = {"Content-Type": content_type}
+
+
+@pytest.fixture(autouse=True)
+def _stub_live_photo_head(monkeypatch):
+    """LIVE_TEST photo checks never reach a real image host.
+
+    In live mode the individual validator sends ``requests.head`` to each
+    participant's photo URL. The tests feed it fixture URLs, and the real image
+    server is private (it answers 403), so the result would depend on network
+    access rather than on the code. A URL naming a missing or broken photo
+    raises a connection error; any other URL is a reachable JPEG. The real
+    ChMeetings and WordPress connectors use ``requests.Session`` and are not
+    affected.
+    """
+    if not _env_flag(LIVE_TEST_ENV):
+        return
+    import requests
+
+    def fake_head(url, *args, **kwargs):
+        lowered = str(url).lower()
+        if any(marker in lowered for marker in ("not-exist", "nonexistent", "broken")):
+            raise requests.ConnectionError(f"stubbed unreachable photo host: {url}")
+        return _StubPhotoResponse(200, "image/jpeg")
+
+    monkeypatch.setattr(requests, "head", fake_head)
