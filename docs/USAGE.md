@@ -242,6 +242,14 @@ rerun to confirm:
 python main.py apply-aliases
 ```
 
+**Precondition for the first `--execute`: the new plugin is live on the site.**
+The guards that keep a `merged` row retired (pastor email link, "Resend Email",
+statistics and the public participants list) ship in plugin **1.1.15**. Install
+`plugins/vaysf.zip` and confirm the Plugins screen in WordPress shows version
+1.1.15 or later *before* running `apply-aliases --execute` for the first time.
+On an older plugin, a pastor's old email link or the admin resend button can
+set a tombstoned participant back to `approved`.
+
 After reviewing the audit, retire the stale participant, approval, roster, and
 open validation-issue rows:
 

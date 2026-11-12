@@ -1,14 +1,14 @@
-"""Reproductions for the canonical-identity validation review (Epic #307, #308-#310).
+"""Regression tests for the canonical-identity validation review (Epic #307, #308-#310).
 
 Every test here asserts the behavior the approved design promises
-(docs/CANONICAL_IDENTITY_RFC.md §4-§5). Each one currently fails against the
-implementation, so it is marked ``xfail(strict=True)``: the suite stays green
-while the finding is open, and the test starts failing loudly (XPASS) the moment
-the finding is fixed, at which point the marker should simply be deleted.
+(docs/CANONICAL_IDENTITY_RFC.md §4-§5). They began as strict-``xfail``
+reproductions of the review findings on the promotion PR (#387); each marker was
+removed in the commit that fixed its finding, and tests were added for the
+findings that had no reproduction (6, 9, 10, 14).
 
-Finding numbers match the review posted on the promotion PR.
-
-No production code is changed by this file.
+Finding numbers match the review posted on the promotion PR. Finding 5 and the
+other plugin changes are PHP only and have no test here (no PHPUnit harness).
+Finding 11 is tracked as a separate issue under Epic #307.
 """
 
 import datetime

@@ -71,6 +71,11 @@
     participant `UPDATE` never overwrites a `merged` row, which closes the
     window between the status read and the write while `apply-aliases
     --execute` is running [4, endpoint notes].
+  - Plugin version bumped to **1.1.15** and `plugins/vaysf.zip` rebuilt from
+    `plugins/vaysf/` (the previous zip predated every `merged` guard). No
+    schema change; `DB_VERSION` stays 1.0.13. `docs/USAGE.md` states "plugin
+    1.1.15 live on the site" as a precondition of the first
+    `apply-aliases --execute` [4].
   - Validation, `check-consent`, the export and the read-only team-group audit
     still run when the alias map is malformed, as decided on #308: they log the
     problem and continue on raw IDs.
