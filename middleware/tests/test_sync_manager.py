@@ -2582,6 +2582,40 @@ def _make_person_data(chm_id: str, is_member: bool) -> dict:
     }
 
 
+@pytest.mark.parametrize("updated_on", ["2026-04-16T07:00:00", "2026-04-16T00:00:00-07:00"])
+def test_sync_participant_writes_updated_on_in_utc(mocker, updated_on):
+    class NonUtcLocalDatetime(datetime.datetime):
+        def astimezone(self, tz=None):
+            if self.tzinfo is None:
+                # Simulate a UTC-07:00 host even when the test runs in UTC.
+                local_tz = datetime.timezone(datetime.timedelta(hours=-7))
+                return self.replace(tzinfo=local_tz).astimezone(tz)
+            return super().astimezone(tz)
+
+    mocker.patch("sync.participants.datetime", wraps=datetime, datetime=NonUtcLocalDatetime)
+    chm_connector = mocker.Mock()
+    chm_connector.get_person.return_value = {
+        **_make_person_data("7001", is_member=True),
+        "updated_on": updated_on,
+    }
+    wordpress_connector = mocker.Mock()
+    wordpress_connector.get_participants.return_value = []
+    wordpress_connector.create_participant.return_value = {"participant_id": 1}
+    syncer = ParticipantSyncer(
+        chm_connector,
+        wordpress_connector,
+        {"participants": {"created": 0, "errors": 0}},
+        {"RPC": {"church_id": 1, "church_code": "RPC"}},
+    )
+    mocker.patch.object(syncer, "_sync_rosters")
+    mocker.patch.object(syncer, "_sync_validation_issues")
+
+    assert syncer._sync_single_participant("7001")
+    wordpress_connector.create_participant.assert_called_once()
+    payload = wordpress_connector.create_participant.call_args.args[0]
+    assert payload["updated_at"] == "2026-04-16 07:00:00"
+
+
 def _setup_flip_test_mocks(sync_manager, mocker, chm_id, person_data, wp_existing):
     """Set up common mocks for membership-flip tests and return (updated_calls, mock_update_person)."""
     sync_manager.churches_cache["RPC"] = {"church_code": "RPC", "church_id": 1, "pastor_email": "p@rpc.org"}
