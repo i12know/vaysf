@@ -11,6 +11,7 @@ Finding numbers match the review posted on the promotion PR.
 No production code is changed by this file.
 """
 
+import datetime
 import json
 from unittest.mock import MagicMock
 
@@ -442,6 +443,70 @@ def test_apply_aliases_refuses_when_canonical_row_is_merged(wp_connector, mocker
     wp_connector.update_validation_issue.assert_not_called()
     (row,) = write_audit.call_args.args[0]
     assert row["Outcome"] == "canonical_is_merged"
+
+
+# --------------------------------------------------------------------------
+# Finding 9 — the approval-mismatch record must survive the confirming rerun
+# --------------------------------------------------------------------------
+def test_apply_aliases_audit_file_is_new_for_every_run(tmp_path, mocker):
+    import sync.alias_reconciler as reconciler
+
+    mocker.patch.object(reconciler, "DATA_DIR", tmp_path)
+    fixed = datetime.datetime(2026, 11, 12, 14, 30, 5)
+
+    first = reconciler._audit_path(fixed)
+    assert first.name == "alias_reconciliation_20261112_143005_audit.xlsx"
+    first.write_bytes(b"run one")
+    second = reconciler._audit_path(fixed)
+    assert second != first and second.name.endswith("_audit.xlsx")
+
+    written = reconciler._write_audit([{"Stale ChM ID": "100", "Outcome": "already_merged"}])
+    assert written is not None and written.exists()
+    assert first.read_bytes() == b"run one", "an earlier run's audit was overwritten"
+
+
+def test_already_merged_row_still_reports_the_approval_mismatch(wp_connector, mocker):
+    _wire_participants(
+        wp_connector,
+        stale=_participant("100", 10, MERGED),
+        canonical=_participant("200", 11, "validated"),
+    )
+    wp_connector.get_approvals.return_value = [
+        {"approval_id": 2, "approval_status": MERGED, "approval_date": "2026-06-01 09:00:00"}
+    ]
+    write_audit = mocker.patch("sync.alias_reconciler._write_audit")
+
+    assert apply_aliases(execute=False) is True
+
+    (row,) = write_audit.call_args.args[0]
+    assert row["Outcome"] == "already_merged"
+    assert row["Approval Mismatch"] == "possible"
+    assert row["Stale Pastor Decision Date"] == "2026-06-01 09:00:00"
+    assert row["Canonical Approval Status"] == "validated"
+    wp_connector.update_participant.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("approval_date", "canonical_status"),
+    [(None, "validated"), ("2026-06-01 09:00:00", "approved")],
+)
+def test_already_merged_row_reports_no_mismatch_when_nothing_was_lost(
+    wp_connector, mocker, approval_date, canonical_status
+):
+    _wire_participants(
+        wp_connector,
+        stale=_participant("100", 10, MERGED),
+        canonical=_participant("200", 11, canonical_status),
+    )
+    wp_connector.get_approvals.return_value = [
+        {"approval_id": 2, "approval_status": MERGED, "approval_date": approval_date}
+    ]
+    write_audit = mocker.patch("sync.alias_reconciler._write_audit")
+
+    assert apply_aliases(execute=False) is True
+
+    (row,) = write_audit.call_args.args[0]
+    assert row["Approval Mismatch"] == "no"
 
 
 # --------------------------------------------------------------------------

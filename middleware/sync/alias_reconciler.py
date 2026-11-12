@@ -3,7 +3,8 @@
 import datetime
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import requests
@@ -14,7 +15,23 @@ from config import APPROVAL_STATUS, DATA_DIR, VALIDATION_STATUS
 from sync.person_aliases import AliasMap, PersonAliasError, load_person_aliases, resolve_chm_id
 from wordpress.frontend_connector import WordPressConnector
 
-AUDIT_FILE = DATA_DIR / "alias_reconciliation_audit.xlsx"
+# One workbook per run, e.g. alias_reconciliation_20261112_143005_audit.xlsx.
+# The name keeps the `_audit.xlsx` suffix so it stays git-ignored
+# (`middleware/data/*_audit.xlsx`). A run never overwrites an earlier run's
+# record: the report that lists who lost a pastor approval must survive the
+# confirming rerun.
+AUDIT_FILE_PREFIX = "alias_reconciliation_"
+AUDIT_FILE_SUFFIX = "_audit.xlsx"
+
+
+def _audit_path(now: Optional[datetime.datetime] = None) -> Path:
+    stamp = (now or datetime.datetime.now()).strftime("%Y%m%d_%H%M%S")
+    path = DATA_DIR / f"{AUDIT_FILE_PREFIX}{stamp}{AUDIT_FILE_SUFFIX}"
+    counter = 2
+    while path.exists():
+        path = DATA_DIR / f"{AUDIT_FILE_PREFIX}{stamp}_{counter}{AUDIT_FILE_SUFFIX}"
+        counter += 1
+    return path
 
 
 # Outcomes that write nothing but still need the operator: the command exits
@@ -221,6 +238,63 @@ def _apply_state(
     return success
 
 
+def _report_surviving_mismatch(
+    connector: Any,
+    stale_chm_id: str,
+    canonical_chm_id: str,
+    state: ReconcileState,
+    row: Dict[str, Any],
+) -> None:
+    """Keep reporting a lost pastor decision after the stale row is tombstoned.
+
+    Once the stale participant reads `merged` its old status is gone, but its
+    approval row keeps `approval_date`. That date is set for a denial as well as
+    an approval, so the result is "possible", not "yes": the operator checks the
+    canonical participant, which is the one that needs the pastor's decision.
+    """
+    decision_dates = sorted(
+        str(approval.get("approval_date"))
+        for approval in state.approvals
+        if approval.get("approval_date")
+    )
+    if not decision_dates:
+        # Nothing was lost, so the canonical row is not needed: residual work
+        # on a tombstone must not depend on an extra read.
+        row["Approval Mismatch"] = "no"
+        return
+    try:
+        canonical_rows = _participant_rows(connector, canonical_chm_id)
+    except ReconcileReadError as exc:
+        # Reporting only. A failed lookup must not block finishing the tombstone.
+        logger.warning(f"[VAY SM] {exc}; approval mismatch reported as possible")
+        row.update(
+            {
+                "Canonical Approval Status": "unknown (read failed)",
+                "Stale Pastor Decision Date": decision_dates[-1],
+                "Approval Mismatch": "possible",
+            }
+        )
+        return
+    canonical_status = canonical_rows[0].get("approval_status", "") if canonical_rows else ""
+    row.update(
+        {
+            "Canonical WP Participant ID": (
+                canonical_rows[0].get("participant_id", "") if canonical_rows else ""
+            ),
+            "Canonical Approval Status": canonical_status,
+            "Stale Pastor Decision Date": decision_dates[-1],
+        }
+    )
+    possible = canonical_status != APPROVAL_STATUS["APPROVED"]
+    row["Approval Mismatch"] = "possible" if possible else "no"
+    if possible:
+        logger.warning(
+            f"[VAY SM] Possible approval mismatch for merged chm_id={stale_chm_id}: its "
+            f"approval row records a pastor decision on {decision_dates[-1]} and canonical "
+            f"chm_id={canonical_chm_id} is '{canonical_status or 'not in WordPress'}', not approved"
+        )
+
+
 def _reconcile_one(
     connector: Any,
     stale_chm_id: str,
@@ -258,6 +332,7 @@ def _reconcile_one(
     already_merged = stale.get("approval_status") == APPROVAL_STATUS["MERGED"]
     if already_merged:
         state = _state(connector, participant_id)
+        _report_surviving_mismatch(connector, stale_chm_id, canonical_chm_id, state, row)
         if not state.has_work:
             row["Outcome"] = "already_merged"
             return row
@@ -323,13 +398,17 @@ def _reconcile_one(
     return row
 
 
-def _write_audit(rows: List[Dict[str, Any]]) -> None:
+def _write_audit(rows: List[Dict[str, Any]]) -> Optional[Path]:
+    """Write this run's audit workbook; earlier runs' files are never touched."""
+    audit_file = _audit_path()
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame(rows).to_excel(AUDIT_FILE, index=False)
-        logger.info(f"Alias reconciliation audit written to {AUDIT_FILE}")
-    except PermissionError:
-        logger.warning(f"Could not write {AUDIT_FILE}; close it and rerun the command")
+        pd.DataFrame(rows).to_excel(audit_file, index=False)
+        logger.info(f"Alias reconciliation audit written to {audit_file}")
+        return audit_file
+    except OSError as exc:
+        logger.error(f"[VAY SM] Could not write alias reconciliation audit {audit_file}: {exc}")
+        return None
 
 
 def apply_aliases(execute: bool = False) -> bool:

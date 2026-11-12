@@ -221,8 +221,11 @@ by `PERSON_ALIASES_FILE`:
 }
 ```
 
-Preview the WordPress cleanup first. This writes
-`data/alias_reconciliation_audit.xlsx` and makes no API changes:
+Preview the WordPress cleanup first. This makes no API changes. Every run,
+preview or `--execute`, writes its own workbook
+`data/alias_reconciliation_<YYYYMMDD_HHMMSS>_audit.xlsx` and never overwrites an
+earlier one, so the report from the `--execute` run is still there after you
+rerun to confirm:
 
 ```bash
 python main.py apply-aliases
@@ -237,6 +240,13 @@ python main.py apply-aliases --execute
 
 Keep the alias permanently so future participant syncs resolve the stale ID
 before fetching ChMeetings.
+
+Read the `Approval Mismatch` column before closing the workbook. `yes` means the
+stale row was pastor-approved and the canonical row is not: the approval is not
+carried over, so that athlete needs a new pastor approval. On a later run the
+stale row already reads `merged`; the column then says `possible` when its old
+approval row still records a pastor decision date (set for a denial as well as
+an approval) and the canonical row is still not approved.
 
 **Reversing an alias.** A tombstone is reversible, but only by hand: no command
 un-merges a row, and sync refuses to touch a `merged` row on its own (it logs a
