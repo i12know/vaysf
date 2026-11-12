@@ -17,6 +17,11 @@ from wordpress.frontend_connector import WordPressConnector
 AUDIT_FILE = DATA_DIR / "alias_reconciliation_audit.xlsx"
 
 
+# Outcomes that write nothing but still need the operator: the command exits
+# non-zero so they cannot scroll past unnoticed.
+_FAILING_OUTCOMES = frozenset({"canonical_is_merged"})
+
+
 class ReconcileReadError(RuntimeError):
     """A WordPress read failed and must not be mistaken for an empty result."""
 
@@ -272,6 +277,25 @@ def _reconcile_one(
         return row
 
     canonical = canonical_rows[0]
+    if canonical.get("approval_status") == APPROVAL_STATUS["MERGED"]:
+        # The "canonical" row is itself a tombstone: the alias points at a
+        # retired identity (typically an executed alias whose direction was
+        # later reversed in the map). Tombstoning the stale row too would leave
+        # the athlete with no active row at all, so nothing is written.
+        row.update(
+            {
+                "Canonical WP Participant ID": canonical.get("participant_id", ""),
+                "Canonical Approval Status": canonical.get("approval_status", ""),
+                "Outcome": "canonical_is_merged",
+            }
+        )
+        logger.error(
+            f"[VAY SM] Alias {stale_chm_id} -> {canonical_chm_id} not applied: the canonical "
+            f"WordPress participant {canonical.get('participant_id')} is itself 'merged'. "
+            "Nothing was written. See docs/USAGE.md, 'Reversing an alias'."
+        )
+        return row
+
     state = _state(connector, participant_id)
     row.update(
         {
@@ -342,4 +366,6 @@ def apply_aliases(execute: bool = False) -> bool:
 
     outcomes = Counter(row["Outcome"] for row in rows)
     logger.info(f"Alias reconciliation complete: {dict(outcomes)}")
-    return not any(outcome.startswith("error") for outcome in outcomes)
+    return not any(
+        outcome.startswith("error") or outcome in _FAILING_OUTCOMES for outcome in outcomes
+    )

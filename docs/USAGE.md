@@ -238,6 +238,35 @@ python main.py apply-aliases --execute
 Keep the alias permanently so future participant syncs resolve the stale ID
 before fetching ChMeetings.
 
+**Reversing an alias.** A tombstone is reversible, but only by hand: no command
+un-merges a row, and sync refuses to touch a `merged` row on its own (it logs a
+`[VAY SM]` warning and counts the participant as an error). `apply-aliases` also
+refuses to act when the *canonical* row is itself `merged` (outcome
+`canonical_is_merged`, nothing written, non-zero exit) — that is what you see if
+you flip an already-executed entry from `A → B` to `B → A`. To undo an executed
+alias `A → B` and bring row A back:
+
+1. Remove the `A` entry from the alias file. Do not add the reversed entry yet.
+2. Restore A's participant row and its approval row from `merged` to `pending`.
+   From `middleware/`, in interactive Python (IDs come from the audit workbook):
+
+   ```python
+   from wordpress.frontend_connector import WordPressConnector
+   with WordPressConnector() as wp:
+       wp.update_participant(<A_wp_participant_id>, {"approval_status": "pending"})
+       for approval in wp.get_approvals(params={"participant_id": <A_wp_participant_id>}):
+           wp.update_approval(approval["approval_id"], {"approval_status": "pending"})
+   ```
+
+3. Run `python main.py sync --type participants --chm-id <A>`. This recomputes
+   A's status and recreates its rosters; validation issues reopen on the next
+   `sync --type validation`.
+4. The pastor approval is **not** restored. Once A reaches `pending_approval`,
+   use "Resend Email" on the Approvals admin page so the pastor gets a fresh
+   link, then regenerate A's badge after approval.
+5. Only if B is the real duplicate: now add `B → A` to the alias file and run
+   `apply-aliases`, review the audit, then `apply-aliases --execute`.
+
 **If the alias file is malformed.** A missing alias file is normal and simply
 means no aliases are configured. An *existing* file that will not parse is
 treated as operator error and fails closed, because identity data cannot be

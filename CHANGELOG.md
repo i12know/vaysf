@@ -32,6 +32,9 @@
     WordPress failure (`tenacity.RetryError`) as one failed write, keeps going
     with the remaining aliases and always writes the audit file. If the
     tombstone itself does not land, nothing else is touched for that alias [7].
+  - `apply-aliases` writes nothing when the canonical WordPress row is itself
+    `merged`: outcome `canonical_is_merged`, logged as an error, non-zero exit.
+    `docs/USAGE.md` now documents how to reverse an alias by hand [8].
   - Validation, `check-consent`, the export and the read-only team-group audit
     still run when the alias map is malformed, as decided on #308: they log the
     problem and continue on raw IDs.

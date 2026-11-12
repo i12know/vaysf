@@ -424,21 +424,24 @@ def test_apply_aliases_writes_audit_even_when_the_run_aborts(wp_connector, mocke
 # Finding 8 — apply-aliases tombstones the stale row even when the "canonical"
 # WordPress row is itself a merged tombstone
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding 8: _reconcile_one never checks that the canonical WP row is "
-    "active; reversing an already-executed alias leaves both rows merged.",
-)
-def test_apply_aliases_refuses_when_canonical_row_is_merged(wp_connector):
+def test_apply_aliases_refuses_when_canonical_row_is_merged(wp_connector, mocker):
     _wire_participants(
         wp_connector,
         stale=_participant("100", 10, "approved"),
         canonical=_participant("200", 11, MERGED),
     )
+    wp_connector.get_rosters.return_value = [{"roster_id": 1}]
+    wp_connector.get_approvals.return_value = [{"approval_id": 2, "approval_status": "approved"}]
+    write_audit = mocker.patch("sync.alias_reconciler._write_audit")
 
-    apply_aliases(execute=True)
+    assert apply_aliases(execute=True) is False
 
     wp_connector.update_participant.assert_not_called()
+    wp_connector.delete_roster.assert_not_called()
+    wp_connector.update_approval.assert_not_called()
+    wp_connector.update_validation_issue.assert_not_called()
+    (row,) = write_audit.call_args.args[0]
+    assert row["Outcome"] == "canonical_is_merged"
 
 
 # --------------------------------------------------------------------------
