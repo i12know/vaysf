@@ -62,6 +62,9 @@
     `status="merged"` is asked for. The admin participants list still shows
     them [5]. PHP only; there is no PHPUnit harness, so this is linted
     (`php -l`) but not executed by a test.
+  - Plugin: `vaysf_resend_approval_email()` itself refuses a `merged` approval
+    or participant (re-read from the database), so a future caller cannot
+    revive a tombstone [15].
   - Validation, `check-consent`, the export and the read-only team-group audit
     still run when the alias map is malformed, as decided on #308: they log the
     problem and continue on raw IDs.
