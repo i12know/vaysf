@@ -11,6 +11,26 @@
   still means no aliases, a malformed file blocks `apply-aliases` and participant
   sync, `run_full_sync()` validates the map before any sub-step, and commands that
   do not consume the map — `sync-churches` among them — remain available.
+- Canonical identity hardening from the promotion review on PR #387 (#308-#310).
+  Each item has a mock-mode test; the review's finding number is in brackets.
+  - Participant sync never rewrites a WordPress row that is already `merged`: it
+    logs a `[VAY SM]` warning, counts the participant as an error and leaves the
+    row untouched, so a tombstone holds even when its alias is not loaded [3].
+  - `sync --type validation` excludes `merged` rows from every team and church
+    rule and resolves the eligible Team-group ID set through the alias map [1].
+  - `check-consent` never writes to a `merged` row. A form that matches the
+    retired registration is credited to the canonical person; a merged row with
+    no loaded alias is excluded [2].
+  - Team-group member IDs are resolved through the alias map and de-duplicated
+    in `export-church-teams` and in validation eligibility, and
+    `audit-team-groups` reports a 404 membership that has an alias as `aliased`
+    and never removes it (`--remove-orphans` refuses to run on a malformed map)
+    [6]. **This supersedes the Discussion #368 choice to keep the export off the
+    alias map.** That choice assumed WordPress state is always reconciled; a
+    stale ID that never had a WordPress row was still listed and billed.
+  - Validation, `check-consent`, the export and the read-only team-group audit
+    still run when the alias map is malformed, as decided on #308: they log the
+    problem and continue on raw IDs.
 - Fixed `export-church-teams` aborting with `can't compare offset-naive and
   offset-aware datetimes` when one church's Team group mixed ChMeetings
   `updated_on` formats. `ChurchTeamsExporter._fetch_chm_church_team_data` now

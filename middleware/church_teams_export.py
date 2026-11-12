@@ -38,6 +38,7 @@ from wordpress.frontend_connector import WordPressConnector
 from tenacity import RetryError
 from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 from church_teams_report import ChurchTeamsReportMixin
+from sync.person_aliases import load_person_aliases_for_reader, resolve_chm_id
 from church_teams_scheduling import delegate_schedule_workbook_methods
 
 _CHM_UPDATED_ON_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -180,6 +181,14 @@ class ChurchTeamsExporter(ChurchTeamsReportMixin):
         ]
         logger.info(f"Found {len(team_groups)} ChMeetings groups with prefix '{Config.TEAM_PREFIX} '.")
 
+        # Team groups are never edited by apply-aliases, so member IDs are
+        # resolved through the person alias map and de-duplicated per church,
+        # the same way the participant sync loop does. Without this, a stale ID
+        # that never had a WordPress row is listed and billed as an athlete, and
+        # a canonical person reached only through a stale membership is missed.
+        person_aliases = load_person_aliases_for_reader("export-church-teams")
+        seen_ids_by_church: Dict[str, set] = {}
+
         for group in team_groups:
             group_name = group.get("name", "")
             group_id = str(group.get("id"))
@@ -202,10 +211,27 @@ class ChurchTeamsExporter(ChurchTeamsReportMixin):
                 continue
 
             for person_summary in group_people_summaries:
-                person_id_str = str(person_summary.get("person_id")) # API uses person_id in group people
+                raw_person_id = person_summary.get("person_id")  # API uses person_id in group people
+                person_id_str = str(raw_person_id).strip() if raw_person_id is not None else ""
                 if not person_id_str:
                     logger.warning(f"Missing person_id in summary from group '{group_name}': {person_summary}")
                     continue
+
+                canonical_id = resolve_chm_id(person_id_str, person_aliases)
+                if canonical_id != person_id_str:
+                    logger.info(
+                        f"[VAY SM] Alias: stale chm_id {person_id_str} in '{group_name}' "
+                        f"resolved to {canonical_id} for export"
+                    )
+                    person_id_str = canonical_id
+                seen_ids = seen_ids_by_church.setdefault(church_code, set())
+                if person_id_str in seen_ids:
+                    logger.info(
+                        f"[VAY SM] Skipping duplicate Team-group membership for "
+                        f"canonical chm_id={person_id_str} in church {church_code}"
+                    )
+                    continue
+                seen_ids.add(person_id_str)
 
                 person_details_response = self.chm_connector.get_person(person_id_str)
                 if not person_details_response:

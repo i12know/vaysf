@@ -80,6 +80,67 @@ def test_fetch_chm_church_team_data_skips_orphaned_memberships(mock_connectors):
     assert exporter.last_orphaned_memberships_by_church == {"RPC": 1}
 
 
+def _alias_export_person(person_id: str) -> dict:
+    return {
+        "id": person_id,
+        "first_name": "Ngoc",
+        "last_name": "Le",
+        "updated_on": "2026-05-07T22:17:30+00:00",
+        "additional_fields": [{"field_name": CHM_FIELDS["ROLES"], "value": "Athlete"}],
+    }
+
+
+def test_fetch_chm_church_team_data_resolves_and_dedups_aliased_members(mock_connectors, mocker):
+    """PR #387 finding 6A: a stale ID still in the Team group is exported as its
+    canonical person, once — never as a second (billable) contact row."""
+    chm_connector, _ = mock_connectors
+    mocker.patch(
+        "church_teams_export.load_person_aliases_for_reader",
+        return_value={"100": {"canonical_chm_id": "200"}},
+    )
+    chm_connector.get_groups.return_value = [{"id": "1", "name": "Team WAG"}]
+    chm_connector.get_group_people.return_value = [{"person_id": "100"}, {"person_id": "200"}]
+
+    def fake_get_person(person_id):
+        chm_connector.last_get_person_status = "ok"
+        return _alias_export_person(person_id)
+
+    chm_connector.get_person.side_effect = fake_get_person
+
+    exporter = ChurchTeamsExporter()
+    data = exporter._fetch_chm_church_team_data()
+
+    assert [row["ChMeetings ID"] for row in data["WAG"]] == ["200"]
+    chm_connector.get_person.assert_called_once_with("200")
+
+
+def test_fetch_chm_church_team_data_reaches_survivor_through_retired_membership(mock_connectors, mocker):
+    """PR #387 finding 6B: only the retired ID is listed (it would 404); the
+    survivor is exported through the alias and nothing is counted as orphaned."""
+    chm_connector, _ = mock_connectors
+    mocker.patch(
+        "church_teams_export.load_person_aliases_for_reader",
+        return_value={"100": {"canonical_chm_id": "200"}},
+    )
+    chm_connector.get_groups.return_value = [{"id": "1", "name": "Team WAG"}]
+    chm_connector.get_group_people.return_value = [{"person_id": "100"}]
+
+    def fake_get_person(person_id):
+        if person_id == "100":
+            chm_connector.last_get_person_status = "not_found"
+            return None
+        chm_connector.last_get_person_status = "ok"
+        return _alias_export_person(person_id)
+
+    chm_connector.get_person.side_effect = fake_get_person
+
+    exporter = ChurchTeamsExporter()
+    data = exporter._fetch_chm_church_team_data()
+
+    assert [row["ChMeetings ID"] for row in data["WAG"]] == ["200"]
+    assert exporter.last_orphaned_memberships_by_church == {}
+
+
 def test_fetch_chm_church_team_data_tolerates_null_email(mock_connectors):
     chm_connector, _ = mock_connectors
 
