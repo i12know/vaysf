@@ -45,12 +45,6 @@ MERGED = APPROVAL_STATUS["MERGED"]
 # --------------------------------------------------------------------------
 # Finding 3 — participant sync overwrites a `merged` tombstone
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding 3: _sync_single_participant has no guard for a WP row whose "
-    "approval_status is 'merged'; when the alias is not applied (alias file not "
-    "found -> empty map, alias removed or reversed) the tombstone is overwritten.",
-)
 def test_sync_never_reactivates_a_merged_row_when_alias_is_absent(sync_manager, mocker):
     mocker.patch("sync.participants.Config.SPORTS_FEST_DATE", "2026-07-18")
     chm_id = "7001"
@@ -80,7 +74,11 @@ def test_sync_never_reactivates_a_merged_row_when_alias_is_absent(sync_manager, 
     # was not found (missing file == empty map) or the entry was removed.
     syncer.person_aliases = {}
 
-    syncer._sync_single_participant(chm_id)
+    errors_before = sync_manager.stats["participants"]["errors"]
+
+    assert syncer._sync_single_participant(chm_id) is False
+    assert sync_manager.stats["participants"]["errors"] == errors_before + 1
+    assert updated_calls == [], "a merged tombstone must never be rewritten"
 
     statuses_written = [
         data.get("approval_status")

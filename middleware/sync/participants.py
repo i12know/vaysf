@@ -912,6 +912,25 @@ class ParticipantSyncer:
         participant_in_wp_list = self.wordpress_connector.get_participants({"chmeetings_id": mapped["chmeetings_id"]})
         participant_in_wp = (participant_in_wp_list[0] if participant_in_wp_list else None)
 
+        # A `merged` row is a tombstone written by apply-aliases. It must hold on
+        # its own: the alias that explains it may not be loaded for this run
+        # (file missing on this machine, entry removed, direction reversed), and
+        # falling through would recompute its status and recreate its rosters.
+        # Never rewrite it; fail the participant loudly so the run reports it.
+        if participant_in_wp and participant_in_wp.get("approval_status") == APPROVAL_STATUS["MERGED"]:
+            logger.warning(
+                f"[VAY SM] Refusing to sync chm_id={chm_id}: WordPress participant "
+                f"{participant_in_wp.get('participant_id')} is a 'merged' tombstone but no "
+                "person alias redirected this ID. Restore the alias entry in the person alias "
+                "map (see the 'Loaded person aliases' log line for the file in use), or "
+                "reverse the merge deliberately (docs/USAGE.md, 'Reversing an alias'). "
+                "The row was left untouched."
+            )
+            self.stats["participants"]["errors"] += 1
+            if chm_id == target_chm_id_for_debug:
+                logger.debug(f"[_SYNC_SINGLE_PARTICIPANT - {chm_id}] END PROCESSING (MERGED TOMBSTONE)")
+            return False
+
         # Normalize `mapped` into its effective shape BEFORE the identity drift
         # comparison below, in the same order the WordPress payload is built.
         # WordPress only ever stores the post-cutoff, post-self-heal shape; if the
