@@ -1147,6 +1147,8 @@ class VAYSF_Shortcodes {
                 return 'status-validated';
             case 'pending_approval':
                 return 'status-pending-approval';
+            case 'merged':
+                return 'status-merged';
             default:
                 return 'status-pending';
         }
@@ -1666,6 +1668,11 @@ class VAYSF_Shortcodes {
                 .status-pending {
                     background-color: #e2e3e5;
                     color: #383d41;
+                }
+
+                .status-merged {
+                    color: #55595c;
+                    text-decoration: line-through;
                 }
 
                 .vaysf-live-schedule-filters,

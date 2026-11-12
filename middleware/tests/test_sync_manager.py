@@ -40,6 +40,20 @@ def sync_manager(mocker):
     yield manager
     manager.close()
 
+
+@pytest.fixture
+def no_live_team_group_scan(sync_manager, mocker):
+    """Keep validate_data() tests off live ChMeetings Team groups.
+
+    These tests feed validate_data() hand-built WordPress rows. In LIVE_TEST
+    mode the sync_manager fixture holds a real ChMeetings connector, and the
+    eligibility filter would read every live Team group and drop the synthetic
+    rows. ``None`` is the "snapshot unavailable" result mock mode already gets,
+    which keeps the unfiltered WordPress fallback.
+    """
+    mocker.patch.object(sync_manager, "_load_current_eligible_chm_ids", return_value=None)
+    return sync_manager
+
 def test_sync_manager_init(sync_manager):
     """Test SyncManager initialization."""
     assert sync_manager is not None, "SyncManager failed to initialize"
@@ -809,7 +823,7 @@ def test_participant_by_chmeetings_id(sync_manager, mocker, mock_chmeetings_data
         not_found = (sync_manager.wordpress_connector.get_participants({"chmeetings_id": "999999"}) or [None])[0]
         assert not_found is None, "Should return None for unknown chmeetings_id"
 
-def test_validate_data_pagination(sync_manager, mocker):
+def test_validate_data_pagination(no_live_team_group_scan, sync_manager, mocker):
     """validate_data() must fetch ALL participants across pages, not just the first page.
     Runs in both mock and live mode — all external calls are patched by this test itself."""
 
@@ -853,7 +867,7 @@ def test_validate_data_pagination(sync_manager, mocker):
     )
 
 
-def test_validate_data_syncs_team_issues_idempotently(sync_manager, mocker):
+def test_validate_data_syncs_team_issues_idempotently(no_live_team_group_scan, sync_manager, mocker):
     """Repeated validation should reuse matching TEAM issues and resolve stale ones."""
     participants = [
         {"participant_id": 1, "church_id": 1, "is_church_member": False,
@@ -923,7 +937,7 @@ def test_validate_data_syncs_team_issues_idempotently(sync_manager, mocker):
     assert sync_manager.stats["validation_issues"]["resolved"] == 1
 
 
-def test_validate_data_self_heals_orphaned_individual_issues(sync_manager, mocker):
+def test_validate_data_self_heals_orphaned_individual_issues(no_live_team_group_scan, sync_manager, mocker):
     """Open INDIVIDUAL issues should auto-resolve when the linked ChMeetings person now 404s."""
     participants = [
         {
@@ -984,7 +998,7 @@ def test_validate_data_self_heals_orphaned_individual_issues(sync_manager, mocke
     assert sync_manager.stats["validation_issues"]["resolved"] == 1
 
 
-def test_validate_data_resolves_church_id_from_church_code(sync_manager, mocker):
+def test_validate_data_resolves_church_id_from_church_code(no_live_team_group_scan, sync_manager, mocker):
     """TEAM validation should work with live-shaped WP participants that only include church_code."""
     participants = [
         {
@@ -1068,7 +1082,7 @@ def test_validate_data_resolves_church_id_from_church_code(sync_manager, mocker)
     assert issue_payload["rule_level"] == "TEAM"
 
 
-def test_validate_data_creates_participant_scoped_team_warning(sync_manager, mocker):
+def test_validate_data_creates_participant_scoped_team_warning(no_live_team_group_scan, sync_manager, mocker):
     """Reciprocal doubles-partner mismatches should sync as TEAM warnings with participant_id."""
     participants = [
         {
@@ -1127,7 +1141,7 @@ def test_validate_data_creates_participant_scoped_team_warning(sync_manager, moc
     assert warning_payload["severity"] == "WARNING"
 
 
-def test_validate_data_persists_roster_derived_missing_partner_issue(sync_manager, mocker):
+def test_validate_data_persists_roster_derived_missing_partner_issue(no_live_team_group_scan, sync_manager, mocker):
     """Scheduler-visible roster failures must be persisted for Church Reps."""
     participants = [
         {
@@ -1190,7 +1204,7 @@ def test_validate_data_persists_roster_derived_missing_partner_issue(sync_manage
     assert issue_payload["sport_format"] == "Women Double"
 
 
-def test_validate_data_resolves_roster_partner_issue_after_correction(sync_manager, mocker):
+def test_validate_data_resolves_roster_partner_issue_after_correction(no_live_team_group_scan, sync_manager, mocker):
     """A corrected reciprocal roster resolves the previously persisted issue."""
     participants = [
         {
@@ -1577,7 +1591,7 @@ def test_validate_data_keeps_ineligible_partner_as_actionable_issue(
     assert "Matthew Chang" in issue_payload["issue_description"]
 
 
-def test_validate_data_creates_church_level_issue(sync_manager, mocker):
+def test_validate_data_creates_church_level_issue(no_live_team_group_scan, sync_manager, mocker):
     """Church-level entry limits should sync as CHURCH validation issues."""
     participants = [
         {
@@ -1618,7 +1632,7 @@ def test_validate_data_creates_church_level_issue(sync_manager, mocker):
     assert issue_payload["rule_code"] == "MAX_CHURCH_BADMINTON_MEN_SINGLE"
 
 
-def test_validate_data_creates_church_team_cap_issue_from_rosters(sync_manager, mocker):
+def test_validate_data_creates_church_team_cap_issue_from_rosters(no_live_team_group_scan, sync_manager, mocker):
     """Church-level team caps should use roster team_order data when available."""
     participants = [
         {
@@ -2272,6 +2286,27 @@ def test_sync_approvals_targeted_skips_non_approved(sync_manager, mocker):
     mock_get_approvals.assert_not_called()
     mock_update.assert_not_called()
 
+
+def test_sync_approvals_targeted_skips_merged(sync_manager, mocker):
+    participant = {
+        "participant_id": 75,
+        "chmeetings_id": "4363699",
+        "approval_status": "merged",
+        "first_name": "Janice",
+        "last_name": "Vu",
+    }
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "get_participants",
+        return_value=[participant],
+    )
+    get_groups = mocker.patch.object(sync_manager.chm_connector, "get_groups")
+    get_approvals = mocker.patch.object(sync_manager.wordpress_connector, "get_approvals")
+
+    assert sync_manager.sync_approvals_to_chmeetings(chm_id_to_target="4363699") is True
+    get_groups.assert_not_called()
+    get_approvals.assert_not_called()
+
 def test_sync_rosters_soccer_coed_exhibition(sync_manager, mocker):
     """Soccer - Coed Exhibition arrives via the other_events checkbox; the comma-split
     loop must produce a single roster row with sport_format=Team and sport_gender=Mixed,
@@ -2520,6 +2555,14 @@ def test_sync_rosters_deletes_duplicate_current_rosters(sync_manager, mocker):
         sync_manager.wordpress_connector,
         "delete_roster",
         return_value=True,
+    )
+
+    # The kept roster is refreshed in place; without this mock LIVE_TEST mode
+    # would send that PUT to the real WordPress site.
+    mocker.patch.object(
+        sync_manager.wordpress_connector,
+        "update_roster",
+        return_value={"roster_id": "10"},
     )
 
     participant_syncer._sync_rosters("131", participant)

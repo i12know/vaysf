@@ -404,6 +404,8 @@ function vaysf_format_approval_status($status) {
             return '<span class="approval-status status-validated">' . esc_html__('Validated', 'vaysf') . '</span>';
         case 'pending_approval':
             return '<span class="approval-status status-pending-approval">' . esc_html__('Pending Approval', 'vaysf') . '</span>';
+        case 'merged':
+            return '<span class="approval-status status-merged">' . esc_html__('Merged', 'vaysf') . '</span>';
         case 'pending':
         default:
             return '<span class="approval-status status-pending">' . esc_html__('Pending', 'vaysf') . '</span>';
@@ -831,7 +833,33 @@ function vaysf_send_email($to, $subject, $message, $args = array()) {
  */
 function vaysf_resend_approval_email($approval) {
     global $wpdb;
-    
+
+    // A 'merged' approval or participant is a retired duplicate identity
+    // (apply-aliases tombstone). Resending would reset the approval to
+    // 'pending' with a fresh token and bring the tombstone back to life, so the
+    // guard lives here and not only in the admin page that calls this today.
+    // Re-read both statuses: the caller's array may be stale or incomplete.
+    $approval_id = isset($approval['approval_id']) ? (int) $approval['approval_id'] : 0;
+    if ($approval_id <= 0) {
+        return false;
+    }
+    $merged_guard_approvals = vaysf_get_table_name('approvals');
+    $merged_guard_participants = vaysf_get_table_name('participants');
+    $current = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT a.approval_status AS approval_status, p.approval_status AS participant_approval_status
+             FROM $merged_guard_approvals a
+             LEFT JOIN $merged_guard_participants p ON a.participant_id = p.participant_id
+             WHERE a.approval_id = %d",
+            $approval_id
+        ),
+        ARRAY_A
+    );
+    if ($current && ($current['approval_status'] === 'merged' || $current['participant_approval_status'] === 'merged')) {
+        error_log('VAYSF: Refusing to resend approval email for merged record - approval ID: ' . $approval_id);
+        return false;
+    }
+
     // Generate fresh token and expiry date
     $new_token = wp_generate_uuid4();
     $token_expiry_days = get_option('vaysf_token_expiry_days', 7);

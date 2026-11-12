@@ -17,6 +17,12 @@ from chmeetings.backend_connector import ChMeetingsConnector, CHM_MIN_REQUEST_IN
 from wordpress.frontend_connector import WordPressConnector
 from sync.churches import ChurchSyncer
 from sync.participants import ParticipantSyncer
+from sync.person_aliases import (
+    AliasMap,
+    load_person_aliases,
+    load_person_aliases_for_reader,
+    resolve_chm_id,
+)
 from validation import ChurchValidator, TeamValidator
 from validation.models import RulesManager
 import datetime
@@ -94,12 +100,31 @@ class SyncManager:
         """Trigger church synchronization from an Excel file."""
         return self.church_syncer.sync_from_excel(excel_file_path)
 
-    def sync_participants(self, chm_id: Optional[str] = None) -> bool:
+    def sync_participants(
+        self,
+        chm_id: Optional[str] = None,
+        person_aliases: Optional[AliasMap] = None,
+    ) -> bool:
         """
         Trigger participant synchronization from ChMeetings.
         Can sync a single participant if chm_id is provided.
+
+        Args:
+            chm_id: Optional single ChMeetings ID to sync.
+            person_aliases: The alias snapshot this run should use. Supplied by
+                ``run_full_sync`` so its preflight and its participant step share
+                one map. When omitted, the map is re-read from disk here.
+
+        Raises:
+            PersonAliasError: if the configured alias map is malformed.
         """
         if self.participant_syncer:
+            # Re-read per top-level run rather than reusing whatever the syncer
+            # cached. In daemon mode one SyncManager serves many scheduled runs,
+            # so an alias added between runs must apply to the next one.
+            self.participant_syncer.person_aliases = (
+                load_person_aliases() if person_aliases is None else person_aliases
+            )
             # Pass the chm_id to the ParticipantSyncer's method
             return self.participant_syncer.sync_participants(chm_id_to_sync=chm_id)
         logger.warning("Participant syncer not initialized. Cannot sync participants.")
@@ -798,8 +823,17 @@ class SyncManager:
                 )
         return church_lookup
 
-    def _load_current_eligible_chm_ids(self) -> Optional[set[str]]:
+    def _load_current_eligible_chm_ids(
+        self,
+        person_aliases: Optional[AliasMap] = None,
+    ) -> Optional[set[str]]:
         """Return current athlete IDs from ChMeetings Team groups.
+
+        Member IDs are resolved through the person alias map and de-duplicated,
+        the same way the participant sync loop does: Team groups are never
+        edited by ``apply-aliases``, so a stale membership must count as its
+        canonical person (and a canonical person reached only through a stale
+        membership must stay in scope).
 
         ``None`` means the snapshot could not be loaded completely, so callers
         must retain the unfiltered WordPress fallback and avoid resolving issues
@@ -807,6 +841,8 @@ class SyncManager:
         """
         if not self.chm_connector:
             return None
+        if person_aliases is None:
+            person_aliases = load_person_aliases_for_reader("validation eligibility")
 
         groups = self.chm_connector.get_groups()
         if getattr(self.chm_connector, "last_get_groups_status", None) != "ok":
@@ -859,8 +895,11 @@ class SyncManager:
                 return None
 
             for member in members:
-                chm_id = str(member.get("person_id") or "").strip()
-                if not chm_id or chm_id in seen_ids:
+                raw_chm_id = str(member.get("person_id") or "").strip()
+                if not raw_chm_id:
+                    continue
+                chm_id = resolve_chm_id(raw_chm_id, person_aliases)
+                if chm_id in seen_ids:
                     continue
                 seen_ids.add(chm_id)
 
@@ -1126,10 +1165,30 @@ class SyncManager:
         logger.info(f"Fetched {len(wp_participants)} participants for validation.")
 
         open_validation_issues = self._fetch_open_validation_issues()
+        # The orphan self-heal still sees every row: it only ever resolves
+        # issues, and a tombstone's leftover issues should be cleared too.
         self._resolve_orphaned_individual_validation_issues(
             wp_participants,
             open_validation_issues,
         )
+
+        # `merged` rows are retired duplicate identities (apply-aliases). Their
+        # sport fields must not be counted by any team or church rule, even
+        # though the stale ChMeetings person is usually still a Team-group
+        # member and would otherwise pass the eligibility filter below.
+        fetched_participant_count = len(wp_participants)
+        wp_participants = [
+            participant for participant in wp_participants
+            if participant.get("approval_status") != APPROVAL_STATUS["MERGED"]
+        ]
+        merged_count = fetched_participant_count - len(wp_participants)
+        if merged_count:
+            logger.info(
+                f"[VAY SM] Excluded {merged_count} merged participant row(s) from validation."
+            )
+        if not wp_participants:
+            logger.warning("No active participants found for validation")
+            return False
 
         eligible_chm_ids = self._load_current_eligible_chm_ids()
         if eligible_chm_ids is not None:
@@ -1248,8 +1307,21 @@ class SyncManager:
         return True
 
     def run_full_sync(self) -> Dict[str, Any]:
-        """Run a full synchronization process."""
+        """Run a full synchronization process.
+
+        Raises:
+            PersonAliasError: if the configured alias map is malformed. Validated
+                up front, before any sub-step writes, so a bad map cannot leave
+                the season half-synced with churches written and participants not.
+        """
         logger.info("Starting full synchronization process...")
+        # Preflight the alias map before the first write. ParticipantSyncer loads
+        # it lazily, so without this the failure would surface only once the
+        # participant step began — after church rows had already been written.
+        # The snapshot is carried into sync_participants below so the map that
+        # was validated is exactly the map the run uses.
+        person_aliases = load_person_aliases()
+
         self.stats = {
             "churches": {"created": 0, "updated": 0, "skipped": 0, "errors": 0},
             "participants": {"created": 0, "updated": 0, "errors": 0},
@@ -1264,7 +1336,7 @@ class SyncManager:
         else:
             logger.error(f"Excel file not found at {excel_path}")
 
-        self.sync_participants()
+        self.sync_participants(person_aliases=person_aliases)
         self.generate_approvals()
         self.sync_approvals_to_chmeetings()
         # self.validate_data() ## temporary skipped until more validations can be tested.

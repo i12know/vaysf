@@ -28,7 +28,9 @@ class VAYSF_Statistics {
                 'icon'  => 'church'
             ),
             'participants' => array(
-                'count' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_participants"),
+                // 'merged' rows are retired duplicate identities (apply-aliases
+                // tombstones); they are not participants. PR #387 finding 5.
+                'count' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}sf_participants WHERE (approval_status IS NULL OR approval_status <> 'merged')"),
                 'label' => 'Participants',
                 'icon'  => 'person'
             ),
@@ -135,6 +137,7 @@ class VAYSF_Statistics {
                     SUM(CASE WHEN approval_status = 'approved' THEN 1 ELSE 0 END) AS approved_participants,
                     SUM(CASE WHEN consent_status = 1 THEN 1 ELSE 0 END) AS consented_participants
                 FROM $table_participants
+                WHERE (approval_status IS NULL OR approval_status <> 'merged')
                 GROUP BY church_code
             ) ps ON ps.church_code = c.church_code";
         }
@@ -203,6 +206,10 @@ class VAYSF_Statistics {
         if (!empty($args['status'])) {
             $where[] = "p.approval_status = %s";
             $where_args[] = $args['status'];
+        } else {
+            // Retired duplicate identities ('merged' tombstones) are listed only
+            // when that status is asked for explicitly. PR #387 finding 5.
+            $where[] = "(p.approval_status IS NULL OR p.approval_status <> 'merged')";
         }
         
         if (!empty($args['sport'])) {

@@ -18,6 +18,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
 from sync.manager import SyncManager
+from sync.person_aliases import PersonAliasError, load_person_aliases, resolve_chm_id
 from chmeetings.backend_connector import ChMeetingsConnector  # Import for export command
 from wordpress.frontend_connector import WordPressConnector   # Import for export command
 from church_teams_export import ChurchTeamsExporter           # Import for export command
@@ -143,6 +144,16 @@ def parse_args() -> argparse.Namespace:
         "--remove-orphans",
         action="store_true",
         help="Remove orphaned memberships from ChMeetings after identifying them (irreversible)",
+    )
+
+    apply_aliases_parser = subparsers.add_parser(
+        "apply-aliases",
+        help="Retire WordPress rows for stale ChMeetings person IDs",
+    )
+    apply_aliases_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Apply the reconciliation; the default is report-only",
     )
 
     # Export command
@@ -1071,6 +1082,17 @@ def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str
             # Pass chm_id to the manager's sync_participants method
             return manager.sync_participants(chm_id=chm_id)
         elif sync_type == "approvals":
+            if chm_id:
+                # Same resolution as the participant choke point: an operator
+                # who types a retired ID gets the work done on the canonical
+                # person. Strict load on purpose; a malformed map is reported by
+                # the PersonAliasError handler below instead of being guessed.
+                canonical_id = resolve_chm_id(chm_id, load_person_aliases())
+                if canonical_id != str(chm_id).strip():
+                    logger.info(
+                        f"[VAY SM] Alias: stale chm_id {chm_id} resolved to {canonical_id}"
+                    )
+                chm_id = canonical_id
             success1 = manager.generate_approvals(chm_id_to_target=chm_id)
             success2 = manager.sync_approvals_to_chmeetings(
                 chm_id_to_target=chm_id,
@@ -1094,6 +1116,18 @@ def run_sync(manager: SyncManager, sync_type: str = "full", chm_id: Optional[str
         else:
             logger.error(f"Invalid sync type: {sync_type}")
             return False
+    except PersonAliasError as e:
+        # Ordered ahead of the generic handler on purpose. A malformed alias map
+        # is operator error with a known cause, so it is reported as a plain
+        # message naming the file and the parse problem rather than the traceback
+        # the generic handler would log.
+        logger.error(f"Refusing to sync: {e}")
+        logger.error(
+            f"Fix the alias map at {Config.PERSON_ALIASES_FILE} and rerun. "
+            "Commands that do not consume the alias map, such as sync-churches, "
+            "are unaffected."
+        )
+        return False
     except Exception as e:
         logger.exception(f"Sync failed: {e}")
         return False
@@ -1711,6 +1745,9 @@ def main() -> None:
                                     remove_orphans=args.remove_orphans)
         if success:
             logger.info("Team-group audit complete. Check data/team_group_orphan_audit.xlsx for the audit log.")
+    elif args.command == "apply-aliases":
+        from sync.alias_reconciler import apply_aliases
+        success = apply_aliases(execute=args.execute)
     elif args.command == "export-church-teams":
         output_path = Path(args.output) 
         try:

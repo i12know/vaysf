@@ -2,6 +2,83 @@
 
 ## Unreleased
 
+- Added canonical ChMeetings person aliases for duplicate registrations (#308-#310).
+  Sync resolves stale IDs before fetching People records; `apply-aliases` previews or
+  retires stale WordPress participants, rosters, approvals, and validation issues.
+  Alias files fail closed when malformed, merged participants cannot be reactivated
+  through approval email tokens, and reconciliation reports partial API failures.
+  Fail-closed scope is bounded per the maintainer decision on #308: a missing file
+  still means no aliases, a malformed file blocks `apply-aliases` and participant
+  sync, `run_full_sync()` validates the map before any sub-step, and commands that
+  do not consume the map — `sync-churches` among them — remain available.
+- Canonical identity hardening from the promotion review on PR #387 (#308-#310).
+  Each item has a mock-mode test; the review's finding number is in brackets.
+  - Participant sync never rewrites a WordPress row that is already `merged`: it
+    logs a `[VAY SM]` warning, counts the participant as an error and leaves the
+    row untouched, so a tombstone holds even when its alias is not loaded [3].
+  - `sync --type validation` excludes `merged` rows from every team and church
+    rule and resolves the eligible Team-group ID set through the alias map [1].
+  - `check-consent` never writes to a `merged` row. A form that matches the
+    retired registration is credited to the canonical person; a merged row with
+    no loaded alias is excluded [2].
+  - Team-group member IDs are resolved through the alias map and de-duplicated
+    in `export-church-teams` and in validation eligibility, and
+    `audit-team-groups` reports a 404 membership that has an alias as `aliased`
+    and never removes it (`--remove-orphans` refuses to run on a malformed map)
+    [6]. **This supersedes the Discussion #368 choice to keep the export off the
+    alias map.** That choice assumed WordPress state is always reconciled; a
+    stale ID that never had a WordPress row was still listed and billed.
+  - `apply-aliases --execute` tombstones the participant first, treats a raised
+    WordPress failure (`tenacity.RetryError`) as one failed write, keeps going
+    with the remaining aliases and always writes the audit file. If the
+    tombstone itself does not land, nothing else is touched for that alias [7].
+  - `apply-aliases` writes nothing when the canonical WordPress row is itself
+    `merged`: outcome `canonical_is_merged`, logged as an error, non-zero exit.
+    `docs/USAGE.md` now documents how to reverse an alias by hand [8].
+  - `apply-aliases` writes one timestamped audit workbook per run
+    (`data/alias_reconciliation_<YYYYMMDD_HHMMSS>_audit.xlsx`) and never
+    overwrites an earlier one. `already_merged` rows keep reporting the approval
+    mismatch, as `possible`, from the pastor decision date that survives on the
+    tombstoned approval row [9].
+  - `PERSON_ALIASES_FILE` now defaults to the git-ignored
+    `data/person_aliases.local.json` (was the tracked example file), a relative
+    value resolves against `middleware/` rather than the current directory, and
+    every load logs the resolved path and entry count, including
+    `Loaded 0 person aliases (file not found at ...)` [10]. **Operator note:** if
+    real entries were ever put in the tracked `data/person_aliases.json`, move
+    them to the `.local` file; the tracked file is no longer read by default.
+  - `apply-aliases` reads stale rosters with `all_team_orders=1` and pages
+    through open validation issues 100 at a time, so a roster with a team order
+    or a 21st open issue is no longer left behind [12].
+  - The alias loader rejects a repeated key and a non-numeric ID, accepts a
+    UTF-8 byte-order mark, and reports a non-UTF-8 file as the usual plain
+    `PersonAliasError` message instead of a traceback [13].
+  - `sync --type approvals --chm-id <stale>` resolves the ID through the alias
+    map and logs the same `Alias: stale ... resolved to ...` line as participant
+    sync. A malformed map refuses this targeted run [14].
+  - Plugin: `merged` rows are excluded from the dashboard / `[vaysf_stats]`
+    participant count, from the per-church totals behind `[vaysf_churches]`
+    (so a church can reach 100% again), and from `[vaysf_participants]` unless
+    `status="merged"` is asked for. The admin participants list still shows
+    them [5]. PHP only; there is no PHPUnit harness, so this is linted
+    (`php -l`) but not executed by a test.
+  - Plugin: `vaysf_resend_approval_email()` itself refuses a `merged` approval
+    or participant (re-read from the database), so a future caller cannot
+    revive a tombstone [15].
+  - Plugin: the pastor token endpoint answers "This approval is no longer
+    active" when the approval row (not only the participant) is `merged`, its
+    approval `UPDATE` is conditional on `approval_status = 'pending'`, and its
+    participant `UPDATE` never overwrites a `merged` row, which closes the
+    window between the status read and the write while `apply-aliases
+    --execute` is running [4, endpoint notes].
+  - Plugin version bumped to **1.1.15** and `plugins/vaysf.zip` rebuilt from
+    `plugins/vaysf/` (the previous zip predated every `merged` guard). No
+    schema change; `DB_VERSION` stays 1.0.13. `docs/USAGE.md` states "plugin
+    1.1.15 live on the site" as a precondition of the first
+    `apply-aliases --execute` [4].
+  - Validation, `check-consent`, the export and the read-only team-group audit
+    still run when the alias map is malformed, as decided on #308: they log the
+    problem and continue on raw IDs.
 - Fixed the ChMeetings API field inspector (`python main.py test --system
   chmeetings --test-type api-inspect`) reporting `CHM_FIELDS["NICK_NAME"]` as
   `MISSING ... NOT found in API fields!` on every run. `NICK_NAME` is a core
