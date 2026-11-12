@@ -79,6 +79,31 @@
   - Validation, `check-consent`, the export and the read-only team-group audit
     still run when the alias map is malformed, as decided on #308: they log the
     problem and continue on raw IDs.
+- Fixed the ChMeetings API field inspector (`python main.py test --system
+  chmeetings --test-type api-inspect`) reporting `CHM_FIELDS["NICK_NAME"]` as
+  `MISSING ... NOT found in API fields!` on every run. `NICK_NAME` is a core
+  profile key (`nick_name`), and the check only looked in the custom field
+  labels from `GET /api/v1/people/fields`, where a core key can never appear —
+  a false positive that taught operators to ignore the drift check. The mapping
+  and badge behavior are unchanged; only the inspector was wrong.
+  - `config.py`: new `CHM_CORE_FIELD_KEYS` names which `CHM_FIELDS` keys are
+    core profile keys (currently just `NICK_NAME`). Add a key there when adding
+    a core-profile entry to `CHM_FIELDS`.
+  - New `field_inspector.py` holds the comparison as a pure function,
+    `validate_chm_fields`. Custom labels are still checked against
+    `/people/fields`; core keys are checked against the keys of the sample
+    person responses (unioned across the two sampled people). Core keys absent
+    from the sample are reported `NOT OBSERVED`. Missing samples or field
+    definitions produce `NOT CHECKED` for the corresponding entries.
+  - `main.py`: the inspector now fetches the sample people before the mapping
+    check (and no longer fetches them a second time). A failed sample fetch is
+    logged and marks the run failed, but no longer skips the custom-label check.
+    The summary line says how many entries were not checked instead of claiming
+    "All CHM_FIELDS matched".
+  - New `middleware/tests/test_field_inspector.py` (mock mode): core key
+    present → OK, absent → NOT OBSERVED; custom label present → OK, absent →
+    MISSING; no sample person → NOT CHECKED; plus tests that drive the real
+    `api-inspect` branch with a fake connector.
 - Fixed `export-church-teams` aborting with `can't compare offset-naive and
   offset-aware datetimes` when one church's Team group mixed ChMeetings
   `updated_on` formats. `ChurchTeamsExporter._fetch_chm_church_team_data` now
