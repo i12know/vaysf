@@ -50,6 +50,9 @@
   - `apply-aliases` reads stale rosters with `all_team_orders=1` and pages
     through open validation issues 100 at a time, so a roster with a team order
     or a 21st open issue is no longer left behind [12].
+  - The alias loader rejects a repeated key and a non-numeric ID, accepts a
+    UTF-8 byte-order mark, and reports a non-UTF-8 file as the usual plain
+    `PersonAliasError` message instead of a traceback [13].
   - Validation, `check-consent`, the export and the read-only team-group audit
     still run when the alias map is malformed, as decided on #308: they log the
     problem and continue on raw IDs.

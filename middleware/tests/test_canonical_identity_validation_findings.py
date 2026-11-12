@@ -601,12 +601,6 @@ def test_apply_aliases_pages_through_every_open_validation_issue(wp_connector):
 # --------------------------------------------------------------------------
 # Finding 13 — alias loader edge cases
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding 13a: json.loads keeps the last of two identical keys, so a "
-    "stale ID listed twice with different canonical IDs silently resolves to "
-    "whichever line is last instead of failing closed.",
-)
 def test_alias_loader_rejects_repeated_stale_id(tmp_path):
     path = tmp_path / "person_aliases.json"
     path.write_text('{"100": "200", "100": "300"}', encoding="utf-8")
@@ -615,12 +609,6 @@ def test_alias_loader_rejects_repeated_stale_id(tmp_path):
         load_person_aliases(path)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding 13b: a valid map saved with a UTF-8 byte-order mark (Windows "
-    "PowerShell 5.1 Set-Content/Out-File -Encoding UTF8) is rejected as "
-    "malformed, which blocks every participant sync until it is re-saved.",
-)
 def test_alias_loader_accepts_utf8_bom(tmp_path):
     path = tmp_path / "person_aliases.json"
     path.write_bytes(b"\xef\xbb\xbf" + json.dumps({"100": "200"}).encode("utf-8"))
@@ -628,16 +616,55 @@ def test_alias_loader_accepts_utf8_bom(tmp_path):
     assert load_person_aliases(path)["100"]["canonical_chm_id"] == "200"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=UnicodeDecodeError,
-    reason="Finding 13c: a UTF-16 file (PowerShell '>' redirection) raises "
-    "UnicodeDecodeError, which is not converted to PersonAliasError, so callers "
-    "get a traceback instead of the plain operator message.",
-)
 def test_alias_loader_reports_wrong_encoding_as_alias_error(tmp_path):
     path = tmp_path / "person_aliases.json"
     path.write_bytes(json.dumps({"100": "200"}).encode("utf-16"))
 
     with pytest.raises(PersonAliasError):
         load_person_aliases(path)
+
+
+def test_alias_loader_rejects_repeated_metadata_key(tmp_path):
+    """Finding 13a: the rule covers nested objects too (two canonical IDs)."""
+    path = tmp_path / "person_aliases.json"
+    path.write_text(
+        '{"100": {"canonical_chm_id": "200", "canonical_chm_id": "300"}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PersonAliasError, match="repeated key"):
+        load_person_aliases(path)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"36260O0": "200"}',
+        '{"100": "36260O0"}',
+        '{"100": {"canonical_chm_id": "2 00"}}',
+        '{"100": 200.5}',
+        '{"-100": "200"}',
+    ],
+)
+def test_alias_loader_rejects_non_numeric_ids(tmp_path, raw):
+    """Finding 13: a typo in an ID fails closed instead of loading."""
+    path = tmp_path / "person_aliases.json"
+    path.write_text(raw, encoding="utf-8")
+
+    with pytest.raises(PersonAliasError):
+        load_person_aliases(path)
+
+
+def test_alias_loader_still_accepts_integer_ids_and_padding(tmp_path):
+    path = tmp_path / "person_aliases.json"
+    path.write_text('{" 100 ": 200}', encoding="utf-8")
+
+    assert load_person_aliases(path) == {
+        "100": {
+            "canonical_chm_id": "200",
+            "reason": "",
+            "confirmed_by": "",
+            "confirmed_on": "",
+            "note": "",
+        }
+    }

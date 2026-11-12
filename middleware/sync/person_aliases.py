@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from loguru import logger
 
@@ -26,12 +26,36 @@ def _chm_id(value: Any, label: str) -> str:
     return normalized
 
 
+def _map_chm_id(value: Any, label: str) -> str:
+    """A ChMeetings ID as written in the alias file: ASCII digits only.
+
+    ChMeetings person IDs are integers. A typo such as ``36260O0`` would
+    otherwise load cleanly and make that person silently stop syncing.
+    """
+    normalized = _chm_id(value, label)
+    if not (normalized.isascii() and normalized.isdigit()):
+        raise PersonAliasError(
+            f"{label} must be a numeric ChMeetings ID, got {normalized!r}"
+        )
+    return normalized
+
+
+def _reject_repeated_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+    """json object hook: a key listed twice is an error, not last-one-wins."""
+    result: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise PersonAliasError(f"repeated key {key!r} in person alias file")
+        result[key] = value
+    return result
+
+
 def _entry(stale_id: str, raw: Any) -> AliasEntry:
     if isinstance(raw, dict):
-        canonical_id = _chm_id(raw.get("canonical_chm_id"), f"alias {stale_id}")
+        canonical_id = _map_chm_id(raw.get("canonical_chm_id"), f"alias {stale_id}")
         entry = {field: str(raw.get(field, "") or "").strip() for field in _METADATA_FIELDS}
     elif isinstance(raw, (str, int)) and not isinstance(raw, bool):
-        canonical_id = _chm_id(raw, f"alias {stale_id}")
+        canonical_id = _map_chm_id(raw, f"alias {stale_id}")
         entry = {field: "" for field in _METADATA_FIELDS}
     else:
         raise PersonAliasError(
@@ -78,7 +102,19 @@ def load_person_aliases(path: Optional[Union[str, Path]] = None) -> AliasMap:
         return {}
 
     try:
-        raw_aliases = json.loads(alias_path.read_text(encoding="utf-8"))
+        # utf-8-sig: a byte-order mark (Windows PowerShell 5.1, some editors) is
+        # not an error. Any other encoding, e.g. UTF-16 from a `>` redirect, is.
+        raw_aliases = json.loads(
+            alias_path.read_text(encoding="utf-8-sig"),
+            object_pairs_hook=_reject_repeated_keys,
+        )
+    except UnicodeDecodeError as exc:
+        raise PersonAliasError(
+            f"cannot load person aliases from {alias_path}: the file is not UTF-8 "
+            f"({exc.reason}); re-save it as UTF-8"
+        ) from exc
+    except PersonAliasError as exc:
+        raise PersonAliasError(f"cannot load person aliases from {alias_path}: {exc}") from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise PersonAliasError(f"cannot load person aliases from {alias_path}: {exc}") from exc
 
@@ -87,7 +123,7 @@ def load_person_aliases(path: Optional[Union[str, Path]] = None) -> AliasMap:
 
     aliases: AliasMap = {}
     for raw_stale_id, raw_entry in raw_aliases.items():
-        stale_id = _chm_id(raw_stale_id, "alias key")
+        stale_id = _map_chm_id(raw_stale_id, "alias key")
         if stale_id in aliases:
             raise PersonAliasError(f"duplicate normalized alias key: {stale_id}")
         aliases[stale_id] = _entry(stale_id, raw_entry)

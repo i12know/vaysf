@@ -304,6 +304,11 @@ retired. Specifically:
 
 Fix the file rather than removing the mapping.
 
+The loader also rejects, with the same plain message: a stale ID listed twice
+(JSON would otherwise keep only the last line), an ID that is not all digits,
+and a file that is not UTF-8 (for example UTF-16 written by PowerShell `>`).
+A UTF-8 byte-order mark is accepted.
+
 The alias map is re-read at the start of every participant or full sync, so an
 alias added between two scheduled runs takes effect on the next run. You do not
 need to restart a long-running `python main.py schedule --daemon` process after
