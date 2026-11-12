@@ -145,6 +145,16 @@ Use this sequence after receiving human schedule updates:
    Edit `venue_input.xlsx` for physical availability: courts, rooms, fields,
    dates, time windows, gym modes, and known playoff pins.
 
+   Once the approved Main/Badminton/Soccer/Table Tennis workbooks exist, fold
+   them into the booking with `reconcile-approved-schedules --dry-run`, review
+   `approved_schedule_reconciliation.audit.json`, then `--execute`. This backs
+   up `venue_input.xlsx`, keeps the original booking in `Booked-Venue-Input`
+   (edit bookings there from then on), and rewrites `Venue-Input` so closures,
+   setup, meals, ceremonies, worship, community events, and approved sport
+   modes are respected. Rerun it whenever an approved workbook changes; an
+   unchanged rerun changes nothing. See `docs/SCHEDULING.md`, "Approved
+   schedule reconciliation".
+
 3. **Import the approved pool-play matchups.**
    Run `import-team-matchups` for BB/MVB/WVB/SOC/BC when those tabs or
    workbooks are authoritative.
@@ -173,6 +183,24 @@ Use this sequence after receiving human schedule updates:
    first. Fix or explicitly waive reported source discrepancies, then rerun
    with `--execute` to write `approved_schedule_games.json`,
    `approved_schedule_input.json`, and `approved_schedule_output.json`.
+
+10. **Optional experiment: ask the solver for a low-disruption repair.**
+    After steps 2, 5 and 9 have been run in that order (reconcile, export,
+    import approved games), run `optimize-approved-schedule --dry-run`. It
+    counts the shared-athlete conflicts in the approved schedule and proposes
+    the fewest game moves that remove them, without changing any matchup,
+    ceremony, meal, setup, or CLOSED block. Read the summary in the log or in
+    `optimized_schedule_comparison.json`. `--execute` also writes
+    `optimized_schedule_output.json` and
+    `VAYSF_Optimized_Schedule_YYYY-MM-DD.xlsx` for the human scheduler.
+
+    This is a proposal only. It never changes the approved workbooks or the
+    official schedule files, and nothing is official until the scheduler and
+    leadership approve it. Useful limits: `--max-moves 2` (smallest useful
+    change), `--max-move-minutes 60`, `--rest-policy ignore`. Badminton and
+    Table Tennis are carried through unchanged, and conflicts with Tennis and
+    Pickleball are not counted yet. See `docs/SCHEDULING.md`, "Approved
+    schedule repair experiment".
 
 ## Publishing To WordPress
 

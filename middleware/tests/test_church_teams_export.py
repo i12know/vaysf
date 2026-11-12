@@ -116,6 +116,115 @@ def test_fetch_chm_church_team_data_tolerates_null_email(mock_connectors):
     assert data["RPC"][0]["Email"] == ""
 
 
+def _team_person(person_id: str, first_name: str, updated_on: str) -> dict:
+    return {
+        "id": person_id,
+        "first_name": first_name,
+        "last_name": "Nguyen",
+        "gender": "Female",
+        "birth_date": "2000-01-02",
+        "mobile": "555-0101",
+        "email": f"{first_name.lower()}@test.com",
+        "updated_on": updated_on,
+        "additional_fields": [
+            {"field_name": MEMBERSHIP_QUESTION, "value": "Yes"},
+            {"field_name": CHM_FIELDS["ROLES"], "value": "Athlete"},
+            {"field_name": CHM_FIELDS["COMPLETION_CHECKLIST"], "value": ""},
+        ],
+    }
+
+
+def _fetch_with_updated_on(chm_connector, updated_on_by_id: dict):
+    chm_connector.get_groups.return_value = [{"id": "870578", "name": "Team RPC"}]
+    chm_connector.get_group_people.return_value = [
+        {"person_id": person_id} for person_id in updated_on_by_id
+    ]
+
+    def fake_get_person(person_id):
+        chm_connector.last_get_person_status = "ok"
+        return _team_person(person_id, f"Person{person_id}", updated_on_by_id[person_id])
+
+    chm_connector.get_person.side_effect = fake_get_person
+
+    exporter = ChurchTeamsExporter()
+    data = exporter._fetch_chm_church_team_data()
+    return exporter, {row["ChMeetings ID"]: row["Update_on_ChM"] for row in data["RPC"]}
+
+
+def test_fetch_chm_church_team_data_mixes_aware_and_naive_updated_on(mock_connectors):
+    """One Team group holding an offset-aware and a naive updated_on must not
+    abort the export with "can't compare offset-naive and offset-aware"."""
+    chm_connector, _ = mock_connectors
+
+    exporter, updated = _fetch_with_updated_on(
+        chm_connector,
+        {
+            "101": "2026-05-02T10:11:12+00:00",
+            "102": "2026-04-03 08:09:10",
+        },
+    )
+
+    # Output strings keep the wall-clock value each person was sent with.
+    assert updated == {
+        "101": "2026-05-02 10:11:12",
+        "102": "2026-04-03 08:09:10",
+    }
+    assert exporter.latest_chm_update_by_church == {"RPC": "2026-05-02 10:11:12"}
+
+
+def test_fetch_chm_church_team_data_naive_updated_on_can_be_latest(mock_connectors):
+    """Order-independent: naive value first, and newer than the aware one."""
+    chm_connector, _ = mock_connectors
+
+    exporter, _ = _fetch_with_updated_on(
+        chm_connector,
+        {
+            "102": "2026-06-03 08:09:10",
+            "101": "2026-05-02T10:11:12+00:00",
+        },
+    )
+
+    assert exporter.latest_chm_update_by_church == {"RPC": "2026-06-03 08:09:10"}
+
+
+def test_fetch_chm_church_team_data_parses_iso_updated_on_without_offset(mock_connectors):
+    """A "T"-separated value with no offset is a real timestamp, not epoch."""
+    chm_connector, _ = mock_connectors
+
+    exporter, updated = _fetch_with_updated_on(
+        chm_connector,
+        {
+            "101": "2026-04-16T00:00:00",
+            "102": "2026-06-15T16:30:12.280-07:00",
+            "103": "2026-05-07T22:17:30Z",
+        },
+    )
+
+    assert updated == {
+        "101": "2026-04-16 00:00:00",
+        "102": "2026-06-15 16:30:12",
+        "103": "2026-05-07 22:17:30",
+    }
+    # 16:30 at -07:00 is 23:30 UTC, later than every other value.
+    assert exporter.latest_chm_update_by_church == {"RPC": "2026-06-15 16:30:12"}
+
+
+def test_fetch_chm_church_team_data_falls_back_to_epoch_for_bad_updated_on(mock_connectors):
+    chm_connector, _ = mock_connectors
+
+    exporter, updated = _fetch_with_updated_on(
+        chm_connector,
+        {"101": "not a date", "102": "2026-04-03 08:09:10", "103": None},
+    )
+
+    assert updated == {
+        "101": "1970-01-01 00:00:00",
+        "103": "1970-01-01 00:00:00",
+        "102": "2026-04-03 08:09:10",
+    }
+    assert exporter.latest_chm_update_by_church == {"RPC": "2026-04-03 08:09:10"}
+
+
 def test_handle_force_resend_filters_to_one_chm_id(mock_connectors, mocker):
     _, wp_connector = mock_connectors
 
@@ -1285,8 +1394,10 @@ def _make_gym_roster(n_churches: int = 8) -> list:
     return rows
 
 
-def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path):
+def test_schedule_input_tab_in_consolidated_export(mock_connectors, tmp_path, monkeypatch):
     """Schedule-Input tab absent from ALL export; schedule_input.json is still written (closes #101)."""
+    # Keep the operator's local, gitignored venue_input.xlsx out of this test.
+    monkeypatch.setattr("church_teams_export.DATA_DIR", tmp_path)
     exporter = ChurchTeamsExporter()
 
     summary_rows = [{

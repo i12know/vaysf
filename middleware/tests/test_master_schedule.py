@@ -110,6 +110,57 @@ def _games():
     ]
 
 
+def _split_window_courts():
+    """Three volleyball courts, each expanded into two time-boxed resources."""
+    windows = [(1, "12:00", "14:00"), (11, "15:00", "17:00")]
+    return [
+        {
+            "resource_id": f"GYM-{first + court - 1}",
+            "resource_type": GYM_RESOURCE_TYPE_VOLLEYBALL,
+            "label": f"Court-{court}",
+            "exclusive_group": "EHS Practice Gym",
+            "day": "Sat-1",
+            "open_time": open_time,
+            "close_time": close_time,
+            "slot_minutes": 60,
+        }
+        for first, open_time, close_time in windows
+        for court in range(1, 4)
+    ]
+
+
+def _volleyball_row(lane, slot):
+    return {
+        "resource_type": GYM_RESOURCE_TYPE_VOLLEYBALL,
+        "day": "Sat-1",
+        "slot": slot,
+        "sport": "WVB",
+        "visual_venue": f"Prac. Gym VB{lane}",
+    }
+
+
+def test_visual_lane_counts_courts_when_windows_are_split():
+    resources = _split_window_courts()
+    # Text order puts GYM-11 straight after GYM-1, so counting resources would
+    # send lane 2 to a court that is closed at 12:00.
+    assert master_schedule._resolve_resource_id(_volleyball_row(2, "Sat-1-12:00"), resources) == ("GYM-2", None)
+    assert master_schedule._resolve_resource_id(_volleyball_row(2, "Sat-1-15:00"), resources) == ("GYM-12", None)
+    assert master_schedule._resolve_resource_id(_volleyball_row(3, "Sat-1-16:00"), resources) == ("GYM-13", None)
+
+
+def test_visual_lane_reports_a_court_closed_at_that_slot():
+    resources = [r for r in _split_window_courts() if not (r["label"] == "Court-2" and r["open_time"] == "15:00")]
+    resource_id, reason = master_schedule._resolve_resource_id(_volleyball_row(2, "Sat-1-15:00"), resources)
+    assert resource_id is None
+    assert "lacks slot" in reason
+
+
+def test_visual_lane_beyond_physical_courts_is_reported():
+    resource_id, reason = master_schedule._resolve_resource_id(_volleyball_row(4, "Sat-1-12:00"), _split_window_courts())
+    assert resource_id is None
+    assert "exceeds 3" in reason
+
+
 def _resources():
     resources = [
         {

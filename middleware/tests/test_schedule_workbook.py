@@ -2770,6 +2770,25 @@ def test_load_venue_input_rows_missing_file(tmp_path):
     assert day_order == []
 
 
+def test_load_venue_input_rows_carries_pod_name(tmp_path):
+    """Pod Name reaches each resource so schedule repair can tell pods apart (#218)."""
+    from openpyxl import Workbook
+    from config import POD_RESOURCE_TYPE_TENNIS
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Venue-Input"
+    ws.append(["Pod Name", "Venue Name", "Resource Type", "Quantity", "Day",
+               "Start Time", "Last Start Time", "Slot Minutes"])
+    ws.append(["North Pod", "City Park", POD_RESOURCE_TYPE_TENNIS, 2, "Sat-1", 9, 11, 60])
+    ws.append([None, "City Park", POD_RESOURCE_TYPE_TENNIS, 1, "Sat-1", 9, 11, 60])
+    path = tmp_path / "venue_input.xlsx"
+    wb.save(path)
+
+    result, _day_order = ScheduleWorkbookBuilder._load_venue_input_rows(path)
+    assert [r["pod_name"] for r in result] == ["North Pod", "North Pod", ""]
+
+
 def test_load_venue_input_rows_expands_quantity(tmp_path):
     """Quantity=2 for a Tennis Court row yields 2 resource objects."""
     from openpyxl import Workbook

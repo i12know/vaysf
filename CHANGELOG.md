@@ -11,7 +11,155 @@
   still means no aliases, a malformed file blocks `apply-aliases` and participant
   sync, `run_full_sync()` validates the map before any sub-step, and commands that
   do not consume the map — `sync-churches` among them — remain available.
-
+- Fixed `export-church-teams` aborting with `can't compare offset-naive and
+  offset-aware datetimes` when one church's Team group mixed ChMeetings
+  `updated_on` formats. `ChurchTeamsExporter._fetch_chm_church_team_data` now
+  parses the value through one helper, `_parse_chm_updated_on`, that always
+  returns a timezone-aware datetime: a value with no offset is taken as UTC, so
+  its `Update_on_ChM` string (`%Y-%m-%d %H:%M:%S`) is unchanged and offset-bearing
+  values print exactly as before. Two adjacent gaps in the same parser are closed
+  with it: an ISO value with a `T` but no offset (`2026-04-16T00:00:00`) used to
+  fail the space-separated fallback and be reported as `1970-01-01 00:00:00` with
+  a warning, and now keeps its real timestamp; and a JSON `null` `updated_on`
+  used to raise an uncaught `TypeError`, and now falls back to the epoch like a
+  missing key. Defensive rather than urgent: the OpenAPI snapshot types
+  `PersonResponseDto.updated_on` as `date-time`, and no fixture or doc in the
+  repo shows the API returning the space-separated form. New mock tests in
+  `middleware/tests/test_church_teams_export.py` cover each format.
+- Split `middleware/church_teams_export.py` (3,791 lines) into three modules
+  with one job each (#376, debt register §2.3). No behavior change.
+  - `church_teams_export.py` (942 lines) — export orchestration:
+    `ChurchTeamsExporter`, the ChMeetings/WordPress fetch loops,
+    `generate_reports()`, and the `--force-resend-*` path.
+  - `church_teams_report.py` (945 lines, new) — formatting:
+    `ChurchTeamsReportMixin` with the validation-issue rows, reverse
+    doubles-partner suggestions, multi-sport matrix, and `_write_excel_report()`.
+    No network calls.
+  - `church_teams_scheduling.py` (181 lines, new) — scheduling hand-off: the
+    delegation list (now `SCHEDULE_WORKBOOK_METHOD_NAMES`, applied by the
+    `delegate_schedule_workbook_methods` class decorator), the
+    `schedule_input.json` write for the ALL export, and the tab status stamp.
+    It is the only `church_teams_*` module that imports `schedule_workbook.py`;
+    the dependency stays one-way.
+  - Deleted 35 scheduling methods (1,749 lines) from the `ChurchTeamsExporter`
+    class body. Each was dead: its name is in the delegation list, so the
+    `setattr` loop replaced it with `ScheduleWorkbookBuilder`'s version at
+    import time. Verified on `main` before deleting — for every one,
+    `ChurchTeamsExporter.__dict__[name] is ScheduleWorkbookBuilder.__dict__[name]`.
+  - The 40 live methods moved verbatim (AST-identical to `main`) except two
+    mechanical edits: `_team_issue_scope_key` names the mixin instead of
+    `ChurchTeamsExporter`, and `_write_excel_report` calls the two hand-off
+    functions instead of inlining them. One new method,
+    `ChurchTeamsExporter._venue_input_path()`, keeps the `DATA_DIR` lookup in
+    the orchestration module.
+  - Tests are unchanged and pass at 1016/1016 in mock mode. A mock-mode
+    before/after run of `export-church-teams` (six CLI scenarios, 23 workbooks,
+    131,895 cells, plus `schedule_input.json` and the run logs) is identical
+    between `main` and this change. Moving the tests to follow their modules is
+    a follow-up.
+  - Live-data check (operator's Windows machine, 2026-11-10): three
+    all-churches `export-church-teams` runs (`main`, this change, `main` again
+    as a control) produced 20 identical workbooks and matching logs. The only
+    difference was the order of `gym_allocation.decisions` in
+    `schedule_input.json`, which `main` also shows against itself; that
+    pre-existing allocator nondeterminism is tracked in #386.
+  - Docs: `docs/ARCHITECTURE.md` (boundaries and rationale),
+    `docs/SCHEDULING.md`, `CLAUDE.md`, `AGENTS.md`.
+- Routed export/roster column headers through `CHM_FIELDS` (#375). Added
+  `EXPORT_COLUMNS` to `middleware/config.py` — a sibling mapping derived from
+  `CHM_FIELDS` (plus `FIRST_NAME`/`LAST_NAME`, which aren't custom fields but
+  share the same drift risk) — and swept the literal `"Church Team"`,
+  `"Primary Sport"`, `"Secondary Sport"`, `"My role is"`, `"First Name"`, and
+  `"Last Name"` column-header strings out of
+  `middleware/{group_assignment,scoresheets,approval_drift_history,
+  schedule_workbook,church_teams_export}.py`,
+  `middleware/scheduling/{approved_games,conflict_edges,manual_matchups,
+  pool_assignment}.py`, and `middleware/sync/{consent_checker,manager}.py`
+  (debt register §2.2). A ChMeetings rename now needs a one-line fix in
+  `config.py`, and the field inspector flags the drift in one place instead of
+  a dozen call sites breaking quietly. Pure constant substitution — no export
+  behavior changed; `pytest tests/ -v` (mock mode) still passes at 1016/1016.
+  `middleware/sync/churches.py`'s `"First Name"`/`"Last Name"` reads from the
+  separate Church Application Form workbook were left alone: that workbook
+  isn't a ChMeetings export, so its headers are out of scope.
+- Removed the broken `uuid>=1.30` pin from `middleware/requirements.txt` (#374).
+  That 2006-era PyPI package shadows the standard-library `uuid` module and fails
+  to build on Python 3 (`AttributeError: install_layout` out of setuptools), which
+  aborted `pip install -r requirements.txt` outright on any machine without an
+  already-provisioned environment — so the documented setup path in
+  `docs/INSTALLATION.md` did not work on a fresh or rebuilt box. Existing operator
+  virtualenvs were unaffected, which is why it went unnoticed for a full season.
+  No source change was needed alongside it: the code imports the stdlib `uuid`.
+  Verified both directions — a clean `pip install -r requirements.txt` now
+  succeeds, and installing `uuid>=1.30` on its own still fails as described.
+  (Debt register §2.1.)
+- Micro-fixes from the 2026 architecture review's debt register §2.4 (#377).
+  `middleware/church_teams_export.py`'s column-width sizing no longer swallows
+  every exception with a bare `except: pass`; it now catches
+  `(AttributeError, TypeError, ValueError)` and logs at debug level, so a sizing
+  failure is visible without a wide sheet flooding the run log (the column still
+  falls back to the width computed from its other cells — behavior unchanged).
+  `middleware/config.py`'s directory-creation failure handler uses `logger.error()`
+  instead of `print()`, bringing that failure path into the structured logging
+  conventions; it reaches loguru's default stderr sink rather than the log file,
+  which is correct here since `LOG_DIR` itself may be the directory that failed.
+  The third §2.4 item — the hardcoded `G:\Shared drives\...` default export path
+  at `config.py:39` — is deliberately **not** included; see #377 for why.
+- Added `python main.py optimize-approved-schedule --dry-run|--execute` (#218),
+  an experimental, non-authoritative CP-SAT *repair* of the approved
+  preliminary schedule. It keeps every approved matchup, the reconciled venue
+  windows (#216) and all later-round pins, treats the approved court/time of
+  each Basketball, Volleyball and Bible Challenge pool game as a movable
+  preference (`placement_policy`: `locked` / `repairable` /
+  `solver_controlled`), and minimizes, in strict order, primary then secondary
+  shared-athlete conflicts, games moved, minutes moved, court changes, and
+  back-to-back games. It audits the baseline with the same metrics as the
+  result, reports hard violations as `BASELINE INVALID`, and writes separate
+  artifacts only: `optimized_schedule_comparison.json` (dry run), plus
+  `optimized_schedule_output.json` and `VAYSF_Optimized_Schedule_*.xlsx` on
+  `--execute`, including a move frontier (best result for each smaller move
+  budget). It refuses to write over an official schedule file. Soccer is
+  locked but counted; Badminton and Table Tennis are deferred (their approved
+  team keys do not match roster conflict ids) and carried through unchanged;
+  Tennis and Pickleball conflict edges are not evaluated because no approved
+  games exist for them. Deferred games and deferred-sport pins still reserve
+  their courts, a game's own placement limits are audited, and the timeout is
+  one budget for the whole solve. `solve-schedule` is unchanged. New module
+  `middleware/scheduling/schedule_repair.py`, 52 tests in
+  `tests/test_schedule_repair.py`; documented in `docs/SCHEDULING.md` and
+  `docs/SCHEDULE-HOW-TO.md`. Venue-Input resources now carry `pod_name`
+  (documented, optional in the schedule_input contract) so the repair can tell
+  apart two pods at one venue whose labels both start at Court-1, and the
+  "back-to-back limit was dropped" note only appears when dropping it actually
+  produced a schedule.
+- Added `python main.py reconcile-approved-schedules --dry-run|--execute`
+  (#216). It parses the four approved 2026 schedule workbooks (Main Schedule,
+  Badminton, Co-ed Soccer, Table Tennis) into operational blocks with
+  file/sheet/cell provenance (merged ranges included) and classifies each as a
+  game, stage block, reservation, setup, meal/break, ceremony/worship,
+  community event, CLOSED, pointer to a separate schedule, or unresolved. It
+  then reconciles them against the booked `venue_input.xlsx`: non-sport blocks
+  are subtracted per lane, approved sport use locks the gym to that mode (so
+  the Stage A allocator cannot reassign it), and the Friday Orange Church
+  Badminton / Table Tennis rows adopt the approved 20- / 15-minute grids and
+  court/table counts. Unknown venues, dates/times outside the booking, capacity
+  overflow, overlapping games, conflicting gym modes, Orange blocks mapped
+  onto non-Orange rows, and the unwaived Table Tennis U35 FVC/SBC discrepancy
+  block `--execute`. The dry run writes
+  `approved_schedule_reconciliation.audit.json`; `--execute` makes a
+  timestamped backup, writes atomically, keeps the original booking in a new
+  `Booked-Venue-Input` tab, and adds `Operational-Blocks` and
+  `Reconciliation-Sources` (source hashes) tabs. Reconciling from the booking
+  tab makes reruns idempotent, lets a changed approved workbook re-open a
+  window, and adopts rows operators add to Venue-Input instead of dropping
+  them. Gym-Modes and Playoff-Slots are left untouched, but a venue-centric
+  Playoff-Slots pin that no longer fits the proposed windows now blocks
+  `--execute`, so the export cannot silently skip `schedule_input.json`. Visual
+  lanes now resolve by physical court, so split windows keep approved games on
+  the right court in `import-approved-games` and the override imports. New module
+  `middleware/scheduling/approved_reconciliation.py`, 38 tests in
+  `tests/test_approved_reconciliation.py`; documented in `docs/SCHEDULING.md`
+  and `docs/SCHEDULE-HOW-TO.md`.
 - Hotfix 1.1.14: Fixed the public/admin `Approved Participants` stat
   under-reporting real approved-athlete counts (#181). `VAYSF_Statistics::get_overall_stats()`
   was counting `sf_approvals.approval_status = 'approved'` (a pastor-approval-token/sync

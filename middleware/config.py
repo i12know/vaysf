@@ -64,7 +64,10 @@ for directory in [LOG_DIR, DATA_DIR, TEMP_DIR, EXPORT_DIR]:
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        print(f"Failed to create directory {directory}: {e}")
+        # Logging is configured below, so this reaches loguru's default stderr
+        # sink rather than the log file — which is correct here, since LOG_DIR
+        # itself may be the directory that failed to create.
+        logger.error(f"Failed to create directory {directory}: {e}")
         raise
 
 # Configure logging (file and console)
@@ -223,6 +226,22 @@ CHM_FIELDS = {
     "PARENT_EMAIL": "Email of my parents or legal guardian",
     "PARENT_PHONE": "Cell phone of my parents or legal guardian",
     "ROLES": "My role is",
+}
+
+# Roster/export column headers that are named after ChMeetings fields.
+# Derived from CHM_FIELDS where a custom field already has the same label;
+# FIRST_NAME/LAST_NAME are core profile fields (API key "first_name"/
+# "last_name") that don't have a CHM_FIELDS entry of their own, so their
+# export header is named here directly. Business logic that builds or reads
+# these roster/export columns should use EXPORT_COLUMNS, not the literal
+# string, so a rename is a one-line fix caught by the field inspector.
+EXPORT_COLUMNS = {
+    "CHURCH_TEAM": CHM_FIELDS["CHURCH_TEAM"],
+    "PRIMARY_SPORT": CHM_FIELDS["PRIMARY_SPORT"],
+    "SECONDARY_SPORT": CHM_FIELDS["SECONDARY_SPORT"],
+    "ROLES": CHM_FIELDS["ROLES"],
+    "FIRST_NAME": "First Name",
+    "LAST_NAME": "Last Name",
 }
 
 # ── Season Reset: ChMeetings Custom Field & Option IDs ──────────────────────
