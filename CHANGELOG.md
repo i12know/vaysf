@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## Version 1.1.15 (2026-11-12)
+
 - Fixed participant sync writing `updated_at` seven hours off on a
   non-UTC host. `ParticipantSyncer._sync_single_participant` now treats a
   timezone-less ChMeetings `updated_on` as UTC (offset values still convert to
