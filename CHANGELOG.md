@@ -56,6 +56,12 @@
   - `sync --type approvals --chm-id <stale>` resolves the ID through the alias
     map and logs the same `Alias: stale ... resolved to ...` line as participant
     sync. A malformed map refuses this targeted run [14].
+  - Plugin: `merged` rows are excluded from the dashboard / `[vaysf_stats]`
+    participant count, from the per-church totals behind `[vaysf_churches]`
+    (so a church can reach 100% again), and from `[vaysf_participants]` unless
+    `status="merged"` is asked for. The admin participants list still shows
+    them [5]. PHP only; there is no PHPUnit harness, so this is linted
+    (`php -l`) but not executed by a test.
   - Validation, `check-consent`, the export and the read-only team-group audit
     still run when the alias map is malformed, as decided on #308: they log the
     problem and continue on raw IDs.
