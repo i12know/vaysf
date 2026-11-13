@@ -33,6 +33,225 @@ Each Sports Fest season produces data across all three systems:
 
 ## Season Transition Checklist
 
+### Phase 0: ChMeetings platform review
+
+ChMeetings ships a release every two to three weeks, and `vaysf` sits idle for
+most of the year. In the 2025–2026 off-season nobody was watching: ChMeetings
+changed its API over the winter and the 2026 season opened with 77 commits of
+repair (see [RETROSPECTIVE_2025.md](RETROSPECTIVE_2025.md), Act IV). Phase 0 is
+the watch. It changes no data, so it is safe to run at any time.
+
+**When to run it — twice a year:**
+
+1. **After the season ends** (August), while the season's behaviour is still
+   fresh and before the archive in Phase 1.
+2. **About six weeks before registration opens**, so there is time to fix
+   whatever it finds before Phase 3.
+
+**What to do:**
+
+1. **Read the release notes since the last review.** Start from the version in
+   the last row of the review record below and read forward at
+   <https://www.chmeetings.com/release-notes/>. The current version is shown in
+   the ChMeetings app (on the Dashboard page as of 2026-11-13). Release notes are published
+   per release (for example `2026.22`), not per patch (`2026.22.7.3`). Look
+   for anything about the API, webhooks, forms and form exports, groups,
+   people profile fields, merging or archiving people, families, messaging,
+   rate limits, authentication and pagination.
+2. **Refresh and diff the OpenAPI snapshot.** Download
+   <https://api.chmeetings.com/openapi/v1.json>, diff it against
+   `chmeetings_openapi_v1.json` at the repo root, and commit the new snapshot
+   in its own commit with the diff summarised in the message. Check, in this
+   order: removed operations; changed required parameters or request bodies on
+   the endpoints the connector calls (`middleware/chmeetings/backend_connector.py`);
+   renamed response schemas; then new capabilities. The Scalar reference at
+   <https://api.chmeetings.com/scalar> is rendered from that same file.
+3. **Re-read the two help articles that state API behaviour:** the
+   [Developer API Guide](https://help.chmeetings.com/hc/en-us/articles/4407466673937-Developer-API-Guide)
+   (rate limit, authentication) and
+   [Configure Webhooks](https://help.chmeetings.com/hc/en-us/articles/22970829186204-Configure-Webhooks).
+   If the rate limit changed, update `CHM_MIN_REQUEST_INTERVAL_SECONDS` and the
+   comment above it in the connector.
+4. **Run the live checklist** below against the VAY SM tenant.
+5. **Record the result** as a new row in the review record, and add a dated
+   note to [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md) for every
+   confirmed change in API behaviour. Mark anything not yet confirmed as
+   "to verify live". If the review changes a convention shared with the other
+   ChMeetings projects, open a PR against the
+   [vay-chmeetings skill](https://github.com/i12know/vay-chmeetings-skill) too.
+
+#### Live checklist (maintainer only — needs the VAY SM API key)
+
+Run from `middleware\`. Steps 1–4 only read. Nothing here prints participant
+names, emails or phone numbers except `api-inspect`, which writes two sample
+people to the local log (`middleware/logs/` is gitignored — do not paste that
+output into an issue or PR).
+
+1. **Connectivity and authentication**
+
+   ```bash
+   python main.py test --system chmeetings --test-type connectivity
+   ```
+
+   Pass: the log shows `API key verified successfully with ChMeetings API` and
+   `Successfully connected to ChMeetings`. A `401` means the key or the
+   lowercase `apikey` header is no longer accepted.
+
+2. **Field inspector**
+
+   ```bash
+   python main.py test --system chmeetings --test-type api-inspect
+   ```
+
+   Pass, all of:
+   - every line under `FIELD MAPPING VALIDATION` is `OK`, ending with
+     `All CHM_FIELDS matched successfully.` — no `MISSING`, `NOT OBSERVED` or
+     `NOT CHECKED`. (`NOT OBSERVED` on `nick_name` means the Nickname profile
+     field was switched off in Account Settings; ChMeetings omits disabled
+     fields from the response instead of returning null.)
+   - the field IDs and option IDs printed under `FIELD DEFINITIONS` match
+     `SF_FIELD_IDS`, `SF_CHURCH_TEAM_OPTIONS`, `SF_PRIMARY_SPORT_OPTIONS`,
+     `SF_SECONDARY_SPORT_OPTIONS` and `SF_IS_MEMBER_OPTION_IDS` in
+     `middleware/config.py`;
+   - each sample `additional_fields` item has `field_id`, `field_name`,
+     `field_type` and `value` (participant mapping reads `field_name` and
+     `value`);
+   - the `GROUPS` list contains every `Team XXX` group and the season's
+     approved group.
+
+3. **Connector tests against the live API** (write tests stay skipped)
+
+   ```bash
+   set LIVE_TEST=true && pytest tests/test_chmeetings_connector.py -v -s
+   ```
+
+   Pass: no failures.
+
+4. **Read-only sample of every endpoint the connector uses.** Start `python`
+   in `middleware\` and paste:
+
+   ```python
+   from chmeetings.backend_connector import ChMeetingsConnector
+   from config import Config
+
+   c = ChMeetingsConnector()
+
+   def get(path, **params):
+       r = c._api_request("GET", path, params=params or None)
+       limits = {k: v for k, v in r.headers.items()
+                 if "rate" in k.lower() or k.lower() == "retry-after"}
+       print(f"{r.status_code} GET {path} rate-headers={limits}")
+       try:
+           return r.json()
+       except ValueError:
+           return None
+
+   base = dict(include_additional_fields=True, include_family_members=False,
+               include_organizations=False)
+
+   # A. People list and paging
+   b = get("api/v1/people", page=1, page_size=2, **base)
+   print(sorted(b), b["paging"])
+   person = b["data"][0]
+   print(sorted(person))
+
+   # B. Field definitions
+   f = get("api/v1/people/fields")["data"]
+   print([(s.get("section_id"), s.get("title"), len(s.get("fields", [])))
+          for s in f["sections"]])
+   print(sorted(f["sections"][0]["fields"][0]))
+
+   # C. Groups (not paged) and the search_text filter
+   g = get("api/v1/groups")["data"]
+   print(len(g), sorted(g[0]))
+   teams = [x for x in g if x["name"].startswith(Config.TEAM_PREFIX + " ")]
+   print(len(teams), "team groups;", Config.APPROVED_GROUP_NAME, "present:",
+         any(x["name"] == Config.APPROVED_GROUP_NAME for x in g))
+   print(len(get("api/v1/groups", search_text=Config.TEAM_PREFIX)["data"]),
+         "groups via search_text")
+
+   # D. Group members
+   m = get("api/v1/groups/people", group_ids=teams[0]["id"])["data"]
+   print(len(m), sorted(m[0]) if m else "empty group")
+
+   # E. One person, the fields a PUT must round-trip, and their notes
+   pid = person["id"]
+   p = get(f"api/v1/people/{pid}")["data"]
+   print(sorted(p))
+   print([k for k in ("nick_name", "native_name", "job_title", "school",
+                      "qualification", "education_level", "church",
+                      "father_name", "talents_and_hobbies") if k in p])
+   n = get(f"api/v1/people/{pid}/notes", page=1, page_size=5)
+   print(sorted(n), len(n["data"]))
+
+   # F. A person ID that does not exist
+   print(get("api/v1/people/999999999"))
+
+   # G. Key scope, webhook events, and the newer people filters
+   print([(o["type"], o["name"])
+          for o in get("api/v1/organizations", page=1, page_size=100)["data"]])
+   print(get("api/v1/integrations/webhooks/events"))
+   x = get("api/v1/people", page=1, page_size=2, person_ids=pid,
+           include_groups=True, **base)
+   print(x["paging"], "groups" in x["data"][0])
+   c.close()
+   ```
+
+   Pass, per block:
+   - **A** — `200`; top-level keys include `data` and `paging`; `paging` has
+     `total_count`, `page`, `page_size`; the person has `id`, `first_name`,
+     `last_name`, `email`, `mobile`, `birth_date`, `gender`, `photo`,
+     `additional_fields`.
+   - **B** — `200`; the `Sports Fest` and `Church Rep Verification` sections
+     are listed; a field has `field_id`, `field_name`, `field_type`, `options`.
+   - **C** — `200`; each group has `id` and `name`; the team-group count
+     matches the number of church teams; the approved group is present. The
+     `search_text` call returning at least as many groups as there are teams
+     confirms the filter added in 2026.
+   - **D** — `200`; each member has `person_id`, `first_name`, `last_name`,
+     `email`, `mobile`, `group_id`.
+   - **E** — `200`; note which of the listed keys come back. Every key that is
+     set on the profile but **not** returned here cannot be preserved by
+     `update_person()`, because `PUT /people/{id}` is a full replacement.
+     Notes: `200`, top-level `data` is a list.
+   - **F** — `404` with a JSON body. Record the body text. This is the same
+     response a merged, deleted or other-tenant person gives, so it must never
+     be read as "deleted".
+   - **G** — organizations lists only VAY SM and its ministries (a diocese or
+     sibling church here means the wrong key is in `CHM_API_KEY`); the webhook
+     events list is recorded in the review; the last line prints a
+     `total_count` of `1` and `True`.
+   - **Rate limit** — no `429` during the run. Record any rate-limit header
+     names that appear.
+
+5. **Optional write checks — test person and test group only.** Run these when
+   the review found a change to `PUT /people/{id}` or to group memberships.
+
+   ```bash
+   python main.py reset-season --year 2026 --person-id <TEST_PERSON_ID> --probe
+   ```
+
+   Pass: probes P1–P3 return `200`, and the test person's profile is unchanged
+   afterwards (compare standard fields such as job title and school as well as
+   the Sports Fest fields).
+
+   The group membership round trip is the gated live test in
+   [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md#live-round-trip-test)
+   (Change #4). Pass: `201` on add, `200` on remove.
+
+6. **Operator screens (browser).** Open the Individual Application Form and
+   Consent Form submission lists. Pass: the form IDs in
+   `middleware/chrome_export_vaysf_forms.py` still open the right forms, the
+   page has an `Export` button, and it opens an `Export Submissions` dialog
+   with a `Download` button. Then confirm the form settings that are decided
+   per season (for 2027: automatic profile creation stays **off**, see #351).
+
+#### Review record
+
+| Date | Reviewed through | Spec snapshot | Live checklist | Result | Record |
+|---|---|---|---|---|---|
+| 2026-11-13 | ChMeetings 2026.22 (tenant showed v2026.22.7.3); release notes read from 2026.1 | Refreshed 2026-11-13: 64 → 110 paths, nothing removed | Step 6 passed in the tenant; steps 1–5 not yet run | No breaking change found in the published spec or release notes for the endpoints `vaysf` calls. Open items are listed in the record. | [PR #401](https://github.com/i12know/vaysf/pull/401) — first Phase 0 review: ranked risks, full API change list, inventory |
+
 ### Phase 1: Archive the Previous Season
 
 1. **Generate final reports** for all churches:
@@ -88,7 +307,7 @@ Each Sports Fest season produces data across all three systems:
 
 ### Phase 3: Update Middleware Configuration
 
-IMPORTANT DEV. NOTE: Since ChMeetings are in active development, it would be wise to spend a week upgrading the system to take advantage of the new capability from them.
+IMPORTANT DEV. NOTE: Since ChMeetings are in active development, it would be wise to spend a week upgrading the system to take advantage of the new capability from them. The Phase 0 review above is where those new capabilities, and any breaking changes, are found and recorded.
 
 7. **Update `.env`**:
    ```
