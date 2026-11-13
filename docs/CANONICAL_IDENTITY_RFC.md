@@ -393,7 +393,7 @@ after A1 merges its test fixtures).
 
 *Companion reading: `docs/ARCHITECTURE_REVIEW_2026.md` (state of the
 system at v1.12), `docs/REGISTRANT_TRUST_RFC.md` (upstream prevention:
-explicit roles, verified contacts, minor consent — Track T of the same
+explicit roles, verified contacts, minor consent — Track R of the same
 epic), `docs/TROUBLESHOOTING.md` §"Approval Sync Returns 404" (today's
 manual classification of stale IDs), issue #40 (duplicate names in
 exports), issue #171 (identity drift).*
