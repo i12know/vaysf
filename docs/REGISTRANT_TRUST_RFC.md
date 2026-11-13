@@ -43,12 +43,11 @@ duplicate tripwires (A5, #312) are not built yet.*
    participant records for workflow, approvals, rosters, badges, scoresheets,
    and views. *This is where duplicate identities enter* — re-registration,
    changing sports by submitting again, delete/re-add.
-   *Fact-check: a form submission is not yet a ChMeetings Person. An admin
-   promotes it with Bulk Actions → "Add People" (`docs/PRD.md` §5 step 3a,
-   #62; the parent/child mis-linking risk at that step is #27), or
-   `repair-form-people` creates it. The ChMeetings ID is minted at that
-   promotion, and the registrant is invisible to the middleware until it
-   has happened and the person is in a `Team` group.*
+   *Fact-check: in the 2026 workflow, staff used Bulk Actions → "Add People"
+   for applications without a linked ChMeetings Person (`docs/PRD.md` §5
+   step 3a, #62; see #27 for the parent/child mis-linking risk).
+   `repair-form-people` can also create a missing profile. Participant sync
+   sees the athlete once a People profile is in a `Team` group.*
 5. **Church Rep reviews and coordinates corrections** before
    forwarding/signoff — team rules, registration requirements, fees, event
    limits.
@@ -241,8 +240,8 @@ Nothing in this RFC starts from zero:
   variant.
 - **Drift framework** — `_detect_identity_drift` + the
   `approval_identity_drift` / `approval_registration_drift` split, with the
-  operator `approval-drift-accept` workflow. Consent drift (Q5) is a third
-  issue type in an existing machine, not a new machine.
+  operator `approval-drift-accept` workflow. This framework tracks pastor
+  approval. Consent has no persisted invalidation state.
   *Fact-check: the machine keeps an invalidated approval invalid through the
   `reapproval_required` status and a rotated approval token. Consent has no
   such state: `consent_status` is recomputed from ChMeetings Box 2 on every
@@ -308,17 +307,18 @@ model (ChMeetings households vs WordPress-side guardian link vs flat text).
 **Dependencies:** none.
 
 ### T5 (#317) — `middleware: flag minor + self-signed consent mismatch`
-Buildable now: cross-check signer-type against `age_at_event` during consent
-processing; WARNING-severity validation issue first, severity revisited with
-T6. **Dependencies:** none.
+Cross-check signer type against the athlete’s age at the event during
+consent processing. The original proposal starts with a warning and
+revisits severity in T6.
 *Fact-check: one dependency was missed. Participant sync resolves every open
 individual issue it did not regenerate in that run, so an issue raised from
 `check-consent` would be closed by the next sync unless signer type is stored
 where the validator can read it.*
 
 ### T6 (#318) — `validation: consent enforcement level for minors`
-Rules-JSON change raising missing/self-signed consent for minors to ERROR
-(Handbook-aligned), adults stay WARNING. **Dependencies:** §8 decision, T5.
+Review enforcement for a minor’s self-signed consent and whether the
+existing missing-consent severity should be configurable in the rules file.
+**Dependencies:** §8 decision, T5.
 *Fact-check: the missing-consent half is already live, and not through the
 rules file: `_validate_consent` sets ERROR for under-18 in code and ignores
 the rule's `severity`. A rules-JSON edit alone changes nothing today. What
