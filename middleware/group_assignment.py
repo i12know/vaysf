@@ -28,6 +28,12 @@ from chmeetings.backend_connector import (
     ChMeetingsConnector, ChMeetingsReadError, CHM_MIN_REQUEST_INTERVAL_SECONDS,
 )
 from wordpress.frontend_connector import WordPressConnector
+from sync.merged_identity_guard import (
+    BLOCKED_OUTCOME as BLOCKED_MERGED_IDENTITY,
+    MergedIdentityGuard,
+    MergedIdentityReadError,
+    load_merged_tombstones,
+)
 
 
 def _team_group_prefix() -> str:
@@ -627,6 +633,19 @@ def _repair_audit_row(
     }
 
 
+def _read_merged_tombstones() -> List[Dict[str, Any]]:
+    """The WordPress ``merged`` participants; raises MergedIdentityReadError if unreadable."""
+    try:
+        with WordPressConnector() as wp_connector:
+            return load_merged_tombstones(wp_connector)
+    except MergedIdentityReadError:
+        raise
+    except Exception as exc:  # connector setup problems are also "could not look"
+        raise MergedIdentityReadError(
+            f"WordPress could not be reached ({exc.__class__.__name__})"
+        ) from exc
+
+
 def repair_form_people(
     source_file: str,
     *,
@@ -635,12 +654,19 @@ def repair_form_people(
     execute: bool = False,
     people: Optional[List[Dict[str, Any]]] = None,
     groups: Optional[List[Dict[str, Any]]] = None,
+    merged_tombstones: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, int]:
     """Create missing ChMeetings People records from Individual Application form rows.
 
     Performs a fresh live re-check first so the repair set reflects current
     ChMeetings state, not a stale audit file.  Only rows that are still
     ``missing_person`` after the re-check are eligible for creation.
+
+    Before anyone is created (dry run included), each of those rows is checked
+    against the WordPress ``merged`` tombstones (#388). A strong identity match
+    (birthdate or exact-name anchor) is reported as ``blocked_merged_identity``
+    and nothing is created. If the WordPress read fails the whole run is
+    refused: "could not look" must not read as "no merged match".
 
     Args:
         source_file: Path to the Individual Application form export xlsx.
@@ -649,10 +675,14 @@ def repair_form_people(
         execute: Must be True for any live creates or group-add calls.
         people: Pre-fetched people list (injected in tests to skip get_people()).
         groups: Pre-fetched groups list (injected in tests to skip get_groups()).
+        merged_tombstones: Pre-fetched WordPress participant rows (injected in
+            tests to skip the WordPress read). Only rows whose
+            ``approval_status`` is ``merged`` are used.
 
     Returns:
         Dict with integer counts: ``created``, ``linked``, ``skipped``,
-        ``blocked``, ``errored``.
+        ``blocked``, ``blocked_merged_identity`` (a subset of ``blocked``),
+        ``errored``.
     """
     empty: Dict[str, int] = {
         "created": 0,
@@ -661,6 +691,7 @@ def repair_form_people(
         "skipped_matched": 0,
         "dry_run": 0,
         "blocked": 0,
+        "blocked_merged_identity": 0,
         "errored": 0,
     }
 
@@ -690,6 +721,7 @@ def repair_form_people(
         "skipped_matched": 0,
         "dry_run": 0,
         "blocked": 0,
+        "blocked_merged_identity": 0,
         "errored": 0,
     }
     audit_rows: List[Dict[str, str]] = []
@@ -721,6 +753,26 @@ def repair_form_people(
             if _source_row_people_match(row, people_index)[0] == "missing_person"
         ]
         duplicate_source_keys = _duplicate_source_repair_keys(repair_candidates)
+
+        # Fail closed (#388): with rows to create and no readable tombstone
+        # list, nothing is created. Read before the first mutating call.
+        merged_guard: Optional[MergedIdentityGuard] = None
+        if repair_candidates:
+            try:
+                merged_guard = MergedIdentityGuard(
+                    merged_tombstones
+                    if merged_tombstones is not None
+                    else _read_merged_tombstones()
+                )
+            except MergedIdentityReadError as exc:
+                logger.error(
+                    f"[VAY SM] repair-form-people refused: {exc}. Nothing was created and no "
+                    "group was changed; the merged-person check could not be completed. "
+                    "Check the WordPress connection and rerun."
+                )
+                refused = dict(empty)
+                refused["errored"] = 1
+                return refused
 
         for row in source_rows:
             match_status, matches = _source_row_people_match(row, people_index)
@@ -754,6 +806,20 @@ def repair_form_people(
                 continue
 
             # Row is still missing_person after fresh re-check.
+            merge_note = ""
+            if merged_guard is not None:
+                merge_check = merged_guard.check(row)
+                if merge_check.blocked:
+                    detail = merge_check.block_detail()
+                    counts["blocked"] += 1
+                    counts["blocked_merged_identity"] += 1
+                    logger.warning(f"[repair] Row {row_key} ({name}): blocked — {detail}")
+                    audit_rows.append(
+                        _repair_audit_row(row, BLOCKED_MERGED_IDENTITY, detail, [])
+                    )
+                    continue
+                merge_note = merge_check.contact_note()
+
             duplicate_reason = _duplicate_source_reason(row, duplicate_source_keys)
             if duplicate_reason:
                 counts["blocked"] += 1
@@ -785,6 +851,8 @@ def repair_form_people(
                     f"would create {name} for church {row.get('church_code')} "
                     f"(sport={row.get('primary_sport')})"
                 )
+                if merge_note:
+                    outcome_detail = f"{outcome_detail}. {merge_note}"
                 logger.info(f"[dry-run] Row {row_key}: {outcome_detail}")
                 audit_rows.append(_repair_audit_row(row, "dry_run", outcome_detail, []))
                 continue
@@ -843,19 +911,17 @@ def repair_form_people(
                 )
 
             counts["created"] += 1
-            audit_rows.append(
-                _repair_audit_row(
-                    row, "created",
-                    f"new_person_id={new_id}{group_note}",
-                    [],
-                )
-            )
+            created_detail = f"new_person_id={new_id}{group_note}"
+            if merge_note:
+                created_detail = f"{created_detail}. {merge_note}"
+            audit_rows.append(_repair_audit_row(row, "created", created_detail, []))
 
     _write_audit_file("form_people_repair.xlsx", audit_rows)
     logger.info(
         f"repair-form-people complete: "
         f"{counts['created']} created, {counts['linked']} linked, "
-        f"{counts['skipped']} skipped, {counts['blocked']} blocked, "
+        f"{counts['skipped']} skipped, {counts['blocked']} blocked "
+        f"({counts['blocked_merged_identity']} merged identity), "
         f"{counts['errored']} errored."
     )
     return counts

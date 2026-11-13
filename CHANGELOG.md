@@ -28,6 +28,20 @@
   on name is proposed with the note "Genders differ (…): likely a data-entry
   error. Fix the gender in ChMeetings before applying the alias." Pairs that
   share only a phone and email are unchanged.
+- `repair-form-people` no longer recreates a retired (merged) person (#388).
+  Before it creates anyone, in dry run and `--execute` alike, it compares each
+  row still `missing_person` with the WordPress `merged` tombstones using the
+  shared `sync/identity_scoring.py` (names without diacritics, shown as
+  registered). A match that rests on a birthdate or exact name plus a second
+  field is reported as `blocked_merged_identity` in
+  `data/form_people_repair.xlsx`, naming the tombstone's WordPress
+  `participant_id`, its ChMeetings ID and the match basis; nothing is created
+  and no group is changed. An email and phone shared with a tombstone, without
+  a matching birthdate or name, does not block (siblings share a parent's
+  contact details); the row is created with a note in `Outcome Detail`. If the
+  WordPress read fails or comes back short, the whole run is refused before any
+  create. New: `sync/merged_identity_guard.py`; `repair_form_people()` takes
+  `merged_tombstones=` for tests.
 - Added `find-duplicates`, a read-only command that proposes likely duplicate
   participants for the person alias map (#311, Canonical Identity RFC §4.4).
   It scores every pair of live WordPress participants and writes
