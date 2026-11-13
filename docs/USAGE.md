@@ -270,8 +270,11 @@ The workbook has three sheets:
 - **Not Proposed** — pairs that share contact details but are not offered as a
   merge, with the reason. A shared phone and email with no matching birthdate
   or name is what siblings and a parent registering several children look like,
-  so those pairs never get a snippet. Neither does a pair whose recorded
-  genders differ.
+  so those pairs never get a snippet. Neither does a pair with different names
+  *and* different recorded genders (brother/sister twins). A pair with the same
+  name and different genders is on `Proposals` instead: that is usually a gender
+  typed wrong on one registration. Its `Review Notes` say so; fix the gender in
+  ChMeetings before applying the alias.
 - **How To Use** — these steps, inside the workbook.
 
 To act on a proposal:

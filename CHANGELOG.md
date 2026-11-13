@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `find-duplicates` no longer hides a pair that matches on name because the two
+  rows record different genders (#395). The gender rule now applies only when
+  the names differ (brother/sister twins, still not proposed). A pair matching
+  on name is proposed with the note "Genders differ (…): likely a data-entry
+  error. Fix the gender in ChMeetings before applying the alias." Pairs that
+  share only a phone and email are unchanged.
 - Added `find-duplicates`, a read-only command that proposes likely duplicate
   participants for the person alias map (#311, Canonical Identity RFC §4.4).
   It scores every pair of live WordPress participants and writes

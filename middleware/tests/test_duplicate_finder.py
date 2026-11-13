@@ -260,6 +260,71 @@ def test_brother_and_sister_twins_are_not_proposed(mocker, tmp_path):
     assert row["Score"] == "84"
 
 
+@pytest.mark.parametrize(
+    "second, expected_score, expected_basis",
+    [
+        # Same name and birthdate, new contacts.
+        ({"email": "other@example.com", "phone": "999-999-9999"}, "49", "birthdate, name"),
+        # The pair from the first live run: all four fields agree.
+        ({}, "100", "birthdate, email, phone, name"),
+        # The name agrees only once diacritics are removed.
+        ({"first_name": "Ngọc", "last_name": "Lê", "email": "other@example.com",
+          "phone": "999-999-9999"}, "49", "birthdate, name"),
+    ],
+)
+def test_same_name_and_birthdate_with_different_genders_is_proposed(
+    mocker, tmp_path, second, expected_score, expected_basis
+):
+    """#395: a matching name makes a gender disagreement a typo, not a twin."""
+    participants = [
+        _participant(32, "4110001", gender="Female", approval_status="approved"),
+        _participant(33, "4110002", gender="Male", **second),
+    ]
+
+    _, proposals, not_proposed, _ = _run(mocker, tmp_path, participants)
+
+    assert not_proposed == []
+    [row] = proposals
+    assert (row["Strength"], row["Score"], row["Match Basis"]) == (
+        "strong", expected_score, expected_basis,
+    )
+    assert (
+        "Genders differ (Female / Male): likely a data-entry error. "
+        "Fix the gender in ChMeetings before applying the alias."
+    ) in row["Review Notes"]
+    _, aliases = _snippet_as_alias_map(tmp_path, row["Alias Map Snippet"])
+    assert resolve_chm_id("4110002", aliases) == "4110001"
+
+
+def test_same_name_and_gender_carries_no_gender_note(mocker, tmp_path):
+    participants = [
+        _participant(32, "4110001", gender="Female"),
+        _participant(33, "4110002", gender="female"),  # case is not a disagreement
+        _participant(34, "4110003", gender=""),  # nor is a blank
+    ]
+
+    _, proposals, not_proposed, _ = _run(mocker, tmp_path, participants)
+
+    assert len(proposals) == 3 and not_proposed == []
+    assert all("Genders differ" not in row["Review Notes"] for row in proposals)
+
+
+def test_shared_contact_only_pair_is_unchanged_by_a_gender_difference(mocker, tmp_path):
+    """Brother and sister of different ages on a parent's phone and email."""
+    siblings = [
+        _participant(20, "4000001", first_name="An", birthdate="2008-04-15", gender="Male"),
+        _participant(21, "4000002", first_name="Chi", birthdate="2012-03-02", gender="Female"),
+    ]
+
+    _, proposals, not_proposed, _ = _run(mocker, tmp_path, siblings)
+
+    assert proposals == []
+    [row] = not_proposed
+    assert row["Why Not Proposed"].startswith("Shared contact only")
+    assert "Genders differ" not in row["Why Not Proposed"]
+    assert "Genders differ" not in row["Review Notes"]
+
+
 def test_same_gender_twins_cannot_be_told_apart_and_are_flagged_for_review(mocker, tmp_path):
     """Known limit, pinned on purpose.
 

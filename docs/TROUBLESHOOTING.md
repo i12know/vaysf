@@ -246,10 +246,10 @@ re-registration, a delete-and-re-add, or a ChMeetings profile merge.
    file named in the audit workbook.
 
 If the pair is on the `Not Proposed` sheet instead, the two rows share a phone
-and email but neither birthdate nor name (or their genders differ). That is
-normally two relatives, not one athlete. Only write an alias for such a pair by
-hand, after confirming with the Church Rep. Full steps: `docs/USAGE.md`,
-"Canonical Person Aliases".
+and email but neither birthdate nor name (or their names and genders both
+differ). That is normally two relatives, not one athlete. Only write an alias
+for such a pair by hand, after confirming with the Church Rep. Full steps:
+`docs/USAGE.md`, "Canonical Person Aliases".
 
 ### Missing Participants
 
