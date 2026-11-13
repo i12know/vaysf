@@ -305,13 +305,32 @@ five changes above still describe how the connector must talk to the API.
   **off by decision for 2027** (issue #351). The release notes for 2026.17 to
   2026.22 add no matching or routing controls to it.
 
+**Confirmed live with the VAY SM API key** (2026-11-13, Phase 0 steps 2, 4
+and 5; the write probe ran on a fictional profile created for the purpose and
+deleted afterwards from the diocese admin view, because the VAY SM key cannot
+delete people):
+
+- **"Omitted fields will be cleared" did not happen for the fields at risk.**
+  A Vietnamese name seeded in Native Name survived all six `reset-season
+  --probe` PUTs and a separate PUT that left `native_name` out entirely. A
+  seeded Qualification survived the six probes. After P1, which sends no
+  `additional_fields`, the seeded Sports Fest fields were unchanged.
+  `GET /people/{id}` returns a populated `native_name`.
+- P3 cleared the targeted checklist checkbox and P4 the targeted sport
+  dropdown, as designed: the probe sends clearing values (Phase 0 step 5).
+- `GET /people/999999999` returns `404` with the body `Invalid Person Id`.
+- The field inspector matched all 14 mapped custom fields and every
+  configured field and option ID. `nick_name` was absent from the sampled
+  responses; whether the account's Nickname setting (2026.13) is off is being
+  checked in the tenant settings.
+
 **To verify live** (see the live checklist in Phase 0):
 
-- Whether `GET /people/{id}` returns `native_name`, `qualification`,
-  `education_level`, `father_name`, `church` and `talents_and_hobbies`. The
-  published response schema does not list them, but `PUT` accepts them, and
-  `PUT` clears what is omitted. If they are not returned, every
-  `update_person()` call clears them on profiles that have them set.
+- Whether `father_name`, `education_level`, `church` and
+  `talents_and_hobbies` survive `update_person()` on a profile that has them
+  set. The sampled real profile omitted `father_name` and had nothing in
+  these fields, so there was nothing to lose; the fictional profile did not
+  seed them.
 - Whether the standard fields that became lookup (list) fields in 2026.21
   (Job Title, Education Level, Qualification, School, Church, City) still
   round-trip through `PUT` as plain strings. The published schema still types

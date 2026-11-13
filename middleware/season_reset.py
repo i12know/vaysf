@@ -327,17 +327,19 @@ class SeasonResetter:
         Diagnostic: send a series of PUT requests to verify what the ChMeetings
         /api/v1/people/{id} endpoint accepts.
 
-        Tests (in order):
-          P1. PUT full person body, no additional_fields
-          P2. PUT full person + all current additional_fields (round-trip values)
-          P3. PUT full person + single current-value field
-          P4. PUT /api/v1/people/{id}/fields  — alternate URL
-          P5. POST /api/v1/people/{id}/fields — alternate URL + method
+        Tests (in order), all PUT /api/v1/people/{id}:
+          P1. full person body, no additional_fields
+          P2. full person + all current additional_fields (round-trip values)
+          P3. full person + one Sports Fest checkbox CLEARED
+          P4. full person + one Sports Fest dropdown CLEARED
+          P5. full person + ALL Sports Fest fields CLEARED (season reset payload)
+          P6. full person + all fields, Sports Fest ones CLEARED, others round-tripped
 
-        All PUT probes (P1-P3) include the full standard person body so no
-        standard profile fields (email, mobile, birthdate…) are wiped.
-        All probes use current field values, not clearing values, so the
-        profile content is not changed by running this command.
+        DESTRUCTIVE: P3-P6 send clearing values and no archive note is written
+        first. Run only against a disposable test person, never a real
+        participant (docs/SEASON_TRANSITION.md, Phase 0 step 5). Every probe
+        includes the full standard person body so standard profile fields
+        (email, mobile, birthdate…) are sent back unchanged.
         """
         logger.info(f"=== Probing PUT endpoint for person {person_id} ===")
         person = self.chm.get_person(person_id)

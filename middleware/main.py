@@ -350,7 +350,8 @@ def parse_args() -> argparse.Namespace:
     reset_parser.add_argument("--person-id", type=str, default=None,
                               help="Process a single ChMeetings person ID instead of the whole group (for testing)")
     reset_parser.add_argument("--probe", action="store_true",
-                              help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id)")
+                              help="Diagnostic: test what the PUT endpoint accepts for a single person (requires --person-id). "
+                                   "DESTRUCTIVE: clears Sports Fest fields; use a disposable test person only")
 
     # Generate-badges command (Issue #77)
     badges_parser = subparsers.add_parser(
