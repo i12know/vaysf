@@ -8,6 +8,13 @@ from loguru import logger
 
 from chmeetings.backend_connector import ChMeetingsConnector
 from config import APPROVAL_STATUS, DATA_DIR, EXPORT_COLUMNS, SF_FIELD_IDS
+from sync.identity_scoring import (
+    IDENTITY_SCORE_WEIGHTS as CONSENT_SCORE_WEIGHTS,
+    full_name as _full_name,
+    normalize_birthdate as _normalize_birthdate,
+    normalize_phone as _normalize_phone,
+    normalize_text as _normalize_text,
+)
 from sync.person_aliases import load_person_aliases_for_reader, resolve_chm_id
 from wordpress.frontend_connector import WordPressConnector
 
@@ -18,12 +25,9 @@ CONSENT_THRESHOLD = 51
 # so those fields reliably mismatch the participant's ChM profile.
 # Name + birthdate alone (16 + 33 = 49) is sufficient to confirm identity.
 CONSENT_THRESHOLD_GUARDIAN = 49
-CONSENT_SCORE_WEIGHTS = {
-    "birthdate": 33,
-    "email": 27,
-    "phone": 24,
-    "name": 16,
-}
+# The weights (birthdate 33 / email 27 / phone 24 / name 16) and the normalizers
+# live in sync.identity_scoring, shared with investigate-consent-404s and
+# find-duplicates (#311).
 CONSENT_AUDIT_FILE = "consent_check_audit.xlsx"
 CONSENT_REQUIRED_COLUMNS = [
     EXPORT_COLUMNS["FIRST_NAME"],
@@ -37,24 +41,6 @@ CONSENT_REQUIRED_COLUMNS = [
     "Cell phone of the parents or legal guardian",
     "Submission Date",
 ]
-
-
-def _normalize_text(value: Any) -> str:
-    return " ".join(str(value or "").strip().lower().split())
-
-
-def _normalize_phone(value: Any) -> str:
-    return "".join(ch for ch in str(value or "") if ch.isdigit())
-
-
-def _normalize_birthdate(value: Any) -> str:
-    if value is None or (isinstance(value, float) and pd.isna(value)) or pd.isna(value):
-        return ""
-
-    parsed = pd.to_datetime(value, errors="coerce")
-    if pd.isna(parsed):
-        return ""
-    return parsed.date().isoformat()
 
 
 def _parse_submission_date(value: Any) -> Optional[datetime.datetime]:
@@ -74,10 +60,6 @@ def _normalize_signer_type(value: Any) -> str:
     if normalized:
         return "self"
     return ""
-
-
-def _full_name(first_name: Any, last_name: Any) -> str:
-    return _normalize_text(f"{first_name or ''} {last_name or ''}")
 
 
 def _format_breakdown(breakdown: Dict[str, int]) -> str:

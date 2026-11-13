@@ -7,12 +7,18 @@ from loguru import logger
 
 from chmeetings.backend_connector import ChMeetingsConnector
 from config import DATA_DIR, LOG_DIR
-from sync.consent_checker import (
-    CONSENT_SCORE_WEIGHTS,
-    _full_name,
-    _normalize_birthdate,
-    _normalize_phone,
-    _normalize_text,
+from sync.identity_scoring import (
+    IDENTITY_SCORE_WEIGHTS as CONSENT_SCORE_WEIGHTS,  # noqa: F401 - kept as this module's name for the weights
+    candidate_strength as _candidate_strength,
+    format_basis as _format_basis,
+    full_name as _full_name,
+    identity_from_wp_participant as _identity_from_wp_participant,
+    normalize_birthdate as _normalize_birthdate,
+    normalize_phone as _normalize_phone,
+    normalize_text as _normalize_text,
+    safe_str as _safe_str,
+    score_identity_match as _score_identity_match,
+    strength_rank as _strength_rank,
 )
 from wordpress.frontend_connector import WordPressConnector
 
@@ -21,34 +27,6 @@ CONSENT_404_AUDIT_FILE = "consent_404_investigation.xlsx"
 CONSENT_404_LOG_PATTERN = re.compile(
     r"Could not retrieve ChMeetings person (?P<chm_id>\S+) while processing consent row (?P<row>\d+)"
 )
-
-
-def _safe_str(value: Any) -> str:
-    return str(value or "").strip()
-
-
-def _identity_from_wp_participant(participant: Dict[str, Any]) -> Dict[str, str]:
-    return {
-        "source": "wordpress",
-        "participant_id": _safe_str(participant.get("participant_id")),
-        "chmeetings_id": _safe_str(participant.get("chmeetings_id")),
-        "first_name": _safe_str(participant.get("first_name")),
-        "last_name": _safe_str(participant.get("last_name")),
-        "name": _safe_str(
-            f"{participant.get('first_name', '') or ''} {participant.get('last_name', '') or ''}"
-        ),
-        "name_norm": _full_name(
-            participant.get("first_name", ""), participant.get("last_name", "")
-        ),
-        "email": _safe_str(participant.get("email")),
-        "email_norm": _normalize_text(participant.get("email", "")),
-        "phone": _safe_str(participant.get("phone")),
-        "phone_norm": _normalize_phone(participant.get("phone", "")),
-        "birthdate": _normalize_birthdate(participant.get("birthdate")),
-        "church_code": _safe_str(participant.get("church_code")),
-        "created_at": _safe_str(participant.get("created_at")),
-        "updated_at": _safe_str(participant.get("updated_at")),
-    }
 
 
 def _identity_from_chm_person(person: Dict[str, Any]) -> Dict[str, str]:
@@ -73,58 +51,6 @@ def _identity_from_chm_person(person: Dict[str, Any]) -> Dict[str, str]:
         "created_at": _safe_str(person.get("created_on")),
         "updated_at": _safe_str(person.get("updated_on")),
     }
-
-
-def _score_identity_match(
-    stale_identity: Dict[str, str], candidate_identity: Dict[str, str]
-) -> Tuple[int, Dict[str, int], List[str]]:
-    breakdown = {
-        "birthdate": CONSENT_SCORE_WEIGHTS["birthdate"]
-        if stale_identity["birthdate"]
-        and stale_identity["birthdate"] == candidate_identity["birthdate"]
-        else 0,
-        "email": CONSENT_SCORE_WEIGHTS["email"]
-        if stale_identity["email_norm"]
-        and stale_identity["email_norm"] == candidate_identity["email_norm"]
-        else 0,
-        "phone": CONSENT_SCORE_WEIGHTS["phone"]
-        if stale_identity["phone_norm"]
-        and stale_identity["phone_norm"] == candidate_identity["phone_norm"]
-        else 0,
-        "name": CONSENT_SCORE_WEIGHTS["name"]
-        if stale_identity["name_norm"]
-        and stale_identity["name_norm"] == candidate_identity["name_norm"]
-        else 0,
-    }
-    basis = [field for field, weight in breakdown.items() if weight]
-    return sum(breakdown.values()), breakdown, basis
-
-
-def _candidate_strength(score: int, basis: List[str]) -> str:
-    basis_set = set(basis)
-    # Family members often share phone/email, so require at least one
-    # identity anchor (birthdate or exact full name) before calling a
-    # replacement candidate "strong".
-    if score >= 49 and ("birthdate" in basis_set or "name" in basis_set):
-        return "strong"
-    if score >= 27 and len(basis_set) >= 2:
-        return "possible"
-    if score > 0:
-        return "weak"
-    return ""
-
-
-def _format_basis(basis: List[str]) -> str:
-    return ", ".join(basis)
-
-
-def _strength_rank(strength: str) -> int:
-    return {
-        "strong": 0,
-        "possible": 1,
-        "weak": 2,
-        "": 3,
-    }.get(strength, 3)
 
 
 class Consent404Investigator:
