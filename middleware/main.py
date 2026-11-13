@@ -156,6 +156,15 @@ def parse_args() -> argparse.Namespace:
         help="Apply the reconciliation; the default is report-only",
     )
 
+    find_duplicates_parser = subparsers.add_parser(
+        "find-duplicates",
+        help="Propose likely duplicate participants for the person alias map (read-only)",
+    )
+    find_duplicates_parser.add_argument(
+        "--output",
+        help="Output xlsx path (default: data/duplicate_participants.xlsx)",
+    )
+
     # Export command
     export_parser = subparsers.add_parser("export-church-teams", help="Export church team status reports")
     export_parser.add_argument("--church-code", help="Export for specific church code (if omitted, exports for all churches)")
@@ -1748,6 +1757,13 @@ def main() -> None:
     elif args.command == "apply-aliases":
         from sync.alias_reconciler import apply_aliases
         success = apply_aliases(execute=args.execute)
+    elif args.command == "find-duplicates":
+        from sync.duplicate_finder import DuplicateFinder
+
+        # WordPress only, and only reads: this command proposes (guardrail G3).
+        with WordPressConnector() as wp_conn:
+            summary = DuplicateFinder(wp_conn).run(output_file=args.output)
+            success = summary["error"] == 0
     elif args.command == "export-church-teams":
         output_path = Path(args.output) 
         try:

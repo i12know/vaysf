@@ -224,6 +224,33 @@ Treat the result as:
 Do not mark every approval-sync `404` as harmless automatically. The replacement
 identity and approval state must be verified first.
 
+### The Same Person Appears Twice (Duplicate Badge, Scoresheet Line or Roster Row)
+
+**Issue**: One athlete shows up twice — two badges, two lines on a scoresheet,
+two rows in a church-team export — usually under two ChMeetings IDs after a
+re-registration, a delete-and-re-add, or a ChMeetings profile merge.
+
+**Solutions**:
+1. List the likely duplicates. This is read-only:
+   ```bash
+   python main.py find-duplicates
+   ```
+2. Open `data/duplicate_participants.xlsx`, sheet `Proposals`, and find the
+   athlete. Read `Review Notes`, then confirm which ID is still live in
+   ChMeetings with `python main.py inspect-person --chm-id <ID>` on both.
+3. Paste the row's `Alias Map Snippet` into `data/person_aliases.local.json`
+   and fill in `confirmed_by` / `confirmed_on`.
+4. Run `python main.py apply-aliases`, review the audit workbook, then
+   `python main.py apply-aliases --execute`.
+5. Regenerate the affected badges and scoresheets, and delete the stale badge
+   file named in the audit workbook.
+
+If the pair is on the `Not Proposed` sheet instead, the two rows share a phone
+and email but neither birthdate nor name (or their genders differ). That is
+normally two relatives, not one athlete. Only write an alias for such a pair by
+hand, after confirming with the Church Rep. Full steps: `docs/USAGE.md`,
+"Canonical Person Aliases".
+
 ### Missing Participants
 
 **Issue**: Some participants don't sync from ChMeetings to WordPress.

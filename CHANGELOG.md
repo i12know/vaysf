@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Added `find-duplicates`, a read-only command that proposes likely duplicate
+  participants for the person alias map (#311, Canonical Identity RFC §4.4).
+  It scores every pair of live WordPress participants and writes
+  `data/duplicate_participants.xlsx` with score, match basis, strength, review
+  notes and a one-line alias-map entry to paste. It never contacts ChMeetings,
+  makes no WordPress change and never edits the alias file (guardrail G3);
+  `merged` rows and already-aliased IDs are skipped. A shared phone and email
+  without a matching birthdate or name (siblings, parent-managed signups) is
+  listed on a separate `Not Proposed` sheet and gets no snippet. Names are
+  compared without diacritics for this command only; names are shown as
+  registered.
+- Moved the identity scoring into `middleware/sync/identity_scoring.py` (#311):
+  the weights (birthdate 33 / email 27 / phone 24 / name 16) from
+  `sync/consent_checker.py`, and the identity record, pair score and
+  strong/possible/weak anchor rule from `sync/consent_404_investigator.py`.
+  `check-consent` and `investigate-consent-404s` behave as before;
+  `tests/test_identity_scoring_characterization.py` pins that and was committed
+  before the code moved.
+
 ## Version 1.1.15 (2026-11-12)
 
 - Fixed participant sync writing `updated_at` seven hours off on a
