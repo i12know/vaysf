@@ -20,8 +20,7 @@ duplicate tripwires (A5, #312) are not built yet.*
 
 *Decisions, 2026-11-12/13: the maintainer answered the review's questions on
 epic #307 (comment 6839370870 and follow-ups). They are recorded in §9 and
-supersede the recommendations they touch: Q1, Q3, Q4, Q5 and §8.1 are decided,
-and R3, R5, R6 and R7 are re-scoped in place. §9.4 lists what the decisions
+supersede the recommendations they touch: Q1, Q3, Q4 and Q5 are decided. The 2027 issue scopes are in §9.3. §9.4 lists what the decisions
 leave open.*
 
 ---
@@ -49,12 +48,11 @@ leave open.*
    participant records for workflow, approvals, rosters, badges, scoresheets,
    and views. *This is where duplicate identities enter* — re-registration,
    changing sports by submitting again, delete/re-add.
-   *Fact-check: a form submission is not yet a ChMeetings Person. An admin
-   promotes it with Bulk Actions → "Add People" (`docs/PRD.md` §5 step 3a,
-   #62; the parent/child mis-linking risk at that step is #27), or
-   `repair-form-people` creates it. The ChMeetings ID is minted at that
-   promotion, and the registrant is invisible to the middleware until it
-   has happened and the person is in a `Team` group.*
+   *Fact-check: in the 2026 workflow, staff used Bulk Actions → "Add People"
+   for applications without a linked ChMeetings Person (`docs/PRD.md` §5
+   step 3a, #62; see #27 for the parent/child mis-linking risk).
+   `repair-form-people` can also create a missing profile. Participant sync
+   sees the athlete once a People profile is in a `Team` group.*
 5. **Church Rep reviews and coordinates corrections** before
    forwarding/signoff — team rules, registration requirements, fees, event
    limits.
@@ -207,15 +205,9 @@ consent-capture page in 2027. Form auto-create (D10) would shorten the
 
 **Q4 — Does parent consent attach to the person, the registration, or the
 exact sports selected?**
-Recommendation: **the registration + its sports**, not the person. The
-consent release is about what the child will actually do; a consent signed
-when the child registered for Scripture Memorization shouldn't silently
-cover a later switch to Basketball. This makes consent behave like pastor
-approval already behaves under the drift framework.
-*Decided (§9.1, D2), overriding this recommendation: the guardian release
-covers the whole Sports Fest. It attaches to the athlete and the season, not
-to the sports selected. Changing sports alone leaves both consent and pastor
-approval in place.*
+The guardian release covers the whole Sports Fest. It applies to the athlete
+for that season. Changing sports alone leaves consent and pastor approval in
+place (§9.1, D2).
 
 **Q5 — What changes require renewed pastor approval or parent consent?**
 The system already answers half of this: identity drift
@@ -224,9 +216,8 @@ the event changes) and registration drift
 (`approval_registration_drift`: sports/events) invalidate pastor approval
 (#171; the identity/registration split landed under #212, which is still open
 as a review of `reapproval_required` side effects; the operator accept
-workflow is #252). Recommendation: add **consent drift** as a sibling — the same
-detected changes, evaluated against consent for minors. One framework, two
-authorities (pastor, guardian), consistent invalidation rules.
+workflow is #252). For 2027, change sync so sport-only changes preserve
+pastor approval. The CONSENT HOLD in §9.2 tracks eligibility separately.
 *Fact-check: the drift guard runs only after a participant has reached the
 pastor-approval surface (an approval record, or a status of approved, denied
 or reapproval_required). Before that, a sport change overwrites the WordPress
@@ -266,8 +257,8 @@ Nothing in this RFC starts from zero:
   variant.
 - **Drift framework** — `_detect_identity_drift` + the
   `approval_identity_drift` / `approval_registration_drift` split, with the
-  operator `approval-drift-accept` workflow. Consent drift (Q5) is a third
-  issue type in an existing machine, not a new machine.
+  operator `approval-drift-accept` workflow. This framework tracks pastor
+  approval. Consent has no persisted invalidation state.
   *Fact-check: the machine keeps an invalidated approval invalid through the
   `reapproval_required` status and a rotated approval token. Consent has no
   such state: `consent_status` is recomputed from ChMeetings Box 2 on every
@@ -297,108 +288,16 @@ Nothing in this RFC starts from zero:
 
 ## 7. Implementation issues (Track R)
 
-*Sub-issues of epic #307 ("Track R — Relational verification and consent",
-R1–R7, matching the epic body; earlier drafts called it Track T). Spikes are
-discovery: their deliverable is a written recommendation, not production
-code.*
+*Sub-issues of epic #307. This RFC uses the epic’s Track R naming. The
+original issue bodies may refer to the same issue numbers as Track T.*
 
-### R1 (#313) — `spike: SMS/notification gateway evaluation`
-Evaluate Twilio and alternatives for cost, nonprofit A2P 10DLC registration
-lead time (weeks — a start-early item), sender identity, and operational
-ownership; define the email fallback that works with zero gateway setup.
-Deliverable: recommendation + cost model. **Dependencies:** none.
-
-### R2 (#314) — `spike: contact verification page (token-page pattern)`
-Prototype a `[contact_verify]`-style page on the insurance-upload pattern:
-request-code → token → verified. Prototype storage must explicitly
-distinguish whether the verified contact belongs to the **athlete,
-registrant, or guardian**; temporary `sf_participants` storage is
-acceptable for the spike, but the deliverable must recommend the final
-role/contact schema shape before any production implementation —
-role-scoped trust data must not be stuffed into the athlete row (that is
-how `parent_info` became a flat-text junk drawer). Answers Q2 with a
-working prototype; feeds `find-duplicates` a strong anchor.
-**Dependencies:** R1 (channel).
-
-### R3 (#315) — `spike: minor registration → parent notification & consent capture`
-Design the trigger (sync-time, `age_at_event < 18`, new registration), the
-guardian notification (R1 channel), and the consent-capture page (token-page
-pattern) as complement or replacement for the ChMeetings consent form.
-Consent-capture and guardian-contact storage follow the role/contact schema
-recommendation from R2 — no ad-hoc fields on the participant row.
-Answers Q3, informs Q4. **Dependencies:** R1, R2.
-*Re-scoped for 2027 (§9.1, D7–D8): a build issue, not a spike. Email only,
-no R1 or R2 dependency, no consent-capture page. One bilingual reminder per
-minor per season, linking to the existing ChMeetings consent form, with the
-guardian-address gate (D8). The page stays a post-2027 option.*
-
-### R4 (#316) — `spike: ChMeetings /families API evaluation`
-Determine whether households are reliably populated for VAY SM families and
-whether the API supports a guardian link worth trusting; recommend family
-model (ChMeetings households vs WordPress-side guardian link vs flat text).
-**Dependencies:** none.
-
-### R5 (#317) — `middleware: flag minor + self-signed consent mismatch`
-Buildable now: cross-check signer-type against `age_at_event` during consent
-processing; WARNING-severity validation issue first, severity revisited with
-R6. **Dependencies:** none.
-*Fact-check: one dependency was missed. Participant sync resolves every open
-individual issue it did not regenerate in that run, so an issue raised from
-`check-consent` would be closed by the next sync unless signer type is stored
-where the validator can read it.*
-*Re-scoped for 2027 (§9.1, D3): the mismatch is a candidate for staff
-review, not a verdict. A self-signed form for a minor is flagged; once staff
-confirm the self-signature, the consent is invalid and the athlete goes on
-CONSENT HOLD (§9.2). Signer type must be stored per athlete and season (D6).*
-
-### R6 (#318) — `validation: consent enforcement level for minors`
-Rules-JSON change raising missing/self-signed consent for minors to ERROR
-(Handbook-aligned), adults stay WARNING. **Dependencies:** §8 decision, R5.
-*Fact-check: the missing-consent half is already live, and not through the
-rules file: `_validate_consent` sets ERROR for under-18 in code and ignores
-the rule's `severity`. A rules-JSON edit alone changes nothing today. What
-is left for R6 is the self-signed case, and moving the severity into the
-rules file if it is to be JSON-driven.*
-*Re-scoped for 2027 (§9.1, D3, D8): two blocking conditions for minors, on
-top of the existing missing-consent ERROR: an active CONSENT HOLD, and a
-guardian email that is missing or suspect and not yet resolved by the Church
-Rep. Both stop the athlete advancing.*
-
-### R7 (#319) — `middleware: consent drift — changes that invalidate consent`
-Extend the drift framework with consent-drift for minors per Q4/Q5
-(registration+sports attachment). **Dependencies:** R3 outcome, R6.
-*Superseded for 2027 (§9.1, D2): consent covers the whole Sports Fest, so
-sport changes never invalidate it. What remains of this issue is the CONSENT
-HOLD state (§9.2), which is better scoped as its own issue than as drift.*
+The 2027 scope and its mapping to issues #313–#319 are in §9.3.
 
 ## 8. Open decisions
 
-1. **Consent enforcement level** (gates R6): recommend ERROR for minors —
-   the Handbook already requires guardian signature; this is enforcement
-   catching up to policy, not new policy. *Fact-check: missing consent is
-   already ERROR for minors (see §2). The decision still open is whether a
-   minor's self-signed consent is an ERROR.*
-   *Decided (§9.1, D3): a staff-confirmed self-signature by a minor voids
-   the consent and puts the athlete on CONSENT HOLD.*
-2. **SMS budget and ownership** (gates R1's conclusion): who owns the
-   gateway account and number; appetite for per-message cost vs email-only
-   first season.
-3. **Family model** (gates R7 shape): decided by R4 evidence.
-   *Decided (§9.1, D11): households are optional context; the 2027
-   workflow does not depend on them.*
-4. **Verification target** (Q2, gates R2 conclusion): registrant vs athlete
-   vs both — recommend registrant + guardian-for-minors.
-
-*Facts only the maintainer can supply, feeding the spikes: whether VAY SM
-households are populated in ChMeetings (R4 verifies); whether the
-registration form can gain fields; whether the ChMeetings app offers any
-native SMS the tenant already has.*
-
-*Fact-check: the form-fields question is answered in practice: #350 adds two
-fields to the 2027 Individual Application. Two things postdate this draft and
-bear on it: Track P (#351, the Person Resolution Gate) now owns duplicate
-prevention at intake, and ChMeetings 2026.16 (2026-08-06) lets a form create
-member profiles automatically on submission.*
+See §9.4 for the remaining workflow and storage decisions. The SMS gateway
+and verification page are deferred. Auto-create remains conditional on
+the form-copy test in D10.
 
 ## 9. Maintainer decisions for 2027
 
@@ -431,8 +330,8 @@ policy; the build issues implement them.*
 - **D6. Storage and retention.** Guardian contacts and consent records are
   kept in ChMeetings, by season. Prior years are retained until VAY chooses
   to delete that year's records. WordPress holds working state only, so the
-  yearly truncation of `sf_participants` does not lose the record of
-  consent.
+  yearly truncation of `sf_participants` must preserve access to the signed
+  release and the record of staff acceptance.
 - **D7. Channel.** Email only for 2027. No SMS gateway and no verification
   page this season.
 - **D8. Guardian reminder and address gate.** A separate bilingual email
@@ -501,7 +400,7 @@ The guardian-address gate in D8 is a separate block with its own resolver
 | R2 (#314) verification page | Deferred (D7); the role/contact schema memo is still needed for D6 |
 | R3 (#315) guardian notice | Build: email reminder and address gate (D8) |
 | R4 (#316) `/families` probe | Optional (D11): may show where household links help, but nothing in 2027 depends on it |
-| R5 (#317) self-signed flag | Build: flag for staff review, feeding CONSENT HOLD (D3) |
+| R5 (#317) self-signed flag | Build: flag for staff review after a reliable athlete match; shared family phone and email alone are insufficient (D3) |
 | R6 (#318) enforcement | Build: the hold and the address gate block advancement |
 | R7 (#319) consent drift | Superseded by D2; CONSENT HOLD replaces it |
 
@@ -509,10 +408,11 @@ The guardian-address gate in D8 is a separate block with its own resolver
 
 1. **Event-day check-in does not exist in vaysf.** `generate-badges` renders
    and uploads badges (`middleware/badges/`), but nothing on `main` records
-   a check-in. Blocking check-in (§9.2) needs either a check-in workflow or
-   a printed or exported check-in list that marks CONSENT HOLD.
+   a check-in. The existing manual check-in can use a current list that marks
+   CONSENT HOLD. Decide who updates the list and relays late changes.
 2. **Badge issuance is not recorded.** The before/after-badge rule for who
-   clears a hold needs an "issued" fact per athlete and season.
+   clears a hold needs an issuance record per athlete and season. Define
+   issuance by when the athlete or church can obtain the badge.
 3. **"Appears to belong to the athlete" needs a definition and an
    override.** When a parent fills in the form, the parent's email is often
    used for both athlete and guardian; equality alone will flag many real
@@ -527,13 +427,19 @@ The guardian-address gate in D8 is a separate block with its own resolver
    canonical person through an alias merge (D9).
 6. **Which ID carries consent and hold.** D9 requires consent and hold to
    follow the canonical person; WordPress cannot resolve aliases, so the
-   carry happens in the middleware (`apply-aliases`, which today moves
-   approvals but not consent).
+   carry happens in the middleware. Today `check-consent` can redirect a
+   matching form to the surviving record. `apply-aliases` does not migrate
+   consent or hold state. Keep an unresolved hold active if records conflict.
 7. **Age bands in code.** D12 needs every minor rule to key on "under 18 at
    the event" with no lower bound. The missing-consent ERROR already does
    (`age < 18` in `IndividualValidator._validate_consent`); the self-signed
    flag, CONSENT HOLD and the reminder must match it, with fixtures that
    include a 10–12 year old.
+
+8. **Downstream eligibility.** Identify consumers that use pastor approval
+   as eligibility, including badge generation and any use of the ChMeetings
+   approved group for admission. Ensure they honor the hold while retaining
+   the underlying pastor approval.
 
 ---
 
