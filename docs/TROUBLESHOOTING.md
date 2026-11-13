@@ -241,7 +241,11 @@ re-registration, a delete-and-re-add, or a ChMeetings profile merge.
 3. Paste the row's `Alias Map Snippet` into `data/person_aliases.local.json`
    and fill in `confirmed_by` / `confirmed_on`.
 4. Run `python main.py apply-aliases`, review the audit workbook, then
-   `python main.py apply-aliases --execute`.
+   `python main.py apply-aliases --execute`. If the workbook shows
+   `canonical_not_in_chmeetings` for the entry, its direction is wrong (the
+   canonical ID is not a live ChMeetings person): swap the two IDs in the alias
+   file and rerun. `canonical_unverified` means ChMeetings could not be reached;
+   rerun. Nothing is written for an entry in either state.
 5. Regenerate the affected badges and scoresheets, and delete the stale badge
    file named in the audit workbook.
 

@@ -1,16 +1,24 @@
-"""Retire stale WordPress participant rows described by the person alias map."""
+"""Retire stale WordPress participant rows described by the person alias map.
+
+Writes go to WordPress only. ChMeetings is read, never written: before an
+alias is reported on or applied, its canonical ID is confirmed to be a live
+ChMeetings person (#396).
+"""
 
 import datetime
+import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 import pandas as pd
 import requests
 from loguru import logger
 from tenacity import RetryError
 
+from chmeetings.backend_connector import CHM_MIN_REQUEST_INTERVAL_SECONDS, ChMeetingsConnector
 from config import APPROVAL_STATUS, DATA_DIR, VALIDATION_STATUS
 from sync.person_aliases import AliasMap, PersonAliasError, load_person_aliases, resolve_chm_id
 from wordpress.frontend_connector import WordPressConnector
@@ -36,7 +44,30 @@ def _audit_path(now: Optional[datetime.datetime] = None) -> Path:
 
 # Outcomes that write nothing but still need the operator: the command exits
 # non-zero so they cannot scroll past unnoticed.
-_FAILING_OUTCOMES = frozenset({"canonical_is_merged"})
+_FAILING_OUTCOMES = frozenset(
+    {"canonical_is_merged", "canonical_not_in_chmeetings", "canonical_unverified"}
+)
+
+# Results of the ChMeetings lookup of an alias's canonical ID (#396).
+CANONICAL_EXISTS = "exists"
+CANONICAL_NOT_FOUND = "not_found"
+CANONICAL_UNVERIFIED = "unverified"
+
+# result -> (audit outcome, "Canonical In ChMeetings" cell, why the entry was skipped)
+_CANONICAL_SKIPS = {
+    CANONICAL_NOT_FOUND: (
+        "canonical_not_in_chmeetings",
+        "not found",
+        "canonical ID not found in ChMeetings; check direction (the stale ID may be the "
+        "live one) and fix the alias file",
+    ),
+    CANONICAL_UNVERIFIED: (
+        "canonical_unverified",
+        "could not verify",
+        "could not verify the canonical ID in ChMeetings; nothing was applied for this "
+        "entry. Rerun apply-aliases.",
+    ),
+}
 
 
 _ISSUE_PAGE_SIZE = 100
@@ -81,6 +112,93 @@ def _read(
     if getattr(connector, status_attribute, None) == "failed":
         raise ReconcileReadError(f"WordPress read failed: {description}")
     return result
+
+
+class _CanonicalVerifier:
+    """Ask ChMeetings, with one GET per canonical ID, whether that person exists.
+
+    An alias whose canonical ID is gone sends every later sync and approval
+    write to a dead ID. Anything other than a clear "exists" keeps the entry
+    from being applied: a 404 and a failed lookup are both skips, reported
+    differently. A 404 is reported as "not found", never as "deleted" — the
+    VAY SM key gets the same 404 for a person moved to another tenant.
+
+    Read-only: the only ChMeetings call made here is ``get_person``. Rate
+    limiting (429 backoff) is the connector's.
+    """
+
+    def __init__(self, chm: Any, available: bool) -> None:
+        self.chm = chm
+        self.available = available
+        self._results: Dict[str, Tuple[str, str]] = {}
+
+    def check(self, canonical_chm_id: str) -> Tuple[str, str]:
+        """``(result, request_id)``; an ID shared by several aliases is looked up once."""
+        if canonical_chm_id not in self._results:
+            self._results[canonical_chm_id] = self._lookup(canonical_chm_id)
+        return self._results[canonical_chm_id]
+
+    def _lookup(self, canonical_chm_id: str) -> Tuple[str, str]:
+        # Middleware-side correlation ID: it ties this log line to the audit row.
+        request_id = uuid4().hex[:12]
+        endpoint = f"GET api/v1/people/{canonical_chm_id}"
+        if not self.available:
+            self._log(endpoint, "not_attempted", 0, request_id, CANONICAL_UNVERIFIED)
+            return CANONICAL_UNVERIFIED, request_id
+
+        if self._results:
+            time.sleep(CHM_MIN_REQUEST_INTERVAL_SECONDS)
+        self.chm.last_get_person_status = "unknown"
+        started = time.monotonic()
+        try:
+            person = self.chm.get_person(canonical_chm_id)
+            status = self.chm.last_get_person_status
+        except (requests.RequestException, ValueError) as exc:
+            logger.error(f"[VAY SM] ChMeetings lookup raised for {endpoint}: {exc!r}")
+            person, status = None, "failed"
+        duration_ms = int((time.monotonic() - started) * 1000)
+
+        if person and status == "ok":
+            result = CANONICAL_EXISTS
+        elif not person and status == "not_found":
+            result = CANONICAL_NOT_FOUND
+        else:
+            result = CANONICAL_UNVERIFIED
+        self._log(endpoint, status, duration_ms, request_id, result)
+        return result, request_id
+
+    @staticmethod
+    def _log(endpoint: str, status: Any, duration_ms: int, request_id: str, result: str) -> None:
+        log = logger.info if result == CANONICAL_EXISTS else logger.error
+        log(
+            f"[VAY SM] apply-aliases canonical check | scope=church | endpoint={endpoint} | "
+            f"status={status} | duration_ms={duration_ms} | request_id={request_id} | "
+            f"result={result}"
+        )
+
+
+def _skipped_row(
+    stale_chm_id: str,
+    canonical_chm_id: str,
+    entry: Dict[str, str],
+    result: str,
+    request_id: str,
+) -> Dict[str, Any]:
+    outcome, cell, why = _CANONICAL_SKIPS[result]
+    logger.error(
+        f"[VAY SM] Alias {stale_chm_id} -> {canonical_chm_id} skipped: {why} "
+        f"(request_id={request_id}). Nothing was written for this entry."
+    )
+    return {
+        "Stale ChM ID": stale_chm_id,
+        "Canonical ChM ID": canonical_chm_id,
+        "Reason": entry.get("reason", ""),
+        "Confirmed By": entry.get("confirmed_by", ""),
+        "Canonical In ChMeetings": cell,
+        "ChM Check Request ID": request_id,
+        "Outcome": outcome,
+        "Skipped Because": why,
+    }
 
 
 def _participant_rows(connector: Any, chm_id: str) -> List[Dict[str, Any]]:
@@ -454,10 +572,29 @@ def apply_aliases(execute: bool = False) -> bool:
 
     rows: List[Dict[str, Any]] = []
     try:
-        with WordPressConnector() as connector:
+        with WordPressConnector() as connector, ChMeetingsConnector() as chm:
+            chm_available = bool(chm.authenticate())
+            if not chm_available:
+                logger.error(
+                    "[VAY SM] apply-aliases could not authenticate with ChMeetings, so no "
+                    "canonical ID can be verified. No alias will be applied in this run."
+                )
+            verifier = _CanonicalVerifier(chm, chm_available)
             for stale_chm_id, entry in aliases.items():
+                # Report-only and --execute alike: an entry is not even reported
+                # as "would reconcile" until its canonical ID is known to be live.
+                canonical_chm_id = resolve_chm_id(stale_chm_id, aliases)
+                result, request_id = verifier.check(canonical_chm_id)
+                if result != CANONICAL_EXISTS:
+                    rows.append(
+                        _skipped_row(stale_chm_id, canonical_chm_id, entry, result, request_id)
+                    )
+                    continue
                 try:
-                    rows.append(_reconcile_one(connector, stale_chm_id, entry, aliases, execute))
+                    row = _reconcile_one(connector, stale_chm_id, entry, aliases, execute)
+                    row["Canonical In ChMeetings"] = "yes"
+                    row["ChM Check Request ID"] = request_id
+                    rows.append(row)
                 except ReconcileReadError as exc:
                     logger.error(f"[VAY SM] {exc}")
                     rows.append({"Stale ChM ID": stale_chm_id, "Outcome": "error_read_failed"})

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `apply-aliases` now confirms each entry's canonical ID in ChMeetings before
+  reporting on or applying it, in the preview and with `--execute` (#396). It
+  reads the person once per canonical ID and writes nothing to ChMeetings. A
+  canonical ID that returns 404 is skipped as `canonical_not_in_chmeetings`
+  ("check direction"); a lookup that fails for any other reason is skipped as
+  `canonical_unverified`. Skipped entries are listed in the audit workbook with
+  the reason, make the command exit non-zero, and do not stop the other
+  entries. **Operator note:** `apply-aliases` now needs ChMeetings to be
+  reachable; if it is not, no alias is applied in that run.
 - `find-duplicates` no longer hides a pair that matches on name because the two
   rows record different genders (#395). The gender rule now applies only when
   the names differ (brother/sister twins, still not proposed). A pair matching

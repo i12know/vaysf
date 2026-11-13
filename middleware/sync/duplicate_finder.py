@@ -106,7 +106,8 @@ _HOW_TO_LINES = [
     "Check the direction before you paste. The canonical ID must be the record that "
     "is still live in ChMeetings: run 'python main.py inspect-person --chm-id <id>' "
     "on both IDs. The pick here only sees WordPress: approved, then has rosters, "
-    "then most recent update.",
+    "then most recent update. apply-aliases also checks: it skips an entry whose "
+    "canonical ID is not found in ChMeetings.",
     "To confirm a pair, paste its 'Alias Map Snippet' inside the outer { } of "
     "data/person_aliases.local.json, with a comma between entries, and fill in "
     "confirmed_by and confirmed_on. A stale ID may appear in the file only once.",

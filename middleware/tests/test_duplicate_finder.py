@@ -153,6 +153,16 @@ def test_pasted_snippet_drives_apply_aliases(mocker, tmp_path):
     connector.get_approvals.return_value = []
     connector.get_validation_issues.return_value = []
     mocker.patch("sync.alias_reconciler.WordPressConnector", return_value=connector)
+    chm = MagicMock()  # apply-aliases confirms the canonical ID in ChMeetings (#396)
+    chm.__enter__.return_value = chm
+    chm.authenticate.return_value = True
+
+    def get_person(person_id):
+        chm.last_get_person_status = "ok"
+        return {"id": person_id}
+
+    chm.get_person.side_effect = get_person
+    mocker.patch("sync.alias_reconciler.ChMeetingsConnector", return_value=chm)
     mocker.patch("sync.alias_reconciler._badge_filename", return_value="stale.png")
     audit = mocker.patch("sync.alias_reconciler._write_audit")
 
@@ -164,6 +174,7 @@ def test_pasted_snippet_drives_apply_aliases(mocker, tmp_path):
     assert reconciled["Canonical ChM ID"] == "3633885"
     assert reconciled["Stale WP Participant ID"] == 11
     assert reconciled["Approval Mismatch"] == "no"  # the approved row was kept
+    chm.get_person.assert_called_once_with("3633885")
 
 
 def test_merged_rows_are_excluded(mocker, tmp_path):

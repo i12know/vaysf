@@ -283,7 +283,11 @@ To act on a proposal:
    the same birthdate, phone and email can be one person under two names; it can
    also be twins. The data cannot tell those apart.
 2. Check the direction. The canonical ID must be the record that is still live
-   in ChMeetings, and this command does not look there:
+   in ChMeetings, and `find-duplicates` does not look there. `apply-aliases`
+   does: it looks up every canonical ID in ChMeetings and skips an entry whose
+   canonical ID is not found (see below), so a reversed entry is caught before
+   anything is written. Looking first is still quicker than pasting, running
+   and fixing:
 
    ```bash
    python main.py inspect-person --chm-id <CANONICAL_ID>
@@ -316,6 +320,26 @@ rerun to confirm:
 ```bash
 python main.py apply-aliases
 ```
+
+**The canonical ID is checked in ChMeetings first.** Before an entry is
+reported on or applied — in the preview and with `--execute` alike —
+`apply-aliases` looks up the entry's canonical ID in ChMeetings (one read per
+canonical ID; nothing is written to ChMeetings). The audit workbook's
+`Canonical In ChMeetings` column shows the answer:
+
+| `Canonical In ChMeetings` | `Outcome` | What happens |
+|---|---|---|
+| `yes` | as before (`would_reconcile`, `reconciled`, …) | The entry proceeds. |
+| `not found` | `canonical_not_in_chmeetings` | Skipped; nothing written. The entry is probably reversed: the stale ID may be the live one. Run `inspect-person` on both IDs, fix the alias file, rerun. |
+| `could not verify` | `canonical_unverified` | Skipped; nothing written. ChMeetings could not be reached, or returned an error. Rerun; the entry is not applied until the lookup succeeds. |
+
+A skipped entry also has its reason in `Skipped Because`, makes the command
+exit non-zero, and does not stop the other entries. "Not found" means the VAY
+SM key cannot see that person: deleted, merged away, or moved to another
+ChMeetings tenant. Each lookup is logged with a `request_id` that is also in
+the workbook's `ChM Check Request ID` column. This check is why a wrong
+direction no longer reaches WordPress; `inspect-person` remains the way to see
+*which* ID is live when an entry is skipped.
 
 **Precondition for the first `--execute`: the new plugin is live on the site.**
 The guards that keep a `merged` row retired (pastor email link, "Resend Email",
