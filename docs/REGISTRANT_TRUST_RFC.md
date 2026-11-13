@@ -18,6 +18,13 @@ and are reviewed on epic #307. Track A status at that date: the alias map,
 `find-duplicates` and the shared `identity_scoring` module (A4, #311) and the
 duplicate tripwires (A5, #312) are not built yet.*
 
+*Update, 2026-11-13 (#311): `find-duplicates` and `sync/identity_scoring.py`
+now exist. Where the fact-check notes below say A4 is "not built yet" or that
+the anchor rule "lives only in the 404 investigator", read them as the
+2026-11-12 state: the rule is now shared by the investigator and
+`find-duplicates`. `check-consent` still does not apply it. A5 (#312) is
+unchanged.*
+
 *Decisions, 2026-11-12/13: the maintainer answered the review's questions on
 epic #307 (comment 6839370870 and follow-ups). They are recorded in §9 and
 supersede the recommendations they touch: Q1, Q3, Q4 and Q5 are decided. The 2027 issue scopes are in §9.3. §9.4 lists what the decisions

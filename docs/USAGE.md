@@ -232,6 +232,78 @@ travel with a clone.
 }
 ```
 
+###### Finding Duplicates to Alias (`find-duplicates`)
+
+You do not have to spot duplicates by eye. `find-duplicates` compares every
+live WordPress participant with every other one and writes a workbook of pairs
+that look like one person, each with an alias entry ready to paste:
+
+```bash
+python main.py find-duplicates
+python main.py find-duplicates --output "data/duplicates_review.xlsx"
+```
+
+**It proposes; it never merges.** The command reads WordPress participants and
+rosters. It does not contact ChMeetings, makes no WordPress change, and never
+edits the alias file. The only thing it writes is
+`data/duplicate_participants.xlsx` (git-ignored, overwritten on each run).
+
+What is compared: rows whose status is `merged`, rows whose ChMeetings ID is
+already a key in the alias file, and rows without a numeric ChMeetings ID are
+skipped. Every other pair is scored with the same rule
+`investigate-consent-404s` uses — birthdate 33, email 27, phone 24, name 16 —
+except that names are compared without diacritics, so `Ngọc Lê` and `Ngoc Le`
+count as the same name. The workbook always shows names as registered.
+
+The workbook has three sheets:
+
+- **Proposals** — pairs offered as a merge.
+  - `Strength` is `strong` (score 49 or more *and* a matching birthdate or
+    name) or `possible` (a matching name plus one shared contact).
+  - `Canonical ...` / `Stale ...` columns show both rows. The canonical row is
+    picked from WordPress data only: approved, then has rosters, then most
+    recent update. `Canonical Pick Basis` says which rule decided.
+  - `Review Notes` lists what to check: names that differ, names that match
+    only without diacritics, differing birthdates or churches, a phone or email
+    shared by several participants, consent on file for the stale row only.
+  - `Alias Map Snippet` is one alias entry on one line.
+- **Not Proposed** — pairs that share contact details but are not offered as a
+  merge, with the reason. A shared phone and email with no matching birthdate
+  or name is what siblings and a parent registering several children look like,
+  so those pairs never get a snippet. Neither does a pair whose recorded
+  genders differ.
+- **How To Use** — these steps, inside the workbook.
+
+To act on a proposal:
+
+1. Decide whether the two rows are one person. A pair with different names but
+   the same birthdate, phone and email can be one person under two names; it can
+   also be twins. The data cannot tell those apart.
+2. Check the direction. The canonical ID must be the record that is still live
+   in ChMeetings, and this command does not look there:
+
+   ```bash
+   python main.py inspect-person --chm-id <CANONICAL_ID>
+   python main.py inspect-person --chm-id <STALE_ID>
+   ```
+
+   If the proposed canonical ID is the one that returns 404, swap the two IDs
+   in the entry before saving it.
+3. Paste the snippet inside the outer `{ }` of
+   `data/person_aliases.local.json`, with a comma between entries, and fill in
+   `confirmed_by` and `confirmed_on`. A stale ID may be listed only once; the
+   loader rejects a repeat.
+4. Run `python main.py apply-aliases`, review its audit workbook, then run
+   `python main.py apply-aliases --execute` (below).
+5. If `Review Notes` said consent is on file for the stale row only, rerun
+   `check-consent` afterwards so the signed form is credited to the canonical
+   person. A confirmed merge does not require a new guardian signature.
+
+If the alias file exists but will not parse, `find-duplicates` stops without
+reading WordPress: it cannot tell which IDs you have already aliased.
+
+###### Applying Aliases (`apply-aliases`)
+
 Preview the WordPress cleanup first. This makes no API changes. Every run,
 preview or `--execute`, writes its own workbook
 `data/alias_reconciliation_<YYYYMMDD_HHMMSS>_audit.xlsx` and never overwrites an
