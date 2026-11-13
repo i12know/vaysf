@@ -305,13 +305,52 @@ five changes above still describe how the connector must talk to the API.
   **off by decision for 2027** (issue #351). The release notes for 2026.17 to
   2026.22 add no matching or routing controls to it.
 
+**Confirmed live with the VAY SM API key** (2026-11-13, Phase 0 steps 2, 4
+and 5; the write probe ran on a fictional profile created for the purpose and
+deleted afterwards from the diocese admin view, because the VAY SM key cannot
+delete people):
+
+- **One PUT that omitted `native_name` did not clear it.** A separate PUT
+  sent without `native_name` returned `200`, and the next GET returned the
+  original Vietnamese name. After P1, which sends no `additional_fields`,
+  the seeded Sports Fest fields were unchanged. The six probes themselves
+  send the standard fields back (`PERSON_PUT_WRITABLE_FIELDS` includes
+  `native_name` and `qualification`), so a seeded Native Name and
+  Qualification surviving them shows round-tripping works, not that omitted
+  fields are kept. Which other fields, if any, are cleared when omitted is
+  untested. `GET /people/{id}` returns a populated `native_name`.
+- P3 cleared the targeted checklist checkbox and P4 the targeted sport
+  dropdown, as designed: the probe sends clearing values (Phase 0 step 5).
+- `GET /people/999999999` returns `404` with the body `Invalid Person Id`.
+- The field inspector matched all 14 mapped custom fields and every
+  configured field and option ID. `nick_name` was absent from the sampled
+  responses although the account's **Enable Nickname** setting is **on**
+  (Account Settings → Format Settings, checked in the tenant the same day).
+
+**Where the published spec and the live API disagree** (reported 2026-11-13;
+trust the live behaviour and re-test after each ChMeetings release):
+
+| Published spec says | Live VAY SM API did |
+|---|---|
+| `PUT /api/v1/people/{id}`: "This is a full replacement — omitted fields will be cleared." | A PUT omitting `native_name` returned `200` and the value was kept. A PUT omitting `additional_fields` (P1) kept the Sports Fest fields |
+| `PersonResponseDto` (used by `GET /people/{id}`) has no `native_name`; only `CreatePersonDto` and `UpdatePersonDto` list it | `GET /people/{id}` returned `native_name`, populated on the fictional profile and empty on a sampled real one |
+| `PersonResponseDto` lists `nick_name`, and both People GET examples show `"nick_name": "Em"`; `GET /people` says a field the account has disabled is "omitted rather than returned as null" | `nick_name` was absent from the sampled API responses even though Enable Nickname was on |
+
+Behaviour for a profile with a **saved** nickname is pending verification.
+When checking it, record `GET /people` (list) and `GET /people/{id}` (detail)
+separately. The 2026.13 release note ("If the toggle is off, then the
+Nickname field will not be available to populate in people profiles")
+describes the profile UI, not the API. Badges
+read `nick_name` for the printed first name (`badges/runner.py`), so until
+this is settled, do not rely on ChMeetings nicknames for badges (see #227).
+
 **To verify live** (see the live checklist in Phase 0):
 
-- Whether `GET /people/{id}` returns `native_name`, `qualification`,
-  `education_level`, `father_name`, `church` and `talents_and_hobbies`. The
-  published response schema does not list them, but `PUT` accepts them, and
-  `PUT` clears what is omitted. If they are not returned, every
-  `update_person()` call clears them on profiles that have them set.
+- Whether `father_name`, `education_level`, `church` and
+  `talents_and_hobbies` survive `update_person()` on a profile that has them
+  set. The sampled real profile omitted `father_name` and had nothing in
+  these fields, so there was nothing to lose; the fictional profile did not
+  seed them.
 - Whether the standard fields that became lookup (list) fields in 2026.21
   (Job Title, Education Level, Qualification, School, Church, City) still
   round-trip through `PUT` as plain strings. The published schema still types

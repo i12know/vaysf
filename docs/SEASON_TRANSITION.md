@@ -106,9 +106,12 @@ output into an issue or PR).
    Pass, all of:
    - every line under `FIELD MAPPING VALIDATION` is `OK`, ending with
      `All CHM_FIELDS matched successfully.` — no `MISSING`, `NOT OBSERVED` or
-     `NOT CHECKED`. (`NOT OBSERVED` on `nick_name` means the Nickname profile
-     field was switched off in Account Settings; ChMeetings omits disabled
-     fields from the response instead of returning null.)
+     `NOT CHECKED`. `NOT OBSERVED` on `nick_name` does **not** by itself mean
+     the Nickname field is switched off: on 2026-11-13 the setting was on
+     (Account Settings → Format Settings → Enable Nickname) and the API still
+     returned no `nick_name`. Check that setting in the tenant; see the
+     2026-11-13 note in
+     [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md#platform-review-notes-dated).
    - the field IDs and option IDs printed under `FIELD DEFINITIONS` match
      `SF_FIELD_IDS`, `SF_CHURCH_TEAM_OPTIONS`, `SF_PRIMARY_SPORT_OPTIONS`,
      `SF_SECONDARY_SPORT_OPTIONS` and `SF_IS_MEMBER_OPTION_IDS` in
@@ -224,16 +227,33 @@ output into an issue or PR).
    - **Rate limit** — no `429` during the run. Record any rate-limit header
      names that appear.
 
-5. **Optional write checks — test person and test group only.** Run these when
-   the review found a change to `PUT /people/{id}` or to group memberships.
+5. **Optional write checks — disposable test person and test group only.** Run
+   these when the review found a change to `PUT /people/{id}` or to group
+   memberships.
+
+   > **The probe is destructive.** P3 to P6 send clearing values: P3 clears
+   > one checkbox, P4 one dropdown, P5 **every** Sports Fest field, and P6
+   > clears the Sports Fest fields while writing everything else back. Unlike
+   > a real season reset, the probe writes no archive note first. Never point
+   > it at a real participant. Create a fictional profile for the run (seed a
+   > Vietnamese name in Native Name, a value in a standard field such as
+   > Qualification, and a few Sports Fest fields), and keep it out of every
+   > `Team XXX` group so sync and `assign-groups` never pick it up. The VAY SM
+   > API key cannot delete people: remove the profile afterwards from the
+   > diocese admin view.
 
    ```bash
-   python main.py reset-season --year 2026 --person-id <TEST_PERSON_ID> --probe
+   python main.py reset-season --year 2026 --person-id <DISPOSABLE_TEST_PERSON_ID> --probe
    ```
 
-   Pass: probes P1–P3 return `200`, and the test person's profile is unchanged
-   afterwards (compare standard fields such as job title and school as well as
-   the Sports Fest fields).
+   Pass, all of:
+   - P1 to P6 return `200`;
+   - after P1 (no `additional_fields` sent) and P2 (current values sent back),
+     the seeded Sports Fest fields are unchanged;
+   - P3 and P4 clear only the one checkbox or dropdown they target;
+   - the seeded Native Name and standard fields survive all six probes. If
+     any standard field is blank afterwards, `update_person()` is losing it:
+     open an issue before the season.
 
    The group membership round trip is the gated live test in
    [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md#live-round-trip-test)
@@ -250,7 +270,7 @@ output into an issue or PR).
 
 | Date | Reviewed through | Spec snapshot | Live checklist | Result | Record |
 |---|---|---|---|---|---|
-| 2026-11-13 | ChMeetings 2026.22 (tenant showed v2026.22.7.3); release notes read from 2026.1 | Refreshed 2026-11-13: 64 → 110 paths, nothing removed | Step 6 passed in the tenant; steps 1–5 not yet run | No breaking change found in the published spec or release notes for the endpoints `vaysf` calls. Open items are listed in the record. | [PR #401](https://github.com/i12know/vaysf/pull/401) — first Phase 0 review: ranked risks, full API change list, inventory |
+| 2026-11-13 | ChMeetings 2026.22 (tenant showed v2026.22.7.3); release notes read from 2026.1 | Refreshed 2026-11-13: 64 → 110 paths, nothing removed | Step 6 passed in the tenant. Run 2026-11-13: step 2 passed (14 custom fields and all IDs match; `nick_name` not returned; approved group present; no `Team SBC` or `Team SGV`, expected because neither church fielded a team in 2026); blocks E and F passed; step 5 on a fictional profile, see [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md#platform-review-notes-dated). Steps 1 and 3 not reported | No breaking change found in the published spec or release notes for the endpoints `vaysf` calls. Open items are listed in the record. | [PR #401](https://github.com/i12know/vaysf/pull/401) — first Phase 0 review: ranked risks, full API change list, inventory |
 
 ### Phase 1: Archive the Previous Season
 

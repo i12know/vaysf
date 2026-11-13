@@ -717,12 +717,17 @@ python main.py reset-season --year 2025 --archive-only
 python main.py reset-season --year 2025 --reset-only
 
 # Test against a single person before running on the full group
-python main.py reset-season --year 2025 --person-id 3139537
-python main.py reset-season --year 2025 --person-id 3139537 --dry-run
+python main.py reset-season --year 2025 --person-id <PERSON_ID>
+python main.py reset-season --year 2025 --person-id <PERSON_ID> --dry-run
 
-# Diagnostic: probe what the PUT endpoint accepts for a single person
-python main.py reset-season --year 2025 --probe --person-id 3139537
+# Diagnostic: probe what the PUT endpoint accepts (DESTRUCTIVE: disposable test person only)
+python main.py reset-season --year 2025 --probe --person-id <DISPOSABLE_TEST_PERSON_ID>
 ```
+
+`--probe` sends clearing values: P3 to P6 clear Sports Fest fields, P5 clears
+all of them, and no archive note is written first. Run it only on a fictional
+profile created for the test, kept out of every `Team XXX` group; see
+[SEASON_TRANSITION.md](SEASON_TRANSITION.md) Phase 0, live checklist step 5.
 
 ### Generating Athlete Badges
 
@@ -922,8 +927,9 @@ Before running on the full VAY-SM group, test with a single person and a small
 church team first:
 
 ```bash
-# 1. Probe - verify the PUT endpoint accepts clearing values (should all pass)
-python main.py reset-season --year 2025 --probe --person-id <any_person_id>
+# 1. Probe - verify the PUT endpoint accepts clearing values (should all pass).
+#    DESTRUCTIVE and writes no archive note: use a disposable test person only.
+python main.py reset-season --year 2025 --probe --person-id <DISPOSABLE_TEST_PERSON_ID>
 
 # 2. Single person - confirm archive note and field clear look correct
 python main.py reset-season --year 2025 --person-id <any_person_id>
