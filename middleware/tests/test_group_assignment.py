@@ -5,6 +5,7 @@ import os
 import sys
 import pytest
 import pandas as pd
+import requests
 from unittest.mock import MagicMock
 
 # Ensure the middleware package root is importable (mirrors conftest.py / pytest.ini)
@@ -99,6 +100,23 @@ def mock_connector(mocker):
     mock_cls.return_value.__exit__ = MagicMock(return_value=False)
 
     return connector
+
+
+@pytest.fixture(autouse=True)
+def mock_wp_connector(mocker):
+    """Never let a test reach WordPress.
+
+    ``repair_form_people`` reads the merged tombstones from WordPress when none
+    are injected. By default that read returns no participants.
+    """
+    wp = MagicMock()
+    wp.get_participants.return_value = []
+    wp.last_get_participants_status = "ok"
+    wp.total_participants = 0
+    mock_cls = mocker.patch("group_assignment.WordPressConnector")
+    mock_cls.return_value.__enter__ = lambda s: wp
+    mock_cls.return_value.__exit__ = MagicMock(return_value=False)
+    return wp
 
 
 # ---------------------------------------------------------------------------
@@ -1219,3 +1237,219 @@ def test_repair_form_people_returns_empty_on_get_people_read_error(mock_connecto
     assert counts["created"] == 0
     assert counts["linked"] == 0
     mock_connector.create_person.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# repair_form_people: merged-identity guard (#388)
+# ---------------------------------------------------------------------------
+
+def _tombstone(participant_id="501", chm_id="100", **overrides):
+    """A WordPress participant retired by apply-aliases (approval_status=merged)."""
+    participant = {
+        "participant_id": participant_id,
+        "chmeetings_id": chm_id,
+        "first_name": "Sayana",
+        "last_name": "Lee",
+        "email": "old.address@example.com",
+        "phone": "555-000-1111",
+        "birthdate": "1999-01-01",
+        "approval_status": "merged",
+    }
+    participant.update(overrides)
+    return participant
+
+
+def _repair(tmp_path, mocker, rows, *, dry_run=False, tombstones=None, **kwargs):
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame(rows).to_excel(source_file, index=False)
+    counts = repair_form_people(
+        str(source_file),
+        dry_run=dry_run,
+        execute=not dry_run,
+        people=[],
+        groups=[{"id": "870578", "name": "Team RPC"}],
+        merged_tombstones=tombstones,
+        **kwargs,
+    )
+    audit_file = tmp_path / "form_people_repair.xlsx"
+    audit = pd.read_excel(audit_file, dtype=str).fillna("") if audit_file.exists() else None
+    return counts, audit
+
+
+def _assert_nothing_created(mock_connector):
+    mock_connector.create_person.assert_not_called()
+    mock_connector.add_person_to_group.assert_not_called()
+
+
+def test_repair_form_people_blocks_merged_identity_on_email_and_name(mock_connector, mocker, tmp_path):
+    tombstone = _tombstone(email="SayanaOakLee@gmail.com", phone="", birthdate="")
+
+    counts, audit = _repair(tmp_path, mocker, [_sayana_row()], tombstones=[tombstone])
+
+    assert counts["blocked"] == 1
+    assert counts["blocked_merged_identity"] == 1
+    assert counts["created"] == 0
+    _assert_nothing_created(mock_connector)
+    row = audit.iloc[0]
+    assert row["Outcome"] == "blocked_merged_identity"
+    assert "participant_id=501" in row["Outcome Detail"]
+    assert "ChMeetings ID 100" in row["Outcome Detail"]
+    assert "email, name" in row["Outcome Detail"]
+    assert (
+        "Check whether this is the merged person before creating. "
+        "If it is, add an alias instead."
+    ) in row["Outcome Detail"]
+
+
+def test_repair_form_people_blocks_merged_identity_on_phone_and_birthdate(mock_connector, mocker, tmp_path):
+    tombstone = _tombstone(
+        first_name="Different", last_name="Spelling",
+        email="someone.else@example.com", phone="(714) 321-7013", birthdate="2002-10-05",
+    )
+
+    counts, audit = _repair(tmp_path, mocker, [_sayana_row()], tombstones=[tombstone])
+
+    assert counts["blocked_merged_identity"] == 1
+    assert counts["created"] == 0
+    _assert_nothing_created(mock_connector)
+    assert audit.iloc[0]["Outcome"] == "blocked_merged_identity"
+    assert "birthdate, phone" in audit.iloc[0]["Outcome Detail"]
+
+
+def test_repair_form_people_creates_when_no_tombstone_matches(mock_connector, mocker, tmp_path):
+    mock_connector.create_person.return_value = {"id": "999001"}
+    unrelated = _tombstone(
+        first_name="Nobody", last_name="Else", email="nobody@example.com",
+        phone="555-999-0000", birthdate="1980-02-02",
+    )
+    # A live (not merged) participant with the same identity is not a tombstone.
+    live_twin = _tombstone(participant_id="502", approval_status="pending",
+                           email="sayanaoaklee@gmail.com", phone="7143217013",
+                           birthdate="2002-10-05")
+
+    counts, audit = _repair(tmp_path, mocker, [_sayana_row()], tombstones=[unrelated, live_twin])
+
+    assert counts["created"] == 1
+    assert counts["blocked"] == 0
+    mock_connector.create_person.assert_called_once()
+    mock_connector.add_person_to_group.assert_called_once_with("870578", "999001")
+    assert audit.iloc[0]["Outcome"] == "created"
+    assert "Note:" not in audit.iloc[0]["Outcome Detail"]
+
+
+def test_repair_form_people_sibling_sharing_parent_contact_is_created_with_note(mock_connector, mocker, tmp_path):
+    """A younger sibling shares the parent's email and phone with an older sibling's tombstone."""
+    mock_connector.create_person.return_value = {"id": "999001"}
+    older_sibling = _tombstone(
+        participant_id="777", chm_id="321", first_name="Khoa", last_name="Lee",
+        email="sayanaoaklee@gmail.com", phone="714-321-7013", birthdate="1996-03-03",
+    )
+
+    counts, audit = _repair(tmp_path, mocker, [_sayana_row()], tombstones=[older_sibling])
+
+    assert counts["created"] == 1
+    assert counts["blocked"] == 0
+    mock_connector.create_person.assert_called_once()
+    row = audit.iloc[0]
+    assert row["Outcome"] == "created"
+    assert "participant_id=777" in row["Outcome Detail"]
+    assert "ChMeetings ID 321" in row["Outcome Detail"]
+    assert "email, phone" in row["Outcome Detail"]
+
+
+def test_repair_form_people_dry_run_reports_blocked_rows_and_mutates_nothing(
+    mock_connector, mock_wp_connector, mocker, tmp_path
+):
+    blocked_row = _sayana_row()
+    free_row = _sayana_row()
+    free_row.update({
+        "First Name": "Minh", "Last Name": "Tran", "Email": "minh.tran@example.com",
+        "Mobile Phone": "5625550123", "Birthdate": "03/04/2001",
+    })
+    mock_wp_connector.get_participants.return_value = [
+        _tombstone(email="sayanaoaklee@gmail.com"),
+        _tombstone(participant_id="900", approval_status="pending", first_name="Minh",
+                   last_name="Tran", email="minh.tran@example.com"),
+    ]
+
+    # No injected tombstones: this goes through the WordPress read.
+    counts, audit = _repair(tmp_path, mocker, [blocked_row, free_row], dry_run=True)
+
+    assert counts["blocked_merged_identity"] == 1
+    assert counts["dry_run"] == 1
+    assert counts["created"] == 0
+    _assert_nothing_created(mock_connector)
+    assert list(audit["Outcome"]) == ["blocked_merged_identity", "dry_run"]
+    # The only WordPress call is the participants read.
+    assert {call[0] for call in mock_wp_connector.method_calls} == {"get_participants"}
+
+
+@pytest.mark.parametrize("failure", ["exception", "status_failed", "incomplete"])
+def test_repair_form_people_refuses_whole_run_when_wordpress_read_fails(
+    mock_connector, mock_wp_connector, mocker, tmp_path, failure
+):
+    if failure == "exception":
+        mock_wp_connector.get_participants.side_effect = requests.ConnectionError("down")
+    elif failure == "status_failed":
+        def _failed(params):
+            mock_wp_connector.last_get_participants_status = "failed"
+            return []
+        mock_wp_connector.get_participants.side_effect = _failed
+    else:
+        mock_wp_connector.get_participants.return_value = [_tombstone()]
+        mock_wp_connector.total_participants = 250  # WordPress says more exist than were returned
+
+    counts, audit = _repair(tmp_path, mocker, [_sayana_row()])
+
+    assert counts["created"] == 0
+    assert counts["errored"] == 1
+    _assert_nothing_created(mock_connector)
+    assert audit is None  # a refused run writes no repair workbook
+
+
+def test_repair_form_people_refuses_run_when_wordpress_cannot_be_reached(mock_connector, mocker, tmp_path):
+    mocker.patch("group_assignment.WordPressConnector", side_effect=RuntimeError("no credentials"))
+
+    counts, _ = _repair(tmp_path, mocker, [_sayana_row()])
+
+    assert counts["created"] == 0
+    assert counts["errored"] == 1
+    _assert_nothing_created(mock_connector)
+
+
+def test_repair_form_people_wordpress_not_read_when_nothing_is_missing(
+    mock_connector, mock_wp_connector, mocker, tmp_path
+):
+    mocker.patch("group_assignment.DATA_DIR", tmp_path)
+    source_file = tmp_path / "individual.xlsx"
+    pd.DataFrame([_sayana_row()]).to_excel(source_file, index=False)
+    existing = {"id": "3318927", "first_name": "Sayana", "last_name": "Lee",
+                "email": "sayanaoaklee@gmail.com", "mobile": "7143217013"}
+
+    counts = repair_form_people(
+        str(source_file), dry_run=False, execute=True, people=[existing],
+        groups=[{"id": "870578", "name": "Team RPC"}],
+    )
+
+    assert counts["skipped_matched"] == 1
+    mock_wp_connector.get_participants.assert_not_called()
+
+
+def test_repair_form_people_merged_match_ignores_diacritics_but_shows_original_spelling(
+    mock_connector, mocker, tmp_path
+):
+    row = _sayana_row()
+    row.update({"First Name": "Duc", "Last Name": "Pham", "Email": "ducpham@example.com",
+                "Mobile Phone": "", "Birthdate": ""})
+    tombstone = _tombstone(first_name="Đức", last_name="Phạm",
+                           email="ducpham@example.com", phone="", birthdate="")
+
+    counts, audit = _repair(tmp_path, mocker, [row], tombstones=[tombstone])
+
+    assert counts["blocked_merged_identity"] == 1
+    _assert_nothing_created(mock_connector)
+    out = audit.iloc[0]
+    # The form row and the tombstone are each shown as registered.
+    assert (out["First Name"], out["Last Name"]) == ("Duc", "Pham")
+    assert "Đức Phạm" in out["Outcome Detail"]

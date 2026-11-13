@@ -1003,6 +1003,15 @@ This command:
 
 > **Missing People audit:** `audit-form-people` is diagnostic only. It does not create ChMeetings People records; it identifies form submissions that cannot be assigned to Team groups because the API has no matching person ID.
 
+#### Creating missing People: `repair-form-people`
+
+```bash
+python main.py repair-form-people --file "data/individual_application_forms.xlsx" --dry-run
+python main.py repair-form-people --file "data/individual_application_forms.xlsx" --execute
+```
+
+`repair-form-people` re-checks each form row against live ChMeetings People and creates the ones still missing, then adds them to their `Team [Code]` group; it writes `data/form_people_repair.xlsx` in both modes. Before it creates anyone (dry run included), it also compares every row it would create with the WordPress participants that `apply-aliases` has retired (`merged`), so a retired person is not recreated under a new ChMeetings ID. A row that matches one by birthdate or name plus another field is reported as `blocked_merged_identity`: nothing is created and no group is changed, and `Outcome Detail` names the merged WordPress `participant_id`, its ChMeetings ID and the match basis. **What to do next:** decide whether the row is the merged person. If it is, add an alias entry for that ID (see `find-duplicates` and `apply-aliases`) instead of creating anyone; if it is a different person, the blocker is a false positive and the row needs a look before the command is rerun by hand. A row that shares only an email and phone with a retired person (siblings often do) is created as usual, with a note in `Outcome Detail` naming the retired participant. If WordPress cannot be read, the whole run is refused and nothing is created; fix the connection and rerun.
+
 > **Note:** Close `church_team_assignments.xlsx` in Excel before running, or you will see a warning that the audit file could not be written (the API calls still complete successfully).
 After assigning participants to their Team groups, run the approval sync to add approved participants to the `2025 Sports Fest` group:
 
