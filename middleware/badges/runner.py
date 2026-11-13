@@ -30,6 +30,7 @@ from badges.generator import BadgeGenerator
 from badges.uploader import WordPressBadgeUploader
 from chmeetings.backend_connector import CHM_MIN_REQUEST_INTERVAL_SECONDS
 from config import CHECK_BOXES, CHM_FIELDS, SF_CHECKLIST_OPTIONS, SF_FIELD_IDS, Config
+from sync.duplicate_tripwire import tripwire_person, warn_on_likely_duplicates
 
 # Approval statuses that count as "approved" for badge eligibility.
 APPROVED_STATUSES = {"approved"}
@@ -105,6 +106,7 @@ class BadgeRunner:
 
         logger.info(f"{len(participants)} approved athlete(s) to process "
                     f"(output: {self.generator.output_dir})")
+        self._warn_on_duplicate_athletes(participants)
 
         uploader = None if dry_run or not upload else (
             self.badge_uploader or WordPressBadgeUploader(self.wp)
@@ -158,6 +160,27 @@ class BadgeRunner:
         return errors == 0
 
     # ── Data fetching ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _warn_on_duplicate_athletes(participants: List[Dict[str, Any]]) -> None:
+        """Warn when two approved athletes of one church look like one person (#312).
+
+        Warning only: every participant still gets a badge. The list is read,
+        never filtered or reordered.
+        """
+        warn_on_likely_duplicates(
+            (
+                tripwire_person(
+                    p.get("chmeetings_id"),
+                    p.get("first_name"),
+                    p.get("last_name"),
+                    p.get("birthdate"),
+                    f"church {(p.get('church_code') or '').strip().upper()}",
+                )
+                for p in participants
+            ),
+            context="badge generation",
+        )
 
     def _badge_url_field_definition(self) -> Tuple[int, str]:
         """Return the ChMeetings field_id/type for the badge URL text field."""

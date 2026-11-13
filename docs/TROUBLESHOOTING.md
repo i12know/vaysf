@@ -230,6 +230,15 @@ identity and approval state must be verified first.
 two rows in a church-team export — usually under two ChMeetings IDs after a
 re-registration, a delete-and-re-add, or a ChMeetings profile merge.
 
+`generate-scoresheets`, `generate-badges` and `export-church-teams` log a
+warning when they see this, without changing their output:
+
+```text
+[VAY SM] Possible duplicate person in <output>, <team or church>: ChMeetings IDs <A> and <B> have the same name and birthdate. ...
+```
+
+The two IDs in that line are the pair to look for below.
+
 **Solutions**:
 1. List the likely duplicates. This is read-only:
    ```bash

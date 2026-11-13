@@ -309,6 +309,37 @@ To act on a proposal:
 If the alias file exists but will not parse, `find-duplicates` stops without
 reading WordPress: it cannot tell which IDs you have already aliased.
 
+###### Duplicate Warnings in Scoresheets, Badges and the Export
+
+Three commands watch for a duplicate that has no alias yet and say so in the
+log. They only warn: **every row is still printed or exported exactly as it
+would have been**, in the same order, so paper matches data.
+
+| Command | Warns when |
+|---|---|
+| `generate-scoresheets` | two rows on one team's roster (per event) have the same name and birthdate |
+| `generate-badges` | two approved athletes of one church have the same name and birthdate |
+| `export-church-teams` | two people in one church's export have the same name and birthdate |
+
+The line looks like this and names both ChMeetings IDs (no name or birthdate is
+written to the log):
+
+```text
+[VAY SM] Possible duplicate person in Basketball score sheets, team RPC: ChMeetings IDs 3633885 and 3634002 have the same name and birthdate. Both rows were kept; the output was not changed. Run 'python main.py find-duplicates' to review the pair.
+```
+
+"Same name" is the `find-duplicates` comparison, so `Ngọc Lê` and `Ngoc Le`
+match; the two rows must be under two different ChMeetings IDs. Twins (same
+birthdate, different names) and two people who share a name but not a birthdate
+do not trigger it. A pair the alias file already resolves is not reported.
+
+`generate-scoresheets` reads birthdates from the `Contacts-Status` tab of the
+same `Church_Team_Status_ALL` workbook it takes rosters from (the `Roster` tab
+has none). If that tab is missing, the log says the check was skipped.
+
+To clear a warning, follow "Finding Duplicates to Alias" above, then regenerate
+the output.
+
 ###### Applying Aliases (`apply-aliases`)
 
 Preview the WordPress cleanup first. This makes no API changes. Every run,

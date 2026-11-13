@@ -2613,6 +2613,7 @@ def main() -> None:
         from scoresheets import (
             ScoreSheetError,
             enrich_roster_photos_from_workbook,
+            load_roster_birthdates_from_workbook,
             write_basketball_scoresheets_pdf,
             write_bible_challenge_scoresheets_pdf,
             write_soccer_scoresheets_pdf,
@@ -2650,10 +2651,13 @@ def main() -> None:
                     context_xlsx = _find_latest_all_workbook(Path(EXPORT_DIR))
 
             roster_rows = []
+            roster_birthdates = {}
             if context_xlsx:
                 logger.info(f"generate-scoresheets: using roster context workbook {context_xlsx}")
                 roster_rows, _validation_rows = ScheduleWorkbookBuilder.read_roster_validation_rows(context_xlsx)
                 roster_rows = enrich_roster_photos_from_workbook(roster_rows, context_xlsx)
+                # For the duplicate warning only; roster rows are not changed.
+                roster_birthdates = load_roster_birthdates_from_workbook(context_xlsx)
             else:
                 logger.warning(
                     "generate-scoresheets: no Church_Team_Status_ALL workbook found; "
@@ -2666,6 +2670,7 @@ def main() -> None:
                     schedule_output_path=schedule_output_path,
                     output_dir=output_dir,
                     roster_rows=roster_rows,
+                    roster_birthdates=roster_birthdates,
                     logo_path=logo_path,
                     score_entry_base_url=score_entry_base_url,
                     stage=args.stage,

@@ -17,7 +17,7 @@ import re
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 from urllib.parse import urlencode
 
 import qrcode
@@ -27,6 +27,7 @@ from PIL import Image, ImageDraw, ImageFont
 from config import Config, EXPORT_COLUMNS
 from schedule_publisher import merge_schedule
 from score_sheet_verses import BibleVerse, VerseSetError, load_bible_verse_set
+from sync.duplicate_tripwire import tripwire_person, warn_on_likely_duplicates
 
 BASKETBALL_EVENT = "Basketball - Men Team"
 BIBLE_CHALLENGE_EVENT = "Bible Challenge - Mixed Team"
@@ -488,6 +489,83 @@ def build_bible_challenge_roster_index(roster_rows: Iterable[dict[str, Any]]) ->
         indexed.setdefault(code, []).append(row)
     _sort_roster_index(indexed)
     return indexed
+
+
+# Export column headers the duplicate check reads. The Roster tab has no
+# birthdate; the Contacts-Status tab of the same workbook does.
+ROSTER_CHM_ID_COLUMN = "ChMeetings ID"
+ROSTER_BIRTHDATE_COLUMN = "Birthdate"
+CONTACTS_SHEET = "Contacts-Status"
+
+
+def _roster_chm_id(value: Any) -> str:
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return str(value or "").strip()
+
+
+def load_roster_birthdates_from_workbook(workbook_path: Path) -> dict[str, Any]:
+    """Map ChMeetings ID -> birthdate from the workbook's Contacts-Status tab.
+
+    Used only by the duplicate check: roster rows are not given a birthdate
+    and nothing here reaches a printed sheet. Any problem reading the tab
+    yields an empty map, and the check then reports that it had nothing to
+    compare.
+    """
+
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(workbook_path, data_only=True, read_only=True)
+    except Exception as exc:
+        logger.debug(f"Could not read roster birthdates from {workbook_path}: {exc}")
+        return {}
+
+    birthdates: dict[str, Any] = {}
+    try:
+        ws = wb[CONTACTS_SHEET]
+        rows = ws.iter_rows(values_only=True)
+        headers = list(next(rows, ()))
+        id_idx = headers.index(ROSTER_CHM_ID_COLUMN)
+        birthdate_idx = headers.index(ROSTER_BIRTHDATE_COLUMN)
+        for cells in rows:
+            if max(id_idx, birthdate_idx) >= len(cells):
+                continue
+            chm_id = _roster_chm_id(cells[id_idx])
+            if chm_id and cells[birthdate_idx] not in (None, ""):
+                birthdates.setdefault(chm_id, cells[birthdate_idx])
+    except (KeyError, ValueError) as exc:
+        logger.debug(f"No usable {CONTACTS_SHEET} birthdates in {workbook_path}: {exc}")
+    finally:
+        wb.close()
+    return birthdates
+
+
+def _warn_on_duplicate_roster_rows(
+    roster_index: Mapping[str, list[dict[str, Any]]],
+    sport_label: str,
+    roster_birthdates: Optional[Mapping[str, Any]] = None,
+) -> None:
+    """Warn when one team's roster lists what looks like one person twice (#312).
+
+    Warning only. The index and its rows are read, never changed: a duplicate
+    that is in the data is printed, so paper matches data.
+    """
+
+    roster_birthdates = roster_birthdates or {}
+    people = []
+    for code, rows in roster_index.items():
+        for row in rows:
+            chm_id = _roster_chm_id(row.get(ROSTER_CHM_ID_COLUMN))
+            first = row.get(EXPORT_COLUMNS["FIRST_NAME"])
+            last = row.get(EXPORT_COLUMNS["LAST_NAME"])
+            if not str(first or "").strip() and not str(last or "").strip():
+                first = row.get("Full Name")
+            birthdate = row.get(ROSTER_BIRTHDATE_COLUMN)
+            if birthdate in (None, ""):
+                birthdate = roster_birthdates.get(chm_id)
+            people.append(tripwire_person(chm_id, first, last, birthdate, f"team {code}"))
+    warn_on_likely_duplicates(people, context=f"{sport_label} score sheets")
 
 
 def _warn_if_approval_status_missing(roster_rows: Iterable[dict[str, Any]], sport_label: str) -> None:
@@ -1403,6 +1481,7 @@ def write_basketball_scoresheets_pdf(
     schedule_output_path: Path,
     output_dir: Path,
     roster_rows: Optional[list[dict[str, Any]]] = None,
+    roster_birthdates: Optional[Mapping[str, Any]] = None,
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
     output_filename: Optional[str] = None,
@@ -1421,6 +1500,7 @@ def write_basketball_scoresheets_pdf(
     roster_rows = list(roster_rows or [])
     _warn_if_approval_status_missing(roster_rows, "Basketball")
     roster_index = build_roster_index(roster_rows)
+    _warn_on_duplicate_roster_rows(roster_index, "Basketball", roster_birthdates)
     photo_cache = PhotoCache()
     pages = [
         render_basketball_scoresheet_page(
@@ -1445,6 +1525,7 @@ def write_bible_challenge_scoresheets_pdf(
     schedule_output_path: Path,
     output_dir: Path,
     roster_rows: Optional[list[dict[str, Any]]] = None,
+    roster_birthdates: Optional[Mapping[str, Any]] = None,
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
     output_filename: Optional[str] = None,
@@ -1463,6 +1544,7 @@ def write_bible_challenge_scoresheets_pdf(
     roster_rows = list(roster_rows or [])
     _warn_if_approval_status_missing(roster_rows, "Bible Challenge")
     roster_index = build_bible_challenge_roster_index(roster_rows)
+    _warn_on_duplicate_roster_rows(roster_index, "Bible Challenge", roster_birthdates)
     try:
         bible_verses = load_bible_verse_set(
             DEFAULT_BIBLE_CHALLENGE_VERSE_SET_KEY,
@@ -1495,6 +1577,7 @@ def write_soccer_scoresheets_pdf(
     schedule_output_path: Path,
     output_dir: Path,
     roster_rows: Optional[list[dict[str, Any]]] = None,
+    roster_birthdates: Optional[Mapping[str, Any]] = None,
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
     output_filename: Optional[str] = None,
@@ -1513,6 +1596,7 @@ def write_soccer_scoresheets_pdf(
     roster_rows = list(roster_rows or [])
     _warn_if_approval_status_missing(roster_rows, "Soccer")
     roster_index = build_soccer_roster_index(roster_rows)
+    _warn_on_duplicate_roster_rows(roster_index, "Soccer", roster_birthdates)
     photo_cache = PhotoCache()
     pages = [
         render_soccer_scoresheet_page(
@@ -1537,6 +1621,7 @@ def write_volleyball_scoresheets_pdf(
     schedule_output_path: Path,
     output_dir: Path,
     roster_rows: Optional[list[dict[str, Any]]] = None,
+    roster_birthdates: Optional[Mapping[str, Any]] = None,
     logo_path: Optional[Path] = None,
     score_entry_base_url: Optional[str] = None,
     output_filename: Optional[str] = None,
@@ -1555,6 +1640,8 @@ def write_volleyball_scoresheets_pdf(
     roster_rows = list(roster_rows or [])
     _warn_if_approval_status_missing(roster_rows, "Volleyball")
     roster_index = build_volleyball_roster_index(roster_rows)
+    for event, event_index in roster_index.items():
+        _warn_on_duplicate_roster_rows(event_index, event, roster_birthdates)
     photo_cache = PhotoCache()
     pages = [
         render_volleyball_scoresheet_page(

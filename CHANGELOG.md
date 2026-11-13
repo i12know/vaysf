@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Added warning-only duplicate tripwires (#312, Canonical Identity RFC §4.5;
+  addresses the symptom in #40). `generate-scoresheets` (per team roster),
+  `generate-badges` (approved athletes, per church) and `export-church-teams`
+  (per church) log `[VAY SM] Possible duplicate person in …` when two rows
+  under different ChMeetings IDs have the same name and birthdate. The warning
+  names both IDs and points to `find-duplicates`. Output is never filtered,
+  reordered or changed. One shared helper (`sync/duplicate_tripwire.py`) uses
+  the `find-duplicates` name comparison and scoring; pairs already resolved by
+  the alias map are skipped, and twins (same birthdate, different names) do
+  not trigger it. `generate-scoresheets` reads birthdates for this check from
+  the context workbook's `Contacts-Status` tab.
 - `apply-aliases` now confirms each entry's canonical ID in ChMeetings before
   reporting on or applying it, in the preview and with `--execute` (#396). It
   reads the person once per canonical ID and writes nothing to ChMeetings. A
