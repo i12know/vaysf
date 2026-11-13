@@ -321,8 +321,23 @@ delete people):
 - `GET /people/999999999` returns `404` with the body `Invalid Person Id`.
 - The field inspector matched all 14 mapped custom fields and every
   configured field and option ID. `nick_name` was absent from the sampled
-  responses; whether the account's Nickname setting (2026.13) is off is being
-  checked in the tenant settings.
+  responses although the account's **Enable Nickname** setting is **on**
+  (Account Settings → Format Settings, checked in the tenant the same day).
+
+**Where the published spec and the live API disagree** (reported 2026-11-13;
+trust the live behaviour and re-test after each ChMeetings release):
+
+| Published spec says | Live VAY SM API did |
+|---|---|
+| `PUT /people/{id}` is a full replacement; omitted fields are cleared | Omitted `native_name`, `qualification` and `additional_fields` were kept |
+| `PersonResponseDto` has `nick_name`, not `native_name` | `native_name` is returned (also when empty); `nick_name` is not |
+| A disabled profile field is omitted from responses | Nickname is enabled and still omitted |
+
+Not yet tested: a profile with a Nickname value set. If `nick_name` appears
+only when populated, the third row is an empty-value rule rather than a bug;
+`native_name` coming back empty makes that inconsistent either way. Badges
+read `nick_name` for the printed first name (`badges/runner.py`), so until
+this is settled, do not rely on ChMeetings nicknames for badges (see #227).
 
 **To verify live** (see the live checklist in Phase 0):
 

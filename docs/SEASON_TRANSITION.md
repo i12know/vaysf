@@ -106,9 +106,12 @@ output into an issue or PR).
    Pass, all of:
    - every line under `FIELD MAPPING VALIDATION` is `OK`, ending with
      `All CHM_FIELDS matched successfully.` — no `MISSING`, `NOT OBSERVED` or
-     `NOT CHECKED`. (`NOT OBSERVED` on `nick_name` means the Nickname profile
-     field was switched off in Account Settings; ChMeetings omits disabled
-     fields from the response instead of returning null.)
+     `NOT CHECKED`. `NOT OBSERVED` on `nick_name` does **not** by itself mean
+     the Nickname field is switched off: on 2026-11-13 the setting was on
+     (Account Settings → Format Settings → Enable Nickname) and the API still
+     returned no `nick_name`. Check that setting in the tenant; see the
+     2026-11-13 note in
+     [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md#platform-review-notes-dated).
    - the field IDs and option IDs printed under `FIELD DEFINITIONS` match
      `SF_FIELD_IDS`, `SF_CHURCH_TEAM_OPTIONS`, `SF_PRIMARY_SPORT_OPTIONS`,
      `SF_SECONDARY_SPORT_OPTIONS` and `SF_IS_MEMBER_OPTION_IDS` in
