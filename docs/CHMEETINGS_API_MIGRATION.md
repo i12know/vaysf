@@ -228,6 +228,108 @@ ChMeetings enforces a rate limit (~5 req/s) on group membership writes. Two safe
 
 ---
 
+## Platform Review Notes (dated)
+
+Notes from the twice-yearly review in
+[SEASON_TRANSITION.md — Phase 0](SEASON_TRANSITION.md#phase-0-chmeetings-platform-review).
+Newest first. Each note says where the fact comes from. "To verify live" means
+nobody has yet confirmed it against the VAY SM tenant with the API key.
+
+### 2026-11-13 — reviewed through ChMeetings 2026.22 (tenant v2026.22.7.3)
+
+No change in this review requires a middleware fix before the 2027 season. The
+five changes above still describe how the connector must talk to the API.
+
+**Confirmed in the published OpenAPI spec** (`/openapi/v1.json`, fetched
+2026-11-13 and committed as `chmeetings_openapi_v1.json`):
+
+- **The published spec is no longer incomplete.** It has 110 paths (64 in the
+  2026-07-17 snapshot) and covers People, Notes, Groups, group memberships,
+  the photo upload and custom fields. The Scalar page loads this same file as
+  its only source, so Scalar and the JSON no longer differ.
+- **Nothing was removed.** Every operation in the 2026-07-17 snapshot is still
+  present. Authentication is still the lowercase `apikey` header, and paging
+  is still `paging.total_count` / `page` / `page_size`.
+- **`PUT /api/v1/people/{id}` is documented as a full replacement:** "omitted
+  fields will be cleared". This matches what `update_person()` already
+  assumes.
+- **`GET /api/v1/people`:** `page_size` is documented as 1 to 100. New optional
+  filters: `person_ids` (up to 100), `group_ids` (up to 100), `ungrouped`,
+  `created_from`, `created_to`, `genders`, `family_roles`, `has_email`,
+  `has_mobile`, `has_photo`, `do_not_email`, `do_not_text`, `country_id`,
+  `state_id`, `city_id`, `zip_code`. New optional expansion
+  `include_groups=true` returns each person's groups as `{id, name}`. The
+  description adds that a profile field the account has disabled is left out
+  of the response instead of being returned as null.
+- **`GET /api/v1/groups`:** documented as not paged and ordered by name. New
+  optional `search_text`. Each group still has `id`, `name` and `created_on`,
+  and now also `description`, `privacy`, `join_request_option`,
+  `is_visible_to_non_members`, `is_members_visible`,
+  `is_group_leaders_visible` and `is_chat_enabled`.
+- **Groups can now be created, updated and deleted by API**
+  (`POST /groups`, `GET|PUT|DELETE /groups/{group_id}`). `DELETE` removes the
+  group together with all of its memberships and group-leader assignments, so
+  it must never be used to clear a `Team XXX` group; `clear-team-groups`
+  removes memberships one at a time and keeps the group and its leaders.
+- **An existing person can be added to, or removed from, an organization by
+  API** (`POST /organizations/{organization_id}/people`,
+  `DELETE /organizations/{organization_id}/people/{person_id}`). An
+  organization outside the API key's tree returns 400, not 404.
+- **Webhook subscriptions can be managed by API** (`/integrations/webhooks`).
+  Deliveries are signed (`ChMeetings-Webhook-Signature`, verified with the
+  subscription's secret), at-least-once, and delayed: at least a minute, and
+  about 4 to 5 minutes for `person.*` events.
+
+**Confirmed in the ChMeetings help centre** (Developer API Guide, updated
+2026-11-09; Configure Webhooks, updated 2026-11-12):
+
+- **Rate limit: 100 requests per 20 seconds, for each API key from each IP
+  address.** Requests over the limit get HTTP 429 with a `Retry-After` header.
+  The two articles now agree; in July 2026 the Developer API Guide said 100
+  per second (see the comment above `CHM_MIN_REQUEST_INTERVAL_SECONDS`).
+  The connector's pacing (`CHM_MIN_REQUEST_INTERVAL_SECONDS = 0.2`) already
+  matches the published limit, with no margin. The connector does not read
+  `Retry-After`; it waits on its own fixed schedule.
+- **Webhook events:** people created, updated, deleted; contributions created;
+  contribution funds created, updated, deleted; event check-in; first-time
+  check-in. There is no event for a person merge.
+
+**Confirmed in the VAY SM tenant** (browser, 2026-11-13):
+
+- The form IDs in `middleware/chrome_export_vaysf_forms.py` (301433 Individual
+  Application Form, 301494 Consent Form) still open those forms. The
+  submissions page still has an `Export` button that opens an
+  `Export Submissions` dialog with a `Download` button, which is what the
+  helper clicks. No file was downloaded during the check.
+- Automatic profile creation from form submissions (2026.16) was tested and is
+  **off by decision for 2027** (issue #351). The release notes for 2026.17 to
+  2026.22 add no matching or routing controls to it.
+
+**To verify live** (see the live checklist in Phase 0):
+
+- Whether `GET /people/{id}` returns `native_name`, `qualification`,
+  `education_level`, `father_name`, `church` and `talents_and_hobbies`. The
+  published response schema does not list them, but `PUT` accepts them, and
+  `PUT` clears what is omitted. If they are not returned, every
+  `update_person()` call clears them on profiles that have them set.
+- Whether the standard fields that became lookup (list) fields in 2026.21
+  (Job Title, Education Level, Qualification, School, Church, City) still
+  round-trip through `PUT` as plain strings. The published schema still types
+  them as strings.
+- Whether a 429 from the live API carries `Retry-After`, and whether any
+  rate-limit headers are sent on normal responses.
+- Whether a merged, deleted, archived, removed-from-church or
+  converted-to-contact person all answer `GET /people/{id}` with the same
+  plain 404. The published spec documents only "404 Not Found" and has no
+  merge endpoint. Until verified otherwise, keep treating 404 as "not found",
+  never as "deleted".
+- Whether orphaned group memberships (members returned by
+  `GET /groups/people` whose `GET /people/{id}` is 404) still occur.
+- Whether the new `person_ids`, `group_ids`, `include_groups` and
+  `search_text` parameters behave as documented for the VAY SM key.
+
+---
+
 ## Troubleshooting API Migration Issues
 
 | Symptom | Likely Cause | Fix |

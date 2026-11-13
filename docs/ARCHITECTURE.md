@@ -673,6 +673,8 @@ For detailed testing instructions see [USAGE.md](USAGE.md#running-tests).
 
 The ChMeetings API is documented at `https://api.chmeetings.com/scalar`. The published OpenAPI JSON (`/openapi/v1.json`) is **incomplete** — it covers only ~30 paths (groups, families, contributions, events). The Scalar UI exposes a fuller set of endpoints that should be used as the authoritative reference.
 
+> **Update 2026-11-13:** the paragraph above described April 2026. The published OpenAPI JSON now has 110 paths, including People, Notes, Groups and group memberships, and the Scalar page loads that same file as its only source. See the dated notes in [CHMEETINGS_API_MIGRATION.md](CHMEETINGS_API_MIGRATION.md#platform-review-notes-dated) and the review process in [SEASON_TRANSITION.md — Phase 0](SEASON_TRANSITION.md#phase-0-chmeetings-platform-review).
+
 ### Confirmed Available Endpoints (as of April 2026)
 
 | Tag | Method | Path | Notes |
