@@ -250,7 +250,7 @@ output into an issue or PR).
 
 | Date | Reviewed through | Spec snapshot | Live checklist | Result | Record |
 |---|---|---|---|---|---|
-| 2026-11-13 | ChMeetings 2026.22 (tenant showed v2026.22.7.3); release notes read from 2026.1 | Refreshed 2026-11-13: 64 → 110 paths, nothing removed | Step 6 passed in the tenant; steps 1–5 not yet run | No breaking change found in the published spec or release notes for the endpoints `vaysf` calls. Open items are listed in the record. | First Phase 0 review (PR link added below) |
+| 2026-11-13 | ChMeetings 2026.22 (tenant showed v2026.22.7.3); release notes read from 2026.1 | Refreshed 2026-11-13: 64 → 110 paths, nothing removed | Step 6 passed in the tenant; steps 1–5 not yet run | No breaking change found in the published spec or release notes for the endpoints `vaysf` calls. Open items are listed in the record. | [PR #401](https://github.com/i12know/vaysf/pull/401) — first Phase 0 review: ranked risks, full API change list, inventory |
 
 ### Phase 1: Archive the Previous Season
 
