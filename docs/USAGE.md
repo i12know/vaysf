@@ -270,8 +270,11 @@ The workbook has three sheets:
 - **Not Proposed** — pairs that share contact details but are not offered as a
   merge, with the reason. A shared phone and email with no matching birthdate
   or name is what siblings and a parent registering several children look like,
-  so those pairs never get a snippet. Neither does a pair whose recorded
-  genders differ.
+  so those pairs never get a snippet. Neither does a pair with different names
+  *and* different recorded genders (brother/sister twins). A pair with the same
+  name and different genders is on `Proposals` instead: that is usually a gender
+  typed wrong on one registration. Its `Review Notes` say so; fix the gender in
+  ChMeetings before applying the alias.
 - **How To Use** — these steps, inside the workbook.
 
 To act on a proposal:
@@ -280,7 +283,11 @@ To act on a proposal:
    the same birthdate, phone and email can be one person under two names; it can
    also be twins. The data cannot tell those apart.
 2. Check the direction. The canonical ID must be the record that is still live
-   in ChMeetings, and this command does not look there:
+   in ChMeetings, and `find-duplicates` does not look there. `apply-aliases`
+   does: it looks up every canonical ID in ChMeetings and skips an entry whose
+   canonical ID is not found (see below), so a reversed entry is caught before
+   anything is written. Looking first is still quicker than pasting, running
+   and fixing:
 
    ```bash
    python main.py inspect-person --chm-id <CANONICAL_ID>
@@ -302,6 +309,37 @@ To act on a proposal:
 If the alias file exists but will not parse, `find-duplicates` stops without
 reading WordPress: it cannot tell which IDs you have already aliased.
 
+###### Duplicate Warnings in Scoresheets, Badges and the Export
+
+Three commands watch for a duplicate that has no alias yet and say so in the
+log. They only warn: **every row is still printed or exported exactly as it
+would have been**, in the same order, so paper matches data.
+
+| Command | Warns when |
+|---|---|
+| `generate-scoresheets` | two rows on one team's roster (per event) have the same name and birthdate |
+| `generate-badges` | two approved athletes of one church have the same name and birthdate |
+| `export-church-teams` | two people in one church's export have the same name and birthdate |
+
+The line looks like this and names both ChMeetings IDs (no name or birthdate is
+written to the log):
+
+```text
+[VAY SM] Possible duplicate person in Basketball score sheets, team RPC: ChMeetings IDs 3633885 and 3634002 have the same name and birthdate. Both rows were kept; the output was not changed. Run 'python main.py find-duplicates' to review the pair.
+```
+
+"Same name" is the `find-duplicates` comparison, so `Ngọc Lê` and `Ngoc Le`
+match; the two rows must be under two different ChMeetings IDs. Twins (same
+birthdate, different names) and two people who share a name but not a birthdate
+do not trigger it. A pair the alias file already resolves is not reported.
+
+`generate-scoresheets` reads birthdates from the `Contacts-Status` tab of the
+same `Church_Team_Status_ALL` workbook it takes rosters from (the `Roster` tab
+has none). If that tab is missing, the log says the check was skipped.
+
+To clear a warning, follow "Finding Duplicates to Alias" above, then regenerate
+the output.
+
 ###### Applying Aliases (`apply-aliases`)
 
 Preview the WordPress cleanup first. This makes no API changes. Every run,
@@ -313,6 +351,26 @@ rerun to confirm:
 ```bash
 python main.py apply-aliases
 ```
+
+**The canonical ID is checked in ChMeetings first.** Before an entry is
+reported on or applied — in the preview and with `--execute` alike —
+`apply-aliases` looks up the entry's canonical ID in ChMeetings (one read per
+canonical ID; nothing is written to ChMeetings). The audit workbook's
+`Canonical In ChMeetings` column shows the answer:
+
+| `Canonical In ChMeetings` | `Outcome` | What happens |
+|---|---|---|
+| `yes` | as before (`would_reconcile`, `reconciled`, …) | The entry proceeds. |
+| `not found` | `canonical_not_in_chmeetings` | Skipped; nothing written. The entry is probably reversed: the stale ID may be the live one. Run `inspect-person` on both IDs, fix the alias file, rerun. |
+| `could not verify` | `canonical_unverified` | Skipped; nothing written. ChMeetings could not be reached, or returned an error. Rerun; the entry is not applied until the lookup succeeds. |
+
+A skipped entry also has its reason in `Skipped Because`, makes the command
+exit non-zero, and does not stop the other entries. "Not found" means the VAY
+SM key cannot see that person: deleted, merged away, or moved to another
+ChMeetings tenant. Each lookup is logged with a `request_id` that is also in
+the workbook's `ChM Check Request ID` column. This check is why a wrong
+direction no longer reaches WordPress; `inspect-person` remains the way to see
+*which* ID is live when an entry is skipped.
 
 **Precondition for the first `--execute`: the new plugin is live on the site.**
 The guards that keep a `merged` row retired (pastor email link, "Resend Email",

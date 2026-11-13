@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Added warning-only duplicate tripwires (#312, Canonical Identity RFC §4.5;
+  addresses the symptom in #40). `generate-scoresheets` (per team roster),
+  `generate-badges` (approved athletes, per church) and `export-church-teams`
+  (per church) log `[VAY SM] Possible duplicate person in …` when two rows
+  under different ChMeetings IDs have the same name and birthdate. The warning
+  names both IDs and points to `find-duplicates`. Output is never filtered,
+  reordered or changed. One shared helper (`sync/duplicate_tripwire.py`) uses
+  the `find-duplicates` name comparison and scoring; pairs already resolved by
+  the alias map are skipped, and twins (same birthdate, different names) do
+  not trigger it. `generate-scoresheets` reads birthdates for this check from
+  the context workbook's `Contacts-Status` tab.
+- `apply-aliases` now confirms each entry's canonical ID in ChMeetings before
+  reporting on or applying it, in the preview and with `--execute` (#396). It
+  reads the person once per canonical ID and writes nothing to ChMeetings. A
+  canonical ID that returns 404 is skipped as `canonical_not_in_chmeetings`
+  ("check direction"); a lookup that fails for any other reason is skipped as
+  `canonical_unverified`. Skipped entries are listed in the audit workbook with
+  the reason, make the command exit non-zero, and do not stop the other
+  entries. **Operator note:** `apply-aliases` now needs ChMeetings to be
+  reachable; if it is not, no alias is applied in that run.
+- `find-duplicates` no longer hides a pair that matches on name because the two
+  rows record different genders (#395). The gender rule now applies only when
+  the names differ (brother/sister twins, still not proposed). A pair matching
+  on name is proposed with the note "Genders differ (…): likely a data-entry
+  error. Fix the gender in ChMeetings before applying the alias." Pairs that
+  share only a phone and email are unchanged.
 - Added `find-duplicates`, a read-only command that proposes likely duplicate
   participants for the person alias map (#311, Canonical Identity RFC §4.4).
   It scores every pair of live WordPress participants and writes

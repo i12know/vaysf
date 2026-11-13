@@ -229,7 +229,25 @@ def test_full_sync_deduplicates_alias_and_canonical_memberships(mocker):
 
 
 @pytest.fixture
-def wp_connector(mocker):
+def chm_connector(mocker):
+    """A read-only ChMeetings double in which every person exists (#396)."""
+    chm = MagicMock()
+    chm.__enter__.return_value = chm
+    chm.__exit__.return_value = None
+    chm.authenticate.return_value = True
+
+    def get_person(person_id):
+        chm.last_get_person_status = "ok"
+        return {"id": person_id}
+
+    chm.get_person.side_effect = get_person
+    mocker.patch("sync.alias_reconciler.ChMeetingsConnector", return_value=chm)
+    mocker.patch("sync.alias_reconciler.time.sleep")
+    return chm
+
+
+@pytest.fixture
+def wp_connector(mocker, chm_connector):
     connector = MagicMock()
     connector.__enter__.return_value = connector
     connector.__exit__.return_value = None

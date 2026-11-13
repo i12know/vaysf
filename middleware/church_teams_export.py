@@ -38,6 +38,7 @@ from wordpress.frontend_connector import WordPressConnector
 from tenacity import RetryError
 from time_utils import current_business_date, parse_wordpress_created_at_to_business_date
 from church_teams_report import ChurchTeamsReportMixin
+from sync.duplicate_tripwire import tripwire_person, warn_on_likely_duplicates
 from sync.person_aliases import load_person_aliases_for_reader, resolve_chm_id
 from church_teams_scheduling import delegate_schedule_workbook_methods
 
@@ -609,6 +610,21 @@ class ChurchTeamsExporter(ChurchTeamsReportMixin):
                     "Update_on_ChM": chm_person["Update_on_ChM"]
                 }
                 church_contacts_rows.append(contact_row)
+
+            # Warning only (#312, #40): the rows are exported exactly as built.
+            warn_on_likely_duplicates(
+                (
+                    tripwire_person(
+                        row.get("ChMeetings ID"),
+                        row.get(EXPORT_COLUMNS["FIRST_NAME"]),
+                        row.get(EXPORT_COLUMNS["LAST_NAME"]),
+                        row.get("Birthdate"),
+                        f"church {church_code_iter}",
+                    )
+                    for row in church_contacts_rows
+                ),
+                context="export-church-teams",
+            )
 
             reverse_partner_suggestions = self._merge_reverse_partner_suggestions(
                 self._build_reverse_partner_suggestion_lookup(church_rosters_rows),

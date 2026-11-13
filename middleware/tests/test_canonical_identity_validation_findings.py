@@ -24,9 +24,10 @@ from sync.consent_checker import ConsentChecker
 from sync.participants import ParticipantSyncer
 from sync.person_aliases import PersonAliasError, load_person_aliases
 
-from test_canonical_identity import (  # noqa: F401  (wp_connector is a fixture)
+from test_canonical_identity import (  # noqa: F401  (the connectors are fixtures)
     _participant,
     _wire_participants,
+    chm_connector,
     wp_connector,
 )
 from test_consent_checker import (

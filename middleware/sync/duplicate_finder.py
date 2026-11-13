@@ -106,7 +106,8 @@ _HOW_TO_LINES = [
     "Check the direction before you paste. The canonical ID must be the record that "
     "is still live in ChMeetings: run 'python main.py inspect-person --chm-id <id>' "
     "on both IDs. The pick here only sees WordPress: approved, then has rosters, "
-    "then most recent update.",
+    "then most recent update. apply-aliases also checks: it skips an entry whose "
+    "canonical ID is not found in ChMeetings.",
     "To confirm a pair, paste its 'Alias Map Snippet' inside the outer { } of "
     "data/person_aliases.local.json, with a comma between entries, and fill in "
     "confirmed_by and confirmed_on. A stale ID may appear in the file only once.",
@@ -117,7 +118,11 @@ _HOW_TO_LINES = [
     "canonical person. A confirmed merge never requires the guardian to sign again.",
     f"'{NOT_PROPOSED_SHEET}' lists pairs that share contact details but are not offered "
     "as a merge, with the reason. A shared phone and email with no matching birthdate "
-    "or name is what siblings and parent-managed signups look like.",
+    "or name is what siblings and parent-managed signups look like. So is a pair with "
+    "different names and different genders.",
+    "A pair with the same name and different genders is still proposed: that is usually "
+    "a gender typed wrong on one registration. Fix it in ChMeetings before applying "
+    "the alias.",
 ]
 
 
@@ -134,6 +139,13 @@ def duplicate_name_key(first_name: Any, last_name: Any) -> str:
     are folded here.
     """
     return normalized_name(f"{first_name or ''} {last_name or ''}").replace("đ", "d")
+
+
+def _genders_differ(left: Dict[str, str], right: Dict[str, str]) -> bool:
+    """True only when both rows record a gender and the two disagree."""
+    return bool(
+        left["gender"] and right["gender"] and left["gender"].lower() != right["gender"].lower()
+    )
 
 
 def _is_numeric_id(value: str) -> bool:
@@ -297,7 +309,11 @@ class DuplicateFinder:
                 "Shared contact only: no matching birthdate or name. Typical of siblings "
                 "or a parent-managed signup."
             )
-        if left["gender"] and right["gender"] and left["gender"].lower() != right["gender"].lower():
+        # Different names and different genders is what brother/sister twins
+        # look like. With a matching name the same disagreement is far more
+        # likely a gender typed wrong on one registration (#395), so that pair
+        # is proposed and the disagreement becomes an evidence note.
+        if "name" not in basis and _genders_differ(left, right):
             return f"Genders differ ({left['gender']} / {right['gender']})."
         return ""
 
@@ -321,6 +337,11 @@ class DuplicateFinder:
                 notes.append("Birthdates differ.")
             else:
                 notes.append("Birthdate missing on at least one row.")
+        if "name" in basis and _genders_differ(left, right):
+            notes.append(
+                f"Genders differ ({left['gender']} / {right['gender']}): likely a data-entry "
+                "error. Fix the gender in ChMeetings before applying the alias."
+            )
         if left["church_code"].upper() != right["church_code"].upper():
             notes.append("Different churches.")
         for field, block_field in (("phone", "phone_norm"), ("email", "email_norm")):

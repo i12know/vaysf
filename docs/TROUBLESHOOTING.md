@@ -230,6 +230,15 @@ identity and approval state must be verified first.
 two rows in a church-team export — usually under two ChMeetings IDs after a
 re-registration, a delete-and-re-add, or a ChMeetings profile merge.
 
+`generate-scoresheets`, `generate-badges` and `export-church-teams` log a
+warning when they see this, without changing their output:
+
+```text
+[VAY SM] Possible duplicate person in <output>, <team or church>: ChMeetings IDs <A> and <B> have the same name and birthdate. ...
+```
+
+The two IDs in that line are the pair to look for below.
+
 **Solutions**:
 1. List the likely duplicates. This is read-only:
    ```bash
@@ -241,15 +250,19 @@ re-registration, a delete-and-re-add, or a ChMeetings profile merge.
 3. Paste the row's `Alias Map Snippet` into `data/person_aliases.local.json`
    and fill in `confirmed_by` / `confirmed_on`.
 4. Run `python main.py apply-aliases`, review the audit workbook, then
-   `python main.py apply-aliases --execute`.
+   `python main.py apply-aliases --execute`. If the workbook shows
+   `canonical_not_in_chmeetings` for the entry, its direction is wrong (the
+   canonical ID is not a live ChMeetings person): swap the two IDs in the alias
+   file and rerun. `canonical_unverified` means ChMeetings could not be reached;
+   rerun. Nothing is written for an entry in either state.
 5. Regenerate the affected badges and scoresheets, and delete the stale badge
    file named in the audit workbook.
 
 If the pair is on the `Not Proposed` sheet instead, the two rows share a phone
-and email but neither birthdate nor name (or their genders differ). That is
-normally two relatives, not one athlete. Only write an alias for such a pair by
-hand, after confirming with the Church Rep. Full steps: `docs/USAGE.md`,
-"Canonical Person Aliases".
+and email but neither birthdate nor name (or their names and genders both
+differ). That is normally two relatives, not one athlete. Only write an alias
+for such a pair by hand, after confirming with the Church Rep. Full steps:
+`docs/USAGE.md`, "Canonical Person Aliases".
 
 ### Missing Participants
 
