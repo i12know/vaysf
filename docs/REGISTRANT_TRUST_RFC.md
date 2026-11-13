@@ -207,8 +207,8 @@ vaysf lacks is a submit-time trigger. "Syncs in" means after the manual
 promotion in §1 step 4, which can be days after the form was submitted.*
 *Decided (§9.1, D7–D8): email only for 2027, one bilingual reminder per
 minor per season, linking to the existing ChMeetings consent form. No
-consent-capture page in 2027. Form auto-create (D10) would shorten the
-"syncs in" delay if it passes its test.*
+consent-capture page in 2027. Form auto-create is off for 2027 (D10), so
+"syncs in" still follows the reviewed promotion step.*
 
 **Q4 — Does parent consent attach to the person, the registration, or the
 exact sports selected?**
@@ -249,8 +249,9 @@ raise confidence without ever auto-acting (guardrail G3: propose, never merge).
 (`check-consent`) does not apply it: phone + email alone scores 51 and
 qualifies (`test_check_consent_phone_plus_email_is_above_threshold`).*
 *Decided (§9.1, D9): valid consent carries across a confirmed alias merge
-within the same Sports Fest; an unresolved CONSENT HOLD carries too. See
-§9.1 D10 for form auto-create, which interacts with Track P (#351).*
+within the same Sports Fest; an unresolved CONSENT HOLD carries too. Form
+auto-create stays off for 2027 (§9.1 D10), so intake prevention belongs to
+Track P (#351).*
 
 ## 6. Foundations already in the codebase
 
@@ -303,8 +304,8 @@ The 2027 scope and its mapping to issues #313–#319 are in §9.3.
 ## 8. Open decisions
 
 See §9.4 for the remaining workflow and storage decisions. The SMS gateway
-and verification page are deferred. Auto-create remains conditional on
-the form-copy test in D10.
+and verification page are deferred. Form auto-create is off for 2027
+(D10, tested 2026-11-13).
 
 ## 9. Maintainer decisions for 2027
 
@@ -354,21 +355,43 @@ policy; the build issues implement them.*
   across a confirmed alias merge: finding another ChMeetings ID for the same
   athlete never requires the guardian to sign again. An unresolved CONSENT
   HOLD also carries through the merge and stays in effect.
-- **D10. Form auto-create (preferred, pending test).** The preferred 2027
-  setup is to turn on automatic People profile creation (ChMeetings
-  2026.16) for the Individual Application, if it works for VAY SM. Before
-  committing, test it on a copy of the form for:
-  1. a returning athlete who already has a People profile (matched, or a
-     duplicate created?);
-  2. parent-managed sibling registrations sharing the parent's email and
-     phone (one profile per child, or siblings collapsed into one; see #27);
-  3. assignment to the right `Team` group, which is what makes a person
-     visible to sync.
+- **D10. Form auto-create: off for 2027 (decided 2026-11-13).** ChMeetings'
+  automatic People profile creation (2026.16) stays **off** on the live
+  Individual Application. This supersedes the earlier "preferred, pending
+  test" wording; the governing record is
+  `docs/DECISION_2027_IDENTITY_FIRST_INTAKE.md` (identity-first intake:
+  prevent duplicates at creation, keep Track A aliases as the safety net).
 
-  Auto-created profiles do not pass through `repair_form_people`, so the
-  Person Resolution Gate in Track P (#351) would not see them. The test
-  result decides whether #351 changes shape (for example, gating by
-  detection after creation instead of before) or auto-create stays off.
+  *Test, 2026-11-13* (copy of the form on the VAY SM tenant, ChMeetings
+  v2026.22.7.3, fictional people only; all test data deleted afterwards):
+
+  | Case | Result |
+  |---|---|
+  | New athlete | One profile created; name, birthdate, email, phone, gender, Church Team and Sports Fest fields written |
+  | Returning athlete, same details | Linked to the existing profile; no duplicate |
+  | Returning athlete, changed email (same name, birthdate, phone) | Linked to the existing profile; profile email not changed |
+  | Siblings sharing a parent's email and phone | Two separate profiles; the second did not overwrite the first |
+  | `Đức Phạm` then `Duc Pham`, same birthdate and contacts | Linked; accented name preserved |
+  | Withdrawn stand-in (in a Lost and Found test group) resubmits | Linked to the existing profile; group kept; submission accepted |
+  | Group assignment | One fixed form-level group; cannot route by the church answered |
+  | Parent types their own name in Name | Profile created under the parent's name with the child's birthdate |
+
+  Matched submissions only offer a manual "Update Profile"; nothing on an
+  existing profile changed automatically. The settings expose no match
+  fields, thresholds or answer-based group rules.
+
+  *Why off, despite good matching:* auto-create creates the Person at
+  submission time with no human review, so a withdrawn or merged athlete
+  whose submission matches no visible profile gets a fresh ChMeetings ID
+  before anyone looks, and the #176/#388 protections in
+  `repair-form-people` never run. Team routing (handled by `assign-groups`
+  from the Church Team field) and the parent-name case (a form-wording
+  problem that manual "Add People" shares; see D1 and #350) are not
+  reasons on their own. Revisit only under the decision record's go/no-go:
+  the untested cases (cross-church Diocese person, stale/merged pair, an
+  existing profile with a fixed group set) pass, the intake review
+  boundary is documented, and the maintainer approves.
+
 - **D11. Households are optional context.** VAY SM household records in
   ChMeetings are sometimes filled in but usually are not. The 2027 workflow
   must work with no household record: the guardian contact comes from the
