@@ -201,7 +201,9 @@ hook at form-submit time and no forms API, and sync runs nightly or on demand.
 participant. The validator computes age per participant (`_calculate_age`,
 event date from the rules file); sync's `_age_at_event` helper is called only
 when a birthdate changes, and uses `Config.SPORTS_FEST_DATE`; badge
-generation computes its own. Two event-date sources is open issue #69. The
+generation computes its own, and so does the church-team export
+(`ChurchTeamsExporter._calculate_age`; added 2026-11-16, see
+`docs/CONSENT_HOLD_DESIGN.md` F16). Two event-date sources is open issue #69. The
 form's fields are the maintainer's to change (#350 adds two for 2027); what
 vaysf lacks is a submit-time trigger. "Syncs in" means after the manual
 promotion in §1 step 4, which can be days after the form was submitted.*
@@ -443,6 +445,12 @@ The guardian-address gate in D8 is a separate block with its own resolver
 2. **Badge issuance is not recorded.** The before/after-badge rule for who
    clears a hold needs an issuance record per athlete and season. Define
    issuance by when the athlete or church can obtain the badge.
+   *Fact-check, 2026-11-16: "not recorded" is imprecise. With
+   `--write-chmeetings-badge-url`, `generate-badges` writes the hosted URL to
+   the profile field "Sports Fest Badge URL". That is not a usable issuance
+   record: the flag is optional, the value carries no season, and season
+   reset does not clear it while `SF_FIELD_IDS["BADGE_URL"]` is 0. See
+   `docs/CONSENT_HOLD_DESIGN.md` Q2.*
 3. **"Appears to belong to the athlete" needs a definition and an
    override.** When a parent fills in the form, the parent's email is often
    used for both athlete and guardian; equality alone will flag many real
