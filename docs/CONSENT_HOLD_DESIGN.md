@@ -1,6 +1,6 @@
 # CONSENT HOLD — design memo (Track R, 2027)
 
-**Status: design proposal, 2026-11-16. No runtime code, rules, plugin or test changes are made by this memo.**
+**Status: M1–M12 approved on 2026-11-16. See [§8](#8-maintainer-decisions-for-2027) for the decisions and rollout checks.**
 
 Scope: the remaining 2027 work in epic #307, Track R: #315 (guardian reminder and
 address gate), #317 (self-signed flag) and #318 (enforcement). It answers the eight
@@ -14,24 +14,23 @@ tenant itself behaves (who can edit a field, who can read a profile note, what a
 merge does to custom fields) could not be checked from the repo and are marked
 **unverified**.
 
-Decisions D1–D12 and §9.2 of the RFC are treated as fixed policy.
+Decisions D1–D12 and §9.2 of the RFC are treated as fixed policy. The approved answers in §8 govern the design where they refine the earlier proposal.
 
 ---
 
 ## 0. The design in one page
 
 1. **ChMeetings stays the record.** Signed consent is the consent-form submission
-   plus Box 2 on the athlete's profile. Hold events and staff acceptance of a
-   replacement copy are written to the athlete's ChMeetings profile as notes. No
-   WordPress table becomes the record of a minor's release.
+   plus Box 2 on the athlete's profile. Staff file signed replacement copies and
+   acceptance details in restricted storage (M8).
 2. **The hold itself is working state in WordPress**, on the athlete's
    `sf_participants` row, in columns the participant sync never writes. It is keyed on
    the ChMeetings ID (the row is unique per ChMeetings ID and cannot be deleted).
 3. **A hold never changes `approval_status`.** Pastor approval stays exactly as it is
    (D5). Eligibility becomes a separate question that every consumer asks through one
-   function: approved, and not on hold.
+   function that checks approval, holds, and required minor consent (M9–M10).
 4. **Placing a hold is a staff command.** It marks the row, unticks Box 2 in
-   ChMeetings, writes a note, and withdraws a hosted badge. Nothing places a hold
+   ChMeetings, records the hold, and withdraws a hosted badge. Nothing places a hold
    automatically.
 5. **Box 2 alone can no longer clear a minor.** While a hold is active, effective
    consent is false whatever Box 2 says, and the nightly `check-consent` run will not
@@ -93,13 +92,11 @@ the form it replaces (F7). The design has to close each of these.
 
 ## 2. The eight §9.4 questions
 
-Each answer is labelled **decidable from the code** or **needs a maintainer decision**.
-Where a mechanism is decidable but one choice inside it is the maintainer's, both are
-said. Maintainer questions are collected in §8 with the same numbers (M1–M12).
+This section explains the design alternatives. See §8 for the approved answers and rollout checks.
 
 ### Q1. Event-day check-in does not exist. Who updates the list and relays late changes?
 
-**Needs a maintainer decision** (M4). The code side is decidable.
+See M4 for event-day ownership.
 
 What exists today for the person at the door: the badge image (F11), the public badge
 page (F13), the church-team workbook, and score sheets that strike unapproved rows
@@ -132,7 +129,7 @@ fallback for a WordPress outage.
 
 ### Q2. Badge issuance is not recorded. What counts as issued?
 
-**Needs a maintainer decision** (M2) on the definition. The record is decidable.
+See M2 for the issuance rule.
 
 What exists: with `--write-chmeetings-badge-url` the hosted URL is written to the
 profile field "Sports Fest Badge URL" (`middleware/badges/runner.py:147-149`,
@@ -159,7 +156,7 @@ conservative reading, and it makes the rule independent of whether `--upload` wa
 
 ### Q3. "Appears to belong to the athlete" needs a definition and an override.
 
-**Needs a maintainer decision** (M7).
+See M7 for the approved guardian email rule.
 
 Data available at sync time without any new call: the athlete's email is the person's
 core `email` (`middleware/sync/participants.py:1356`) and the guardian's email is the
@@ -196,8 +193,7 @@ guardian's own name, email and phone (`middleware/sync/consent_checker.py:39-41`
 
 ### Q4. Where does staff-recorded replacement consent live?
 
-**Needs a maintainer decision** (M8) on where the signed copy is filed and who can read
-profile notes. The mechanism is decidable.
+See M8 for the approved filing and access rules.
 
 The only state the next sync will not undo is Box 2 (F1). So a staff-accepted copy is
 recorded as three things, written by one command (`consent-hold accept-copy`):
@@ -205,20 +201,12 @@ recorded as three things, written by one command (`consent-hold accept-copy`):
 1. **Box 2 ticked** on the athlete's profile, with the same payload shape
    `check-consent` uses (`middleware/sync/consent_checker.py:277-291`). The next sync
    recomputes `consent_status` as true from it.
-2. **A profile note**, which is the record of staff acceptance that D6 asks ChMeetings to
-   hold: `Sports Fest 2027 Consent | replacement copy accepted | by <staff> | <date> | signer <guardian name> | filed <reference>`.
-   Notes are not touched by season reset (F19), so prior years stay until VAY deletes
-   them.
+2. **A restricted acceptance record** naming who accepted the signed copy and when.
+   File it with the copy. An ordinary profile note may carry a minimal status marker only (M8).
 3. **Working state** in WordPress: `consent_signer = 'staff_copy'` and a timestamp (§3),
    so the hold logic can tell that replacement consent is on record.
 
-The note has no contact details and nothing medical. The signed copy itself cannot be
-attached through the API (notes are text only, F20), so it is filed outside vaysf and
-the note says where.
-
-**Recommendation:** a staff-only folder per season for the copies; confirm in the tenant
-that Church Reps and members cannot read profile notes before the first note is written
-(**unverified**; the API describes the list as "public notes").
+The signed copy stays in restricted storage. Confirm visibility before writing a profile status marker (M8).
 
 ### Q5. Where is "reminder sent" recorded?
 
@@ -263,11 +251,9 @@ alias map, which only the middleware can read:
 - **Clearing** clears every `active` row in the alias group, so a stale row cannot
   re-impose a hold that staff lifted.
 
-Valid consent (D9) already carries for forms (F9). It does not carry when a Church Rep
-ticked Box 2 on the stale profile and no form matches. Proposed: `check-consent` gains a
-carry pass that ticks Box 2 on the canonical profile when a `merged` row in its alias
-group had `consent_status = 1` and no row in the group has an active hold, and writes a
-note saying where the consent came from. `check-consent` already owns Box 2 writes and
+Valid consent (D9) already carries for forms (F9). For a stale Box 2 tick, verify how the consent was recorded. `check-consent` may tick the canonical profile when
+same-season consent is verified and the alias group has no active hold. Send a tick
+with unknown provenance to staff review (M11). `check-consent` already owns Box 2 writes and
 already loads aliases (`middleware/sync/consent_checker.py:239`); `apply-aliases` keeps
 its "WordPress only" contract (F10). The reminder is suppressed for a canonical row
 whose alias group already has consent, so a guardian is never asked twice.
@@ -309,15 +295,14 @@ status, and pastor approval is never rewritten.
 |---|---|---|---|
 | Signed consent | Consent-form submission; Box 2 (checklist option `199609`, `middleware/config.py:389`) | `consent_status` mirror (existing) | ChMeetings person ID |
 | Who signed, and when | The form submission | `consent_signer`, `consent_evidence_at` (new) | ChMeetings person ID |
-| Hold | Profile notes: placed, cleared, carried | `consent_hold`, `consent_hold_at` (new) | ChMeetings person ID |
-| Replacement consent accepted by staff | Profile note, plus Box 2 | `consent_signer = 'staff_copy'` | ChMeetings person ID |
+| Hold | Restricted staff audit, with an optional minimal profile status marker (M8) | `consent_hold`, `consent_hold_at` (new) | ChMeetings person ID |
+| Replacement consent accepted by staff | Box 2 plus the restricted acceptance record (M8) | `consent_signer = 'staff_copy'` | ChMeetings person ID |
 | Guardian contact | The three parent fields (F21) | `parent_info` mirror (existing) | ChMeetings person ID |
 | Guardian address confirmed by Church Rep | Checklist option 7 (new option, M7) | part of `completion_checklist` (existing) | ChMeetings person ID |
 | Reminder sent | none (not a consent record) | `guardian_notice_at`, `guardian_notice_key` (new) | ChMeetings person ID, plus the key in Q5 |
 | Badge issued | none | `badge_issued_at` (new) | ChMeetings person ID |
 
-Every staff action also writes one row to a git-ignored audit workbook in
-`middleware/data/` named `consent_hold_<timestamp>_audit.xlsx`, following
+Every staff action also writes one row to a restricted, git-ignored audit workbook named `consent_hold_<timestamp>_audit.xlsx`, following
 `apply-aliases` (`middleware/sync/alias_reconciler.py:26-42`; ignore rule at
 `.gitignore:243`).
 
@@ -406,8 +391,7 @@ Points that are easy to miss:
   already know: ticking Box 2. Whether that clears the hold is decided by the
   middleware from T4's preconditions. After a badge is issued the same tick does
   nothing (T5), which is the "only VAY Staff" rule.
-- **"VAY Staff" in 2027 means the operator running the command with `--by <name>`**,
-  as the alias map's `confirmed_by` does (M8).
+- **VAY Staff** means a named, authorized operator. The command's `--by <name>` records attribution (M8).
 - **Pastor approval is not in this table.** No transition reads or writes
   `approval_status`. An athlete at `pending_approval` when a hold is placed drops to
   `pending` through the ordinary ERROR path (F3) and returns to `pending_approval` on
@@ -444,8 +428,8 @@ fact-check said #317 was missing.
 
 | Today | Proposed | Why |
 |---|---|---|
-| Any best match at or above threshold ticks Box 2 (F6). | A Box 2 write also needs an identity anchor: birthdate or exact name in the match. | A guardian's form for one child can tick a sibling's Box 2 on shared phone and email alone. Changes the behaviour pinned by `test_check_consent_phone_plus_email_is_above_threshold` (`middleware/tests/test_consent_checker.py:184`). M6. |
-| Signer type affects only the threshold (F8). | Minor plus self-signed plus anchored: no Box 2 write; evidence stored; audit action `flagged_minor_self_signed`. | The system should not create an attestation from a form that says a minor signed alone. M5. |
+| Any best match at or above threshold ticks Box 2 (F6). | A Box 2 write needs an identity anchor and an unambiguous match. Tied athletes and conflicting birthdates go to review. | A guardian's form for one child can tick a sibling's Box 2 on shared phone and email alone. Changes the behaviour pinned by `test_check_consent_phone_plus_email_is_above_threshold` (`middleware/tests/test_consent_checker.py:184`). M6. |
+| Signer type affects only the threshold (F8). | Minor plus self-signed plus reliable match: leave Box 2 as found, store the evidence, and flag it for staff review. | The system should not create an attestation from a form that says a minor signed alone. M5. |
 | Highest score wins among rows for one participant (F7). | Among anchored rows, guardian-signed is preferred, then the latest. | Otherwise the replacement form loses to the form it replaces. |
 | Box 2 is ticked whatever else is true. | With a hold active: evidence is stored, Box 2 is not ticked. | The Church Rep (T4) or staff (T6) clears. |
 | Nothing is stored about the signer. | `consent_signer` and `consent_evidence_at` written to the matched row; for a `merged` match, to the canonical row. | #317 needs it where the validator can read it. |
@@ -468,15 +452,15 @@ means the alias-group hold from §3.
 
 | # | Consumer | Where | Today | Change |
 |---|---|---|---|---|
-| C1 | Badge selection | `middleware/badges/runner.py:36`, `:297-325`, `:402-404` | Every `approved` row gets a badge. | Skip a held athlete; count and log as `CONSENT HOLD`. Dry-run lists them separately. Approval untouched. |
+| C1 | Badge selection | `middleware/badges/runner.py:36`, `:297-325`, `:402-404` | Every `approved` row gets a badge. | Skip held athletes and approved minors who still need consent. Report `CONSENT HOLD` or `CONSENT NEEDED` in staff output. |
 | C2 | Badge consent and minor tags | `middleware/badges/runner.py:354-359`, `:407-451`; `middleware/badges/generator.py:319-334`, `:412-432`, `:668-677` | Reads Box 2 straight from ChMeetings; computes its own age. | Use effective consent and the shared minor helper. Add the hold to `_RENDER_FIELDS` (`generator.py:78-96`) so a change re-renders. |
 | C3 | Badge upload and issuance | `middleware/badges/runner.py:136-150`; `middleware/badges/uploader.py:55-96` | Uploads; records nothing. | Set `badge_issued_at` on first issue (Q2). On a hold, delete the hosted PNG through the existing DELETE route (`plugins/vaysf/includes/badge-hosting.php:26-36`); the uploader needs a delete method. M3. |
 | C4 | Badge URL on the ChMeetings profile | `middleware/badges/runner.py:147-149`, `:221-264` | Written after upload when asked. | Not written for a held athlete. When a hosted badge is withdrawn, blank the field so the profile does not show a dead image. |
-| C5 | Approved-group sync | `middleware/sync/manager.py:476-483`, `:500-502`, `:567-617`; Excel fallback `:634-703` | Adds every approved, unsynced participant; never removes. | Exclude held athletes from the add. For a hold placed after the add: remove from the group (`middleware/chmeetings/backend_connector.py:408`) and set `synced_to_chmeetings` back to false so clearing re-adds. Approval rows keep their status and date. M9. |
+| C5 | Approved-group sync | `middleware/sync/manager.py:476-483`, `:500-502`, `:567-617`; Excel fallback `:634-703` | Adds every approved, unsynced participant; never removes. | Apply the clearance rule before adding anyone. Remove athletes who lose clearance and reset `synced_to_chmeetings` so eligible athletes can be re-added after clearance. Preserve the approval record (M9). |
 | C6 | Pastor token generation | `middleware/sync/manager.py:134-307` | Tokens for `pending_approval`. | No code change needed for the common path: a held or gated athlete is `pending` (F3). Add a guard for the single-ID path (`:148-158`) so the log says why. |
 | C7 | Pastor email resend | `middleware/church_teams_export.py:751-776`, `:866-981` | Resends for pending, validated and `reapproval_required`. | Skip held and gated athletes with a log line. D5: they resume at the next gate after the hold clears. |
-| C8 | Daily roster export | `middleware/church_teams_export.py:463-480`, `:487-492`, `:514-544`, `:590-611`, `:680-684`; `middleware/church_teams_report.py:699-700`, `:721-723`, `:780-781`, `:883-884` | Shows `Approval_Status (WP)`; counts "Total Approved (WP)". | The athlete **stays** in the export (§9.2). Add a `Clearance` column to Contacts and Roster: `cleared`, `CONSENT HOLD`, or the approval status. Add a `Consent Hold` detail column: what is needed and from whom. Summary gains "Total On Consent Hold"; "Total Approved" is unchanged because approval is unchanged. |
-| C9 | Score sheets (the cleared roster at the court) | `middleware/scoresheets.py:380-398`, `:401-414`, `:900-901`, `:971-972`, `:1112-1113` | Strikes a row unless status is `approved`. | Read `Clearance` first. A held row is struck and labelled `CONSENT HOLD` (the label slot holds 24 characters, `:409-412`). |
+| C8 | Daily roster export | `middleware/church_teams_export.py:463-480`, `:487-492`, `:514-544`, `:590-611`, `:680-684`; `middleware/church_teams_report.py:699-700`, `:721-723`, `:780-781`, `:883-884` | Shows `Approval_Status (WP)`; counts "Total Approved (WP)". | The athlete **stays** in the export (§9.2). Add a `Clearance` column to Contacts and Roster: `cleared`, `CONSENT HOLD`, `CONSENT NEEDED`, or the approval status. Add a `Consent Hold` detail column: what is needed and from whom. Summary gains "Total On Consent Hold"; "Total Approved" is unchanged because approval is unchanged. |
+| C9 | Score sheets (the cleared roster at the court) | `middleware/scoresheets.py:380-398`, `:401-414`, `:900-901`, `:971-972`, `:1112-1113` | Strikes a row unless status is `approved`. | Read `Clearance` first. Strike rows that lack clearance and show `CONSENT HOLD` or `CONSENT NEEDED` as appropriate (the label slot holds 24 characters, `:409-412`). |
 | C10 | Sync status machine | `middleware/sync/participants.py:973-979`, `:1131-1144`, `:1338` | §1, F1–F4. | §3.5. Never sets a status because of a hold. |
 | C11 | Individual validator | `middleware/validation/individual_validator.py:335-363` | F2. | §3.5; shared minor helper; severity read from the rules file. |
 | C12 | `check-consent` | `middleware/sync/consent_checker.py:347-586` | F6–F9. | §3.6. |
@@ -499,7 +483,7 @@ Checked and **not** eligibility consumers, so no change:
 
 | # | Consumer | Where | Today | Change |
 |---|---|---|---|---|
-| P1 | Public badge page, list mode | `plugins/vaysf/includes/shortcodes.php:1255-1269`, `:1297-1332` | Names every `approved` participant of a church. | Exclude rows with `consent_hold = 'active'`. Do **not** print "CONSENT HOLD" here: this page is public and the athlete is a minor. M10. |
+| P1 | Public badge page, list mode | `plugins/vaysf/includes/shortcodes.php:1255-1269`, `:1297-1332` | Names every `approved` participant of a church. | Omit held athletes and approved minors who still need consent (M10). |
 | P2 | Public badge page, photo mode | `plugins/vaysf/includes/shortcodes.php:284-345`, `:1362-1389` | Shows any PNG whose name starts with church and ID. | Same exclusion. The hosted file is also deleted (C3), so a saved link stops working. |
 | P3 | Participants REST | `plugins/vaysf/includes/rest-api/class-vaysf-rest-participants.php:58-100` (GET filters), `:257-299` (create), `:339-510` (update) | Whitelisted fields. | Accept the seven columns on create and update; add a `consent_hold` filter to GET. |
 | P4 | Admin participants list | `plugins/vaysf/admin/class-vaysf-admin-participants.php:107-130` | Status chip. | Add a `CONSENT HOLD` chip beside the status. |
@@ -522,7 +506,7 @@ above cannot drift apart:
 
 ```python
 def clearance(participant: dict, *, hold_active: bool) -> str:
-    """'cleared', 'CONSENT HOLD', or the approval status when not approved."""
+    """'cleared', 'CONSENT HOLD', 'CONSENT NEEDED', or the unapproved status."""
 
 def resolve_group_hold(rows: list[dict]) -> HoldState:
     """Alias-group rule from Q6: active beats cleared beats empty."""
@@ -531,9 +515,7 @@ def rep_may_clear(hold: HoldState) -> tuple[bool, str]:
     """T4 preconditions; the string names the one that failed."""
 ```
 
-The plugin repeats the same test in SQL (`consent_hold = 'active'`) in P1, P2, P5 and
-P6. With no PHPUnit harness (#363), those four call sites are the manual test list for
-the plugin steps.
+Verify the public exclusions for both hold and missing minor consent in P1 and P2. Verify the hold guard in P5 and the dashboard count in P6. These checks are manual until there is a PHPUnit harness (#363).
 
 ---
 
@@ -555,7 +537,7 @@ case belongs in; builders such as `_make_wp_participant` and `_make_chm_person`
 | A4 | Exactly 18 on event day | born 2008-07-18 | adult; missing consent is WARNING; no flag, no gate, no reminder; `consent-hold place` refuses without `--force` | new `test_age_at_event.py` |
 | A5 | Unknown birthdate | blank or `2008/07/19` | helper returns `None`; `missing_birthdate` or `invalid_birthdate` ERROR as today; hold may be placed | `test_age_at_event.py` |
 | A6 | One answer everywhere | same birthdate through validator, sync, badge runner, export | identical age and minor flag from all four | `test_age_at_event.py` |
-| A7 | Turns 18 on day two | depends on M1 | minor if "first day" is adopted | `test_age_at_event.py` |
+| A7 | Turns 18 on day two | first event day is the age cutoff | minor | `test_age_at_event.py` |
 
 ### 5.2 Self-signed flag and `check-consent`
 
@@ -616,7 +598,7 @@ case belongs in; builders such as `_make_wp_participant` and `_make_chm_person`
 | M-4 | Alias written, not yet applied | stale `active`; sync of the canonical person | canonical treated as held | `test_consent_hold.py` |
 | M-5 | Clear after a merge | M-1, then staff clear | canonical `cleared`; stale stays `carried`; next sync does not re-impose | `test_consent_hold.py` |
 | M-6 | Stale row carried valid consent by form | guardian form matches the stale row's details | canonical Box 2 ticked (existing behaviour, F9); signer written to the canonical row | `test_consent_checker.py` |
-| M-7 | Stale row carried rep-ticked consent | stale `consent_status = 1`, no form, canonical Box 2 empty, no hold in group | carry pass ticks canonical Box 2 and writes a note; no reminder is sent | `test_consent_checker.py`, `test_guardian_notice.py` |
+| M-7 | Stale row carried rep-ticked consent | verified same-season consent, no form, canonical Box 2 empty, no hold in group | carry pass ticks canonical Box 2 and records the source; a tick of unknown provenance goes to staff review | `test_consent_checker.py`, `test_guardian_notice.py` |
 | M-8 | Stale consent, but a hold in the group | as M-7 with a hold active | no Box 2 write | `test_consent_checker.py` |
 | M-9 | Stale row had a badge issued | stale `badge_issued_at` set | canonical inherits it; rep clear refused (T5) | `test_canonical_identity.py` |
 | M-10 | Reminder already sent to the stale ID | stale has key and timestamp | no email for the canonical row | `test_guardian_notice.py` |
@@ -646,13 +628,13 @@ no PHPUnit harness (#363).
 | 2 | #318 | Consent severity moves into the rules file (one rule for minors at ERROR, one default at WARNING); validator reads it; `docs/PRD.md:233-234` aligned. | middleware, rules JSON, docs | none |
 | 3 | #317, #318 | Seven columns, `DB_VERSION` 1.0.14, REST whitelist and filter (P3). Check W1–W2. | **plugin** | none |
 | 4 | #317, #318 | `consent_state.py` (§4.3) with unit tests; `Clearance` and `Consent Hold` columns in the export (C8), all blank or `cleared` until a hold exists. | middleware | two new export columns |
-| 5 | #317 | `check-consent`: column mapping in `config.py`, signer `unknown`, anchor rule, guardian-first tie-break, signer evidence stored, no Box 2 write for a self-signed minor; validator raises `minor_self_signed_consent`. Tests S1–S8. Needs M5 and M6. | middleware, rules JSON | fewer automatic Box 2 ticks |
-| 6 | #318 | `consent-hold` command (`place`, `clear`, `accept-copy`, `dismiss-flag`, `list`, `list --verify`), dry-run by default as `apply-aliases` is; sync honours the hold (§3.5); `consent_hold` rule. Tests H1, H4–H13. Needs M4 and M8. | middleware, rules JSON | holds can exist |
-| 7 | #318 | Middleware consumers: badges (C1–C4, with `badge_issued_at`), approved group (C5), resend paths (C6–C7), score sheets (C9), drift-accept warning (C16). Tests H2, H3, H14, H15. Needs M2, M3, M9. | middleware | held athletes lose badge and group membership |
-| 8 | #318 | Plugin consumers: P1, P2, P4–P7. Checks W3–W5. Needs M10. | **plugin** | held athletes leave the public badge page |
-| 9 | #315 | Guardian-address gate: two rules, checklist option 7 in `CHECK_BOXES` and `SF_CHECKLIST_OPTIONS`, field inspector run. Tests G1–G3, G6, G11. Needs M7 and the option created in ChMeetings first. | middleware, rules JSON | minors with no usable guardian email stop at `pending` |
+| 5 | #317 | `check-consent`: column mapping in `config.py`, signer `unknown`, anchor rule, guardian-first tie-break, signer evidence stored, no Box 2 write for a self-signed minor; validator raises `minor_self_signed_consent`. Tests S1–S8. Implements M5 and M6. Verify the export and replay before rollout. | middleware, rules JSON | fewer automatic Box 2 ticks |
+| 6 | #318 | `consent-hold` command (`place`, `clear`, `accept-copy`, `dismiss-flag`, `list`, `list --verify`), dry-run by default as `apply-aliases` is; sync honours the hold (§3.5); `consent_hold` rule. Tests H1, H4–H13. Implements M4 and M8. | middleware, rules JSON | holds can exist |
+| 7 | #318 | Middleware consumers: badges (C1–C4, with `badge_issued_at`), approved group (C5), resend paths (C6–C7), score sheets (C9), drift-accept warning (C16). Tests H2, H3, H14, H15. Implements M2, M3, M9 and the badge rules in M10. | middleware | held athletes lose badge and group membership |
+| 8 | #318 | Plugin consumers: P1, P2, P4–P7. Checks W3–W5. Implements M10. | **plugin** | held athletes leave the public badge page |
+| 9 | #315 | Guardian-address gate: two rules, checklist option 7 in `CHECK_BOXES` and `SF_CHECKLIST_OPTIONS`, field inspector run. Tests G1–G3, G6, G11. Implements M7. Create the option in ChMeetings first. | middleware, rules JSON | minors with no usable guardian email stop at `pending` |
 | 10 | #315 | Reminder: bilingual template, claim-then-send marker, Church Rep copied, off by default behind a config switch until the wording is approved. Tests G4–G10. | middleware | one email per minor |
-| 11 | #318, Track A | `apply-aliases` carry, `check-consent` carry pass, `find-duplicates` columns, season archive lines (C13–C15). Tests M-1 to M-10. Needs M11. | middleware | merges keep holds |
+| 11 | #318, Track A | `apply-aliases` carry, `check-consent` carry pass, `find-duplicates` columns, season archive lines (C13–C15). Tests M-1 to M-10. Implements M11. | middleware | merges keep holds |
 | 12 | all three | `docs/USAGE.md` (commands; rewrite `:787-788`), `docs/TROUBLESHOOTING.md` (hold playbook), `docs/SEASON_TRANSITION.md` (M12; delete hosted badges at reset), `CLAUDE.md` and `AGENTS.md` (form-export wording, §7 R8; new doc in the layout list), `CHANGELOG.md`. | docs | none |
 
 Step 1 in enough detail to start: add `middleware/validation/age.py` with
@@ -669,8 +651,8 @@ A4–A6.
 
 Ordering notes:
 
-- Steps 1–4 can ship before any policy question is answered. Steps 5–11 each wait on
-  the questions named in the table; step 10 also waits on approved wording.
+- M1–M12 are approved in §8. See [rollout follow-through](#follow-through-before-rollout)
+  for the remaining verification and operator tasks.
 - Steps 3 and 8 are the only plugin changes. Step 3 must be deployed before step 5 is
   run: the update handler ignores keys it does not know, so signer evidence written to
   an older plugin would be dropped without an error.
@@ -712,13 +694,13 @@ is no longer true (F22).
 | # | Risk | Mitigation |
 |---|---|---|
 | R1 | **A badge that has left the building cannot be recalled.** A screenshot or printout still looks valid. | The hold list and score sheets are the authority, not the badge (Q1). Rewrite `docs/USAGE.md:787-788`. |
-| R2 | **The hold lives in WordPress.** A restore or a mistaken truncation mid-season loses it. | Every placement also writes a ChMeetings note and an audit row; `consent-hold list --verify` compares WordPress against the audit workbooks and reports a hold with no row. It does not read notes for state, because `get_person_notes` reads one page (F20). |
+| R2 | **The hold lives in WordPress.** A restore or a mistaken truncation mid-season loses it. | Every placement also writes a restricted audit row and may write a minimal ChMeetings status marker (M8); `consent-hold list --verify` compares WordPress against the audit workbooks and reports a hold with no row. It does not read notes for state, because `get_person_notes` reads one page (F20). |
 | R3 | **The Church Rep can re-tick Box 2.** | By design that is a request, not a clear (T4, T5). The export says in words why a re-tick did nothing. |
 | R4 | **Signer type is self-declared** (F8). A minor who picks "parent or legal guardian" is not flagged. | Out of reach of code. D1's wording helps the honest case; the Church Rep's Box 2 attestation and staff confirmation remain the check. |
 | R5 | **Old badges look current.** Filenames have no season, the gallery globs by prefix, and reset does not clear hosted files or the profile's badge URL (F12, Q2). A returning athlete, once approved in 2027, shows a 2026 badge until a new one is rendered. | Add "delete hosted badges" and "set `SF_FIELD_IDS['BADGE_URL']`" to the season reset steps (step 12). `badge_issued_at` is a recorded fact for this reason, not inferred from a file. |
 | R6 | **Two event dates** (F16). A hold or reminder could use a different age from the validator. | Step 1. |
 | R7 | **No plugin tests** (#363). | Two small plugin steps; the eligibility rule lives in the middleware; §5.6 is the manual list. |
-| R8 | **The form export becomes more important.** `check-consent` already reads the Playwright export every night (`middleware/daily-run.bat:15-19`), and #317's flag has no other source. CLAUDE.md says that helper is "never a dependency of sync/validation/approval logic". | Sync never requires the export: with no export there is no new flag and no new evidence, and existing holds stay in force. The rep-clear path needs fresh evidence, so without an export it waits for staff. The CLAUDE.md sentence should be amended to say so (M12). |
+| R8 | **The form export becomes more important.** `check-consent` already reads the Playwright export every night (`middleware/daily-run.bat:15-19`), and #317's flag has no other source. CLAUDE.md says that helper is "never a dependency of sync/validation/approval logic". | Require a successful refresh before `check-consent` takes new action. Ordinary sync continues and existing holds stay in force. The rep-clear path needs fresh evidence, so without an export it waits for staff. The CLAUDE.md sentence should be amended to say so (M12). |
 | R9 | **Email delivery** is `wp_mail` on shared hosting (F22). A reminder can be accepted and never arrive. | Turn on `vaysf_log_emails`; the export shows "reminder sent on"; the Church Rep is copied and remains the human follow-up. |
 | R10 | **A ChMeetings UI merge** may move or drop Box 2 and notes (unverified). | Hold is in WordPress and follows the alias (§3.3). Add "check the survivor's Box 2 and notes" to the merge playbook. |
 | R11 | **Placing a hold is easy to do to the wrong person** with a mistyped ID. | Dry-run by default; the command prints name, church, birthdate and age and requires `--execute`; `--by` and `--reason` are mandatory. |
@@ -766,32 +748,72 @@ decision, not an accident:
 
 ---
 
-## 8. Questions for the maintainer
+## 8. Maintainer decisions for 2027
 
-Numbered as referenced above. Each has a recommended answer.
+**Approved by Bumble, VAY Sports Fest maintainer, on 2026-11-16.** The answers below govern the implementation plan. The checks and assignments at the end of this section are still pending.
 
-| # | Question | Recommendation |
-|---|---|---|
-| M1 | Which day decides "under 18 at the event" for a multi-day event, and which setting holds that date? | The first day. One value, `metadata.event_date` in the season rules file, read by everything. |
-| M2 | When is a badge "issued"? Is `EXPORT_DIR/<church>/badges` visible to the Church Rep? | Issued at the first render into the church folder or the first upload, whichever comes first. |
-| M3 | When a hold is placed after a badge was issued, what happens to the badge? | Delete the hosted copy and blank the profile's badge URL; overwrite the church-folder copy with a version carrying a `CONSENT HOLD` band; re-issue on clearing. |
-| M4 | Who owns the hold list on event day, and how do late changes reach check-in? | The operator places and clears; one named check-in lead reads the live "Consent Holds" page; print the list the evening before as the fallback. |
-| M5 | Should `check-consent` stop ticking Box 2 from a minor's self-signed form before staff have confirmed anything? | Yes. The athlete then shows as missing consent with a "self-signed, needs review" flag, which is what the form says. |
-| M6 | Should every automatic Box 2 tick require a birthdate or exact-name match, adults included? | Yes. First count last season's `checked` rows that had neither, from `consent_check_audit.xlsx`, to see how many forms would have needed a manual tick. |
-| M7 | Guardian-email gate: is "equal to the athlete's email" the whole definition, does it apply only while consent is still needed, and is a new checklist option 7 the override? | Yes to all three. The maintainer adds the option in ChMeetings before registration opens. |
-| M8 | Who is "VAY Staff" in the system for 2027, where are accepted paper copies filed, and can Church Reps or members read profile notes? | The operator's command with `--by <name>`; a staff-only folder per season; confirm note visibility in the tenant before the first note is written. |
-| M9 | Is the ChMeetings approved group ("2027 Sports Fest") used for admission or for messages to participants? | Treat it as the cleared list: do not add a held athlete, and remove one who was added, restoring them on clearing. Pastor approval stays recorded in WordPress. |
-| M10 | Public pages: may a hold ever be shown there? And should an approved minor with Box 2 unticked but no hold (the #201 case) also be kept out of badges? | Never show a hold publicly; omit the athlete from the public badge page. Yes to the second: label it `CONSENT NEEDED`, distinct from `CONSENT HOLD`, and build it in step 7 only if confirmed. |
-| M11 | When an alias is confirmed and the retired profile had Box 2 ticked by a Church Rep with no form, may `check-consent` tick Box 2 on the surviving profile automatically? | Yes, with a note naming the source, and never when any row in the alias group is on hold. |
-| M12 | Two documents to reconcile: `docs/SEASON_TRANSITION.md:16` says old consent-form submissions are cleared before a new season, while D6 retains prior years; and CLAUDE.md says the form-export helper is never a dependency of validation logic. | Export and archive each season's submissions before clearing the inbox, or stop clearing it. Amend CLAUDE.md and AGENTS.md to say `check-consent` and the self-signed flag read the export, and that sync never requires it. |
+### M1 — Which day determines whether an athlete is under 18 for a multi-day event?
 
-Form-side work that only the maintainer can do in ChMeetings, and that steps 5, 9 and
-10 wait on: reword and require the signer question (D1); make the guardian email
-required for under-18 registrants if the form builder allows a conditional requirement
-(D12); add checklist option 7 (M7); approve the bilingual reminder wording and the
-address it is sent from.
+Use the first day of the event. Store it in `metadata.event_date` in the season rules and use it for every age calculation. An athlete who turns 18 on day two follows the minor consent process for that event.
 
----
+### M2 — When does a badge count as issued?
+
+Record issuance at the first render into a shared church folder or the first successful WordPress upload, whichever comes first. Confirm which church folders Church Reps can access. Dry runs and private test renders do not count.
+
+### M3 — What happens to a badge if staff place a hold after it was issued?
+
+Remove the hosted image and clear the ChMeetings badge URL. If a replacement file is needed in the shared folder, use a neutral invalid-badge notice. Show `CONSENT HOLD` on the staff check-in list and authorized score sheets. Reissue the badge after clearance. The check-in lead consults the live list when someone presents an earlier printout or download.
+
+### M4 — Who owns the hold list on event day and relays late changes?
+
+The authorized operator places and clears holds. A named check-in lead and backup use the live list, and the operator alerts them directly when the list changes. Print a dated copy the evening before as an outage fallback.
+
+### M5 — Should the nightly job tick Box 2 from a minor's self-signed form?
+
+No. When the form reliably matches a minor and identifies that athlete as the signer, leave an unticked Box 2 blank and flag the form for staff review. Preserve an existing tick pending review because valid consent may already be on file. Send unclear signer answers or uncertain age to review when they affect eligibility to sign. Staff confirm the self-signature and place any hold.
+
+### M6 — Should automatic Box 2 ticks require an identity anchor for all athletes?
+
+Yes. Keep the existing score threshold and require a matching birthdate or exact athlete name, with one unambiguous athlete. Send shared phone and email alone, tied matches across distinct athletes, and conflicting birthdates to review. Use the athlete's name where the export supplies it. The signer may be the guardian.
+
+Before enabling this rule, replay the 2026 export against a same-season participant snapshot without writes. Compare old and proposed decisions and count the additional reviews by reason. The July 17 audit contained no fresh automatic ticks and cannot supply a season-wide count.
+
+### M7 — When does guardian email block progress, and what can checklist option 7 override?
+
+Apply the gate to minors who still need consent. A missing or invalid address blocks progress. A Church Rep can confirm that a valid address shared with the athlete genuinely belongs to the parent or guardian. Use **`7. Parent or guardian email confirmed (minors)`** for that confirmation. The rep must confirm again if the address changes.
+
+### M8 — Who accepts signed replacement consent, where is it filed, and who can see the record?
+
+Name the authorized VAY Staff operators. Record who accepted each replacement and when. File the signed copy and acceptance details in a restricted season folder. Use `--by` for attribution.
+
+The VAY SM settings review showed that Church Reps can view and edit ordinary Person Notes. If a profile note is needed, use a minimal status marker. Keep guardian names, document references, and hold reasons in restricted storage.
+
+### M9 — Should the `2027 Sports Fest` ChMeetings group represent athletes currently cleared to participate?
+
+Yes. Exclude held athletes and minors who still need consent. Remove any athlete already added who loses clearance. Restore membership once the athlete is cleared and otherwise eligible. Keep pastor approval on record in WordPress and use the staff check-in list as the event-day authority.
+
+### M10 — Should public badge pages omit athletes on hold and approved minors who still need consent?
+
+Yes. Omit their entries and images from the public badge list and gallery. Use `CONSENT NEEDED` for an outstanding release and `CONSENT HOLD` for a hold staff have placed in the appropriate staff or Church Rep view.
+
+### M11 — Can Box 2 carry to a surviving profile when a confirmed duplicate has no form on file?
+
+Carry verified same-season consent across a confirmed alias. Send a prior Box 2 tick with unknown provenance to staff review. A hold anywhere in the alias group blocks an automatic tick.
+
+### M12 — How do we retain prior-season releases, and which nightly decisions require a fresh export?
+
+Keep prior-season form submissions in ChMeetings if they can be separated by season. If the inbox must be cleared, first verify that the restricted archive is complete and retrievable.
+
+Require a successful export refresh before `check-consent` makes new decisions. If the refresh fails, keep existing consent and hold state in force and let ordinary sync continue. Record this distinction in the runbook, `CLAUDE.md`, and `AGENTS.md`.
+
+### Follow-through before rollout
+
+- **M2–M4:** Confirm which church badge folders are shared. Name the check-in lead and backup and agree how the operator will alert them.
+- **M5–M6:** Reword and require the signer question (D1), verify its actual export column and answer values, confirm whether the export includes the athlete's name separately, and review the read-only replay before enabling the new matching rule.
+- **M7:** Before registration opens, add checklist option 7 in ChMeetings, record its option ID, and verify Church Rep edit access. Confirm whether the form builder can require guardian email for minors (D12).
+- **M8:** Name authorized operators and confirm the season folder and its access. Verify who can see any proposed profile marker before writing it.
+- **Step 10:** Approve the bilingual reminder text and sender address before enabling reminders.
+- **M12:** Confirm the season retention and retrieval procedure before clearing any submissions.
 
 ## Appendix: RFC statements re-checked
 
