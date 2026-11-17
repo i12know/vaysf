@@ -23,8 +23,10 @@ class VAYSF_Admin_Churches extends VAYSF_Admin_Page {
         
 		// Handle actions
 		if (isset($_GET['action']) && $_GET['action'] === 'sync') {
-			// Log sync request
-			if (vaysf_sync_churches()) {
+			// Log sync request (the link is nonce-signed - Issue #406)
+			if (!$this->verify_get_action_nonce('vaysf_sync_churches')) {
+				echo '<div class="notice notice-error"><p>Invalid or expired sync request. Please click Sync Churches again.</p></div>';
+			} elseif (vaysf_sync_churches()) {
 				echo '<div class="notice notice-info"><p>Sync request for churches has been logged. The middleware will process this request during its next scheduled run.</p></div>';
 			} else {
 				echo '<div class="notice notice-error"><p>Error logging sync request for churches.</p></div>';
@@ -136,7 +138,7 @@ class VAYSF_Admin_Churches extends VAYSF_Admin_Page {
             
             <div class="tablenav top">
                 <div class="alignleft actions">
-                    <a href="<?php echo admin_url('admin.php?page=vaysf-churches&action=sync'); ?>" class="button">Sync Churches</a>
+                    <a href="<?php echo esc_url($this->nonce_action_url('vaysf-churches', 'sync', 'vaysf_sync_churches')); ?>" class="button">Sync Churches</a>
                 </div>
                 <br class="clear">
             </div>

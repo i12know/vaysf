@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- WordPress admin links that change data now carry a nonce and are checked
+  before anything is written or sent (#406). This covers Resolve, Reopen and
+  Validate Data on the Validation page, Resend Email and Generate Approval
+  Tokens on the Approvals page, Sync Churches, Sync Participants, and the four
+  dashboard Quick Actions buttons. A link without a valid nonce shows "Invalid
+  or expired request" and does nothing. Resolve and Reopen now also require
+  `sf2025_write`; the Sports Fest Viewer role no longer sees those buttons.
+  The Validation status filter accepts only `open` or `resolved` (anything
+  else shows open issues) and is built with `$wpdb->prepare()`. **Operator
+  note:** a bookmarked `...&action=sync` or `...&action=validate` URL no
+  longer works; use the button on the page. `plugins/vaysf.zip` is not rebuilt
+  in this change.
 - Added warning-only duplicate tripwires (#312, Canonical Identity RFC §4.5;
   addresses the symptom in #40). `generate-scoresheets` (per team roster),
   `generate-badges` (approved athletes, per church) and `export-church-teams`
