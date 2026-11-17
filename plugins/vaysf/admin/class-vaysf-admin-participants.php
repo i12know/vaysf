@@ -22,7 +22,10 @@ public function display_participants_page() {
     $table_churches = $wpdb->prefix . 'sf_churches';
     
     if (isset($_GET['action']) && $_GET['action'] === 'sync') {
-        if (vaysf_sync_participants()) {
+        // The link is nonce-signed (Issue #406).
+        if (!$this->verify_get_action_nonce('vaysf_sync_participants')) {
+            echo '<div class="notice notice-error"><p>Invalid or expired sync request. Please click Sync Participants again.</p></div>';
+        } elseif (vaysf_sync_participants()) {
             echo '<div class="notice notice-info"><p>Sync request for participants has been logged. The middleware will process this request during its next scheduled run.</p></div>';
         } else {
             echo '<div class="notice notice-error"><p>Error logging sync request for participants.</p></div>';
@@ -63,7 +66,7 @@ public function display_participants_page() {
                 </form>
             </div>
             <div class="alignleft actions">
-                <a href="<?php echo admin_url('admin.php?page=vaysf-participants&action=sync'); ?>" class="button">Sync Participants</a>
+                <a href="<?php echo esc_url($this->nonce_action_url('vaysf-participants', 'sync', 'vaysf_sync_participants')); ?>" class="button">Sync Participants</a>
             </div>
             <br class="clear">
         </div>

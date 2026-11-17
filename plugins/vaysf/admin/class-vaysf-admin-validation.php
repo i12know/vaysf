@@ -22,48 +22,75 @@ class VAYSF_Admin_Validation extends VAYSF_Admin_Page {
 		$table_churches = vaysf_get_table_name('churches');
 		$table_participants = vaysf_get_table_name('participants');
 
-		// Handle actions
-		if (isset($_GET['action']) && $_GET['action'] === 'validate') {
-			// Log validation request
-			if (vaysf_validate_data()) {
+		// Resolve/Reopen change data, so they need sf2025_write; the page itself
+		// only needs sf2025_read (Issue #406).
+		$can_write = current_user_can('sf2025_write');
+
+		// Handle actions. Each one arrives as a GET link signed with
+		// nonce_action_url() and is verified before anything is written.
+		$action = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : '';
+
+		if ($action === 'validate') {
+			if (!$this->verify_get_action_nonce('vaysf_validate_data')) {
+				echo '<div class="notice notice-error"><p>Invalid or expired validation request. Please click Validate Data again.</p></div>';
+			} elseif (vaysf_validate_data()) {
+				// Log validation request
 				echo '<div class="notice notice-info"><p>Data validation request has been logged. The middleware will process this request during its next scheduled run.</p></div>';
 			} else {
 				echo '<div class="notice notice-error"><p>Error logging data validation request.</p></div>';
 			}
-		} else if (isset($_GET['action']) && $_GET['action'] === 'resolve' && isset($_GET['id'])) {
+		} elseif (($action === 'resolve' || $action === 'reopen') && isset($_GET['id'])) {
 			$issue_id = absint($_GET['id']);
-			$wpdb->update(
-				$table_issues,
-				array(
-					'status' => 'resolved',
-					'resolved_at' => current_time('mysql'),
-					'updated_at' => current_time('mysql')
-				),
-				array('issue_id' => $issue_id),
-				array('%s', '%s', '%s'),
-				array('%d')
-			);
-			echo '<div class="notice notice-success"><p>Issue marked as resolved.</p></div>';
-		} else if (isset($_GET['action']) && $_GET['action'] === 'reopen' && isset($_GET['id'])) {
-			$issue_id = absint($_GET['id']);
-			$wpdb->update(
-				$table_issues,
-				array(
-					'status' => 'open',
-					'resolved_at' => null,
-					'updated_at' => current_time('mysql')
-				),
-				array('issue_id' => $issue_id),
-				array('%s', '%s', '%s'),
-				array('%d')
-			);
-			echo '<div class="notice notice-success"><p>Issue reopened.</p></div>';
+
+			if (!$can_write) {
+				echo '<div class="notice notice-error"><p>You are not allowed to resolve or reopen validation issues.</p></div>';
+			} elseif (!$issue_id || !$this->verify_get_action_nonce('vaysf_' . $action . '_issue_' . $issue_id)) {
+				echo '<div class="notice notice-error"><p>Invalid or expired request. Please use the button in the list again.</p></div>';
+			} elseif ($action === 'resolve') {
+				$updated = $wpdb->update(
+					$table_issues,
+					array(
+						'status' => 'resolved',
+						'resolved_at' => current_time('mysql'),
+						'updated_at' => current_time('mysql')
+					),
+					array('issue_id' => $issue_id),
+					array('%s', '%s', '%s'),
+					array('%d')
+				);
+				if ($updated === false) {
+					echo '<div class="notice notice-error"><p>Could not mark the issue as resolved. Please try again.</p></div>';
+				} else {
+					echo '<div class="notice notice-success"><p>Issue marked as resolved.</p></div>';
+				}
+			} else {
+				$updated = $wpdb->update(
+					$table_issues,
+					array(
+						'status' => 'open',
+						'resolved_at' => null,
+						'updated_at' => current_time('mysql')
+					),
+					array('issue_id' => $issue_id),
+					array('%s', '%s', '%s'),
+					array('%d')
+				);
+				if ($updated === false) {
+					echo '<div class="notice notice-error"><p>Could not reopen the issue. Please try again.</p></div>';
+				} else {
+					echo '<div class="notice notice-success"><p>Issue reopened.</p></div>';
+				}
+			}
 		}
-		
-		// Filter by status
-		$status_filter = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : 'open';
-		$where_clause = "WHERE i.status = '$status_filter'";
-		
+
+		// Filter by status. Only the two statuses the dropdown offers are
+		// accepted; anything else falls back to the default (Issue #406).
+		$status_filter = isset($_GET['status']) ? sanitize_key(wp_unslash($_GET['status'])) : 'open';
+		if (!in_array($status_filter, array('open', 'resolved'), true)) {
+			$status_filter = 'open';
+		}
+		$where_clause = $wpdb->prepare("WHERE i.status = %s", $status_filter);
+
 		// Filter by church
 		$church_filter = isset($_GET['church_id']) ? absint($_GET['church_id']) : 0;
 		if ($church_filter > 0) {
@@ -158,7 +185,7 @@ class VAYSF_Admin_Validation extends VAYSF_Admin_Page {
 					</form>
 				</div>
 				<div class="alignleft actions">
-					<a href="<?php echo admin_url('admin.php?page=vaysf-validation&action=validate'); ?>" class="button">Validate Data</a>
+					<a href="<?php echo esc_url($this->nonce_action_url('vaysf-validation', 'validate', 'vaysf_validate_data')); ?>" class="button">Validate Data</a>
 					
 					<?php if ($status_filter === 'open' && !empty($issues)) : ?>
 					<button id="resolve-all-btn" class="button">Resolve All Filtered Issues</button>
@@ -256,10 +283,21 @@ class VAYSF_Admin_Validation extends VAYSF_Admin_Page {
 								</td>
 								<td><?php echo esc_html(date('Y-m-d H:i', strtotime($issue['created_at']))); ?></td>
 								<td>
-									<?php if ($issue['status'] === 'open') : ?>
-										<a href="<?php echo admin_url('admin.php?page=vaysf-validation&action=resolve&id=' . $issue['issue_id'] . '&status=' . $status_filter); ?>" class="button button-small">Resolve</a>
-									<?php else : ?>
-										<a href="<?php echo admin_url('admin.php?page=vaysf-validation&action=reopen&id=' . $issue['issue_id'] . '&status=' . $status_filter); ?>" class="button button-small">Reopen</a>
+									<?php if ($can_write) : ?>
+										<?php
+										$row_issue_id = absint($issue['issue_id']);
+										$row_action = $issue['status'] === 'open' ? 'resolve' : 'reopen';
+										$row_action_url = $this->nonce_action_url(
+											'vaysf-validation',
+											$row_action,
+											'vaysf_' . $row_action . '_issue_' . $row_issue_id,
+											array(
+												'id' => $row_issue_id,
+												'status' => $status_filter,
+											)
+										);
+										?>
+										<a href="<?php echo esc_url($row_action_url); ?>" class="button button-small"><?php echo $row_action === 'resolve' ? 'Resolve' : 'Reopen'; ?></a>
 									<?php endif; ?>
 									<?php if ($issue['participant_id']) : ?>
 										<a href="<?php echo admin_url('admin.php?page=vaysf-participants&action=edit&id=' . $issue['participant_id']); ?>" class="button button-small">View Participant</a>

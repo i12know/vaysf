@@ -95,10 +95,11 @@ class VAYSF_Admin_Dashboard extends VAYSF_Admin_Page {
                 <div class="vaysf-actions">
                     <h2>Quick Actions</h2>
                     <div class="vaysf-action-buttons">
-                        <a href="<?php echo admin_url('admin.php?page=vaysf-churches&action=sync'); ?>" class="button button-primary">Sync Churches</a>
-                        <a href="<?php echo admin_url('admin.php?page=vaysf-participants&action=sync'); ?>" class="button button-primary">Sync Participants</a>
-                        <a href="<?php echo admin_url('admin.php?page=vaysf-approvals&action=generate'); ?>" class="button button-primary">Generate Approval Tokens</a>
-                        <a href="<?php echo admin_url('admin.php?page=vaysf-validation&action=validate'); ?>" class="button button-primary">Validate Data</a>
+                        <?php // Nonce action names must match the ones each target page verifies (Issue #406). ?>
+                        <a href="<?php echo esc_url($this->nonce_action_url('vaysf-churches', 'sync', 'vaysf_sync_churches')); ?>" class="button button-primary">Sync Churches</a>
+                        <a href="<?php echo esc_url($this->nonce_action_url('vaysf-participants', 'sync', 'vaysf_sync_participants')); ?>" class="button button-primary">Sync Participants</a>
+                        <a href="<?php echo esc_url($this->nonce_action_url('vaysf-approvals', 'generate', 'vaysf_generate_approvals')); ?>" class="button button-primary">Generate Approval Tokens</a>
+                        <a href="<?php echo esc_url($this->nonce_action_url('vaysf-validation', 'validate', 'vaysf_validate_data')); ?>" class="button button-primary">Validate Data</a>
                     </div>
                 </div>
             </div>

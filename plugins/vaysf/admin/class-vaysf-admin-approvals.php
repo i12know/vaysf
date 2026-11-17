@@ -22,24 +22,36 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
         $table_participants = $wpdb->prefix . 'sf_participants';
         $table_churches = $wpdb->prefix . 'sf_churches';
         
-		// Handle actions
-                if (isset($_GET['action']) && $_GET['action'] === 'generate') {
-                        // Log approval token generation request
-                        if (vaysf_generate_approvals()) {
+		// Handle actions. Each one arrives as a GET link signed with
+		// nonce_action_url() and is verified before anything is written or
+		// sent (Issue #406).
+                $action = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : '';
+
+                if ($action === 'generate') {
+                        if (!$this->verify_get_action_nonce('vaysf_generate_approvals')) {
+                                echo '<div class="notice notice-error"><p>Invalid or expired request. Please click Generate Approval Tokens again.</p></div>';
+                        } elseif (vaysf_generate_approvals()) {
+                                // Log approval token generation request
                                 echo '<div class="notice notice-info"><p>Approval token generation has been logged. The middleware will process this request during its next scheduled run.</p></div>';
                         } else {
                                 echo '<div class="notice notice-error"><p>Error logging approval token generation request.</p></div>';
                         }
-                } elseif (isset($_GET['action']) && $_GET['action'] === 'resend' && !empty($_GET['id'])) {
+                } elseif ($action === 'resend' && !empty($_GET['id'])) {
                         $resend_id = absint($_GET['id']);
-                        $approval = $wpdb->get_row(
-                                $wpdb->prepare(
-                                        "SELECT a.*, p.first_name, p.last_name, p.approval_status AS participant_approval_status, c.church_name FROM $table_approvals a JOIN $table_participants p ON a.participant_id = p.participant_id JOIN $table_churches c ON a.church_id = c.church_id WHERE a.approval_id = %d",
-                                        $resend_id
-                                ),
-                                ARRAY_A
-                        );
-                        if (!$approval) {
+                        $approval = null;
+                        $resend_nonce_ok = $resend_id && $this->verify_get_action_nonce('vaysf_resend_approval_' . $resend_id);
+                        if ($resend_nonce_ok) {
+                                $approval = $wpdb->get_row(
+                                        $wpdb->prepare(
+                                                "SELECT a.*, p.first_name, p.last_name, p.approval_status AS participant_approval_status, c.church_name FROM $table_approvals a JOIN $table_participants p ON a.participant_id = p.participant_id JOIN $table_churches c ON a.church_id = c.church_id WHERE a.approval_id = %d",
+                                                $resend_id
+                                        ),
+                                        ARRAY_A
+                                );
+                        }
+                        if (!$resend_nonce_ok) {
+                                echo '<div class="notice notice-error"><p>Invalid or expired resend request. Please use the Resend Email button in the list again.</p></div>';
+                        } elseif (!$approval) {
                                 echo '<div class="notice notice-error"><p>Approval record not found.</p></div>';
                         } elseif ($approval['approval_status'] === 'merged' || $approval['participant_approval_status'] === 'merged') {
                                 echo '<div class="notice notice-error"><p>Cannot resend an approval for a merged participant.</p></div>';
@@ -73,7 +85,7 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
             
             <div class="tablenav top">
                 <div class="alignleft actions">
-                    <a href="<?php echo admin_url('admin.php?page=vaysf-approvals&action=generate'); ?>" class="button">Generate Approval Tokens</a>
+                    <a href="<?php echo esc_url($this->nonce_action_url('vaysf-approvals', 'generate', 'vaysf_generate_approvals')); ?>" class="button">Generate Approval Tokens</a>
                 </div>
                 <br class="clear">
             </div>
@@ -129,7 +141,16 @@ class VAYSF_Admin_Approvals extends VAYSF_Admin_Page {
                                     <?php if ($approval['approval_status'] === 'merged' || $approval['participant_approval_status'] === 'merged') : ?>
                                         <span class="description">Merged - resend disabled</span>
                                     <?php else : ?>
-                                        <a href="<?php echo admin_url('admin.php?page=vaysf-approvals&action=resend&id=' . $approval['approval_id']); ?>" class="button button-small">Resend Email</a>
+                                        <?php
+                                        $row_approval_id = absint($approval['approval_id']);
+                                        $resend_url = $this->nonce_action_url(
+                                            'vaysf-approvals',
+                                            'resend',
+                                            'vaysf_resend_approval_' . $row_approval_id,
+                                            array('id' => $row_approval_id)
+                                        );
+                                        ?>
+                                        <a href="<?php echo esc_url($resend_url); ?>" class="button button-small">Resend Email</a>
                                     <?php endif; ?>
                                 </td>
                             </tr>
